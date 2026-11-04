@@ -14,6 +14,9 @@
 
 #include <algorithm>
 
+#include <thread>
+
+#include "audio/audio.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
@@ -467,6 +470,49 @@ int cmdShadowTest(int, char**) {
   return bad == 0 && ok ? 0 : 1;
 }
 
+// regs-tool sound <gameDir> <path> [seconds] [stream]: decode a sound from the VFS, print its format, play it for a
+// few seconds (the audio layer's smoke test)
+int cmdSound(int argc, char** argv) {
+  if (argc < 4) return 2;
+  Vfs vfs;
+  vfs.setInstallRoot(widen(argv[2]));
+  vfs.rescan();
+  std::vector<uint8_t> data;
+  std::string err;
+  if (!vfs.read(argv[3], data, &err)) {
+    std::printf("not found: %s (%s)\n", argv[3], err.c_str());
+    return 1;
+  }
+  double seconds = argc > 4 ? std::atof(argv[4]) : 3.0;
+  bool stream = argc > 5 && std::string(argv[5]) == "stream";
+  auto t0 = std::chrono::steady_clock::now();
+  audio::ClipRef clip = audio::loadClip(std::move(data), stream, &err);
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+  if (!clip) {
+    std::printf("decode failed: %s\n", err.c_str());
+    return 1;
+  }
+  audio::ClipInfo ci = audio::clipInfo(clip);
+  std::printf("%s: %u ch, %u Hz, %llu frames (%.2f s), %s, decoded in %lld ms\n", argv[3], ci.channels, ci.sampleRate,
+              (unsigned long long)ci.frames, ci.sampleRate ? double(ci.frames) / ci.sampleRate : 0.0,
+              ci.stream ? "stream" : "pcm", (long long)ms);
+  if (!audio::init(false)) return 1;
+  audio::VoiceParams p;
+  p.group = stream ? audio::Group::Music : audio::Group::Effects;
+  int v = audio::play(clip, p);
+  std::printf("voice %d\n", v);
+  auto start = std::chrono::steady_clock::now();
+  while (audio::isPlaying(v) &&
+         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < seconds) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    audio::update();
+  }
+  std::printf("played %.2f s, %s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
+              audio::isPlaying(v) ? "still playing (cut)" : "finished");
+  audio::shutdown();
+  return v > 0 ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -483,6 +529,7 @@ int main(int argc, char** argv) {
     else if (cmd == "shaders") rc = cmdShaders(argc, argv);
     else if (cmd == "shadowtest") rc = cmdShadowTest(argc, argv);
     else if (cmd == "skintest") rc = cmdSkinTest(argc, argv);
+    else if (cmd == "sound") rc = cmdSound(argc, argv);
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

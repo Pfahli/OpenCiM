@@ -72,8 +72,18 @@ add_library(regs_engine STATIC
   src/engine/ui_lines.cpp
   src/engine/sim_paths.cpp
   src/platform/window_win32.cpp
+  src/audio/audio.cpp
+  src/audio/miniaudio_impl.cpp
 )
 target_include_directories(regs_engine PUBLIC src)
+# third-party: miniaudio (public domain / MIT-0), the audio output and the WAV/MP3 decoders; its implementation file is
+# compiled without the port's warning level
+target_include_directories(regs_engine PRIVATE third_party/miniaudio)
+if(MSVC)
+  set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "/W0")
+else()
+  set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 
 add_executable(regs-tool src/tools/regs_tool.cpp src/tools/crash_win32.cpp)
 target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)

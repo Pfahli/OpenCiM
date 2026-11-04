@@ -73,8 +73,9 @@ it is, what already exists, and the open decisions. Order is not priority.
 
 ## Platforms
 
-* **ARM builds.** The port is plain C++20 with no third-party dependencies; the OpenGL path and the Win32 platform
-  layer are the parts to port (SDL2 would cover the windowing).
+* **ARM builds.** The port is plain C++20; its one third-party library, miniaudio (audio, `third_party/`), already
+  runs on ARM, Linux and macOS. The OpenGL path and the Win32 platform layer are the parts to port (SDL2 would cover
+  the windowing).
 
 ## Mods
 
