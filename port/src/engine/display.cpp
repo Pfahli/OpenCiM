@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -90,6 +91,25 @@ void writePng(std::ofstream& f, const uint8_t* rgba, int w, int h) {
   be32(z, (b << 16) | a);
   chunk("IDAT", z);
   chunk("IEND", {});
+}
+
+// Glyph quads of one text run (gsGuiText_OGL::render's draw step) in the current projection.
+void drawText(VM& vm, Display& d, Font& f, const std::u16string& s, const TextParams& p, float x, float y, uint32_t argb,
+              bool inlineColours) {
+  auto pageHeight = [&](int page) {
+    auto* t = page >= 0 && size_t(page) < f.pages.size() ? dynamic_cast<TextureObj*>(f.pages[size_t(page)].get()) : nullptr;
+    return t ? t->height : 1;
+  };
+  auto emit = [&](const TextQuad& q) {
+    uint32_t tex = 0;
+    if (q.page >= 0 && size_t(q.page) < f.pages.size())
+      if (auto* t = dynamic_cast<TextureObj*>(f.pages[size_t(q.page)].get())) tex = d.texture(vm, t);
+    uint32_t rgba = render::argbToRgba(q.argb);
+    GuiVertex v[4];
+    for (int k = 0; k < 4; ++k) v[k] = {q.x[k], q.y[k], q.u[k], q.v[k], rgba};
+    d.r2d().draw(tex, render::Prim::Quads, v, 4);
+  };
+  layoutText(f, s, p, x, y, argb, 0, inlineColours, emit, pageHeight);
 }
 
 }  // namespace
@@ -244,21 +264,8 @@ struct GuiPass {
     controlTextPos(c, *f, p, x, y);
     uint32_t colour = mulA(c->textColor, c->visibility);
     uint32_t shadow = c->shadowPushed ? mulA(c->shadowColor, c->visibility) : 0;
-    auto pageHeight = [&](int page) {
-      auto* t = page >= 0 && size_t(page) < f->pages.size() ? dynamic_cast<TextureObj*>(f->pages[size_t(page)].get()) : nullptr;
-      return t ? t->height : 1;
-    };
-    auto emit = [&](const TextQuad& q) {
-      uint32_t tex = 0;
-      if (q.page >= 0 && size_t(q.page) < f->pages.size())
-        if (auto* t = dynamic_cast<TextureObj*>(f->pages[size_t(q.page)].get())) tex = d.texture(vm, t);
-      uint32_t rgba = render::argbToRgba(q.argb);
-      GuiVertex v[4];
-      for (int k = 0; k < 4; ++k) v[k] = {q.x[k], q.y[k], q.u[k], q.v[k], rgba};
-      d.r2d().draw(tex, render::Prim::Quads, v, 4);
-    };
-    if (shadow >> 24) layoutText(*f, c->display, p, x + c->shadowDX, y + c->shadowDY, shadow, 0, false, emit, pageHeight);
-    layoutText(*f, c->display, p, x, y, colour, 0, true, emit, pageHeight);
+    if (shadow >> 24) drawText(vm, d, *f, c->display, p, x + c->shadowDX, y + c->shadowDY, shadow, false);
+    drawText(vm, d, *f, c->display, p, x, y, colour, true);
   }
 
   // gsEditCtrl caret (updateCaret, controls.md §11): a bar after the selStart-th character, 0.12 chars wide, one char
@@ -332,6 +339,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
         if (auto* cc = dynamic_cast<ControlObj*>(c.get())) pass.control(cc);
     }
   }
+  drawFpsReadout(vm);
   r2d_.endFrame();
   if (!shot_.empty()) {
     if (saveScreenshot(shot_)) LOG_INFO("screenshot: %s", shot_.string().c_str());
@@ -339,6 +347,59 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     shot_.clear();
   }
   window_->swap();
+}
+
+void Display::drawFpsReadout(VM& vm) {
+  if (settingNumber(vm, u"regsShowFps", 0) == 0) {
+    if (fps_.on) fps_ = FpsReadout{};  // off: nothing measured, history dropped
+    return;
+  }
+  auto now = std::chrono::steady_clock::now();
+  if (!fps_.on) {
+    fps_.on = true;
+    fps_.last = now;
+    fps_.text = u"-- FPS\n";
+  } else {
+    double dt = std::chrono::duration<double>(now - fps_.last).count();
+    fps_.last = now;
+    fps_.window.push_back(dt);
+    fps_.windowSum += dt;
+    while (fps_.window.size() > 1 && fps_.windowSum - fps_.window.front() >= 1.0) {
+      fps_.windowSum -= fps_.window.front();
+      fps_.window.pop_front();
+    }
+    ++fps_.frames;
+    fps_.elapsed += dt;
+    if (fps_.elapsed >= 0.5) {  // the shown values change twice a second
+      auto [lo, hi] = std::minmax_element(fps_.window.begin(), fps_.window.end());
+      char buf[96];
+      std::snprintf(buf, sizeof buf, "%.0f FPS  %.1f ms\nmin %.0f  max %.0f", fps_.frames / fps_.elapsed,
+                    fps_.elapsed * 1000.0 / fps_.frames, 1.0 / std::max(*hi, 1e-6), 1.0 / std::max(*lo, 1e-6));
+      fps_.text = utf8ToUtf16(buf);
+      fps_.frames = 0;
+      fps_.elapsed = 0;
+    }
+  }
+  Font* f = getFont(vm, u"metro/fonts/tahoma-8", u"");
+  if (!f || f->glyphs.empty()) return;
+  // the GUI's text font (ui.script setTextFont) in window pixels, at the top edge right of the centred toolbar
+  // (query / build / bulldoze, ±105 px): the reputation bar and money are top left, the line and vehicle panel and
+  // the menus' close buttons top right, the minimap and date bottom left, the info panel bottom right
+  int w = r2d_.frameWidth(), h = r2d_.frameHeight();
+  r2d_.setProjection(0, 0, float(w), float(h), float(w), float(h));
+  r2d_.setScissor(0, 0, -1, -1);
+  TextParams p;
+  p.sizeX = p.sizeY = 15;
+  p.spacingX = -2;
+  const float pad = 5;
+  float tw = std::max(measureWidth(*f, fps_.text, p), 96.0f), th = measureHeight(*f, fps_.text, p);
+  float x = std::floor(float(w) * 0.5f + 116), y = 3;
+  uint32_t bg = render::argbToRgba(0xA0000000u);
+  GuiVertex q[4] = {{x, y, 0, 0, bg}, {x + tw + 2 * pad, y, 0, 0, bg}, {x + tw + 2 * pad, y + th + 2 * pad, 0, 0, bg},
+                    {x, y + th + 2 * pad, 0, 0, bg}};
+  r2d_.draw(0, render::Prim::Quads, q, 4);
+  drawText(vm, *this, *f, fps_.text, p, x + pad + 1, y + pad + 1, 0xFF000000u, false);
+  drawText(vm, *this, *f, fps_.text, p, x + pad, y + pad, 0xFFE8E8E8u, false);
 }
 
 

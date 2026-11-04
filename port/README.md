@@ -83,6 +83,7 @@ The game's graphics page is extended this way (`data/regs/extend/metro/ui/menus/
 | Colour style | `$regsColorStyle` | Original, Vibrant, Warm, Cool, Cinematic, Monochrome (`grade.fragment`) | at once |
 | Lens blur | `$regsLensBlur` | off; light / strong by distance from the camera target (thin lens on the depth buffer, `dof.fragment`: zoomed in, the distance blurs); tilt-shift (`tiltshift.fragment`) | at once |
 | Graphics engine | `$regsRenderer` | OpenGL 3.3; Vulkan listed as planned (raytracing, DLSS) | — |
+| Performance readout | `$regsShowFps` | off (default) / on: FPS and frame time averaged over 0.5 s, min/max FPS over the last second, drawn by the engine over the GUI at the top edge right of the toolbar (`Display::drawFpsReadout`); never in headless runs, nothing measured while off. The game's own "show frame rate" (`$fps`, a script overlay in the top right corner) stays as it was | at once |
 
 New sandbox games also take a **traffic density** and a **population density** (0.5×, 1× = the original, 2×, 4×) on the
 setup page (`data/regs/extend/metro/ui/menus/sandbox.script`). They are stored in the save's `game.campaign`
