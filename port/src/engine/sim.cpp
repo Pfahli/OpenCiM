@@ -734,8 +734,10 @@ void stepTraffic(VM& vm, SimState& s, float dt) {
 
 // ---- line vehicles ----
 
-// the leg from stop k's platform to the next stop's, plus `extra` nodes of the leg after (metro trains halt half
-// their length past the platform, transport.md §4.3)
+// the leg from stop k's platform to the next stop's, plus `extra` nodes of the leg after: every line vehicle but the
+// helicopter halts half its length past the platform node, its middle at the stop (transport.md §4.3;
+// 0x101152a0.c:173-174 sets pathStepsLeft = (lengthNodes >> 1) + steps for buses and trams too, lengthNodes from the
+// cars' lengths / 6 for every type)
 void appendLeg(SimState& s, VehicleState& v, const LineState& line, int k) {
   const LaneGraph& G = s.graph;
   Mover& m = s.movers[size_t(v.mover)];
@@ -752,7 +754,7 @@ void appendLeg(SimState& s, VehicleState& v, const LineState& line, int k) {
   m.limit = int(m.track.nodes.size()) - 1;
   v.extraNodes = 0;
   const LineStopState& nx = line.stops[size_t((k + 1) % int(line.stops.size()))];
-  if (line.type >= 2 && !v.units.empty() && nx.legStart == st.legEnd) {
+  if (!v.units.empty() && nx.legStart == st.legEnd) {
     int extra = lengthNodesOf(s, v.units, true) >> 1;
     for (int i = 0; i < extra && size_t(i) < nx.path.size(); ++i) m.track.push(G, nx.path[size_t(i)]);
     v.extraNodes = std::min(extra, int(nx.path.size()));

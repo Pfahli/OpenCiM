@@ -120,7 +120,7 @@ struct VehicleState {
   int mover = -1;
   std::vector<Unit> units;
   int stopA = -1, stopB = -1;   // line stop indices: just left, approaching
-  int extraNodes = 0;           // nodes of the next leg already on the track (metro: half the train past the platform)
+  int extraNodes = 0;           // nodes of the next leg already on the track (half the vehicle past the platform)
   float stopTime = 0;
   bool halted = false;          // flag 0x400: docked at stopB
   float doorPos = -1;           // the skeleton clip time of the doors (FUN_101081f0), −1 = closed (rest pose)
