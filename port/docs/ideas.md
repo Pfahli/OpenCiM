@@ -53,6 +53,21 @@ it is, what already exists, and the open decisions. Order is not priority.
     names), and remappable bindings next to the game's `controls.keys`.
 
 * **Quality-of-life improvements.** To be collected as they come up.
+* **Jam relief for line vehicles.** In the original, trams (and buses) can deadlock each other and the traffic behind
+  them backs up for good; the engine only fires `onJammed` after 180 s of waiting (`0x101152a0.c`, transport.md
+  §4.3), which `linepanel.script` turns into a ticker message. The port could resolve it:
+  1. **Detect:** a bus or tram whose head has not advanced (less than about one unit) for 2 minutes of game time,
+     not counting its dwell at a stop, a breakdown or a crash.
+  2. **Clear the cars:** the road vehicles that block it, or that wait in the jam around it, turn round one by one
+     (one every few seconds): onto the opposite lane of their node (`oppositeNode`) with a new route, or, where no
+     turn is possible, they leave the map (fade out like a finished trip).
+  3. **Respawn:** if the bus or tram has still not moved 30 s later, it leaves the map (`onUnspawn`, as when a line
+     is paused) and spawns again two stops further on, as soon as that platform is free. Its passengers get off at
+     the vehicle's last position and plan their trip again from there.
+  * The original's ticker message stays; a second message could say that the vehicle was moved.
+  * An option (`$regsJamRelief`, on by default, off = the original's behaviour), with the times as settings keys.
+  * Open: which cars count as "surrounding" (the cars on the nodes the vehicle waits for and their queues, up to a
+    radius), and whether trains and metro need the same (they deadlock less, since they claim whole blocks).
 * **Sandbox densities.** Traffic and population density (0.5×-4×) for new sandbox games: **done** (README, "Port files
   and graphics options").
 
