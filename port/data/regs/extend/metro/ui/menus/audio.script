@@ -1,8 +1,12 @@
 // ReGS extension of the audio page (metro/ui/menus/audio.script, used as installed). The part before //@base runs
-// before the original page (see VM::extendSource). The page labels each audio_speakers() value with
+// before the original page, the rest after it (see VM::extendSource). The page labels each audio_speakers() value with
 // $strings.$menu_audio<value>_item; the port's extra value "Headphones" (data-free binaural stereo, docs/audio/README.md
 // "Port status") gets its label here, from the port's strings. A changed device or speaker mode applies at the next
 // start, as in the original ($requireRestart).
+// After the page: the port's volume groups (docs/audio/README.md §16.2) under the music volume, and the menu-music fix.
+// Like the original's sliders they apply on OK (save()); the engine reads the regs*Volume keys every frame. The
+// master volume ($volume) stays on top of every group.
+//@rename save regsBaseSave
 
 if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
   $regs = load "/regs/strings/"+MAIN.$language+".strings";
@@ -12,3 +16,78 @@ if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
 MAIN.$strings.$menu_audioHeadphones_item = $regs.$regs_audioHeadphones_item;
 
 //@base
+
+// ---- after the original page: left column, under the music volume ----
+
+$effectsVolume = $settings.$regsEffectsVolume : 1.0;
+$ambienceVolume = $settings.$regsAmbienceVolume : 1.0;
+$interfaceVolume = $settings.$regsInterfaceVolume : 1.0;
+$menuMusicFollows = $settings.$regsMenuMusicFollowsMusicVolume : false;
+
+function regsLabel($y, $text) {
+  with ($label = new_control($box.$content)) {
+    .setRect(60, $y, $box.$content.width - 80, 18);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $label;
+}
+
+with (regsLabel(220, $regs.$regs_effectsVolume_item)) {
+  .setArg(0, macro :: int($effectsVolume * 100.0));
+}
+$effectsVolumeSlider = MAIN.$ui.createSlider($box.$content, $effectsVolume, 0.0, 1.0, 60, 240, 215, 27);
+$effectsVolumeSlider.$action = macro :: regsSetEffectsVolume();
+function regsSetEffectsVolume() {
+  $effectsVolume = $effectsVolumeSlider.$value;
+}
+
+with (regsLabel(280, $regs.$regs_ambienceVolume_item)) {
+  .setArg(0, macro :: int($ambienceVolume * 100.0));
+}
+$ambienceVolumeSlider = MAIN.$ui.createSlider($box.$content, $ambienceVolume, 0.0, 1.0, 60, 300, 215, 27);
+$ambienceVolumeSlider.$action = macro :: regsSetAmbienceVolume();
+function regsSetAmbienceVolume() {
+  $ambienceVolume = $ambienceVolumeSlider.$value;
+}
+
+with (regsLabel(340, $regs.$regs_interfaceVolume_item)) {
+  .setArg(0, macro :: int($interfaceVolume * 100.0));
+}
+$interfaceVolumeSlider = MAIN.$ui.createSlider($box.$content, $interfaceVolume, 0.0, 1.0, 60, 360, 215, 27);
+$interfaceVolumeSlider.$action = macro :: regsSetInterfaceVolume();
+function regsSetInterfaceVolume() {
+  $interfaceVolume = $interfaceVolumeSlider.$value;
+}
+
+// the original plays the menu and ending music at 1.0 whatever the music settings (docs/audio/README.md §10); the
+// port's optional fix gives them the in-game music's settings (off by default, as the original)
+$regsMenuMusicButton = MAIN.$ui.createChoiceButton($box.$content, "self", 40, 411, 16, 16, "", macro :: regsSetMenuMusicFollows(!$menuMusicFollows), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel(410, $regs.$regs_menuMusicFollows_item);
+function regsSetMenuMusicFollows($value) {
+  $menuMusicFollows = $value;
+  MAIN.$ui.selectChoiceButton($menuMusicFollows ? $regsMenuMusicButton : null, $regsMenuMusicButton);
+}
+regsSetMenuMusicFollows($menuMusicFollows);
+
+// the original save() (renamed regsBaseSave) stores its options, then the port's
+function save() {
+  regsBaseSave();
+  $settings.$regsEffectsVolume = $effectsVolume;
+  $settings.$regsAmbienceVolume = $ambienceVolume;
+  $settings.$regsInterfaceVolume = $interfaceVolume;
+  $settings.$regsMenuMusicFollowsMusicVolume = $menuMusicFollows;
+  $settings.exportVariables("regsEffectsVolume", "regsAmbienceVolume", "regsInterfaceVolume", "regsMenuMusicFollowsMusicVolume");
+  // the main menu's music, when the page was opened from there (the pause menu has none)
+  $regsMenuMusic = $menu.$menuMusic : null;
+  if ($regsMenuMusic) {
+    if ($menuMusicFollows) {
+      $regsMenuMusic.volume = $music ? $musicVolume : 0.0;
+    } else {
+      $regsMenuMusic.volume = 1.0;
+    }
+  }
+}

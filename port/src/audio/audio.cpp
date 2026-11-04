@@ -26,6 +26,9 @@ constexpr float kSpeedOfSound = 340.0f;  // FMOD Ex's default (units/s, distance
 constexpr int kHist = 64;          // headphones: the delay line of a voice (> 0.66 ms at 96 kHz)
 constexpr float kPi = 3.14159265f;
 
+const char* const kGroupNames[] = {"effects", "ambience", "interface", "music"};
+constexpr int kGroups = int(Group::Count);
+
 const char* const kLayoutNames[] = {"Default", "Mono", "Stereo", "Quad", "Surround", "5p1", "7p1", "Prologic", "Headphones"};
 
 struct Voice {
@@ -36,6 +39,7 @@ struct Voice {
   bool loop = false, paused = false, stopped = false, spatial = false, relative = false;
   float pos[3] = {}, vel[3] = {};
   float minD = 10, maxD = 100;
+  Group group = Group::Interface;
   // ---- computed by update() ----
   float target[2][kMaxCh] = {};  // gain per source row (0: mono / left, 1: right) and bus channel
   bool stereoRows = false;       // the source's two channels go separately (2D pass-through); else downmixed
@@ -85,10 +89,13 @@ struct State {
   std::map<int, std::unique_ptr<Voice>> voices;
   int nextId = 1;
   float master = 1;
+  float group[kGroups] = {1, 1, 1, 1};
   float lpos[3] = {}, lfwd[3] = {0, 0, -1}, lup[3] = {0, 1, 0}, lvel[3] = {};
   std::vector<float> bus;
+  std::vector<float> groupBus[kGroups];  // each group mixed alone, then summed into bus (per-group RMS for the log)
   // stats (audio thread accumulates)
   double sumSq[kMaxCh] = {};
+  double groupSumSq[kGroups] = {};
   uint64_t statFrames = 0;
   int mixedCount = 0, virtualCount = 0, pausedCount = 0;
   // capture
@@ -206,7 +213,8 @@ void panGains(const State& s, float x, float y, float z, float d, float out[kMax
 // Main thread, under the lock: the targets of one voice from its parameters and the listener.
 void computeVoice(State& s, Voice& v) {
   const ClipInfo& ci = v.clip->info;
-  float vol = std::clamp(v.volume, 0.0f, 1.0f);
+  // the channel volume is clamped like an FMOD channel's; the group gain (the port's sliders) comes on top
+  float vol = std::clamp(v.volume, 0.0f, 1.0f) * s.group[int(v.group)];
   float doppler = 1;
   for (auto& row : v.target)
     for (float& g : row) g = 0;
@@ -418,13 +426,24 @@ void dataCallback(ma_device* device, void* output, const void*, ma_uint32 frames
   const uint32_t bc = s.busCh, oc = s.outCh;
   {
     std::lock_guard<std::mutex> g(s.lock);
-    s.bus.assign(size_t(frames) * bc, 0.0f);
+    const size_t samples = size_t(frames) * bc;
+    for (auto& gb : s.groupBus) gb.assign(samples, 0.0f);
     for (auto& [id, vp] : s.voices) {
       Voice& v = *vp;
       if (v.stopped || v.finished || v.paused) continue;
-      mixVoice(s, v, s.bus.data(), frames);
+      mixVoice(s, v, s.groupBus[int(v.group)].data(), frames);
     }
     const float m = std::clamp(s.master, 0.0f, 1.0f);
+    s.bus.assign(samples, 0.0f);
+    for (int gi = 0; gi < kGroups; ++gi) {
+      const float* gb = s.groupBus[gi].data();
+      double sq = 0;
+      for (size_t k = 0; k < samples; ++k) {
+        s.bus[k] += gb[k];
+        sq += double(gb[k]) * gb[k];
+      }
+      s.groupSumSq[gi] += sq * double(m) * m / double(bc);
+    }
     for (uint32_t n = 0; n < frames; ++n) {
       const float* b = s.bus.data() + size_t(n) * bc;
       float* o = out + size_t(n) * oc;
@@ -696,6 +715,7 @@ int play(const ClipRef& clip, const VoiceParams& p) {
   std::memcpy(v->vel, p.vel, sizeof v->vel);
   v->minD = p.minDistance;
   v->maxD = p.maxDistance;
+  v->group = p.group;
   std::lock_guard<std::mutex> g(s.lock);
   computeVoice(s, *v);
   int id = s.nextId++;
@@ -771,6 +791,20 @@ void setMasterVolume(float volume) {
   st().master = volume;
 }
 
+void setGroupVolume(Group grp, float volume) {
+  if (int(grp) < 0 || int(grp) >= kGroups) return;
+  std::lock_guard<std::mutex> g(st().lock);
+  st().group[int(grp)] = std::clamp(volume, 0.0f, 1.0f);  // the voices' targets follow in the next update()
+}
+
+float groupVolume(Group grp) {
+  if (int(grp) < 0 || int(grp) >= kGroups) return 1.0f;
+  std::lock_guard<std::mutex> g(st().lock);
+  return st().group[int(grp)];
+}
+
+const char* groupName(Group g) { return int(g) >= 0 && int(g) < kGroups ? kGroupNames[int(g)] : "?"; }
+
 void update() {
   State& s = st();
   if (s.open) {
@@ -812,6 +846,10 @@ Stats takeStats() {
   out.virtualized = s.virtualCount;
   out.paused = s.pausedCount;
   out.channels = s.outCh;
+  for (int gi = 0; gi < kGroups; ++gi) {
+    out.groupRms[gi] = s.statFrames ? float(std::sqrt(s.groupSumSq[gi] / double(s.statFrames))) : 0.0f;
+    s.groupSumSq[gi] = 0;
+  }
   for (uint32_t c = 0; c < s.outCh && c < kMaxCh; ++c) {
     out.rms[c] = s.statFrames ? float(std::sqrt(s.sumSq[c] / double(s.statFrames))) : 0.0f;
     s.sumSq[c] = 0;
@@ -824,6 +862,7 @@ Stats takeStats() {
   for (size_t k = 0; k < sp.size() && k < 4; ++k) {
     Stats::Top t;
     t.voice = sp[k]->id;
+    t.group = sp[k]->group;
     t.gain = sp[k]->audibility;
     t.x = sp[k]->rel[0], t.z = sp[k]->rel[2], t.d = sp[k]->dist;
     for (uint32_t c = 0; c < s.busCh && c < 8; ++c) t.ch[c] = sp[k]->target[0][c];

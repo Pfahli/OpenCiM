@@ -11,6 +11,7 @@
 #include "engine/api.h"
 #include "engine/host.h"
 #include "engine/scene3d.h"
+#include "engine/settings.h"
 #include "vfs/vfs.h"
 
 namespace regs::engine {
@@ -51,8 +52,10 @@ struct Sounds {
   bool eyeKnown = false;
   std::map<int, WorldVoice> world;
   float statClock = 0;
+  float groupVolume[int(audio::Group::Count)] = {1, 1, 1, 1};
   const ClassInfo* elementClass = nullptr;  // gs3DElement
   const ClassInfo* cameraClass = nullptr;   // gs3DCamera
+  const ClassInfo* gridClass = nullptr;     // gsGrid
 };
 
 Sounds& snd() {
@@ -81,6 +84,26 @@ std::string shortPath(const std::u16string& p) {
   std::string s = utf16ToUtf8(p);
   size_t k = s.find_last_of('/');
   return k == std::string::npos ? s : s.substr(k + 1);
+}
+
+// The port's volume group of a script sound (docs/audio/README.md §16.2, §18.2), decided when it starts:
+//   a file in a "music" folder (/metro/music/, addons/<dlc>/music/)  → Music
+//   a file whose name says "ambience", or any other gsMusic (new_music) → Ambience (the area loops of ambience.script,
+//     the DLC's replacements; every shipped new_music outside the music folders is one of them)
+//   a sound owned by a grid (a script sound in the world)             → Effects
+//   everything else (new_sound on the desktop: menus, ui, tools, panels, news, achievements, scenario jingles, query
+//     sounds)                                                          → Interface
+// The engine's own world voices (worldSoundPlay: vehicles, items, animals, bells, doors, fares) are Effects.
+audio::Group scriptSoundGroup(const Object* o, const std::u16string& path, bool music) {
+  std::string p = "/" + utf16ToUtf8(path);
+  for (char& c : p) c = (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : (c == '\\' ? '/' : c);
+  size_t k = p.find_last_of('/');
+  std::string dir = p.substr(0, k + 1), name = p.substr(k + 1);
+  if (dir.find("/music/") != std::string::npos) return audio::Group::Music;
+  if (music || name.find("ambience") != std::string::npos) return audio::Group::Ambience;
+  for (const Object* q = o ? o->parent : nullptr; q; q = q->parent)
+    if (snd().gridClass && q->cls->isA(snd().gridClass)) return audio::Group::Effects;
+  return audio::Group::Interface;
 }
 
 // gsSounds::getSound (§5.2): enabled only; cached by expanded path, so the first load fixes the mode
@@ -131,6 +154,7 @@ class SoundObj : public Object {
   int parked = 0;        // port: the paused voice kept for that resume (streams cannot seek cheaply)
   double parkedAt = -1;
   uint32_t lastStatus = 5;
+  audio::Group group = audio::Group::Interface;  // port: the volume group (scriptSoundGroup), set when a voice starts
 
   bool channelValid() {
     if (voice && !audio::isPlaying(voice)) voice = 0;
@@ -171,9 +195,10 @@ class SoundObj : public Object {
   void log(VM& vm, const char* what) const {
     if (!snd().debug) return;
     Vec3 p = relative ? vecOf(fieldValue(u"position")) : globalPos(vm);
-    LOG_INFO("audio: %s %s [%s%s%s] vol %.2f pitch %.2f pos (%.1f, %.1f, %.1f) dist %.1f (min %.0f max %.0f) voice %d",
+    LOG_INFO("audio: %s %s [%s%s%s, %s] vol %.2f pitch %.2f pos (%.1f, %.1f, %.1f) dist %.1f (min %.0f max %.0f) voice %d",
              what, shortPath(path).c_str(), modeName(clip3D, music), relative ? ", relative" : "", loop ? ", loop" : "",
-             volume * volumeMult, pitch * pitchMult, p.x, p.y, p.z, distance(vm), minD, maxD, voice);
+             audio::groupName(group), volume * volumeMult, pitch * pitchMult, p.x, p.y, p.z, distance(vm), minD, maxD,
+             voice);
   }
 
   void stopParked() {
@@ -199,7 +224,9 @@ class SoundObj : public Object {
         audio::setPaused(voice, false);
       } else {
         stopParked();
+        group = scriptSoundGroup(this, path, music);
         audio::VoiceParams p;
+        p.group = group;
         p.volume = volume * volumeMult * solo(path);
         p.pitch = pitch * pitchMult;
         p.loop = loop;
@@ -373,6 +400,7 @@ int worldSoundPlay(Object* grid, const SoundTemplate& t, const Vec3& pos, const 
   Sounds& S = snd();
   if (!S.enabled || !t.clip || effectiveStatus(grid) != 5) return 0;
   audio::VoiceParams p;
+  p.group = audio::Group::Effects;  // the engine's world voices (§11): the port's Effects slider
   p.volume = t.volume * volumeMult * solo(t.path);
   p.pitch = t.pitch * pitchMult;
   p.loop = loop;
@@ -418,6 +446,21 @@ void worldSoundStop(int voice, const char* why) {
 void soundsFrame(VM& vm, float dt) {
   Sounds& S = snd();
   if (!S.enabled) return;
+  // the port's group sliders (Audio page, saved on OK like $volume): read every frame, so a saved value applies at once
+  static const struct {
+    audio::Group group;
+    const char16_t* key;
+  } kGroupKeys[] = {{audio::Group::Effects, u"regsEffectsVolume"},
+                    {audio::Group::Ambience, u"regsAmbienceVolume"},
+                    {audio::Group::Interface, u"regsInterfaceVolume"}};
+  for (const auto& g : kGroupKeys) {
+    float v = std::clamp(settingNumber(vm, g.key, 1.0f), 0.0f, 1.0f);
+    float& cur = S.groupVolume[int(g.group)];
+    if (v == cur) continue;
+    cur = v;
+    audio::setGroupVolume(g.group, v);
+    if (S.debug) LOG_INFO("audio: %s volume %.2f", audio::groupName(g.group), v);
+  }
   updateListener(vm);
   // statusUpdated: only sounds that play, loop or wait for a resume can react
   std::vector<SoundObj*> poll;
@@ -447,12 +490,17 @@ void soundsFrame(VM& vm, float dt) {
     for (uint32_t c = 0; c < st.channels && c < 8; ++c) rms += fmt(" %.4f", st.rms[c]);
     LOG_INFO("audio: %d voices (%d mixed, %d virtual, %d paused; %zu world), master %.2f, listener (%.1f, %.1f, %.1f), RMS%s",
              st.voices, st.mixed, st.virtualized, st.paused, S.world.size(), S.master, S.eye.x, S.eye.y, S.eye.z, rms.c_str());
+    std::string groups;
+    for (int g = 0; g < int(audio::Group::Count); ++g)
+      groups += fmt(" %s %.4f (x%.2f)", audio::groupName(audio::Group(g)), st.groupRms[g], audio::groupVolume(audio::Group(g)));
+    LOG_INFO("audio:   RMS by group:%s", groups.c_str());
     for (const auto& t : st.top) {  // the loudest 3D voices: where they are and how they are panned
       auto w = S.world.find(t.voice);
       std::string gains;
       for (uint32_t c = 0; c < st.channels && c < 8; ++c) gains += fmt(" %.3f", t.ch[c]);
-      LOG_INFO("audio:   voice %d %s: gain %.3f at x %.1f z %.1f (dist %.1f), rate %.3f, channel gains%s", t.voice,
-               w != S.world.end() ? w->second.path.c_str() : "(script sound)", t.gain, t.x, t.z, t.d, t.rate, gains.c_str());
+      LOG_INFO("audio:   voice %d %s (%s): gain %.3f at x %.1f z %.1f (dist %.1f), rate %.3f, channel gains%s", t.voice,
+               w != S.world.end() ? w->second.path.c_str() : "(script sound)", audio::groupName(t.group), t.gain, t.x,
+               t.z, t.d, t.rate, gains.c_str());
     }
   }
 }
@@ -471,6 +519,7 @@ void registerSoundNatives(VM& vm) {
   S.debug = std::getenv("REGS_DEBUG_AUDIO") && std::atoi(std::getenv("REGS_DEBUG_AUDIO")) != 0;
   S.elementClass = vm.findClass("gs3DElement");
   S.cameraClass = vm.findClass("gs3DCamera");
+  S.gridClass = vm.findClass("gsGrid");
   if (ClassInfo* c = vm.findClass("gsSound"))
     c->factory = [&vm](const ClassInfo* ci) {
       auto* s = new SoundObj(ci);

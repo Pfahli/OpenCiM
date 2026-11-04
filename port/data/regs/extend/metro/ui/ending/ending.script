@@ -1,0 +1,8 @@
+// ReGS extension of the ending screen (metro/ui/ending/ending.script, used as installed; see VM::extendSource). Its
+// music plays at volume 1.0 whatever the music settings, like the menu music (docs/audio/README.md §10); with the
+// port's optional fix $regsMenuMusicFollowsMusicVolume (Audio page, off by default) it follows $music/$musicVolume.
+//@base
+
+if (MAIN.$settings.$regsMenuMusicFollowsMusicVolume : false) {
+  $menuMusic.volume = (MAIN.$settings.$music : true) ? (MAIN.$settings.$musicVolume : 0.3) : 0.0;
+}

@@ -1,0 +1,9 @@
+// ReGS extension of the main menu (metro/ui/menus/mainmenu.script, used as installed; see VM::extendSource). The
+// original plays the menu music at volume 1.0 whatever the music settings (docs/audio/README.md §10). With the port's
+// optional fix $regsMenuMusicFollowsMusicVolume (Audio page, off by default as the original) it follows the in-game
+// music's settings: $musicVolume, silent when music is off. The Audio page's OK applies a change at once.
+//@base
+
+if (MAIN.$settings.$regsMenuMusicFollowsMusicVolume : false) {
+  $menuMusic.volume = (MAIN.$settings.$music : true) ? (MAIN.$settings.$musicVolume : 0.3) : 0.0;
+}

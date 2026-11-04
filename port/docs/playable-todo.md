@@ -110,6 +110,10 @@ modes (the editor's roads, terrain and paint tools come later):
   sounds (`gsGridVehicleController.playSound`). Done with miniaudio's device and decoders and a mixer of the port's
   own: script sounds, ambience by area, world sounds of vehicles, animals and items, speaker modes and a Headphones
   mode (`docs/audio/README.md` §18).
+- [x] Separate volumes (port addition): Effects, Ambience and Interface sliders on the Audio page under the master
+  volume (`$regsEffectsVolume`, `$regsAmbienceVolume`, `$regsInterfaceVolume`), and the optional menu-music fix
+  `$regsMenuMusicFollowsMusicVolume` (off by default, as the original). Sounds are tagged where they are created;
+  rule and measurements in `docs/audio/README.md` §18.7.
 - [ ] Door-item sounds (level-crossing bells, needs the door items' animation), a Prologic encoder with phase shift.
 
 ## 7. Effects and remaining graphics

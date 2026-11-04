@@ -23,3 +23,7 @@ $regs_trafficDensity_item = "Verkehrsdichte: %0";
 $regs_populationDensity_item = "Bevölkerungsdichte: %0";
 $regs_density_values = ["0,5x", "1x (Original)", "2x", "4x"];
 $regs_audioHeadphones_item = "Kopfhörer (binaurales Stereo)";
+$regs_effectsVolume_item = "Effektlautstärke (Fahrzeuge, Gebäude, Tiere): %0%%";
+$regs_ambienceVolume_item = "Umgebungslautstärke: %0%%";
+$regs_interfaceVolume_item = "Oberflächenlautstärke: %0%%";
+$regs_menuMusicFollows_item = "Menümusik folgt den Musikeinstellungen";
