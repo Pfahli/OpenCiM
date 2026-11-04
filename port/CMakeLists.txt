@@ -81,9 +81,11 @@ target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
 # the game
 add_executable(regs src/app/main.cpp src/tools/crash_win32.cpp)
 target_link_libraries(regs PRIVATE regs_engine dbghelp)
-# the port's own game files (menu pages, strings), mounted over the install from data/ next to the executable
-add_custom_command(TARGET regs POST_BUILD
+# the port's own game files (menu pages, strings, script extensions), mounted over the install from data/ next to the
+# executable; copied on every build (also when only data/ changed and nothing relinks)
+add_custom_target(regs_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data)
+add_dependencies(regs_data regs)
 if(WIN32)
   target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32)
 endif()
