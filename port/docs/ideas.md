@@ -39,6 +39,19 @@ it is, what already exists, and the open decisions. Order is not priority.
 
 ## Gameplay and comfort
 
+* **Controller support.** Play with a gamepad (Xbox, PlayStation, Switch Pro, Steam Deck).
+  * How: XInput on Windows, or SDL2's game-controller API, which covers all pads and the later ARM/Linux builds
+    (`docs/ui/input.md` describes the input path the port feeds today). The left stick pans the camera, the right
+    stick turns and tilts it, the triggers zoom; a virtual cursor (stick or touchpad) drives the HUD, the tools and
+    selection, snapping to buttons and pins; shoulder buttons cycle the build menu and the line panel; Start opens the
+    pause menu.
+  * Comfort: radial menus for the build tools and game speed, larger hit areas while a pad is in use, button prompts
+    in place of mouse hints, rumble on errors (red placement) as an option.
+  * Fits: the Steam Deck (a good handheld target for this game) and the VR idea (Quest controllers use the same
+    pointer model).
+  * Open decisions: SDL2 (a dependency, also wanted for ARM) or XInput first, how text entry works (line and company
+    names), and remappable bindings next to the game's `controls.keys`.
+
 * **Quality-of-life improvements.** To be collected as they come up.
 * **Sandbox densities.** Traffic and population density (0.5×-4×) for new sandbox games: **done** (README, "Port files
   and graphics options").
