@@ -140,7 +140,8 @@ coverage counters are not written.
   `0x10110840.c`); new vehicles spawn at the first stop of the ring whose platform is free; a vehicle taken off while
   broken is repaired after 60 s without spawning (`0x101152a0.c:32-43`).
 * Saves made with community vehicle mods (e.g. `Cim2`) list vehicles in `$availableVehicles` whose templates exist
-  only with `--community-addons`; the vehicle panel then stops with "Undefined member $type", as the original would
-  without those mods.
+  only with `--community-addons`; the vehicle panel stopped with "Undefined member $type", as the original does
+  without those mods. A port extension (`data/regs/extend/metro/ui/vehiclepanel/vehiclepanel.script`) now leaves
+  vehicles without a template out of the shop (the save keeps them), so such saves can buy vehicles without the mods.
 * Not ported: `gsGridItemController.setColor` (the stops' company colour on their own mesh), the stop bubbles'
   overlap layout (`gsTracerOrganizer`).

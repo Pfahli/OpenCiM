@@ -1,0 +1,19 @@
+// ReGS extension of metro/ui/vehiclepanel/vehiclepanel.script (used as installed; see VM::extendSource): a save made
+// with community vehicle mods lists those vehicles in $gameData.$availableVehicles, but the port loads no community
+// content by default, so their templates are missing and the shop stopped at the first one ("Undefined member $type",
+// the original does the same without the mods). The shop now leaves vehicles without a template out; the save keeps
+// them, so they come back when the mods are loaded (--community-addons).
+//@rename showShopItems regsBaseShowShopItems
+
+//@base
+
+function showShopItems($type) {
+  $all = MAIN.$gameData.$availableVehicles;
+  $known = map [];
+  foreach (keys $all) {
+    if (MAIN.$grid.getGridObject(current)) $known[current] = $all[current];
+  }
+  MAIN.$gameData.$availableVehicles = $known;
+  regsBaseShowShopItems($type);
+  MAIN.$gameData.$availableVehicles = $all;
+}
