@@ -23,7 +23,10 @@ modes (the editor's roads, terrain and paint tools come later):
   road crossings, the underground view (`GRID_VIEW_UNDERGROUND`) to see subway tracks.
 - [x] Place stops and stations: bus and tram stops, metro stations and transitions, docks, heliports
   (`GRIDMODE_CREATE_STOP`, `selectStation`; `engine/tool_objects.cpp`, construction.md §11-12). Still to see on
-  screen: heliport, elevated and underground stations, the metro transition.
+  screen: heliport, elevated and underground stations, the metro transition. Port QoL: a stop upgrade costs the new
+  price minus the old stop's demolition refund (`data/regs/extend/metro/ui/hoverinfo/hoverinfo.script`); the stop
+  keeps its name and lines. The whole loop (lay track, place stops, new line, buy trams, run, save, reload) checked on
+  Cim2.
 - [x] Bulldoze (`GRIDMODE_REMOVE_OBJECTS`), with the demolition cost of buildings (construction.md §13).
 - [ ] Terraforming and paint tools (shift, level, soften, pavement, fields, variation, rename), also used by the map
   editor.
@@ -46,8 +49,8 @@ modes (the editor's roads, terrain and paint tools come later):
   selling; usage and condition gauges (`gsGaugeCtrl`); condition and repairs are script-side and run.
 - [x] `routeExists`, `countStops`, `countLines`, `calculateCoverage`, `countConnectedStops`.
 - [x] Panels: the empty first tab was right (Cim2 has no bus line); the tram tab, line statistics and vehicle lists
-  work. Cim2's vehicle panel stops on its community-mod vehicles unless `--community-addons` is given (as the
-  original without those mods).
+  work. The shop leaves out community-mod vehicles whose templates are not loaded
+  (`data/regs/extend/metro/ui/vehiclepanel/vehiclepanel.script`; the save keeps them).
 
 ## 3. The city over time
 

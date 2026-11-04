@@ -225,8 +225,11 @@ is already specified in `docs/`.
 
    *Check:* a loaded save runs, and its walk/drive/transit counts and line statistics stay close to the original
    game's over the same period.
-6. **Construction tools.** Road, track and stop placement (`gsGridPlayer`). *Needs RE:* most of it.
-   *Check:* a new game can be played: build a line, buy vehicles, carry passengers.
+6. **Construction tools.** Track and stop placement (`gsGridPlayer`; `docs/ui/construction.md`): the tool framework
+   (`engine/tools.*`), tram and metro track laying (`tool_tracks.cpp`), stops, stations, docks and the bulldozer
+   (`tool_objects.cpp`), the line panel's add-stop mode (`tool_addstop.cpp`); lines and vehicles in `sim_lines.cpp`.
+   Still open: the editor's road, terrain and paint tools, undo, the underground view.
+   *Check:* passed on Cim2: lay track, place stops, create a line, buy trams, carry passengers, save and reload.
 7. **Audio.** WAV/MP3 playback with 2D/3D sounds and music, replacing FMOD; Steam features become no-ops.
    *Mods:* a mod manager for ReGS mods (manifests, load order, script extensions, options API) is designed in
    `docs/mod-manager.md`; its base, the script-extension mechanism, already exists.
