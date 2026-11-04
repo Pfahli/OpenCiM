@@ -57,6 +57,7 @@ class GridObj : public script::Object {
  public:
   using Object::Object;
   std::map<std::string, script::Ref<script::Object>> templates;  // idName → gsGridObject
+  std::vector<std::string> templateOrder;  // idNames in loadGridObject order (the template search map keeps the last)
   std::shared_ptr<GridData> data;
   std::shared_ptr<const std::vector<uint8_t>> sourceFile;  // the loaded map.grid; saveToFile writes it back by section
   uint64_t generation = 0;  // bumped on every load (render caches rebuild)

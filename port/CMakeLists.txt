@@ -57,6 +57,7 @@ add_library(regs_engine STATIC
   src/engine/skinning.cpp
   src/engine/interaction.cpp
   src/engine/tools.cpp
+  src/engine/tool_tracks.cpp
   src/engine/grid_save.cpp
   src/engine/grid_edit.cpp
   src/engine/timeline.cpp

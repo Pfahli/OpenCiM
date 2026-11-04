@@ -16,8 +16,11 @@ Spec: `docs/ui/construction.md`. The tool framework is done (`engine/tools.h`): 
 mouseDown / mouseUp / finishTool / cancelTool, preview items, replaced items, `checkConflict`, `mountObject`, the
 price lists the hover script reads, and the green/red highlight overlay; the select mode runs on it. The game's
 modes (the editor's roads, terrain and paint tools come later):
-- [ ] Lay roads, alleys, tram tracks, metro tracks (ground, elevated, underground), bridges and tunnels, with the
-  slope, conflict and price checks (`canApplyTool`, `getNewItems`/`getReplacedItems` for the cost preview).
+- [x] Lay tram tracks and metro tracks (ground, elevated with pillars, underground on the three levels) with junctions,
+  slopes, conflicts and prices (`engine/tool_tracks.cpp`, `docs/ui/construction.md` §6-§9); station track parts
+  through `toolBlocks().track`.
+- [ ] Lay roads, alleys, bridges and tunnels (editor only; `createRoadBlock` is a plain stand-in), the double track's
+  road crossings, the underground view (`GRID_VIEW_UNDERGROUND`) to see subway tracks.
 - [ ] Place stops and stations: bus and tram stops, metro stations and transitions, docks, heliports
   (`GRIDMODE_CREATE_STOP`, `selectStation`).
 - [ ] Bulldoze (`GRIDMODE_REMOVE_OBJECTS`), with the demolition cost of buildings.

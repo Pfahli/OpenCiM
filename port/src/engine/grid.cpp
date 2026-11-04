@@ -180,6 +180,7 @@ void registerGridNatives(VM& vm) {
     }
     t->fieldValues[u"idName"] = Value::string(utf8ToUtf16(name));
     g->templates[name] = t;
+    g->templateOrder.push_back(name);
     runCompanionScript(v, t.get(), path);
     if (o) {
       o->pendingPath = utf16ToUtf8(meshPath);
