@@ -1,4 +1,6 @@
 #pragma once
+#include <chrono>
+#include <deque>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -54,6 +56,19 @@ class Display {
   void dumpTarget(const render::RenderTarget& rt, const std::filesystem::path& file);
 
  private:
+  // The port's frame-rate readout (setting regsShowFps, graphics page): measured and drawn over the GUI only while
+  // the setting is on. Frame time = interval between two rendered frames (limiter sleeps and vsync included).
+  struct FpsReadout {
+    bool on = false;
+    std::chrono::steady_clock::time_point last;
+    std::deque<double> window;  // frame times of the last second, oldest first
+    double windowSum = 0;
+    int frames = 0;             // since the shown average was taken
+    double elapsed = 0;
+    std::u16string text;
+  };
+  void drawFpsReadout(script::VM& vm);
+  FpsReadout fps_;
   bool saveScreenshot(const std::filesystem::path& file);
   std::unique_ptr<platform::Window> window_;
   render::Renderer2D r2d_;

@@ -18,6 +18,7 @@ $regs_lensBlur_values = ["Off", "Light", "Strong", "Tilt-shift"];
 $regs_renderer_item = "Graphics engine:";
 $regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
 $regs_renderer_planned = "Planned: a modern graphics engine (Vulkan) for raytracing and DLSS";
+$regs_showFps_item = "Performance readout (FPS, frame time)";
 $regs_trafficDensity_item = "Traffic density: %0";
 $regs_populationDensity_item = "Population density: %0";
 $regs_density_values = ["0.5x", "1x (original)", "2x", "4x"];

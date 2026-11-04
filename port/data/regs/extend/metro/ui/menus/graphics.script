@@ -1,8 +1,8 @@
 // ReGS extension of the game's graphics page (metro/ui/menus/graphics.script, used as installed). The part before
 // //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds
 // presets, the port's options (stored as regs* settings, or fpsLimit, which the game reads but never offered here),
-// more steps for shadows and antialiasing, the style effects and the graphics engine choice. New options: a row in
-// the middle column, a column in $regsPresets if it is a quality option, and a line in save().
+// more steps for shadows and antialiasing, the style effects, the graphics engine choice and the frame-rate readout.
+// New options: a row in the middle column, a column in $regsPresets if it is a quality option, and a line in save().
 //@rename save regsBaseSave
 
 if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
@@ -178,6 +178,17 @@ for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
   }
 }
 MAIN.$ui.setTooltip($regsRendererButtons[1], $regs.$regs_renderer_planned, 0, -1);
+
+// ---- right column, under the refresh rates: the port's frame-rate readout (drawn by the engine, display.cpp) ----
+
+$showFps = $settings.$regsShowFps : false;
+$regsShowFpsButton = MAIN.$ui.createChoiceButton($box.$content, "self", int($box.$content.width * 0.5) + 40, 451, 16, 16, "", macro :: regsSetShowFps(!$showFps), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel(int($box.$content.width * 0.5) + 60, 450, $regs.$regs_showFps_item);
+function regsSetShowFps($value) {
+  $showFps = $value;
+  MAIN.$ui.selectChoiceButton($showFps ? $regsShowFpsButton : null, $regsShowFpsButton);
+}
+regsSetShowFps($showFps);
 function regsSetRenderer($index) {
   if ($index > 0) return;
   $renderer = $index;
@@ -229,5 +240,6 @@ function save() {
   $settings.$regsColorStyle = $colorStyle;
   $settings.$regsLensBlur = $lensBlur;
   $settings.$regsRenderer = $renderer;
-  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer");
+  $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps");
 }
