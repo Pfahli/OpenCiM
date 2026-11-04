@@ -554,6 +554,8 @@ void testStops(VM& vm, GridObj* grid) {
   LOG_INFO("stop test: %d of %d stops rebuilt identically", same, checked);
 }
 
+int upgradedStop(VM& vm, GridObj* grid, uint32_t preview);
+
 void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   ToolState& t = toolState(player);
   static bool tested = false;
@@ -571,6 +573,7 @@ void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float m
   }
   t.newItems.clear();
   t.replaced.clear();
+  t.upgraded.clear();
   int stop = stopPreview(vm, grid, cx, cz, intField(vm, player, u"toolMode", 0), intField(vm, player, u"toolType", 0));
   int announce = -1;
   bool announceError = false;
@@ -582,6 +585,8 @@ void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float m
       debugConflicts(vm, grid, uint32_t(stop), conflict);
       gridSelectObjectArea(vm, grid, uint32_t(stop), conflict);
       announce = stop, announceError = conflict;
+      if (!conflict)
+        if (int old = upgradedStop(vm, grid, uint32_t(stop)); old >= 0) t.upgraded.push_back(uint32_t(old));
     } else {
       gridEditRemoveItem(vm, grid, uint32_t(stop));  // no fitting template: nothing is shown (not even the red cell)
     }
@@ -704,6 +709,19 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
   vm.fireEvent(player, u"onHoverConstruct", {});
 }
 
+// the live stop a stop preview would upgrade: same type, place, height and connections, another template; −1 for none
+int upgradedStop(VM& vm, GridObj* grid, uint32_t preview) {
+  Info n = infoOf(vm, grid, preview);
+  if (!n.ok || !(n.flags & kFlagStop)) return -1;
+  for (uint32_t o : gridGetObjects(vm, grid, n.x, n.z, n.sx, n.sz)) {
+    Info s = infoOf(vm, grid, o);
+    if (s.ok && (s.flags & kFlagStop) && s.conn == n.conn && s.type() == n.type() && s.x == n.x && s.z == n.z &&
+        s.y == n.y && s.tpl.obj != n.tpl.obj)
+      return int(o);
+  }
+  return -1;
+}
+
 // finishTool cases 7 and 10 (L:0x0819a3e0.c:299-511): when no preview conflicts (against the map without the replaced
 // items, and each with the one before it) the replaced items go and the previews are mounted. A new stop on the place
 // of a stop of the same type, facing the same way, upgrades it (the old stop's name, controller and line places move
@@ -733,15 +751,7 @@ bool finishPlace(VM& vm, ControlObj* player, GridObj* grid) {
     if (conflict) continue;
     Info n = infoOf(vm, grid, i);
     if (mode == kGridModeCreateStop && n.ok && (n.flags & kFlagStop)) {
-      int old = -1;
-      for (uint32_t o : gridGetObjects(vm, grid, n.x, n.z, n.sx, n.sz)) {
-        Info s = infoOf(vm, grid, o);
-        if (s.ok && (s.flags & kFlagStop) && s.conn == n.conn && s.type() == n.type() && s.x == n.x && s.z == n.z &&
-            s.y == n.y && s.tpl.obj != n.tpl.obj) {
-          old = int(o);
-          break;
-        }
-      }
+      int old = upgradedStop(vm, grid, i);
       if (old >= 0) {
         GridData::Item& it = g.items[size_t(old)];
         it.type = g.items[i].type;

@@ -62,6 +62,9 @@ constexpr uint32_t kItemAutoChild = 0x2000000; // generated part of its parent (
 struct ToolState {
   std::vector<uint32_t> newItems;  // +0x27c: the preview items (TEMP), in creation order
   std::set<uint32_t> replaced;     // +0x288: live items the tool would remove when applied
+  // port: live stops the create-stop preview would upgrade in place (regsGetUpgradedItems; the hover script's port
+  // extension credits their demolition refund against the new stop's price)
+  std::vector<uint32_t> upgraded;
   bool inProgress = false;         // +0x258: the left button started a tool (drag, placement)
   bool right = false;              // +0x259: right button held (rename, variation, brushes)
   bool middle = false;             // +0x25a: middle button held: the camera drags, the tools rest

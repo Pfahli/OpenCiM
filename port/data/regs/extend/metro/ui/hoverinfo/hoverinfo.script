@@ -1,0 +1,28 @@
+// ReGS extension of metro/ui/hoverinfo/hoverinfo.script (used as installed; see VM::extendSource).
+// Stop upgrades: placing a newer stop on an existing one of the same type upgrades it in place (its name, controller and
+// lines stay). The original charges the full price of the new stop; the port credits what demolishing the old one would
+// return (the bulldozer's rule: price × demolishCost %, a refund when negative, -50 % in every shipped campaign). When
+// the refund is larger than the new price the difference is paid out, as the bulldozer's refunds are (tryApplyTool's
+// earnMoney for a negative $price). This handler runs after the original onHoverConstruct and corrects its $price.
+
+//@base
+
+event $player.onHoverConstruct::() {
+  $regsUpgraded = $player.regsGetUpgradedItems();
+  if (#$regsUpgraded > 0 && #$player.getNewItems() > 0 && (MAIN.$campaign : false)) {
+    $regsFactor = 0.01 * MAIN.$campaign.$campaign.$demolishCost;
+    if ($regsFactor < 0) {
+      foreach ($regsUpgraded) {
+        $p = getPrice(current);
+        $originalPrice += int($p * $regsFactor);
+        if (MAIN.$economy : false) $p = MAIN.$economy.getPrice($p);
+        $price += int($p * $regsFactor);
+      }
+      if ($price < 0) {
+        displayText($strings.$hover_value_pattern, $price);
+      } else {
+        displayText($strings.$hover_money_pattern, $price);
+      }
+    }
+  }
+}
