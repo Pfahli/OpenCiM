@@ -1,0 +1,61 @@
+#pragma once
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "render/mesh.h"
+#include "render/renderer3d.h"
+#include "script/vm.h"
+
+namespace regs::engine {
+
+class Display;
+class ControlObj;
+
+// gsObject and subclasses: a loaded .object with its GPU copy (uploaded on first draw) and the colorize colour.
+class ObjectObj : public script::Object {
+ public:
+  using Object::Object;
+  std::shared_ptr<const render::ObjectData> data;
+  std::shared_ptr<render::GpuMesh> gpu;
+  std::shared_ptr<std::vector<render::GpuMaterial>> materials;
+  uint32_t colorizeArgb = 0xFFFFFFFF;
+  std::string pendingPath;  // grid templates load their mesh on first use
+  // load-time transform of grid templates: the "b" diagonal variants turn by π/4 (+0x1b8) and may scale (+0x1ac)
+  float loadYaw = 0.0f;
+  float loadScale[3] = {1.0f, 1.0f, 1.0f};
+  // grid templates: places from addHomePlaces / addWorkPlaces / addVisitPlaces, barred visitor classes
+  // (preventVisitors); read by the minimap's data views (docs/ui/minimap.md §3.5) and later the simulation
+  int homePlaces[7] = {}, workPlaces[7] = {}, visitPlaces[13] = {};
+  uint32_t barredVisitors = 0;
+};
+
+// The current eye, look point and up of a camera as the 3D pass uses it (eased for floating cameras).
+void cameraFrame(script::VM& vm, script::Object* cam, render::Vec3& eye, render::Vec3& look, render::Vec3& up);
+// The near and far plane of a viewport looking through a camera, as the 3D pass uses them (before the port's view
+// distance option).
+void viewDepthRange(script::VM& vm, script::Object* viewport, script::Object* cam, float& nearZ, float& farZ);
+
+// .object files by resolved VFS path, loaded once (null when missing or invalid).
+std::shared_ptr<const render::ObjectData> loadObjectCached(script::VM& vm, const std::string& path);
+
+// gsObject::load runs <stem>.script on the object before its mesh loads (0x1008bd90.c:65-93). The .properties
+// companion (class and sub-objects of exported scenes) is not read yet.
+void runCompanionScript(script::VM& vm, script::Object* o, const std::u16string& objectPath);
+
+// A gsMaterialVariant (grid materials, sky, ...) as the renderer binds it; null gives the engine's default material.
+render::GpuMaterial scriptMaterial(Display& d, script::VM& vm, script::Object* variant);
+
+// A mesh material from a .material record, with the overrides scripts made through object.getMaterial(name).
+render::GpuMaterial objectMaterial(Display& d, script::VM& vm, script::Object* object, const render::MaterialDef& m);
+
+// The program of a combiner variant (empty shader = default.shader), compiled on first use; 0 when it fails.
+uint32_t combinerProgram(Display& d, script::VM& vm, const std::string& shader, uint32_t matFlags, uint32_t env);
+
+// Renders the 3D scene of a gsViewPort control into its texture target, if it has a scene, a camera and a
+// gsTextureTarget_OGL effect. Called by the GUI pass when it reaches the viewport.
+void renderViewportScene(Display& d, script::VM& vm, ControlObj* viewport);
+
+void registerSceneNatives(script::VM& vm);
+
+}  // namespace regs::engine

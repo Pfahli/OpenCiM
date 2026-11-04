@@ -1,0 +1,58 @@
+// ReGS extension of the sandbox setup page (metro/ui/menus/sandbox.script, used as installed). The part before
+// //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds the
+// port's traffic and population density for the new game: main.script's loadSandboxScenario (extension) copies them
+// into the campaign, campaign.script's saveCampaign (extension) keeps them in the save, and environment.script
+// (extension) hands them to the simulation before the map loads.
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regs = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regs = load "/regs/strings/en_US.strings";
+}
+
+//@base
+
+// ---- after the original page: two rows in the middle column, below the map size ----
+
+$regsDensityValues = [0.5, 1.0, 2.0, 4.0];      // × the original game
+$regsTrafficStep = 1;
+$regsPopulationStep = 1;
+$regsTrafficDensity = $regsDensityValues[$regsTrafficStep];
+$regsPopulationDensity = $regsDensityValues[$regsPopulationStep];
+
+function regsLabel($x, $y, $text) {
+  with ($label = new_control($box.$content)) {
+    .setRect($x, $y, 200, 18);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $label;
+}
+
+function regsSlider($x, $y, $step) {
+  $steps = #$regsDensityValues;
+  return MAIN.$ui.createSlider($box.$content, $step * ($steps - 0.01) / ($steps - 1), 0.0, $steps - 0.01, $x, $y, 200, 27);
+}
+
+with (regsLabel(270, 362, $regs.$regs_trafficDensity_item)) {
+  .setArg(0, macro :: $regs.$regs_density_values[$regsTrafficStep]);
+}
+$regsTrafficSlider = regsSlider(270, 380, $regsTrafficStep);
+$regsTrafficSlider.$action = macro :: regsSetTrafficDensity();
+function regsSetTrafficDensity() {
+  $regsTrafficStep = int($regsTrafficSlider.$value);
+  $regsTrafficDensity = $regsDensityValues[$regsTrafficStep];
+}
+
+with (regsLabel(270, 412, $regs.$regs_populationDensity_item)) {
+  .setArg(0, macro :: $regs.$regs_density_values[$regsPopulationStep]);
+}
+$regsPopulationSlider = regsSlider(270, 430, $regsPopulationStep);
+$regsPopulationSlider.$action = macro :: regsSetPopulationDensity();
+function regsSetPopulationDensity() {
+  $regsPopulationStep = int($regsPopulationSlider.$value);
+  $regsPopulationDensity = $regsDensityValues[$regsPopulationStep];
+}

@@ -1,0 +1,35 @@
+// Threads across groups and the array helpers the game's queues use (regs-tool script tests/vm_threads.script).
+$log = [];
+
+function spawn($tag) {
+  thread :: {
+    $log[] = $tag + " started";
+    wait 0.05;
+    $log[] = $tag + " after wait";
+  };
+}
+
+thread "x" :: {
+  spawn("from x");
+  wait 0.2;
+  $log[] = "x done";
+};
+resume "x";
+
+spawn("from top");
+
+// array_splice($a, start, count) removes in place (announcement.script's queue)
+$queue = ["a", "b", "c"];
+array_splice($queue, 0, 1);
+echo "array_splice: " + #$queue + " left, first " + $queue[0];
+
+// the same on a script variable from inside a thread of a named group, as announcement.script does
+$q2 = ["only"];
+thread "x" :: {
+  array_splice($q2, 0, 1);
+  echo "array_splice in a thread: " + #$q2 + " left";
+};
+
+wait 0.5;
+foreach ($log) echo current;
+echo "entries: " + #$log;

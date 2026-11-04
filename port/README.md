@@ -1,0 +1,243 @@
+# ReGS: a source port of the Cities in Motion engine
+
+ReGS reimplements `GSystem.dll`, the engine of Cities in Motion (2011), in portable C++20. It runs the game's own
+scripts and data from an **installed copy**; nothing from the game is part of this tree, and nothing is copied out of
+the install. The reverse-engineered specifications it follows are in [`../docs/`](../docs/REPORT.md).
+
+The goal is a playable build first, then the improvements the original engine can't take: a modern renderer,
+native ARM64 builds, better performance, quality-of-life features, a mod loader and multiplayer.
+
+## Build (Windows)
+
+Needs the Visual Studio 2022 Build Tools with the C++ workload (MSVC, CMake and Ninja are taken from there).
+There are no third-party dependencies yet.
+
+```powershell
+.\build.ps1                 # Release x64 into build\x64-Release
+.\build.ps1 -Config Debug   # or RelWithDebInfo; -Arch x86; -Clean
+.\build.ps1 -Name gfx       # a separate tree build\x64-Release-gfx, for parallel work on the same sources
+```
+
+## Run the game
+
+```powershell
+$game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
+.\build\x64-Release\regs.exe $game --windowed
+```
+
+`--documents <dir>` stands in for your Documents folder (default `.\documents`): the game keeps its settings, log and
+saves in `<dir>\Cities In Motion`, so your real saves and settings are never touched. Copy your `settings.script`
+there to start with your language and resolution. The port loads the game and its DLC from the install's own
+archives only: community addons and loose override folders in the install (`addons\`, `metro\`) and in
+`userdata\addons` stay off, so mods for the original game cannot change it; `--community-addons` mounts them as the
+original does (for comparisons). `--frames <n>` quits after n frames and `--screenshot <file.png>`
+saves the last one (used for checks). `--at <frame>:<action>` injects input for screenshot checks: `move:x,y`,
+`click:left|right|middle`, `down:…`/`up:…`, `key:<VK>` (press and release), `keydown:<VK>`/`keyup:<VK>` (hold), `text:<chars>` (typed into edit controls),
+`shot:<file.png>`. Loading the save `Cim2` and entering the game, for example:
+
+```powershell
+.\build\x64-Release\regs.exe $game --windowed --frames 3000 --at 800:move:160,348 --at 820:click:left `
+  --at 900:move:760,371 --at 910:click:left --at 950:move:630,566 --at 960:click:left `
+  --at 2500:move:1490,844 --at 2510:click:left --at 2600:keydown:68 --at 2700:keyup:68 --screenshot map.png
+```
+
+Debugging switches (environment variables): `REGS_NO_COMBINER=1` (built-in shader only), `REGS_DEBUG_SHADE=1..4`
+(fallback shader views), `REGS_DUMP_TARGET=<file.png>` (render-target contents), `REGS_DEBUG_VIEWPORT=1` (viewport
+scene/camera and large GUI images, once each), `REGS_DEBUG_MATERIALS=1` (failed `getMaterial` lookups), `REGS_MINIMAP_CHECK=amsterdam,tutorialcity` (renders
+shipped maps with the loaded templates and compares them with the editor's saved minimaps, `metro/maps/<map>.dds`),
+`REGS_DEBUG_PICK=1` (logs each newly hovered item or vehicle), `REGS_REPORT_MISSING=1` (lists the unimplemented natives
+the scripts called, at exit), `REGS_DEBUG_GROUPS=1` (the script thread groups' pause count, speed and time every 300
+frames), `REGS_DEBUG_SAVE_AT=<ticks>:<name>` (saves the game after that many simulation ticks, for round trips),
+`REGS_DEBUG_FOLLOW=<line type>[:n]` (the main camera follows the n-th line vehicle of that transport type, given as
+a number: 0 bus, 1 tram, 2 metro, 3 boat, 4 helicopter),
+`REGS_TEST_CRASH=<n>` (drivers near the camera turn reckless until n crashes happened). Test
+saves with every transport type: `node tools/gstool.mjs pack samples/saves/vienna "<documents>/Cities In Motion/saves/vienna.gs"`
+(keep the folder name: the save's `level.scenario` points at it), `REGS_DEBUG_SIM=1` (logs the stop cycle and replays the
+saved traffic routes), `REGS_NO_SIM=1` (simulation off). Runs with `--at` actions ignore the real mouse, keyboard and
+window focus, so scripted clicks land the same with or without focus.
+
+### Port files and graphics options
+
+The port needs an installed copy of the game and ships none of its files, like OpenRCT2. Its own files live in
+`data/` (copied next to `regs.exe` by the build; `--data <dir>` points elsewhere) and are mounted over the install:
+
+* `data/regs/extend/<game path>` **extends** a game script without replacing it: the part before a line `//@base`
+  is compiled before the installed file and the rest after it, in the same script object; `//@rename f g` renames a
+  function of the original so the extension can wrap it (`VM::extendSource`). This is also the planned basis for mods.
+* `data/regs/strings/<language>.strings` (`en_US` is the fallback), `data/regs/shaders/` (the port's post effects).
+
+The game's graphics page is extended this way (`data/regs/extend/metro/ui/menus/graphics.script`):
+
+| Option | Setting | Values | Applies |
+|---|---|---|---|
+| Graphics preset | (derived) | Low, Medium, Original (the game's defaults), High, Ultra; "Custom" otherwise | sets the options below |
+| Shadows | `$shadows` | off, 1024², 2048² (the game's maximum), 4096², 8192² | after a restart in game |
+| Antialiasing | `$antialiasing` | off, 2×, 4×, 8× MSAA | after a restart |
+| Anisotropic filtering | `$anisotropy` | off … 16× (now applied; the port ignored it before) | after a restart |
+| View distance | `$regsViewDistance` | 100–300 % of the far plane and the map's cull distance (shadows keep the game's range) | at once |
+| Detail distance | `$regsDetailDistance` | 100–300 % of the near-LOD band | at once |
+| Frame rate limit | `$fpsLimit` | off, 30–144 (the game read it but never offered it) | at once |
+| Colour style | `$regsColorStyle` | Original, Vibrant, Warm, Cool, Cinematic, Monochrome (`grade.fragment`) | at once |
+| Lens blur | `$regsLensBlur` | off; light / strong by distance from the camera target (thin lens on the depth buffer, `dof.fragment`: zoomed in, the distance blurs); tilt-shift (`tiltshift.fragment`) | at once |
+| Graphics engine | `$regsRenderer` | OpenGL 3.3; Vulkan listed as planned (raytracing, DLSS) | — |
+
+New sandbox games also take a **traffic density** and a **population density** (0.5×, 1× = the original, 2×, 4×) on the
+setup page (`data/regs/extend/metro/ui/menus/sandbox.script`). They are stored in the save's `game.campaign`
+(`regsTrafficDensity`, `regsPopulationDensity`, written by the `campaign.script` extension), applied before the map
+loads (`environment.script` extension → `gsGridCitizens.regsPopulationDensity`, `gsGridVehicles.regsTrafficDensity`)
+and cannot be changed during a game. Population scales the home slots per building; traffic scales car use and
+background traffic.
+
+## Tools
+
+```powershell
+$game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
+.\build\x64-Release\regs-tool.exe vfs $game stats      # mounted archives and records
+.\build\x64-Release\regs-tool.exe vfs $game verify     # unpack every archive entry
+.\build\x64-Release\regs-tool.exe vfs $game cat metro/scripts/init.script
+.\build\x64-Release\regs-tool.exe parse-all $game      # parse and compile every script-source file
+.\build\x64-Release\regs-tool.exe parse some.script    # dump one file's syntax tree
+.\build\x64-Release\regs-tool.exe run $game 120 <sandbox>      # boot init.script headless for 120 frames
+.\build\x64-Release\regs-tool.exe script tests\vm_basics.script   # VM self-test
+.\build\x64-Release\regs-tool.exe script tests\vm_threads.script  # threads across groups, array_splice in place
+.\build\x64-Release\regs-tool.exe shader $game "" 0x1601E 0 0x1000   # one combiner variant as generated GLSL
+.\build\x64-Release\regs-tool.exe shaders $game     # generate and compile the shipped shader variants (hidden window)
+.\build\x64-Release\regs-tool.exe shadowtest        # the shadow light-camera fit vs. docs/renderer/shadows.md §3.7
+```
+
+`run` points `userdata/` at the sandbox folder instead of `Documents\Cities In Motion`. The file system also refuses
+writes outside `userdata/`, so test runs never touch your saves, your settings or the install.
+
+Generated sources (re-run when the docs change):
+
+```powershell
+node ..\tools\gen-port-api.mjs ..\docs\native-api.json "$game\GSystem.dll" src\engine\api_generated.cpp
+node ..\tools\gen-port-operators.mjs ..\docs\script-runtime\operators.json src\script\operators_table.inc
+```
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `src/core/` | logging, text decoding (UTF-16 strings, Windows-1252 files), zlib inflate |
+| `src/vfs/` | GS10 archives and the virtual file system (mount rules, loose overrides, `memory/`, `userdata/`) |
+| `src/script/` | script language: lexer, parser, compiler, bytecode VM (threads, events, macros, `load`), values and operators (`vm_ops.cpp`; the dispatch table is generated from the engine's) |
+| `src/engine/` | engine instance and `MAIN`, the generated native API (every class, field, method, event and constant), hand-written natives, the display (window tick, GUI pass) and input dispatch |
+| `src/platform/` | OS window and OpenGL context behind an interface (Win32/WGL now; SDL or others later) |
+| `src/render/` | OpenGL 3.3 core loader, DDS decoding, the batched 2D renderer |
+| `src/app/` | `regs`, the game executable |
+| `data/` | the port's own game-side files: script extensions, strings, post-effect shaders (mounted over the install) |
+| `tests/` | script self-tests |
+| `src/tools/` | `regs-tool` developer commands |
+
+## Status
+
+| Area | State | Check |
+|---|---|---|
+| Archives and file system | done | all 36 archives in the test install mount (including third-party mods with wrong size fields, which the engine tolerates); 22 848 entries unpack with 0 failures (`regs-tool vfs`). The game mounts the 24 official archives only (16 DLC packs load as addons) unless `--community-addons` is given |
+| Script parser | done | 4 113 of 4 116 script-source files parse in 0.8 s; the 3 failures are mod files the original engine rejects too (missing `;`, a stray `2`) |
+| Script compiler and VM | done | All shipped scripts compile. `tests/vm_basics.script` passes; it covers operators, conversions, containers, scoping, functions, events, threads and thread groups. `init.script` runs to the end headless. |
+| Object model and native API | boot reaches `MainMenu` headless | Boot reaches `MainMenu` with no runtime errors, loading all addons and mods. All 123 classes are registered. Implemented so far: the module tree tick, clocks, timers, state machines with guards and actions, textures (real DDS sizes), GUI control geometry, fades and arguments, texture targets, and owner-created sub-objects. Audio, 3D model loading and `writePackage` are still stubs. |
+| Window, input and 2D GUI | main menu works | `regs.exe` opens an OpenGL 3.3 window and runs the menus: DDS textures, both font formats with the engine's exact text metrics, control images, borders, text alignment and `%` formatting, fades, hover, clicks, keyboard routing. Text editing is not done yet. |
+| 3D | menu scene works | The main menu's animated trams render: `.object`/`.material` loading, the sun from the scene clock, the fixed camera, fog, render-to-texture. **The shader combiner is ported**: `.shader` scripts, `setBaseShader`, `onProgram` and the component templates run through the port's own VM and produce the engine's GLSL 1.10 byte for byte; a translator turns it into GLSL 3.30 core with the fixed-function state as uniforms (alpha test included). `regs-tool shaders` compiles 3 749 variants: every shipped shader with the 78 material flag sets the 3 166 shipped objects use, the default shader also skinned and in the shadow passes. Only the terrain and water shaders fail, and only with those object flag sets, which they never get. |
+| Game load and map | a save loads and its map renders | Loading `Cim2` from the menu runs the real load flow (`docs/ui/game-load.md`) into the `Game` state with the HUD. Grid templates run their companion scripts and `onLoaded`, load their meshes, texture variations and colour maps. The map draws in the main viewport per 16×16-cell division: terrain with its materials and shaders (`docs/renderer/terrain.md`: grass variants, cliffs, sea floor, yards, fields, water, map-edge walls), cover quadrants and normal overrides from items (`fixGrid`), and all 87 146 placed items (roads, tracks, props, buildings, trees) merged per division and material (`docs/renderer/grid-items.md`). The floating camera eases as in the engine; WASD, edge scroll and panning move it. Sun shadows, bloom/HDR and window MSAA follow the settings (`docs/renderer/shadows.md`, `bloom.md`). The minimap (`docs/ui/minimap.md`) renders the map texture as the game does (tutorialcity bit-exact, amsterdam and helsinki 99.9 % against the shipped thumbnails), with the camera footprint, pins and click-to-jump; the corner preview shows its masked empty state. Not yet: transit lines on the minimap, skeletal item animation, base walls, the water-edge curtain. |
+| Saving | saves are written | The pause menu saves: `writePackage` writes the GS10 package zlib-compressed like the engine (`core/deflate.cpp`; Cim2 3.06 MB vs the original's 2.97 MB), `gsGrid.saveToFile` writes the loaded `map.grid` back section by section with the simulation's sections from its live state (`engine/grid_save.cpp`, `sim_save.cpp`: vehicles, parked cars, trains, boats, aircraft, animals, pedestrians with the rest of their walk, lines, citizens and routes; round trips on Cim2, Vienna and Berlin reload matching counts, `tools/gridparse.mjs` reads the saves with 0 issues), terrain, network and timeline come from the live map. Seated pedestrians and a few transient vehicle values are written as 0, the original's reset value, because the port doesn't model them. Text fields take typing (`gsEditCtrl`: caret, Backspace/Delete, arrows, `maxLength`, `onCheckInput`), and the save list shows the save dates. |
+| Selection | hover, click, corner preview | The grid player picks like the engine (`docs/ui/selection.md`: `intersectGrid` over vehicles, items and terrain, cell cover, the 0xfe view mode): hovering shows the game's tooltip ("Karussell", "Mietshaus"), a click fires `onSelectObject`, and the corner HUD shows the live preview camera on the selection, its data rows, the selection arrow over it (`gsTracerCtrl`) and the minimap arrow. Item controllers (`gsGridItemController`, `gsTransportStopController`) carry name, model, position and place counts. Not yet: the editing tools (roads, stops, lines, demolish), the stop catchment circle, citizen data pages. |
+| Simulation | a loaded city runs | The save's transport lines, stops and vehicles load into the lane graph (`docs/simulation/`); trams drive their lines, dock with the documented dwell times, follow the speed buttons, and the date advances. Background traffic runs: the save's 771 moving cars, lorries and trains drive their saved routes, claim the lanes ahead (queuing and giving way at junctions, trams included), and new trips keep the count steady; named vehicles (e.g. "Taxi") can be hovered and selected, and the corner preview follows them. Citizens live their days (`docs/simulation/citizens.md`): 32 520 residents fill exactly the save's 32 520 home slots, plan trips, choose walking, car or tram, wait at stops, board, ride and pay fares (the money counter and line statistics move), and pedestrians walk the pavements with skeletal animation (`docs/renderer/skinning.md`; the merry-go-round and Ferris wheel turn too). Hovering a pedestrian shows its kind ("Tourist"); selecting it shows the citizen page (name, portrait, pins) with the preview on the person. Also running: parking, utility trips and company fleets, breakdowns and accidents (`REGS_TEST_CRASH` films one), walk layers for buildings, bridges, tunnels and platforms (no pedestrians over water), boats and aircraft with water bus and helicopter lines, metro platforms and turning at a terminus, animals, vehicle doors and boarding through them in mood order, city growth from the timeline, and the sandbox densities. Not yet: 1.7 % (Cim2) to 6.2 % (Vienna) of walks find no path, all of them real gaps in the walk map (`docs/playable-todo.md` §4); aircraft gear and doors not seen on screen. |
+| Everything else | not started | |
+
+## Roadmap to a playable build
+
+Each milestone ends with a check that can be run. RE work that a milestone still needs is listed with it; the rest
+is already specified in `docs/`.
+
+1. **Script VM.** Compile the syntax tree to bytecode and run it. This covers the variant types and operator rules,
+   functions and default parameters, `with`/`foreach`/`current`, events, macros, `load` (script files as objects),
+   cooperative threads (`wait`, `wait_until` watchers, `skip_frame`, thread groups with `pause`/`resume`), and
+   `exportVariables`.
+   **Done.** Semantics follow `docs/script-runtime/` (`semantics.md`, `values.md`, `operators.json`).
+   Known deviations from the engine:
+   * `wait_until` re-checks its condition every frame, instead of waking when a variable in it is written. This is
+     equivalent for shipped scripts, which only wait on plain variables.
+   * Objects sort and print by creation number instead of memory address.
+
+   *Check:* `metro/scripts/init.script` runs headless to "Engine initialization finished". The remaining errors
+   come from stubbed natives such as `new_texture` and `loadStateMachine`.
+2. **Object model and native API.**
+   * The `gsModule` tree with tick order (`docs/simulation/README.md`).
+   * Field bindings with setters, hooks and read-only flags (`docs/native-api.json`).
+   * All 131 global functions and 72 classes, first as logging stubs, then implemented.
+   * Clocks and state machines (`.states`).
+
+   *Needs RE:* the ~310 handlers not yet read.
+   *Check:* boot reaches the `MainMenu` state headless. **Reached**, with no runtime errors (`regs-tool run`;
+   the sandbox settings need a `$language`, as on any non-first launch).
+3. **Window, input and 2D.**
+   * The platform layer: a Win32 window, input, and an OpenGL 3.3 context behind an interface, so SDL or other
+     backends can follow for ARM and other systems.
+   * DDS textures (DXT1/3/5) and `.font` text.
+   * GUI controls (`gsControl` family), following `docs/renderer/interfaces-2d-output.md`.
+
+   *Check:* the main menu draws and responds to the mouse. **Reached.** The menus, submenus and dialogs draw with
+   their fonts, borders, hover highlights and fades and react to mouse and keyboard; `regs --at …` scripts clicks for
+   screenshot checks. Specs: `docs/ui/controls.md`, `docs/ui/input.md`, `docs/ui/fonts.md`. Deliberate differences:
+   * The mouse is fed in absolute mode, as in the official Linux build. Windows warped the OS cursor to the window
+     centre and sent relative motion.
+   * Fullscreen is a borderless window over the monitor instead of a display-mode change.
+   * The back buffer is cleared every frame (the engine cleared it only on demand).
+
+   Still open: render targets and material shaders (they need the 3D renderer, for example the main menu's
+   animated trams), text editing in `gsEditCtrl`, and the chart, map and tracer controls used in game.
+4. **3D scene.**
+   * Meshes, materials, skeletons and animation (`docs/asset-format/`).
+   * The GLSL 1.10 shaders run with the fixed-function state passed as uniforms.
+   * Camera, terrain and cell geometry, sky and sun, particles, skinning.
+
+   *Needs RE:* animation blending.
+   *Check:* a saved game's map renders. **Reached.** The main menu's tram scene renders as in the original
+   (`docs/renderer/scene-basics.md`), through the ported shader combiner (`engine/shaders.cpp`, `render/glsl.cpp`);
+   a hand-written GLSL 3.30 version of the default shader stays as a fallback (`REGS_NO_COMBINER=1` forces it). A
+   loaded save shows its terrain, water, roads, buildings and trees (`engine/terrain.cpp`, `engine/grid_items.cpp`).
+   Known deviations:
+   * All items are merged per division and material, as the engine does for `storeMesh` templates. The engine draws
+     buildings, trees and stations as one instance each; placement and materials are the same, but the tree wind
+     (`trees.shader`) sees division-space instead of model-space heights, so trunks sway a little more.
+   * Upward item normals are not replaced by the terrain normal, and the `vertexGeneration` triangle order is not
+     applied (only its spherical foliage normals).
+   * The fade between 800 and 880 m and the near/in-range rules of `gsGrid::move` are replaced by distance bands
+     around the eye with frustum culling; item meshes are built nearest first, six divisions per frame.
+
+   **Shadows and bloom** follow `docs/renderer/shadows.md` and `docs/renderer/bloom.md` (`engine/effects.cpp`):
+   the trapezoid-warped sun shadow map (`$shadows` × 1024, light pass with the `SHADOWMAP_RENDER` variants, receivers
+   with `SHADOWMAP`), and the bloom chain (RGBA16F scene with MSAA, squared downsample, 4-level blur, red-channel RMS
+   exposure with a 1 s half-life, tone-mapping composite). `regs-tool shadowtest` checks the light-camera fit
+   against the worked example of `shadows.md` §3.7. Without bloom the window itself gets `$antialiasing` samples, as
+   in the engine. Deviations: the shadow pass reuses the main pass's draw list (division culling with a generous
+   radius instead of the doubled per-mesh radius); trees in the light pass use the same merged LOD as the main pass;
+   the unused `clipYPlane = false` fit (`gsFitTrapezoid`) and `screenSpaceBlur` are not ported.
+
+   Still open: skinning and skeletal item animation, base walls under items on slopes, the water-edge curtain,
+   particles, glow sprites.
+5. **Simulation.**
+   * Grid load and save (`docs/save-format/`).
+   * Lane, pedestrian and transit graphs and searches; citizens, vehicles, lines and stops; the city timeline
+     (`docs/simulation/`).
+
+   *Check:* a loaded save runs, and its walk/drive/transit counts and line statistics stay close to the original
+   game's over the same period.
+6. **Construction tools.** Road, track and stop placement (`gsGridPlayer`). *Needs RE:* most of it.
+   *Check:* a new game can be played: build a line, buy vehicles, carry passengers.
+7. **Audio.** WAV/MP3 playback with 2D/3D sounds and music, replacing FMOD; Steam features become no-ops.
+   *Mods:* a mod manager for ReGS mods (manifests, load order, script extensions, options API) is designed in
+   `docs/mod-manager.md`; its base, the script-extension mechanism, already exists.
+8. **Parity pass.** Saves load in both engines, campaigns run start to finish, and mods load.
+
+The concrete todo list to a playable game, by priority, is `docs/playable-todo.md`.
+
+Ideas for after that (new graphics engine, high-res textures, a stereoscopic 3D mode, a map generator from
+OpenStreetMap, ARM, mod manager,
+multiplayer, cloud saves, RetroAchievements, …) are
+collected in `docs/ideas.md`.
+
+Third-party libraries that would speed things up (SDL2 for windows and input on every platform, miniaudio, an MP3
+decoder) are not used yet; adding them means downloading them, which is a separate decision.

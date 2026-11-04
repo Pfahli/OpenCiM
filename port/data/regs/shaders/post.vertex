@@ -1,0 +1,7 @@
+// ReGS post effects: full-screen quad (texCoord.xy = image uv, bottom-left origin)
+varying vec4 texCoord;
+
+void main(void) {
+  gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+  texCoord = gl_MultiTexCoord0;
+}

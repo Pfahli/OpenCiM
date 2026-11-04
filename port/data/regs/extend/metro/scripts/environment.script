@@ -1,0 +1,18 @@
+// ReGS extension of metro/scripts/environment.script (used as installed; see VM::extendSource): the densities of a
+// sandbox game (sandbox.script / campaign.script extensions) reach the simulation before level.script loads the map.
+// Population is read once per load (home slots); traffic also applies live.
+
+//@base
+
+$regsTrafficDensity = 1.0;
+$regsPopulationDensity = 1.0;
+if (defined MAIN.$campaign) {
+  if (MAIN.$campaign) {
+    if (MAIN.$campaign.$campaign) {
+      $regsTrafficDensity = MAIN.$campaign.$campaign.$regsTrafficDensity : 1.0;
+      $regsPopulationDensity = MAIN.$campaign.$campaign.$regsPopulationDensity : 1.0;
+    }
+  }
+}
+if ($grid.citizens.hasMember("regsPopulationDensity")) $grid.citizens.regsPopulationDensity = $regsPopulationDensity;
+if ($grid.vehicles.hasMember("regsTrafficDensity")) $grid.vehicles.regsTrafficDensity = $regsTrafficDensity;

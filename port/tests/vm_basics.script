@@ -1,0 +1,104 @@
+// ReGS VM self-test. Run: regs-tool script tests/vm_basics.script
+// Every check uses assert; a failure is logged as "Assert failed!" with its line and execution continues.
+// Expected behaviour follows docs/script-runtime/semantics.md and values.md.
+
+// arithmetic and conversions
+assert 7 / 2 == 3;
+assert 7 % 3 == 1;
+assert 1 + 2 * 3 == 7;
+assert 0xFFFF0000 == -65536;
+assert 1 << 4 == 16;
+assert -8 >>> 28 == 15;
+assert 2.5 * 2 == 5.0;
+assert "a" + 1 == "a1";
+assert "v=" + 1.5 == "v=1.500";          // floats always print with three decimals
+assert 1 + "2" == 3;                      // the left operand's type decides
+assert #"hello" == 5;
+assert !false;
+$i = 1;
+$i += 0.5;                                // an int variable becomes a float
+assert $i == 1.5;
+
+// ':' replaces only unset; own script variables start as null, members read through '.' start unset
+assert (this.$neverSet : 42) == 42;
+assert !(defined this.$alsoNeverSet);
+assert (defined $declaredBelow);          // mentioned at top level, so it exists (null) from the start
+$declaredBelow = 1;
+$x = 5;
+assert ($x : 42) == 5;
+assert ((null : 42) == null);
+
+// arrays and maps
+$a = [1, 2, 3];
+$a[] = 4;
+assert #$a == 4;
+assert $a[3] == 4;
+assert $a[-1] == 4;                       // negative indices count from the end
+$a[1] += 10;
+assert $a[1] == 12;
+assert !(defined $a[99]);
+$b = $a;                                  // arrays are shared, never copied
+$b[0] = 100;
+assert $a[0] == 100;
+$m = map ["k", 1, "j", 2];
+assert $m["j"] == 2;
+$m["n"] = 3;
+assert #(keys $m) == 3;
+assert (keys $m)[0] == "j";               // maps iterate in key order
+assert !(defined $m["missing"]);
+$num = map [1, "one"];
+assert $num[1.0] == "one";                // 1 and 1.0 are the same key
+
+// foreach / current, writing through current
+$sum = 0;
+foreach ($a) $sum += current;
+assert $sum == 100 + 12 + 3 + 4;
+foreach ($a) current = 0;
+assert $a[2] == 0;
+$rev = "";
+foreach_reverse (["a", "b", "c"]) $rev += current;
+assert $rev == "cba";
+
+// functions, defaults, recursion, locals
+function add($p, $q = 10) { return $p + $q; }
+assert add(1) == 11;
+assert add(1, 2) == 3;
+function fact($n) { if ($n <= 1) return 1; return $n * fact($n - 1); }
+assert fact(6) == 720;
+function counter() { local $c = 0; for ($k = 0; $k < 5; ++$k) { if ($k == 3) continue; $c++; } return $c; }
+assert counter() == 4;
+assert this.getFunction("add")(2, 3) == 5;
+// $later is not yet a script variable when this function is compiled, so it is a local there
+function setLater() { $later = 7; return $later; }
+$later = 1;
+assert setLater() == 7;
+assert $later == 1;
+
+// with and leading '.'
+$obj = load "/tests/vm_child.script";
+with ($obj) {
+  assert .$name == "child";
+  .$name = "renamed";
+}
+assert $obj.$name == "renamed";
+assert $obj.double(21) == 42;
+
+// macros capture arguments as $0..$n; '$name' in a macro is the script variable
+$mac = macro(5, 6) :: $0 * 10 + $1 + $x;
+assert $mac() == 61;
+
+// events on an engine object: handlers accumulate; filtered events match their key; 'current' is the target
+$mod = new_module(this);
+$fired = 0;
+event $mod.onAddChild::($v) { $fired += $v; }
+event $mod.keyDown::["Enter"]() { $fired += 100; if (current == $mod) $fired += 1000; }
+
+// threads and wait
+$ticks = 0;
+thread :: loop { $ticks++; wait 0.1; }
+$done = false;
+thread :: { wait 0.25; $done = true; }
+$grouped = false;
+thread "testgroup" :: { $grouped = true; }   // named groups start paused
+
+echo "vm_basics: synchronous checks done";

@@ -1,0 +1,3 @@
+// loaded by vm_basics.script
+$name = "child";
+function double($v) { return $v * 2; }

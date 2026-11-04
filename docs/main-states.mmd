@@ -1,0 +1,244 @@
+﻿stateDiagram-v2
+  state "entry" as s0
+  state s1 <<choice>>
+  state "GameExit" as s2
+  state s3 <<choice>>
+  state "ScenarioExit" as s4
+  state "MainMenu" as s5
+  state "ScenarioMenu" as s6
+  state s7 <<choice>>
+  state "LoadGameMenu" as s8
+  state s9 <<choice>>
+  state s10 <<choice>>
+  state "CampaignMenu" as s11
+  state "NewGameMenu" as s12
+  state "GameLoading" as s13
+  state "ScenariosMenu" as s14
+  state "ContinueGame" as s15
+  state "SettingsMenu" as s16
+  state "Credits" as s17
+  state "Game" as s18
+  state "ScenarioBriefing" as s19
+  state "Newspaper" as s20
+  state "EditorPauseMenu" as s21
+  state "MapDataMenu" as s22
+  state "Editor" as s23
+  state s24 <<choice>>
+  state "RetryConfirm" as s25
+  state s26 <<choice>>
+  state "EditorExit" as s27
+  state "LoadMapMenu" as s28
+  state "EditorMenu" as s29
+  state "NewMapMenu" as s30
+  state "LoadError" as s31
+  state "EditorLoading" as s32
+  state "PauseMenu" as s33
+  state "SaveGameMenu" as s34
+  state s35 <<choice>>
+  state "SaveGameConfirm" as s36
+  state s37 <<choice>>
+  state "SaveGameMenu2" as s38
+  state "SaveGameConfirm2" as s39
+  state "IngameLoadMenu" as s40
+  state s41 <<choice>>
+  state "PlayMapConfirm" as s42
+  state "SaveMapMenu" as s43
+  state s44 <<choice>>
+  state "SaveMapConfirm" as s45
+  state s46 <<choice>>
+  state "PlayEditorMap" as s47
+  state "SandboxMenu" as s48
+  state "DifficultyMenu" as s49
+  state "CampaignFinished" as s50
+  state "GraphicsMenu" as s51
+  state s52 <<choice>>
+  state "AudioMenu" as s53
+  state "ControlsMenu" as s54
+  state "SelectKey" as s55
+  state "RestartRequired" as s56
+  state "TrophyMenu" as s57
+  state "LoginMenu" as s58
+  state "Intro (0.01s)" as s59
+  state "LogoFade (0.3s)" as s60
+  state "Logo1 (4s)" as s61
+  state "Logo2 (4s)" as s62
+  state s63 <<choice>>
+  state s64 <<choice>>
+  state "UnsupportedMenu" as s65
+  state "LanguageMenu" as s66
+  state "DemoEnd" as s67
+  state "entry" as s68
+  state "ExpiredVersion" as s69
+  state s70 <<choice>>
+  state "ShopLogin" as s71
+  state "Shop" as s72
+  state "ShopPurchase" as s73
+  state "ShopItems" as s74
+  s2 --> s2 : cancel (return to previous)
+  s4 --> s4 : cancel (return to previous)
+  s8 --> s8 : cancel (return to previous)
+  s11 --> s11 : back (return to previous)
+  s12 --> s12 : back (return to previous)
+  s14 --> s14 : back (return to previous)
+  s16 --> s16 : back (return to previous)
+  s17 --> s17 : back (return to previous)
+  s20 --> s20 : cancel (return to previous)
+  s21 --> s21 : back (return to previous)
+  s22 --> s22 : back (return to previous)
+  s25 --> s25 : cancel (return to previous)
+  s27 --> s27 : cancel (return to previous)
+  s28 --> s28 : cancel (return to previous)
+  s29 --> s29 : back (return to previous)
+  s30 --> s30 : back (return to previous)
+  s33 --> s33 : back (return to previous)
+  s34 --> s34 : cancel (return to previous)
+  s36 --> s36 : cancel (return to previous)
+  s38 --> s38 : cancel (return to previous)
+  s39 --> s39 : cancel (return to previous)
+  s40 --> s40 : cancel (return to previous)
+  s42 --> s42 : cancel (return to previous)
+  s43 --> s43 : cancel (return to previous)
+  s45 --> s45 : cancel (return to previous)
+  s47 --> s47 : cancel (return to previous)
+  s48 --> s48 : back (return to previous)
+  s49 --> s49 : cancel (return to previous)
+  s51 --> s51 : back (return to previous)
+  s53 --> s53 : back (return to previous)
+  s54 --> s54 : back (return to previous)
+  s55 --> s55 : back (return to previous)
+  s57 --> s57 : back (return to previous)
+  s58 --> s58 : cancel (return to previous)
+  s55 --> s54 : ok
+  s5 --> s0 : exit
+  s16 --> s54 : controls
+  s54 --> s16 : ok
+  s26 --> s27 : branch 1
+  s26 --> s5 : branch 2
+  s5 --> s12 : newgame
+  s2 --> s5 : ok
+  s6 --> s7 : exit
+  s7 --> s4 : branch 1
+  s7 --> s5 : branch 2
+  s4 --> s5 : ok
+  s5 --> s8 : loadgame
+  s11 --> s6 : ok
+  s6 --> s13 : ok
+  s15 --> s13 : ok
+  s10 --> s15 : branch 2
+  s5 --> s16 : settings
+  s5 --> s17 : credits
+  s18 --> s20 : newspaper
+  s18 --> s19 : briefing
+  s19 --> s18 : cancel
+  s23 --> s21 : cancel
+  s21 --> s23 : resume
+  s21 --> s22 : mapdata
+  s22 --> s21 : ok
+  s29 --> s28 : loadmap
+  s29 --> s30 : empty
+  s28 --> s32 : ok
+  s8 --> s9 : ok
+  s25 --> s13 : ok
+  s21 --> s26 : exit
+  s27 --> s5 : ok
+  s5 --> s29 : editor
+  s9 --> s10 : branch 2
+  s40 --> s9 : ok
+  s32 --> s23 : completed
+  s30 --> s32 : ok
+  s18 --> s13 : retry
+  s13 --> s18 : completed
+  s9 --> s31 : branch 1
+  s32 --> s31 : error
+  s13 --> s31 : error
+  s31 --> s5 : ok
+  s10 --> s13 : branch 1
+  s33 --> s16 : settings
+  s33 --> s1 : exit
+  s18 --> s33 : pause
+  s33 --> s18 : resume
+  s33 --> s19 : briefing
+  s33 --> s24 : retry
+  s34 --> s35 : ok
+  s35 --> s33 : branch 2
+  s37 --> s39 : branch 1
+  s37 --> s6 : branch 2
+  s6 --> s38 : save
+  s38 --> s37 : ok
+  s39 --> s6 : ok
+  s33 --> s34 : save
+  s43 --> s44 : ok
+  s35 --> s36 : branch 1
+  s36 --> s33 : ok
+  s21 --> s16 : settings
+  s33 --> s40 : loadgame
+  s44 --> s45 : branch 1
+  s41 --> s13 : branch 1
+  s47 --> s46 : ok
+  s46 --> s42 : branch 1
+  s42 --> s41 : ok
+  s21 --> s43 : save
+  s44 --> s21 : branch 2
+  s45 --> s21 : ok
+  s46 --> s41 : branch 2
+  s21 --> s47 : play
+  s14 --> s13 : ok
+  s12 --> s11 : campaign
+  s12 --> s14 : scenarios
+  s12 --> s13 : tutorial
+  s9 --> s6 : branch 3
+  s48 --> s13 : ok
+  s15 --> s13 : cancel
+  s12 --> s48 : sandbox
+  s18 --> s3 : completed
+  s50 --> s5 : ok
+  s3 --> s50 : branch 2
+  s3 --> s5 : branch 3
+  s3 --> s6 : branch 1
+  s51 --> s52 : ok
+  s54 --> s55 : select
+  s16 --> s53 : audio
+  s53 --> s52 : ok
+  s16 --> s51 : graphics
+  s52 --> s56 : branch 1
+  s52 --> s16 : branch 2
+  s33 --> s57 : trophies
+  s48 --> s49 : difficulty
+  s49 --> s48 : ok
+  s58 --> s57 : ok
+  s57 --> s57 : logout
+  s24 --> s25 : branch 1
+  s24 --> s13 : branch 2
+  s59 --> s61 : timeout
+  s61 --> s62 : timeout
+  s62 --> s60 : timeout
+  s60 --> s63 : timeout
+  s63 --> s64 : branch 2
+  s66 --> s64 : ok
+  s65 --> s5 : ok
+  s63 --> s66 : branch 1
+  s1 --> s2 : branch 1
+  s18 --> s33 : cancel
+  s18 --> s67 : demoend
+  s1 --> s5 : branch 2
+  s67 --> s5 : ok
+  s65 --> s68 : cancel
+  s64 --> s5 : branch 3
+  s64 --> s65 : branch 2
+  s69 --> s68 : ok
+  s5 --> s5 : buy
+  s64 --> s69 : branch 1
+  s5 --> s57 : trophies
+  s56 --> s16 : ok
+  s5 --> s70 : shop
+  s72 --> s5 : back
+  s71 --> s5 : cancel
+  s70 --> s72 : branch 1
+  s57 --> s58 : login
+  s70 --> s71 : branch 2
+  s72 --> s71 : logout
+  s71 --> s72 : success
+  s73 --> s73 : cancel (return to previous)
+  s72 --> s73 : purchase
+  s72 --> s74 : items
+  s74 --> s74 : cancel (return to previous)

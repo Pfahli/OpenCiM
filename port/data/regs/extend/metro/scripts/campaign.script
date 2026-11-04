@@ -1,0 +1,19 @@
+// ReGS extension of metro/scripts/campaign.script (used as installed; see VM::extendSource): a save also keeps the
+// port's densities of a sandbox game. The campaign file is a script, so loading it restores them without help.
+//@rename saveCampaign regsBaseSaveCampaign
+
+//@base
+
+function saveCampaign($campaignName) {
+  regsBaseSaveCampaign($campaignName);
+  if (!(defined $campaign.$regsTrafficDensity)) return;
+  // exportVariablesTo writes the whole file: the original's keys again, plus the port's
+  $campaign.exportVariablesTo($campaignName,
+    "current", "filename", "ingame", "companyColor", "companyLogo", "companyName",
+    "difficultyLevel", "bankLevel", "demolishCost", "customData", "saveDate", "saveTime",
+    "saveVersion", "finished", "singleScenario", "scenarioTitle",
+    "startDate", "startMoney", "startGrid", "privateCars",
+    "regsTrafficDensity", "regsPopulationDensity"
+  );
+  $campaign.scriptFilename = $campaignName;
+}

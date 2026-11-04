@@ -1,0 +1,13 @@
+// ReGS extension of metro/scripts/main.script (used as installed; see VM::extendSource): starting a sandbox game also
+// copies the port's density choices of the setup page (sandbox.script extension) into the campaign.
+//@rename loadSandboxScenario regsBaseLoadSandboxScenario
+
+//@base
+
+function loadSandboxScenario($mapName = "") {
+  if ($submenu) {
+    MAIN.$campaign.$campaign.$regsTrafficDensity = $submenu.$regsTrafficDensity : 1.0;
+    MAIN.$campaign.$campaign.$regsPopulationDensity = $submenu.$regsPopulationDensity : 1.0;
+  }
+  regsBaseLoadSandboxScenario($mapName);
+}

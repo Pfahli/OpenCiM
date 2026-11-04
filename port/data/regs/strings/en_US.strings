@@ -1,0 +1,23 @@
+// ReGS strings (English, the fallback for every language without its own file)
+$regs_preset_item = "Graphics preset: %0";
+$regs_preset_values = ["Low", "Medium", "Original", "High", "Ultra"];
+$regs_preset_custom = "Custom";
+$regs_viewDistance_item = "View distance: %0%%";
+$regs_detailDistance_item = "Detail distance: %0%%";
+$regs_fpsLimit_item = "Frame rate limit: %0";
+$regs_fpsLimit_values = ["Off", "30", "60", "90", "120", "144"];
+$regs_shadows_values = ["Off", "Low", "High", "Very high", "Ultra"];
+$regs_antialiasing_values = ["Off", "2x", "4x", "8x"];
+// indexed by the stored value ($shadows) and by samples / 2, as the game's page does
+$regs_shadows_byValue = ["Off", "Low", "High", "Very high", "Very high", "Ultra", "Ultra", "Ultra", "Ultra"];
+$regs_antialiasing_byHalf = ["Off", "2x", "4x", "6x", "8x"];
+$regs_colorStyle_item = "Colour style: %0";
+$regs_colorStyle_values = ["Original", "Vibrant", "Warm", "Cool", "Cinematic", "Monochrome"];
+$regs_lensBlur_item = "Lens blur: %0";
+$regs_lensBlur_values = ["Off", "Light", "Strong", "Tilt-shift"];
+$regs_renderer_item = "Graphics engine:";
+$regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
+$regs_renderer_planned = "Planned: a modern graphics engine (Vulkan) for raytracing and DLSS";
+$regs_trafficDensity_item = "Traffic density: %0";
+$regs_populationDensity_item = "Population density: %0";
+$regs_density_values = ["0.5x", "1x (original)", "2x", "4x"];

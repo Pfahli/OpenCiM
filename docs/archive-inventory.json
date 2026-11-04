@@ -1,0 +1,159 @@
+{
+  "archives": 24,
+  "entries": 20900,
+  "inflateFailures": [],
+  "magicMatches": 20900,
+  "magicMismatchSample": [],
+  "inventory": [
+    {
+      "ext": ".dds",
+      "count": 5301,
+      "MB": 1178.3,
+      "archives": 21
+    },
+    {
+      "ext": ".script",
+      "count": 3272,
+      "MB": 4.5,
+      "archives": 20
+    },
+    {
+      "ext": ".object",
+      "count": 2747,
+      "MB": 262.1,
+      "archives": 17
+    },
+    {
+      "ext": ".bmp",
+      "count": 2491,
+      "MB": 7.3,
+      "archives": 12
+    },
+    {
+      "ext": ".material",
+      "count": 1556,
+      "MB": 0.7,
+      "archives": 17
+    },
+    {
+      "ext": ".properties",
+      "count": 1482,
+      "MB": 0.4,
+      "archives": 17
+    },
+    {
+      "ext": ".skeleton",
+      "count": 1482,
+      "MB": 2.8,
+      "archives": 17
+    },
+    {
+      "ext": ".scene",
+      "count": 1467,
+      "MB": 0.6,
+      "archives": 17
+    },
+    {
+      "ext": ".wav",
+      "count": 279,
+      "MB": 54.4,
+      "archives": 2
+    },
+    {
+      "ext": ".animation",
+      "count": 250,
+      "MB": 84.8,
+      "archives": 13
+    },
+    {
+      "ext": ".scenario",
+      "count": 167,
+      "MB": 4.7,
+      "archives": 11
+    },
+    {
+      "ext": ".strings",
+      "count": 67,
+      "MB": 4.8,
+      "archives": 17
+    },
+    {
+      "ext": ".grid",
+      "count": 54,
+      "MB": 351.9,
+      "archives": 10
+    },
+    {
+      "ext": ".timeline",
+      "count": 54,
+      "MB": 67.2,
+      "archives": 10
+    },
+    {
+      "ext": ".vertex",
+      "count": 52,
+      "MB": 0,
+      "archives": 4
+    },
+    {
+      "ext": ".campaign",
+      "count": 49,
+      "MB": 0,
+      "archives": 10
+    },
+    {
+      "ext": ".fragment",
+      "count": 43,
+      "MB": 0,
+      "archives": 2
+    },
+    {
+      "ext": ".shader",
+      "count": 41,
+      "MB": 0,
+      "archives": 4
+    },
+    {
+      "ext": ".mp3",
+      "count": 19,
+      "MB": 244.7,
+      "archives": 4
+    },
+    {
+      "ext": ".fnt",
+      "count": 11,
+      "MB": 0.2,
+      "archives": 1
+    },
+    {
+      "ext": ".font",
+      "count": 5,
+      "MB": 0,
+      "archives": 2
+    },
+    {
+      "ext": "(none)",
+      "count": 4,
+      "MB": 5.4,
+      "archives": 1
+    },
+    {
+      "ext": ".states",
+      "count": 3,
+      "MB": 0,
+      "archives": 1
+    },
+    {
+      "ext": ".keys",
+      "count": 2,
+      "MB": 0,
+      "archives": 1
+    },
+    {
+      "ext": ".db",
+      "count": 2,
+      "MB": 0,
+      "archives": 2
+    }
+  ]
+}

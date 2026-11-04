@@ -1,0 +1,3868 @@
+{
+ "scriptsScanned": 3601,
+ "nativeGlobalFunctions": [
+  {
+   "name": "random",
+   "uses": 7434
+  },
+  {
+   "name": "vector_length",
+   "uses": 2625
+  },
+  {
+   "name": "vector",
+   "uses": 2423
+  },
+  {
+   "name": "new_sound",
+   "uses": 1876
+  },
+  {
+   "name": "mkdate",
+   "uses": 1192
+  },
+  {
+   "name": "loadMaterial",
+   "uses": 960
+  },
+  {
+   "name": "new_control",
+   "uses": 537
+  },
+  {
+   "name": "colormap",
+   "uses": 351
+  },
+  {
+   "name": "max",
+   "uses": 332
+  },
+  {
+   "name": "expandPattern",
+   "uses": 295
+  },
+  {
+   "name": "int",
+   "uses": 287
+  },
+  {
+   "name": "new_particleEmitter",
+   "uses": 179
+  },
+  {
+   "name": "quat",
+   "uses": 138
+  },
+  {
+   "name": "escapePattern",
+   "uses": 103
+  },
+  {
+   "name": "fappend",
+   "uses": 94
+  },
+  {
+   "name": "changeFileExt",
+   "uses": 89
+  },
+  {
+   "name": "mktime",
+   "uses": 76
+  },
+  {
+   "name": "extractFileName",
+   "uses": 58
+  },
+  {
+   "name": "file_exists",
+   "uses": 56
+  },
+  {
+   "name": "new_tracerControl",
+   "uses": 50
+  },
+  {
+   "name": "substr",
+   "uses": 49
+  },
+  {
+   "name": "min",
+   "uses": 41
+  },
+  {
+   "name": "clamp",
+   "uses": 21
+  },
+  {
+   "name": "color",
+   "uses": 19
+  },
+  {
+   "name": "formatText",
+   "uses": 16
+  },
+  {
+   "name": "new_boatContrain",
+   "uses": 15
+  },
+  {
+   "name": "list_files",
+   "uses": 15
+  },
+  {
+   "name": "clock",
+   "uses": 13
+  },
+  {
+   "name": "new_music",
+   "uses": 12
+  },
+  {
+   "name": "vector_x",
+   "uses": 12
+  },
+  {
+   "name": "string",
+   "uses": 11
+  },
+  {
+   "name": "array_splice",
+   "uses": 11
+  },
+  {
+   "name": "vector_z",
+   "uses": 11
+  },
+  {
+   "name": "map_erase",
+   "uses": 10
+  },
+  {
+   "name": "findstr",
+   "uses": 10
+  },
+  {
+   "name": "new_viewport",
+   "uses": 9
+  },
+  {
+   "name": "latinToRussian",
+   "uses": 9
+  },
+  {
+   "name": "new_gaugeControl",
+   "uses": 9
+  },
+  {
+   "name": "new_editControl",
+   "uses": 9
+  },
+  {
+   "name": "list_dirs",
+   "uses": 8
+  },
+  {
+   "name": "sin",
+   "uses": 8
+  },
+  {
+   "name": "cos",
+   "uses": 7
+  },
+  {
+   "name": "current_date",
+   "uses": 7
+  },
+  {
+   "name": "abs",
+   "uses": 7
+  },
+  {
+   "name": "copy_file",
+   "uses": 6
+  },
+  {
+   "name": "float",
+   "uses": 6
+  },
+  {
+   "name": "array_erase",
+   "uses": 6
+  },
+  {
+   "name": "replacestr",
+   "uses": 6
+  },
+  {
+   "name": "pow",
+   "uses": 5
+  },
+  {
+   "name": "trimFirstLines",
+   "uses": 5
+  },
+  {
+   "name": "loadStateMachine",
+   "uses": 4
+  },
+  {
+   "name": "current_time",
+   "uses": 3
+  },
+  {
+   "name": "new_scene",
+   "uses": 3
+  },
+  {
+   "name": "new_sky",
+   "uses": 3
+  },
+  {
+   "name": "new_sun",
+   "uses": 3
+  },
+  {
+   "name": "mkdir",
+   "uses": 3
+  },
+  {
+   "name": "display_modes",
+   "uses": 3
+  },
+  {
+   "name": "new_graphControl",
+   "uses": 3
+  },
+  {
+   "name": "new_pinControl",
+   "uses": 3
+  },
+  {
+   "name": "new_emittingParticleEmitter",
+   "uses": 2
+  },
+  {
+   "name": "updateFileSystem",
+   "uses": 2
+  },
+  {
+   "name": "new_floatingCamera",
+   "uses": 2
+  },
+  {
+   "name": "setRunSpeed",
+   "uses": 2
+  },
+  {
+   "name": "set_audio_volume",
+   "uses": 2
+  },
+  {
+   "name": "writePackage",
+   "uses": 2
+  },
+  {
+   "name": "array_shuffle",
+   "uses": 2
+  },
+  {
+   "name": "new_object",
+   "uses": 2
+  },
+  {
+   "name": "new_fixedCamera",
+   "uses": 2
+  },
+  {
+   "name": "openURL",
+   "uses": 2
+  },
+  {
+   "name": "freset",
+   "uses": 2
+  },
+  {
+   "name": "loadObject",
+   "uses": 1
+  },
+  {
+   "name": "init_userdata",
+   "uses": 1
+  },
+  {
+   "name": "getMyDocumentsFolder",
+   "uses": 1
+  },
+  {
+   "name": "new_particleEngine",
+   "uses": 1
+  },
+  {
+   "name": "new_grid",
+   "uses": 1
+  },
+  {
+   "name": "new_gridTimeline",
+   "uses": 1
+  },
+  {
+   "name": "enable_sounds",
+   "uses": 1
+  },
+  {
+   "name": "delete_file",
+   "uses": 1
+  },
+  {
+   "name": "quit",
+   "uses": 1
+  },
+  {
+   "name": "new_gridPlayer",
+   "uses": 1
+  },
+  {
+   "name": "new_tracerOrganizer",
+   "uses": 1
+  },
+  {
+   "name": "arg",
+   "uses": 1
+  },
+  {
+   "name": "new_window",
+   "uses": 1
+  },
+  {
+   "name": "current_display_mode",
+   "uses": 1
+  },
+  {
+   "name": "new_desktop",
+   "uses": 1
+  },
+  {
+   "name": "new_listener",
+   "uses": 1
+  },
+  {
+   "name": "g0",
+   "uses": 1
+  },
+  {
+   "name": "n0",
+   "uses": 1
+  },
+  {
+   "name": "new_achievements",
+   "uses": 1
+  },
+  {
+   "name": "extractFileExt",
+   "uses": 1
+  },
+  {
+   "name": "audio_devices",
+   "uses": 1
+  },
+  {
+   "name": "audio_speakers",
+   "uses": 1
+  },
+  {
+   "name": "validatePackage",
+   "uses": 1
+  },
+  {
+   "name": "new_mapControl",
+   "uses": 1
+  },
+  {
+   "name": "new_mapViewport",
+   "uses": 1
+  },
+  {
+   "name": "new_mapRoute",
+   "uses": 1
+  },
+  {
+   "name": "new_mapItem",
+   "uses": 1
+  },
+  {
+   "name": "bool",
+   "uses": 1
+  },
+  {
+   "name": "uppercase",
+   "uses": 1
+  },
+  {
+   "name": "read_file",
+   "uses": 1
+  },
+  {
+   "name": "new_textControl",
+   "uses": 1
+  }
+ ],
+ "nativeMembers": [
+  {
+   "name": "position",
+   "uses": 19259
+  },
+  {
+   "name": "lines",
+   "uses": 9484
+  },
+  {
+   "name": "routeExists",
+   "uses": 8692
+  },
+  {
+   "name": "getRandomItem",
+   "uses": 6457
+  },
+  {
+   "name": "setPathFlags",
+   "uses": 6397
+  },
+  {
+   "name": "getGridObject",
+   "uses": 4899
+  },
+  {
+   "name": "width",
+   "uses": 3295
+  },
+  {
+   "name": "length",
+   "uses": 3006
+  },
+  {
+   "name": "flags",
+   "uses": 2739
+  },
+  {
+   "name": "height",
+   "uses": 2396
+  },
+  {
+   "name": "loadGridObject",
+   "uses": 2338
+  },
+  {
+   "name": "displayName",
+   "uses": 2270
+  },
+  {
+   "name": "type",
+   "uses": 2258
+  },
+  {
+   "name": "diagonals",
+   "uses": 2248
+  },
+  {
+   "name": "addVisitPlaces",
+   "uses": 2128
+  },
+  {
+   "name": "volume",
+   "uses": 1894
+  },
+  {
+   "name": "load",
+   "uses": 1890
+  },
+  {
+   "name": "addHomePlaces",
+   "uses": 1843
+  },
+  {
+   "name": "addWorkPlaces",
+   "uses": 1752
+  },
+  {
+   "name": "storeMesh",
+   "uses": 1460
+  },
+  {
+   "name": "video",
+   "uses": 1284
+  },
+  {
+   "name": "vertexGeneration",
+   "uses": 1273
+  },
+  {
+   "name": "relative",
+   "uses": 1239
+  },
+  {
+   "name": "findItem",
+   "uses": 1155
+  },
+  {
+   "name": "visible",
+   "uses": 1115
+  },
+  {
+   "name": "onDestroy",
+   "uses": 1071
+  },
+  {
+   "name": "citizens",
+   "uses": 1037
+  },
+  {
+   "name": "setTextureVariation",
+   "uses": 960
+  },
+  {
+   "name": "offsetx",
+   "uses": 928
+  },
+  {
+   "name": "offsetz",
+   "uses": 925
+  },
+  {
+   "name": "connections",
+   "uses": 908
+  },
+  {
+   "name": "maxDistance",
+   "uses": 865
+  },
+  {
+   "name": "onLoaded",
+   "uses": 813
+  },
+  {
+   "name": "addPath",
+   "uses": 798
+  },
+  {
+   "name": "getCharacter",
+   "uses": 689
+  },
+  {
+   "name": "setRect",
+   "uses": 672
+  },
+  {
+   "name": "minDistance",
+   "uses": 654
+  },
+  {
+   "name": "canActivate",
+   "uses": 592
+  },
+  {
+   "name": "date",
+   "uses": 574
+  },
+  {
+   "name": "countLines",
+   "uses": 539
+  },
+  {
+   "name": "speed",
+   "uses": 408
+  },
+  {
+   "name": "text",
+   "uses": 368
+  },
+  {
+   "name": "colorMap",
+   "uses": 351
+  },
+  {
+   "name": "frontOffset",
+   "uses": 316
+  },
+  {
+   "name": "rearOffset",
+   "uses": 316
+  },
+  {
+   "name": "loadAnimation",
+   "uses": 315
+  },
+  {
+   "name": "frontAnchor",
+   "uses": 311
+  },
+  {
+   "name": "rearAnchor",
+   "uses": 311
+  },
+  {
+   "name": "acceleration",
+   "uses": 309
+  },
+  {
+   "name": "braking",
+   "uses": 309
+  },
+  {
+   "name": "turning",
+   "uses": 309
+  },
+  {
+   "name": "new_texture",
+   "uses": 295
+  },
+  {
+   "name": "background",
+   "uses": 257
+  },
+  {
+   "name": "setCropRect",
+   "uses": 251
+  },
+  {
+   "name": "setTexture",
+   "uses": 249
+  },
+  {
+   "name": "addCar",
+   "uses": 249
+  },
+  {
+   "name": "setImage",
+   "uses": 247
+  },
+  {
+   "name": "variation",
+   "uses": 242
+  },
+  {
+   "name": "loadSkeleton",
+   "uses": 226
+  },
+  {
+   "name": "children",
+   "uses": 220
+  },
+  {
+   "name": "engineSound",
+   "uses": 202
+  },
+  {
+   "name": "autoemit",
+   "uses": 196
+  },
+  {
+   "name": "density",
+   "uses": 194
+  },
+  {
+   "name": "setShader",
+   "uses": 194
+  },
+  {
+   "name": "addColorRange",
+   "uses": 182
+  },
+  {
+   "name": "textAlign",
+   "uses": 182
+  },
+  {
+   "name": "minParticleSpeed",
+   "uses": 181
+  },
+  {
+   "name": "maxParticleSpeed",
+   "uses": 181
+  },
+  {
+   "name": "minParticleAngle",
+   "uses": 181
+  },
+  {
+   "name": "maxParticleAngle",
+   "uses": 181
+  },
+  {
+   "name": "minParticleLife",
+   "uses": 181
+  },
+  {
+   "name": "maxParticleLife",
+   "uses": 181
+  },
+  {
+   "name": "particleSize",
+   "uses": 181
+  },
+  {
+   "name": "particleAirResist",
+   "uses": 181
+  },
+  {
+   "name": "gravitation",
+   "uses": 181
+  },
+  {
+   "name": "sortParticles",
+   "uses": 181
+  },
+  {
+   "name": "setParticleScale",
+   "uses": 179
+  },
+  {
+   "name": "direction",
+   "uses": 178
+  },
+  {
+   "name": "capacity",
+   "uses": 173
+  },
+  {
+   "name": "getMaterial",
+   "uses": 172
+  },
+  {
+   "name": "active",
+   "uses": 171
+  },
+  {
+   "name": "hornSound",
+   "uses": 161
+  },
+  {
+   "name": "doorOpenStart",
+   "uses": 160
+  },
+  {
+   "name": "doorOpenLen",
+   "uses": 160
+  },
+  {
+   "name": "cropAnimation",
+   "uses": 156
+  },
+  {
+   "name": "calculateLength",
+   "uses": 154
+  },
+  {
+   "name": "top",
+   "uses": 146
+  },
+  {
+   "name": "setArg",
+   "uses": 142
+  },
+  {
+   "name": "visibility",
+   "uses": 136
+  },
+  {
+   "name": "clickThrough",
+   "uses": 133
+  },
+  {
+   "name": "doorCloseStart",
+   "uses": 132
+  },
+  {
+   "name": "doorCloseLen",
+   "uses": 132
+  },
+  {
+   "name": "enabled",
+   "uses": 131
+  },
+  {
+   "name": "perform",
+   "uses": 124
+  },
+  {
+   "name": "left",
+   "uses": 120
+  },
+  {
+   "name": "onPlace",
+   "uses": 107
+  },
+  {
+   "name": "material",
+   "uses": 106
+  },
+  {
+   "name": "conditions",
+   "uses": 102
+  },
+  {
+   "name": "setShaderParams",
+   "uses": 95
+  },
+  {
+   "name": "ambience",
+   "uses": 93
+  },
+  {
+   "name": "keyDown",
+   "uses": 91
+  },
+  {
+   "name": "years",
+   "uses": 90
+  },
+  {
+   "name": "playAnimation",
+   "uses": 89
+  },
+  {
+   "name": "onCreateInstance",
+   "uses": 85
+  },
+  {
+   "name": "connections2",
+   "uses": 85
+  },
+  {
+   "name": "doorOpenSound",
+   "uses": 79
+  },
+  {
+   "name": "doorCloseSound",
+   "uses": 79
+  },
+  {
+   "name": "setMargins",
+   "uses": 78
+  },
+  {
+   "name": "light",
+   "uses": 74
+  },
+  {
+   "name": "blend",
+   "uses": 71
+  },
+  {
+   "name": "targetModule",
+   "uses": 70
+  },
+  {
+   "name": "bellSound",
+   "uses": 61
+  },
+  {
+   "name": "diffuse",
+   "uses": 59
+  },
+  {
+   "name": "unlock",
+   "uses": 59
+  },
+  {
+   "name": "setBorder",
+   "uses": 59
+  },
+  {
+   "name": "doorOpenStart2",
+   "uses": 58
+  },
+  {
+   "name": "doorOpenLen2",
+   "uses": 58
+  },
+  {
+   "name": "doorCloseStart2",
+   "uses": 58
+  },
+  {
+   "name": "doorCloseLen2",
+   "uses": 58
+  },
+  {
+   "name": "targetViewport",
+   "uses": 53
+  },
+  {
+   "name": "targetPosition",
+   "uses": 53
+  },
+  {
+   "name": "parameters",
+   "uses": 51
+  },
+  {
+   "name": "textures",
+   "uses": 51
+  },
+  {
+   "name": "play",
+   "uses": 49
+  },
+  {
+   "name": "vertexComponent",
+   "uses": 48
+  },
+  {
+   "name": "getVariable",
+   "uses": 48
+  },
+  {
+   "name": "ambient",
+   "uses": 47
+  },
+  {
+   "name": "moveSound",
+   "uses": 47
+  },
+  {
+   "name": "enter",
+   "uses": 46
+  },
+  {
+   "name": "getFunction",
+   "uses": 45
+  },
+  {
+   "name": "attributes",
+   "uses": 45
+  },
+  {
+   "name": "getModel",
+   "uses": 44
+  },
+  {
+   "name": "onProgram",
+   "uses": 41
+  },
+  {
+   "name": "name",
+   "uses": 39
+  },
+  {
+   "name": "editMode",
+   "uses": 38
+  },
+  {
+   "name": "owner",
+   "uses": 37
+  },
+  {
+   "name": "fragmentComponent",
+   "uses": 36
+  },
+  {
+   "name": "hide",
+   "uses": 36
+  },
+  {
+   "name": "show",
+   "uses": 32
+  },
+  {
+   "name": "clientWidth",
+   "uses": 31
+  },
+  {
+   "name": "clear",
+   "uses": 28
+  },
+  {
+   "name": "addCharacter",
+   "uses": 28
+  },
+  {
+   "name": "tilting",
+   "uses": 27
+  },
+  {
+   "name": "depthOffset",
+   "uses": 27
+  },
+  {
+   "name": "shaderParams",
+   "uses": 27
+  },
+  {
+   "name": "months",
+   "uses": 26
+  },
+  {
+   "name": "matMask",
+   "uses": 26
+  },
+  {
+   "name": "meshMask",
+   "uses": 26
+  },
+  {
+   "name": "envMask",
+   "uses": 26
+  },
+  {
+   "name": "getVehicles",
+   "uses": 23
+  },
+  {
+   "name": "time",
+   "uses": 22
+  },
+  {
+   "name": "onMouseOver",
+   "uses": 22
+  },
+  {
+   "name": "planeSize",
+   "uses": 21
+  },
+  {
+   "name": "resetTool",
+   "uses": 21
+  },
+  {
+   "name": "setFont",
+   "uses": 21
+  },
+  {
+   "name": "getAverageY",
+   "uses": 20
+  },
+  {
+   "name": "minOnTime",
+   "uses": 20
+  },
+  {
+   "name": "maxOnTime",
+   "uses": 20
+  },
+  {
+   "name": "minOffTime",
+   "uses": 20
+  },
+  {
+   "name": "maxOffTime",
+   "uses": 20
+  },
+  {
+   "name": "clientHeight",
+   "uses": 20
+  },
+  {
+   "name": "moveTunnelSound",
+   "uses": 19
+  },
+  {
+   "name": "negHeight",
+   "uses": 19
+  },
+  {
+   "name": "fogDistance",
+   "uses": 18
+  },
+  {
+   "name": "specular",
+   "uses": 18
+  },
+  {
+   "name": "mouseDown",
+   "uses": 18
+  },
+  {
+   "name": "fogColor",
+   "uses": 17
+  },
+  {
+   "name": "fogOffset",
+   "uses": 17
+  },
+  {
+   "name": "magnitude",
+   "uses": 17
+  },
+  {
+   "name": "speedNodding",
+   "uses": 17
+  },
+  {
+   "name": "grid",
+   "uses": 17
+  },
+  {
+   "name": "countStops",
+   "uses": 17
+  },
+  {
+   "name": "vehicles",
+   "uses": 17
+  },
+  {
+   "name": "fov",
+   "uses": 16
+  },
+  {
+   "name": "onMouseOut",
+   "uses": 16
+  },
+  {
+   "name": "setBaseShader",
+   "uses": 15
+  },
+  {
+   "name": "viewMode",
+   "uses": 15
+  },
+  {
+   "name": "audible",
+   "uses": 15
+  },
+  {
+   "name": "hasMember",
+   "uses": 15
+  },
+  {
+   "name": "orientation",
+   "uses": 14
+  },
+  {
+   "name": "minY",
+   "uses": 14
+  },
+  {
+   "name": "keyUp",
+   "uses": 14
+  },
+  {
+   "name": "addEffect",
+   "uses": 14
+  },
+  {
+   "name": "getStop",
+   "uses": 14
+  },
+  {
+   "name": "toolObject",
+   "uses": 14
+  },
+  {
+   "name": "anchorY",
+   "uses": 14
+  },
+  {
+   "name": "globalPos",
+   "uses": 14
+  },
+  {
+   "name": "days",
+   "uses": 13
+  },
+  {
+   "name": "clickThroughSelf",
+   "uses": 13
+  },
+  {
+   "name": "bringToFront",
+   "uses": 13
+  },
+  {
+   "name": "sendToBack",
+   "uses": 13
+  },
+  {
+   "name": "paused",
+   "uses": 12
+  },
+  {
+   "name": "addInputTarget",
+   "uses": 12
+  },
+  {
+   "name": "removeInputTarget",
+   "uses": 12
+  },
+  {
+   "name": "attractiveness",
+   "uses": 12
+  },
+  {
+   "name": "selStart",
+   "uses": 12
+  },
+  {
+   "name": "destroyed",
+   "uses": 11
+  },
+  {
+   "name": "stopCount",
+   "uses": 11
+  },
+  {
+   "name": "getHomeCount",
+   "uses": 11
+  },
+  {
+   "name": "camera",
+   "uses": 11
+  },
+  {
+   "name": "offset",
+   "uses": 11
+  },
+  {
+   "name": "catchmentArea",
+   "uses": 10
+  },
+  {
+   "name": "isClosed",
+   "uses": 10
+  },
+  {
+   "name": "scene",
+   "uses": 10
+  },
+  {
+   "name": "getTextWidth",
+   "uses": 10
+  },
+  {
+   "name": "loadFromFile",
+   "uses": 10
+  },
+  {
+   "name": "waterMaterial",
+   "uses": 10
+  },
+  {
+   "name": "getStart",
+   "uses": 10
+  },
+  {
+   "name": "setTextShadow",
+   "uses": 10
+  },
+  {
+   "name": "target",
+   "uses": 10
+  },
+  {
+   "name": "nodding",
+   "uses": 9
+  },
+  {
+   "name": "countConnectedStops",
+   "uses": 9
+  },
+  {
+   "name": "update",
+   "uses": 9
+  },
+  {
+   "name": "getID",
+   "uses": 9
+  },
+  {
+   "name": "organize",
+   "uses": 9
+  },
+  {
+   "name": "bits",
+   "uses": 9
+  },
+  {
+   "name": "multiplier",
+   "uses": 9
+  },
+  {
+   "name": "getChildCount",
+   "uses": 9
+  },
+  {
+   "name": "count",
+   "uses": 8
+  },
+  {
+   "name": "getWorkplaceCount",
+   "uses": 8
+  },
+  {
+   "name": "saveToFile",
+   "uses": 8
+  },
+  {
+   "name": "renderViewport",
+   "uses": 8
+  },
+  {
+   "name": "applyChanges",
+   "uses": 8
+  },
+  {
+   "name": "getYardMaterial",
+   "uses": 8
+  },
+  {
+   "name": "currentDay",
+   "uses": 8
+  },
+  {
+   "name": "getStopCount",
+   "uses": 8
+  },
+  {
+   "name": "anchorX",
+   "uses": 8
+  },
+  {
+   "name": "caretColor",
+   "uses": 8
+  },
+  {
+   "name": "maxLength",
+   "uses": 8
+  },
+  {
+   "name": "onCheckInput",
+   "uses": 8
+  },
+  {
+   "name": "rejectInput",
+   "uses": 8
+  },
+  {
+   "name": "onChange",
+   "uses": 8
+  },
+  {
+   "name": "renderMap",
+   "uses": 8
+  },
+  {
+   "name": "toolSize",
+   "uses": 7
+  },
+  {
+   "name": "viewport",
+   "uses": 7
+  },
+  {
+   "name": "setPriceSignificance",
+   "uses": 7
+  },
+  {
+   "name": "setReasonProbability",
+   "uses": 7
+  },
+  {
+   "name": "saturation",
+   "uses": 7
+  },
+  {
+   "name": "exportVariables",
+   "uses": 7
+  },
+  {
+   "name": "exit",
+   "uses": 7
+  },
+  {
+   "name": "getFlags",
+   "uses": 7
+  },
+  {
+   "name": "desktopLeft",
+   "uses": 7
+  },
+  {
+   "name": "forceSounds",
+   "uses": 7
+  },
+  {
+   "name": "getHomePlaces",
+   "uses": 7
+  },
+  {
+   "name": "getWorkPlaces",
+   "uses": 7
+  },
+  {
+   "name": "checkDay",
+   "uses": 7
+  },
+  {
+   "name": "pitch",
+   "uses": 6
+  },
+  {
+   "name": "exportVariablesTo",
+   "uses": 6
+  },
+  {
+   "name": "generateMesh",
+   "uses": 6
+  },
+  {
+   "name": "setUtilProbability",
+   "uses": 6
+  },
+  {
+   "name": "getState",
+   "uses": 6
+  },
+  {
+   "name": "reset",
+   "uses": 6
+  },
+  {
+   "name": "mouse",
+   "uses": 6
+  },
+  {
+   "name": "passengerCount",
+   "uses": 6
+  },
+  {
+   "name": "pathMaterial",
+   "uses": 6
+  },
+  {
+   "name": "colorize",
+   "uses": 6
+  },
+  {
+   "name": "setTiling",
+   "uses": 6
+  },
+  {
+   "name": "dds",
+   "uses": 6
+  },
+  {
+   "name": "alternateId",
+   "uses": 5
+  },
+  {
+   "name": "particleBlend",
+   "uses": 5
+  },
+  {
+   "name": "passengersTransported",
+   "uses": 5
+  },
+  {
+   "name": "toolType",
+   "uses": 5
+  },
+  {
+   "name": "new_textureTarget",
+   "uses": 5
+  },
+  {
+   "name": "getTexture",
+   "uses": 5
+  },
+  {
+   "name": "earthMaterial",
+   "uses": 5
+  },
+  {
+   "name": "reservedMaterial",
+   "uses": 5
+  },
+  {
+   "name": "edgeMaterial",
+   "uses": 5
+  },
+  {
+   "name": "waterEdgeMaterial",
+   "uses": 5
+  },
+  {
+   "name": "modelMask",
+   "uses": 5
+  },
+  {
+   "name": "setAirplanes",
+   "uses": 5
+  },
+  {
+   "name": "getClass",
+   "uses": 5
+  },
+  {
+   "name": "travelDistance",
+   "uses": 5
+  },
+  {
+   "name": "tick",
+   "uses": 5
+  },
+  {
+   "name": "setColor",
+   "uses": 5
+  },
+  {
+   "name": "init",
+   "uses": 5
+  },
+  {
+   "name": "toolLine",
+   "uses": 5
+  },
+  {
+   "name": "findCitizen",
+   "uses": 5
+  },
+  {
+   "name": "getCharModel",
+   "uses": 5
+  },
+  {
+   "name": "line",
+   "uses": 5
+  },
+  {
+   "name": "mouseUp",
+   "uses": 5
+  },
+  {
+   "name": "getTextHeight",
+   "uses": 5
+  },
+  {
+   "name": "tag",
+   "uses": 5
+  },
+  {
+   "name": "tracked2",
+   "uses": 5
+  },
+  {
+   "name": "addEmitPosition",
+   "uses": 4
+  },
+  {
+   "name": "keyRepeat",
+   "uses": 4
+  },
+  {
+   "name": "yPlane",
+   "uses": 4
+  },
+  {
+   "name": "particleEngine",
+   "uses": 4
+  },
+  {
+   "name": "clock",
+   "uses": 4
+  },
+  {
+   "name": "baseMaterial",
+   "uses": 4
+  },
+  {
+   "name": "positiveMaterial",
+   "uses": 4
+  },
+  {
+   "name": "negativeMaterial",
+   "uses": 4
+  },
+  {
+   "name": "getFieldMaterial",
+   "uses": 4
+  },
+  {
+   "name": "timeSpeed",
+   "uses": 4
+  },
+  {
+   "name": "setPassengerTrains",
+   "uses": 4
+  },
+  {
+   "name": "onDeactivate",
+   "uses": 4
+  },
+  {
+   "name": "scale",
+   "uses": 4
+  },
+  {
+   "name": "getWorkplace",
+   "uses": 4
+  },
+  {
+   "name": "getCanTravelCount",
+   "uses": 4
+  },
+  {
+   "name": "getTravelCount",
+   "uses": 4
+  },
+  {
+   "name": "currentPosition",
+   "uses": 4
+  },
+  {
+   "name": "pixelCoordinates",
+   "uses": 4
+  },
+  {
+   "name": "username",
+   "uses": 4
+  },
+  {
+   "name": "getReplacedItems",
+   "uses": 4
+  },
+  {
+   "name": "stopExists",
+   "uses": 4
+  },
+  {
+   "name": "instantEmit",
+   "uses": 4
+  },
+  {
+   "name": "getHome",
+   "uses": 4
+  },
+  {
+   "name": "tempPathMaterial",
+   "uses": 4
+  },
+  {
+   "name": "extraPathMaterial",
+   "uses": 4
+  },
+  {
+   "name": "freq",
+   "uses": 4
+  },
+  {
+   "name": "desktopTop",
+   "uses": 4
+  },
+  {
+   "name": "getVisitPlaces",
+   "uses": 4
+  },
+  {
+   "name": "onSpawn",
+   "uses": 3
+  },
+  {
+   "name": "illumination",
+   "uses": 3
+  },
+  {
+   "name": "brightness",
+   "uses": 3
+  },
+  {
+   "name": "pause",
+   "uses": 3
+  },
+  {
+   "name": "onYear",
+   "uses": 3
+  },
+  {
+   "name": "scriptFilename",
+   "uses": 3
+  },
+  {
+   "name": "showMarkers",
+   "uses": 3
+  },
+  {
+   "name": "new_shadowEffect",
+   "uses": 3
+  },
+  {
+   "name": "screenSpaceBlur",
+   "uses": 3
+  },
+  {
+   "name": "safeMargin",
+   "uses": 3
+  },
+  {
+   "name": "clipYPlane",
+   "uses": 3
+  },
+  {
+   "name": "setViewportRect",
+   "uses": 3
+  },
+  {
+   "name": "renderOffsetY",
+   "uses": 3
+  },
+  {
+   "name": "getPos",
+   "uses": 3
+  },
+  {
+   "name": "getConnections",
+   "uses": 3
+  },
+  {
+   "name": "dataMaterial",
+   "uses": 3
+  },
+  {
+   "name": "smoothness",
+   "uses": 3
+  },
+  {
+   "name": "saturationWeight",
+   "uses": 3
+  },
+  {
+   "name": "setCargoTrains",
+   "uses": 3
+  },
+  {
+   "name": "onDay",
+   "uses": 3
+  },
+  {
+   "name": "getCitizen",
+   "uses": 3
+  },
+  {
+   "name": "waitMessages",
+   "uses": 3
+  },
+  {
+   "name": "title",
+   "uses": 3
+  },
+  {
+   "name": "removeDay",
+   "uses": 3
+  },
+  {
+   "name": "onEnd",
+   "uses": 3
+  },
+  {
+   "name": "usedTransport",
+   "uses": 3
+  },
+  {
+   "name": "getTarget",
+   "uses": 3
+  },
+  {
+   "name": "condition",
+   "uses": 3
+  },
+  {
+   "name": "getDriveCount",
+   "uses": 3
+  },
+  {
+   "name": "onMouseMove",
+   "uses": 3
+  },
+  {
+   "name": "mouseX",
+   "uses": 3
+  },
+  {
+   "name": "mouseY",
+   "uses": 3
+  },
+  {
+   "name": "getPassengersByLine",
+   "uses": 3
+  },
+  {
+   "name": "hoverObject",
+   "uses": 3
+  },
+  {
+   "name": "applyTool",
+   "uses": 3
+  },
+  {
+   "name": "onModeChange",
+   "uses": 3
+  },
+  {
+   "name": "toolMode",
+   "uses": 3
+  },
+  {
+   "name": "systemCursor",
+   "uses": 3
+  },
+  {
+   "name": "password",
+   "uses": 3
+  },
+  {
+   "name": "onLoginSuccessful",
+   "uses": 3
+  },
+  {
+   "name": "onLoginFailed",
+   "uses": 3
+  },
+  {
+   "name": "onLogout",
+   "uses": 3
+  },
+  {
+   "name": "viewOffset",
+   "uses": 3
+  },
+  {
+   "name": "getReplacedObjects",
+   "uses": 3
+  },
+  {
+   "name": "resetMouseDown",
+   "uses": 3
+  },
+  {
+   "name": "maxTextLength",
+   "uses": 3
+  },
+  {
+   "name": "getVehicle",
+   "uses": 3
+  },
+  {
+   "name": "selLength",
+   "uses": 3
+  },
+  {
+   "name": "loginEnabled",
+   "uses": 3
+  },
+  {
+   "name": "onMouseDrag",
+   "uses": 3
+  },
+  {
+   "name": "onChangeRect",
+   "uses": 3
+  },
+  {
+   "name": "fps",
+   "uses": 3
+  },
+  {
+   "name": "isSpawned",
+   "uses": 2
+  },
+  {
+   "name": "latitude",
+   "uses": 2
+  },
+  {
+   "name": "onConstructInstance",
+   "uses": 2
+  },
+  {
+   "name": "preventVisitors",
+   "uses": 2
+  },
+  {
+   "name": "clone",
+   "uses": 2
+  },
+  {
+   "name": "printSlotData",
+   "uses": 2
+  },
+  {
+   "name": "hours",
+   "uses": 2
+  },
+  {
+   "name": "minutes",
+   "uses": 2
+  },
+  {
+   "name": "useBackSide",
+   "uses": 2
+  },
+  {
+   "name": "saveToColormap",
+   "uses": 2
+  },
+  {
+   "name": "save",
+   "uses": 2
+  },
+  {
+   "name": "carMultiplier",
+   "uses": 2
+  },
+  {
+   "name": "clearColor",
+   "uses": 2
+  },
+  {
+   "name": "glossiness",
+   "uses": 2
+  },
+  {
+   "name": "characters",
+   "uses": 2
+  },
+  {
+   "name": "moveToFirst",
+   "uses": 2
+  },
+  {
+   "name": "addCamera",
+   "uses": 2
+  },
+  {
+   "name": "tracked",
+   "uses": 2
+  },
+  {
+   "name": "new_bloomEffect",
+   "uses": 2
+  },
+  {
+   "name": "homeMultiplier",
+   "uses": 2
+  },
+  {
+   "name": "workplaceMultiplier",
+   "uses": 2
+  },
+  {
+   "name": "setBoats",
+   "uses": 2
+  },
+  {
+   "name": "effectConditions",
+   "uses": 2
+  },
+  {
+   "name": "onMonth",
+   "uses": 2
+  },
+  {
+   "name": "setSize",
+   "uses": 2
+  },
+  {
+   "name": "getRandomCitizen",
+   "uses": 2
+  },
+  {
+   "name": "idName",
+   "uses": 2
+  },
+  {
+   "name": "getWalkCount",
+   "uses": 2
+  },
+  {
+   "name": "disableEvents",
+   "uses": 2
+  },
+  {
+   "name": "onActivate",
+   "uses": 2
+  },
+  {
+   "name": "getWorldPosition",
+   "uses": 2
+  },
+  {
+   "name": "targetDirection",
+   "uses": 2
+  },
+  {
+   "name": "mouseMove",
+   "uses": 2
+  },
+  {
+   "name": "canApplyTool",
+   "uses": 2
+  },
+  {
+   "name": "itemUpdated",
+   "uses": 2
+  },
+  {
+   "name": "getMood",
+   "uses": 2
+  },
+  {
+   "name": "vsync",
+   "uses": 2
+  },
+  {
+   "name": "onLoginStarted",
+   "uses": 2
+  },
+  {
+   "name": "awardAchievement",
+   "uses": 2
+  },
+  {
+   "name": "awardSteamAchievement",
+   "uses": 2
+  },
+  {
+   "name": "segmentCount",
+   "uses": 2
+  },
+  {
+   "name": "automaticUpdate",
+   "uses": 2
+  },
+  {
+   "name": "verticalLines",
+   "uses": 2
+  },
+  {
+   "name": "horizontalLines",
+   "uses": 2
+  },
+  {
+   "name": "textFormat",
+   "uses": 2
+  },
+  {
+   "name": "minValue",
+   "uses": 2
+  },
+  {
+   "name": "maxValue",
+   "uses": 2
+  },
+  {
+   "name": "getNewItems",
+   "uses": 2
+  },
+  {
+   "name": "findNames",
+   "uses": 2
+  },
+  {
+   "name": "ticketPrice",
+   "uses": 2
+  },
+  {
+   "name": "onUnspawn",
+   "uses": 2
+  },
+  {
+   "name": "color",
+   "uses": 2
+  },
+  {
+   "name": "deleteStop",
+   "uses": 2
+  },
+  {
+   "name": "loadAvailableGoods",
+   "uses": 2
+  },
+  {
+   "name": "logOut",
+   "uses": 2
+  },
+  {
+   "name": "mapToWorldPosition",
+   "uses": 2
+  },
+  {
+   "name": "targetPos",
+   "uses": 2
+  },
+  {
+   "name": "mouseCapture",
+   "uses": 2
+  },
+  {
+   "name": "getFormatIdAt",
+   "uses": 2
+  },
+  {
+   "name": "getPassengersTransported",
+   "uses": 2
+  },
+  {
+   "name": "getWaitingTime",
+   "uses": 2
+  },
+  {
+   "name": "onSpawnCharacter",
+   "uses": 2
+  },
+  {
+   "name": "onSpawnVehicle",
+   "uses": 2
+  },
+  {
+   "name": "hasInstance",
+   "uses": 2
+  },
+  {
+   "name": "toolObject2",
+   "uses": 2
+  },
+  {
+   "name": "onErrorMsg",
+   "uses": 2
+  },
+  {
+   "name": "onInfoMsg",
+   "uses": 2
+  },
+  {
+   "name": "avgFps",
+   "uses": 2
+  },
+  {
+   "name": "blendAnimation",
+   "uses": 1
+  },
+  {
+   "name": "skeleton",
+   "uses": 1
+  },
+  {
+   "name": "setAnimationPos",
+   "uses": 1
+  },
+  {
+   "name": "onRemoveInstance",
+   "uses": 1
+  },
+  {
+   "name": "setClusterData",
+   "uses": 1
+  },
+  {
+   "name": "ignoreCitizens",
+   "uses": 1
+  },
+  {
+   "name": "hasTempStops",
+   "uses": 1
+  },
+  {
+   "name": "startFire",
+   "uses": 1
+  },
+  {
+   "name": "mergeVariables",
+   "uses": 1
+  },
+  {
+   "name": "getAreaType",
+   "uses": 1
+  },
+  {
+   "name": "currentPos",
+   "uses": 1
+  },
+  {
+   "name": "getMember",
+   "uses": 1
+  },
+  {
+   "name": "distanceFactor",
+   "uses": 1
+  },
+  {
+   "name": "seconds",
+   "uses": 1
+  },
+  {
+   "name": "getUnemployment",
+   "uses": 1
+  },
+  {
+   "name": "joblessRate",
+   "uses": 1
+  },
+  {
+   "name": "objectRenamed",
+   "uses": 1
+  },
+  {
+   "name": "removeLastAction",
+   "uses": 1
+  },
+  {
+   "name": "windVelocity",
+   "uses": 1
+  },
+  {
+   "name": "reflection",
+   "uses": 1
+  },
+  {
+   "name": "forceInterval",
+   "uses": 1
+  },
+  {
+   "name": "smoothPosition",
+   "uses": 1
+  },
+  {
+   "name": "clearEffects",
+   "uses": 1
+  },
+  {
+   "name": "clearGameData",
+   "uses": 1
+  },
+  {
+   "name": "minCycleDuration",
+   "uses": 1
+  },
+  {
+   "name": "maxCycleDuration",
+   "uses": 1
+  },
+  {
+   "name": "graph",
+   "uses": 1
+  },
+  {
+   "name": "onPathError",
+   "uses": 1
+  },
+  {
+   "name": "onCrashBegin",
+   "uses": 1
+  },
+  {
+   "name": "fpsLimit",
+   "uses": 1
+  },
+  {
+   "name": "onLoadProgress",
+   "uses": 1
+  },
+  {
+   "name": "parameter",
+   "uses": 1
+  },
+  {
+   "name": "onHour",
+   "uses": 1
+  },
+  {
+   "name": "getPriceTooHighCount",
+   "uses": 1
+  },
+  {
+   "name": "resetTripCounts",
+   "uses": 1
+  },
+  {
+   "name": "resetTraffic",
+   "uses": 1
+  },
+  {
+   "name": "activate",
+   "uses": 1
+  },
+  {
+   "name": "deactivate",
+   "uses": 1
+  },
+  {
+   "name": "getAreaY",
+   "uses": 1
+  },
+  {
+   "name": "transportStopCreated",
+   "uses": 1
+  },
+  {
+   "name": "rotate",
+   "uses": 1
+  },
+  {
+   "name": "onError",
+   "uses": 1
+  },
+  {
+   "name": "mood",
+   "uses": 1
+  },
+  {
+   "name": "onMoodChange",
+   "uses": 1
+  },
+  {
+   "name": "enableFade",
+   "uses": 1
+  },
+  {
+   "name": "onCitizenMood",
+   "uses": 1
+  },
+  {
+   "name": "frequency",
+   "uses": 1
+  },
+  {
+   "name": "screenColors",
+   "uses": 1
+  },
+  {
+   "name": "fullscreen",
+   "uses": 1
+  },
+  {
+   "name": "antialiasing",
+   "uses": 1
+  },
+  {
+   "name": "postProcess",
+   "uses": 1
+  },
+  {
+   "name": "preventScreenSaver",
+   "uses": 1
+  },
+  {
+   "name": "anisotropy",
+   "uses": 1
+  },
+  {
+   "name": "textureDetail",
+   "uses": 1
+  },
+  {
+   "name": "shaders",
+   "uses": 1
+  },
+  {
+   "name": "nearPlane",
+   "uses": 1
+  },
+  {
+   "name": "motionBlur",
+   "uses": 1
+  },
+  {
+   "name": "hardwareSkinning",
+   "uses": 1
+  },
+  {
+   "name": "occlusionQuery",
+   "uses": 1
+  },
+  {
+   "name": "pointSprites",
+   "uses": 1
+  },
+  {
+   "name": "maxVertexWeights",
+   "uses": 1
+  },
+  {
+   "name": "optimizeSkinGroups",
+   "uses": 1
+  },
+  {
+   "name": "blendLod",
+   "uses": 1
+  },
+  {
+   "name": "langcode",
+   "uses": 1
+  },
+  {
+   "name": "profilename",
+   "uses": 1
+  },
+  {
+   "name": "onAchievementAwarded",
+   "uses": 1
+  },
+  {
+   "name": "onSteamInitialized",
+   "uses": 1
+  },
+  {
+   "name": "onSteamAchievement",
+   "uses": 1
+  },
+  {
+   "name": "getEffectTimer",
+   "uses": 1
+  },
+  {
+   "name": "onHoverObject",
+   "uses": 1
+  },
+  {
+   "name": "onHoverRename",
+   "uses": 1
+  },
+  {
+   "name": "onHoverConstruct",
+   "uses": 1
+  },
+  {
+   "name": "onHoverDemolish",
+   "uses": 1
+  },
+  {
+   "name": "onHoverAddStop",
+   "uses": 1
+  },
+  {
+   "name": "onTryApplyTool",
+   "uses": 1
+  },
+  {
+   "name": "getNewObjects",
+   "uses": 1
+  },
+  {
+   "name": "onAddStop",
+   "uses": 1
+  },
+  {
+   "name": "addVehicle",
+   "uses": 1
+  },
+  {
+   "name": "addTrailer",
+   "uses": 1
+  },
+  {
+   "name": "onGetPassenger",
+   "uses": 1
+  },
+  {
+   "name": "playSound",
+   "uses": 1
+  },
+  {
+   "name": "onBroken",
+   "uses": 1
+  },
+  {
+   "name": "stopTime",
+   "uses": 1
+  },
+  {
+   "name": "onCannotReach",
+   "uses": 1
+  },
+  {
+   "name": "onJammed",
+   "uses": 1
+  },
+  {
+   "name": "calculateCoverage",
+   "uses": 1
+  },
+  {
+   "name": "createLine",
+   "uses": 1
+  },
+  {
+   "name": "moveStop",
+   "uses": 1
+  },
+  {
+   "name": "onKeyDown",
+   "uses": 1
+  },
+  {
+   "name": "setVariable",
+   "uses": 1
+  },
+  {
+   "name": "hideChar",
+   "uses": 1
+  },
+  {
+   "name": "initialize",
+   "uses": 1
+  },
+  {
+   "name": "listVirtualGoods",
+   "uses": 1
+  },
+  {
+   "name": "loadVirtualGood",
+   "uses": 1
+  },
+  {
+   "name": "loadVirtualGoodImage",
+   "uses": 1
+  },
+  {
+   "name": "start",
+   "uses": 1
+  },
+  {
+   "name": "onCompleted",
+   "uses": 1
+  },
+  {
+   "name": "onFailed",
+   "uses": 1
+  },
+  {
+   "name": "onVirtualGood",
+   "uses": 1
+  },
+  {
+   "name": "loadAvailableGoodsSuccess",
+   "uses": 1
+  },
+  {
+   "name": "loadAvailableGoodsFailed",
+   "uses": 1
+  },
+  {
+   "name": "logIn",
+   "uses": 1
+  },
+  {
+   "name": "zoom",
+   "uses": 1
+  },
+  {
+   "name": "zoomFactor",
+   "uses": 1
+  },
+  {
+   "name": "minVelocity",
+   "uses": 1
+  },
+  {
+   "name": "route",
+   "uses": 1
+  },
+  {
+   "name": "canRotate",
+   "uses": 1
+  },
+  {
+   "name": "get",
+   "uses": 1
+  },
+  {
+   "name": "resetTexture",
+   "uses": 1
+  },
+  {
+   "name": "visibleGroups",
+   "uses": 1
+  },
+  {
+   "name": "ignoreOrient",
+   "uses": 1
+  },
+  {
+   "name": "removeCamera",
+   "uses": 1
+  },
+  {
+   "name": "getCarModel",
+   "uses": 1
+  },
+  {
+   "name": "getStats",
+   "uses": 1
+  },
+  {
+   "name": "offset2",
+   "uses": 1
+  },
+  {
+   "name": "onSelectObject",
+   "uses": 1
+  },
+  {
+   "name": "timeline",
+   "uses": 1
+  },
+  {
+   "name": "getActions",
+   "uses": 1
+  },
+  {
+   "name": "removeRedundantActions",
+   "uses": 1
+  },
+  {
+   "name": "removeAction",
+   "uses": 1
+  },
+  {
+   "name": "cropLeft",
+   "uses": 1
+  },
+  {
+   "name": "cropTop",
+   "uses": 1
+  },
+  {
+   "name": "cropWidth",
+   "uses": 1
+  },
+  {
+   "name": "cropHeight",
+   "uses": 1
+  },
+  {
+   "name": "onAddChild",
+   "uses": 1
+  },
+  {
+   "name": "format",
+   "uses": 1
+  },
+  {
+   "name": "captureScreen",
+   "uses": 1
+  },
+  {
+   "name": "hotBackground",
+   "uses": 1
+  },
+  {
+   "name": "dragTarget",
+   "uses": 1
+  },
+  {
+   "name": "physicTime",
+   "uses": 1
+  },
+  {
+   "name": "listMembers",
+   "uses": 1
+  },
+  {
+   "name": "memberInfo",
+   "uses": 1
+  },
+  {
+   "name": "className",
+   "uses": 1
+  },
+  {
+   "name": "mode",
+   "uses": 1
+  },
+  {
+   "name": "frameTime",
+   "uses": 1
+  },
+  {
+   "name": "polyCount",
+   "uses": 1
+  },
+  {
+   "name": "submeshCount",
+   "uses": 1
+  },
+  {
+   "name": "test",
+   "uses": 1
+  },
+  {
+   "name": "allocated_memory",
+   "uses": 1
+  },
+  {
+   "name": "reserved_memory",
+   "uses": 1
+  },
+  {
+   "name": "allocatedVertexBufferMemory",
+   "uses": 1
+  },
+  {
+   "name": "allocatedIndexBufferMemory",
+   "uses": 1
+  },
+  {
+   "name": "allocatedTextureMemory",
+   "uses": 1
+  },
+  {
+   "name": "getVideoMemoryUsage",
+   "uses": 1
+  },
+  {
+   "name": "version",
+   "uses": 1
+  }
+ ],
+ "scriptOnlyMembersTop": [
+  {
+   "name": "getBuildingName",
+   "uses": 5605
+  },
+  {
+   "name": "addTask",
+   "uses": 4134
+  },
+  {
+   "name": "getReward",
+   "uses": 3697
+  },
+  {
+   "name": "loadProp",
+   "uses": 2025
+  },
+  {
+   "name": "loadBuilding",
+   "uses": 963
+  },
+  {
+   "name": "addThread",
+   "uses": 885
+  },
+  {
+   "name": "objectiveUpdated",
+   "uses": 588
+  },
+  {
+   "name": "loadAIVehicle",
+   "uses": 400
+  },
+  {
+   "name": "waitForTaskCompletion",
+   "uses": 253
+  },
+  {
+   "name": "loadPlayerVehicle",
+   "uses": 224
+  },
+  {
+   "name": "setTextFont",
+   "uses": 218
+  },
+  {
+   "name": "addButton",
+   "uses": 135
+  },
+  {
+   "name": "createButton",
+   "uses": 134
+  },
+  {
+   "name": "waitForDate",
+   "uses": 122
+  },
+  {
+   "name": "setTooltip",
+   "uses": 120
+  },
+  {
+   "name": "selectTool",
+   "uses": 107
+  },
+  {
+   "name": "createChoiceButton",
+   "uses": 89
+  },
+  {
+   "name": "addPetition",
+   "uses": 81
+  },
+  {
+   "name": "addTickerText",
+   "uses": 80
+  },
+  {
+   "name": "showAnnouncement",
+   "uses": 79
+  },
+  {
+   "name": "callFunction",
+   "uses": 77
+  },
+  {
+   "name": "scenarioCompleted",
+   "uses": 76
+  },
+  {
+   "name": "startAnimationEvent",
+   "uses": 76
+  },
+  {
+   "name": "stopAnimationEvent",
+   "uses": 76
+  },
+  {
+   "name": "selectChoiceButton",
+   "uses": 73
+  },
+  {
+   "name": "getCityName",
+   "uses": 60
+  },
+  {
+   "name": "spendMoney",
+   "uses": 55
+  },
+  {
+   "name": "earnMoney",
+   "uses": 45
+  },
+  {
+   "name": "showPetition",
+   "uses": 44
+  },
+  {
+   "name": "setTitleFont",
+   "uses": 43
+  },
+  {
+   "name": "objectiveCompleted",
+   "uses": 39
+  },
+  {
+   "name": "createHudElement",
+   "uses": 39
+  },
+  {
+   "name": "displayBriefing",
+   "uses": 38
+  },
+  {
+   "name": "unlockScenario",
+   "uses": 36
+  },
+  {
+   "name": "loadTree",
+   "uses": 31
+  },
+  {
+   "name": "unlocked",
+   "uses": 27
+  },
+  {
+   "name": "showDialog",
+   "uses": 26
+  },
+  {
+   "name": "addTypeButton",
+   "uses": 23
+  },
+  {
+   "name": "createScrollArea",
+   "uses": 23
+  },
+  {
+   "name": "createMenuButton",
+   "uses": 22
+  },
+  {
+   "name": "selectStation",
+   "uses": 18
+  },
+  {
+   "name": "unselectChoiceButton",
+   "uses": 17
+  },
+  {
+   "name": "resetScrollArea",
+   "uses": 14
+  },
+  {
+   "name": "setCameraTarget",
+   "uses": 14
+  },
+  {
+   "name": "createSlider",
+   "uses": 13
+  },
+  {
+   "name": "getPrice",
+   "uses": 13
+  },
+  {
+   "name": "setCameraPos",
+   "uses": 12
+  },
+  {
+   "name": "showMouse",
+   "uses": 12
+  },
+  {
+   "name": "hideMouse",
+   "uses": 12
+  },
+  {
+   "name": "showErrorDialog",
+   "uses": 11
+  },
+  {
+   "name": "selectSpeed",
+   "uses": 11
+  },
+  {
+   "name": "requireMouse",
+   "uses": 11
+  },
+  {
+   "name": "releaseMouse",
+   "uses": 11
+  },
+  {
+   "name": "z",
+   "uses": 10
+  },
+  {
+   "name": "createHeadingBar",
+   "uses": 10
+  },
+  {
+   "name": "setCameraZoom",
+   "uses": 8
+  },
+  {
+   "name": "scrollKey",
+   "uses": 8
+  },
+  {
+   "name": "resetMenu",
+   "uses": 8
+  },
+  {
+   "name": "selectTab",
+   "uses": 6
+  },
+  {
+   "name": "selectType",
+   "uses": 6
+  },
+  {
+   "name": "updateCompanyValue",
+   "uses": 6
+  },
+  {
+   "name": "setSmallHeaderFont",
+   "uses": 6
+  },
+  {
+   "name": "createNumberEdit",
+   "uses": 6
+  },
+  {
+   "name": "updateInfoItems",
+   "uses": 6
+  },
+  {
+   "name": "updateButtonImage",
+   "uses": 6
+  },
+  {
+   "name": "toggleUndergroundView",
+   "uses": 5
+  },
+  {
+   "name": "saveScore",
+   "uses": 5
+  },
+  {
+   "name": "calculateMonthlyPayment",
+   "uses": 5
+  },
+  {
+   "name": "removePetition",
+   "uses": 5
+  },
+  {
+   "name": "hideOtherLeftPanels",
+   "uses": 5
+  },
+  {
+   "name": "unsetLevel",
+   "uses": 5
+  },
+  {
+   "name": "endAnimation",
+   "uses": 5
+  },
+  {
+   "name": "setIcon",
+   "uses": 5
+  },
+  {
+   "name": "createPin",
+   "uses": 5
+  },
+  {
+   "name": "createHudItem",
+   "uses": 5
+  },
+  {
+   "name": "initTarget",
+   "uses": 5
+  },
+  {
+   "name": "selectObject",
+   "uses": 4
+  },
+  {
+   "name": "removeTickerText",
+   "uses": 4
+  },
+  {
+   "name": "setCameraDirection",
+   "uses": 4
+  },
+  {
+   "name": "getCitizenName",
+   "uses": 4
+  }
+ ],
+ "nativeConstants": [
+  {
+   "name": "TRANSPORTLINE_MASK_ALL",
+   "uses": 8773
+  },
+  {
+   "name": "GRID_PATH_INTERSECTION",
+   "uses": 3595
+  },
+  {
+   "name": "GRID_CITIZEN_WHITE_COLLAR",
+   "uses": 2241
+  },
+  {
+   "name": "GRID_CITIZEN_BLUE_COLLAR",
+   "uses": 1964
+  },
+  {
+   "name": "GRID_ITEM_LOCK_GROUND",
+   "uses": 1752
+  },
+  {
+   "name": "QUAT_IDENT",
+   "uses": 1596
+  },
+  {
+   "name": "GRID_CITIZEN_STUDENT",
+   "uses": 1499
+  },
+  {
+   "name": "GRID_ITEM_COVER",
+   "uses": 1413
+  },
+  {
+   "name": "GRID_CITIZEN_BUSINESS",
+   "uses": 1253
+  },
+  {
+   "name": "GRID_ITEM_ENABLE_BASE",
+   "uses": 885
+  },
+  {
+   "name": "GRID_ITEM_BUILDING",
+   "uses": 877
+  },
+  {
+   "name": "GRID_VISIT_DELIVERY",
+   "uses": 832
+  },
+  {
+   "name": "GRID_PATH_LANE_CHANGE",
+   "uses": 784
+  },
+  {
+   "name": "GRID_VISIT_EMERGENCY",
+   "uses": 762
+  },
+  {
+   "name": "GRID_VISIT_HOME",
+   "uses": 760
+  },
+  {
+   "name": "GRID_CITIZEN_PENSIONER",
+   "uses": 713
+  },
+  {
+   "name": "GRID_ITEM_OPTIONAL",
+   "uses": 660
+  },
+  {
+   "name": "GRID_PATH_START",
+   "uses": 601
+  },
+  {
+   "name": "GRID_PATH_ROAD_SMALL",
+   "uses": 593
+  },
+  {
+   "name": "GRID_PATH_END",
+   "uses": 587
+  },
+  {
+   "name": "GRID_CITIZEN_UNEMPLOYED",
+   "uses": 580
+  },
+  {
+   "name": "GRID_VISIT_SHOPPING",
+   "uses": 562
+  },
+  {
+   "name": "GRID_PATH_EXTERNAL",
+   "uses": 464
+  },
+  {
+   "name": "GRID_VISIT_LEISURE",
+   "uses": 409
+  },
+  {
+   "name": "GRID_VISIT_WORK",
+   "uses": 383
+  },
+  {
+   "name": "GRID_CITIZEN_TOURIST",
+   "uses": 351
+  },
+  {
+   "name": "GRID_ITEM_BLOCK",
+   "uses": 313
+  },
+  {
+   "name": "GRID_PATH_IGNORE_TRAFFIC",
+   "uses": 272
+  },
+  {
+   "name": "TRANSPORTLINE_TRAM",
+   "uses": 255
+  },
+  {
+   "name": "TRANSPORTLINE_MASK_BUS",
+   "uses": 254
+  },
+  {
+   "name": "GRID_PATH_ROAD_EXPRESS",
+   "uses": 248
+  },
+  {
+   "name": "GRID_PATH_STOP",
+   "uses": 242
+  },
+  {
+   "name": "GRID_PATH_TRAIN_TRACK",
+   "uses": 240
+  },
+  {
+   "name": "GRID_VISIT_HEAVY_INDUSTRIAL",
+   "uses": 211
+  },
+  {
+   "name": "GRID_VISIT_GENERIC",
+   "uses": 190
+  },
+  {
+   "name": "GRID_ITEM_LARGE_ROAD",
+   "uses": 181
+  },
+  {
+   "name": "GRID_ITEM_LARGE_TRAM",
+   "uses": 176
+  },
+  {
+   "name": "GRID_PATH_PARK",
+   "uses": 171
+  },
+  {
+   "name": "ALIGN_MIDDLE",
+   "uses": 164
+  },
+  {
+   "name": "GRID_ITEM_HIDE_LOD",
+   "uses": 149
+  },
+  {
+   "name": "GRID_PATH_RUNWAY",
+   "uses": 148
+  },
+  {
+   "name": "TRANSPORTLINE_MASK_TRAM",
+   "uses": 146
+  },
+  {
+   "name": "GRID_ITEM_BRIDGE",
+   "uses": 117
+  },
+  {
+   "name": "GRID_PATH_TRAM_TRACK",
+   "uses": 110
+  },
+  {
+   "name": "TRANSPORTLINE_BUS",
+   "uses": 106
+  },
+  {
+   "name": "GRID_ITEM_CONCAVE",
+   "uses": 93
+  },
+  {
+   "name": "ALIGN_LEFT",
+   "uses": 93
+  },
+  {
+   "name": "GRID_ITEM_SMALL_ROAD",
+   "uses": 92
+  },
+  {
+   "name": "GRIDVEHICLE_BROKEN",
+   "uses": 90
+  },
+  {
+   "name": "GRID_ITEM_AVENUE_ROAD",
+   "uses": 88
+  },
+  {
+   "name": "GRID_ITEM_AVENUE_TRAM",
+   "uses": 79
+  },
+  {
+   "name": "GRID_ITEM_SMALL_TRAM",
+   "uses": 78
+  },
+  {
+   "name": "GRID_ITEM_DISABLE_TRAM",
+   "uses": 76
+  },
+  {
+   "name": "ALIGN_CENTER",
+   "uses": 76
+  },
+  {
+   "name": "GRID_ITEM_EXPRESS_ROAD",
+   "uses": 69
+  },
+  {
+   "name": "GRID_ITEM_STOP",
+   "uses": 59
+  },
+  {
+   "name": "GRID_PATH_BLOCKER",
+   "uses": 56
+  },
+  {
+   "name": "TRANSPORTLINE_MASK_METRO",
+   "uses": 55
+  },
+  {
+   "name": "GRID_ITEM_TUNNEL",
+   "uses": 53
+  },
+  {
+   "name": "GRID_ITEM_SHOW_CHARACTER",
+   "uses": 44
+  },
+  {
+   "name": "GRID_ITEM_GROUND_RAMP",
+   "uses": 40
+  },
+  {
+   "name": "GRID_ITEM_ELEVATED_METRO",
+   "uses": 39
+  },
+  {
+   "name": "GRID_ITEM_SUBWAY_METRO",
+   "uses": 35
+  },
+  {
+   "name": "GRID_ITEM_DOUBLE_TRACK",
+   "uses": 34
+  },
+  {
+   "name": "GRID_ITEM_ELEVATED_RAMP",
+   "uses": 34
+  },
+  {
+   "name": "GRID_PATH_ROAD_LARGE",
+   "uses": 32
+  },
+  {
+   "name": "GRID_VISIT_ARMY",
+   "uses": 32
+  },
+  {
+   "name": "TRANSPORTLINE_MASK_BOAT",
+   "uses": 30
+  },
+  {
+   "name": "GRID_VISIT_EMERGENCY_POLICE",
+   "uses": 30
+  },
+  {
+   "name": "GRIDMODE_CREATE_STOP",
+   "uses": 29
+  },
+  {
+   "name": "GRID_ITEM_ALLEY",
+   "uses": 26
+  },
+  {
+   "name": "MATERIAL_LAYER",
+   "uses": 23
+  },
+  {
+   "name": "GRID_PATH_ALTERNATIVE_STOP",
+   "uses": 23
+  },
+  {
+   "name": "GRID_VISIT_EMERGENCY_FIRE",
+   "uses": 23
+  },
+  {
+   "name": "GRID_ITEM_TREE",
+   "uses": 23
+  },
+  {
+   "name": "TRANSPORTLINE_METRO",
+   "uses": 22
+  },
+  {
+   "name": "MATERIAL_ADDITIVE_A",
+   "uses": 22
+  },
+  {
+   "name": "GRID_VISIT_GOVERNMENT",
+   "uses": 20
+  },
+  {
+   "name": "SHADER_CUSTOM0",
+   "uses": 20
+  },
+  {
+   "name": "GRID_ITEM_GROUND_METRO",
+   "uses": 20
+  },
+  {
+   "name": "GRID_VISIT_EMERGENCY_INJURY",
+   "uses": 19
+  },
+  {
+   "name": "GRID_ITEM_PILLAR",
+   "uses": 19
+  },
+  {
+   "name": "GRID_ITEM_TIMER",
+   "uses": 19
+  },
+  {
+   "name": "MATERIAL_ALPHABLEND",
+   "uses": 18
+  },
+  {
+   "name": "GRID_ITEM_MARKER",
+   "uses": 18
+  },
+  {
+   "name": "GRIDMODE_LAY_ROAD",
+   "uses": 18
+  },
+  {
+   "name": "GRID_ITEM_METRO_STATION",
+   "uses": 17
+  },
+  {
+   "name": "GRIDMODE_LAY_BRIDGE",
+   "uses": 17
+  },
+  {
+   "name": "GRID_ITEM_SPECIAL0",
+   "uses": 16
+  },
+  {
+   "name": "MATERIAL_LAYERABLE",
+   "uses": 16
+  },
+  {
+   "name": "SHADER_TIMER",
+   "uses": 15
+  },
+  {
+   "name": "GRID_VIEW_DEFAULT",
+   "uses": 14
+  },
+  {
+   "name": "GRIDSTOP_TRAM",
+   "uses": 13
+  },
+  {
+   "name": "GRIDMODE_LAY_TRACK",
+   "uses": 13
+  },
+  {
+   "name": "TRANSPORTLINE_MASK_HELICOPTER",
+   "uses": 12
+  },
+  {
+   "name": "GRID_ITEM_SPECIAL1",
+   "uses": 12
+  },
+  {
+   "name": "ALIGN_RIGHT",
+   "uses": 12
+  },
+  {
+   "name": "GRIDMODE_SELECT_OBJECT",
+   "uses": 11
+  },
+  {
+   "name": "GRIDMODE_PLACE_OBJECT",
+   "uses": 11
+  },
+  {
+   "name": "ENVIROMENT_SHADOWMAP_RENDER",
+   "uses": 11
+  },
+  {
+   "name": "GRIDMODE_LAY_TRAM_TRACK",
+   "uses": 10
+  },
+  {
+   "name": "GRID_ITEM_ALIGN_4",
+   "uses": 10
+  },
+  {
+   "name": "GRIDMODE_ADD_STOP",
+   "uses": 10
+  },
+  {
+   "name": "GRID_ITEM_PAVEMENT",
+   "uses": 9
+  },
+  {
+   "name": "GRIDVEHICLE_HELICOPTER_DUST",
+   "uses": 9
+  },
+  {
+   "name": "GRID_VIEW_UNDERGROUND",
+   "uses": 9
+  },
+  {
+   "name": "GRIDROAD_LARGE",
+   "uses": 9
+  },
+  {
+   "name": "MATERIAL_NORMALMAP",
+   "uses": 9
+  },
+  {
+   "name": "BORDER_LEFT",
+   "uses": 9
+  },
+  {
+   "name": "ALIGN_TOP",
+   "uses": 9
+  },
+  {
+   "name": "TRANSPORTLINE_BOAT",
+   "uses": 8
+  },
+  {
+   "name": "GRIDSTOP_BUS",
+   "uses": 8
+  },
+  {
+   "name": "GRIDMODE_SET_PAVEMENT",
+   "uses": 8
+  },
+  {
+   "name": "GRIDMODE_LAY_TUNNEL",
+   "uses": 8
+  },
+  {
+   "name": "GRIDROAD_AVENUE",
+   "uses": 8
+  },
+  {
+   "name": "GRID_ITEM_DOCK",
+   "uses": 8
+  },
+  {
+   "name": "ENVIROMENT_SHADOWMAP",
+   "uses": 8
+  },
+  {
+   "name": "BORDER_RIGHT",
+   "uses": 8
+  },
+  {
+   "name": "GRID_ITEM_HELIPORT",
+   "uses": 7
+  },
+  {
+   "name": "GRIDMODE_REMOVE_OBJECTS",
+   "uses": 7
+  },
+  {
+   "name": "GRIDMODE_LAY_ALLEY",
+   "uses": 7
+  },
+  {
+   "name": "GRIDROAD_SMALL",
+   "uses": 7
+  },
+  {
+   "name": "GRID_ITEM_TEMP",
+   "uses": 7
+  },
+  {
+   "name": "MATERIAL_DIFFUSEMAP",
+   "uses": 7
+  },
+  {
+   "name": "TRANSPORTLINE_HELICOPTER",
+   "uses": 6
+  },
+  {
+   "name": "MATERIAL_DECAL",
+   "uses": 6
+  },
+  {
+   "name": "ENVIROMENT_FOG",
+   "uses": 6
+  },
+  {
+   "name": "ENVIROMENT_LIGHTS",
+   "uses": 6
+  },
+  {
+   "name": "SHADER_SHADOWWARP",
+   "uses": 6
+  },
+  {
+   "name": "GRID_PATH_CONNECT_TO",
+   "uses": 5
+  },
+  {
+   "name": "GRID_PATH_CONNECT_FROM",
+   "uses": 5
+  },
+  {
+   "name": "MATERIAL_ILLUMINATIONMAP",
+   "uses": 5
+  },
+  {
+   "name": "BLEND_ADDITIVE_ALPHA",
+   "uses": 5
+  },
+  {
+   "name": "GRIDTRACK_DOUBLE",
+   "uses": 5
+  },
+  {
+   "name": "GRIDMODE_SET_VARIATION",
+   "uses": 5
+  },
+  {
+   "name": "SHADER_CUSTOM1",
+   "uses": 5
+  },
+  {
+   "name": "GRIDMETRO_ELEVATED",
+   "uses": 4
+  },
+  {
+   "name": "GRID_ITEM_SPAWNPOINT",
+   "uses": 4
+  },
+  {
+   "name": "GRIDMODE_SET_FIELD",
+   "uses": 4
+  },
+  {
+   "name": "GRIDROAD_EXPRESS",
+   "uses": 4
+  },
+  {
+   "name": "MATERIAL_TWOSIDED",
+   "uses": 4
+  },
+  {
+   "name": "SHADER_SHADOWTRANS",
+   "uses": 4
+  },
+  {
+   "name": "SHADER_SHADOWPARAMS",
+   "uses": 4
+  },
+  {
+   "name": "GRID_CITIZEN_IDLE",
+   "uses": 4
+  },
+  {
+   "name": "MESH_SKINNED",
+   "uses": 4
+  },
+  {
+   "name": "GRIDMETRO_SUBWAY",
+   "uses": 3
+  },
+  {
+   "name": "GRIDMODE_RENAME",
+   "uses": 3
+  },
+  {
+   "name": "MATERIAL_SWAP_UV",
+   "uses": 3
+  },
+  {
+   "name": "SHADER_CUSTOM4",
+   "uses": 3
+  },
+  {
+   "name": "SHADER_REFLECTION",
+   "uses": 3
+  },
+  {
+   "name": "SHADER_VIEWORIENT",
+   "uses": 3
+  },
+  {
+   "name": "BORDER_BOTTOM",
+   "uses": 3
+  },
+  {
+   "name": "BORDER_TOP",
+   "uses": 3
+  },
+  {
+   "name": "GRID_ITEM_ERROR",
+   "uses": 2
+  },
+  {
+   "name": "GRID_PATH_FIND_ALTERNATIVE",
+   "uses": 2
+  },
+  {
+   "name": "GRID_PATH_WALK",
+   "uses": 2
+  },
+  {
+   "name": "GRID_ITEM_CROSS_TRACK",
+   "uses": 2
+  },
+  {
+   "name": "GRIDMETRO_GROUND",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_ZERO_RADIUS",
+   "uses": 2
+  },
+  {
+   "name": "GRIDVEHICLE_CRASHED",
+   "uses": 2
+  },
+  {
+   "name": "SHADER_CUSTOM2",
+   "uses": 2
+  },
+  {
+   "name": "SHADER_CUSTOM3",
+   "uses": 2
+  },
+  {
+   "name": "GRID_ITEM_SINGLE_TRACK",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_SPECULARMAP",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_MIX2MAP",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_MIX3MAP",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_REFLECTION",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_COLORIZE",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_AMBIENTOCCLUSIONMAP",
+   "uses": 2
+  },
+  {
+   "name": "ENVIROMENT_SHADOW",
+   "uses": 2
+  },
+  {
+   "name": "MATERIAL_NO_SHADOW",
+   "uses": 1
+  },
+  {
+   "name": "GRIDMODE_SHIFT_TERRAIN",
+   "uses": 1
+  },
+  {
+   "name": "GRIDMODE_LEVEL_TERRAIN",
+   "uses": 1
+  },
+  {
+   "name": "GRIDMODE_SOFTEN_TERRAIN",
+   "uses": 1
+  },
+  {
+   "name": "GRIDMODE_RUIN",
+   "uses": 1
+  },
+  {
+   "name": "GRIDMODE_TOGGLE_WATER",
+   "uses": 1
+  },
+  {
+   "name": "GRIDRAMP_GROUND",
+   "uses": 1
+  },
+  {
+   "name": "GRIDRAMP_ELEVATED",
+   "uses": 1
+  },
+  {
+   "name": "GRID_CITIZEN_TRAVEL",
+   "uses": 1
+  },
+  {
+   "name": "GRIDSTOP_METRO",
+   "uses": 1
+  },
+  {
+   "name": "GRIDSTOP_BOAT",
+   "uses": 1
+  },
+  {
+   "name": "GRIDSTOP_HELICOPTER",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_CATCHMENT",
+   "uses": 1
+  },
+  {
+   "name": "SHADER_CUSTOM5",
+   "uses": 1
+  },
+  {
+   "name": "SHADER_CUSTOM6",
+   "uses": 1
+  },
+  {
+   "name": "SHADER_CUSTOM7",
+   "uses": 1
+  },
+  {
+   "name": "GRID_ITEM_NONE",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_HOMES",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_WORKPLACES",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_SHOPPING",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_LEISURE",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_GOVERNMENT",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_TRAFFIC",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_POPULARITY",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_BLUECOLLAR",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_WHITECOLLAR",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_BUSINESS",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_STUDENT",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_TOURIST",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_PENSIONER",
+   "uses": 1
+  },
+  {
+   "name": "GRID_VIEW_UNEMPLOYED",
+   "uses": 1
+  },
+  {
+   "name": "GRIDMODE_GROW_TREES",
+   "uses": 1
+  },
+  {
+   "name": "MATERIAL_SPECULAR",
+   "uses": 1
+  },
+  {
+   "name": "MATERIAL_ALPHATEST",
+   "uses": 1
+  },
+  {
+   "name": "MATERIAL_ADDITIVE",
+   "uses": 1
+  },
+  {
+   "name": "ENVIROMENT_SHADOW_RENDER",
+   "uses": 1
+  },
+  {
+   "name": "SHADER_COLORIZE",
+   "uses": 1
+  }
+ ],
+ "scriptDefinedFunctions": 2207
+}

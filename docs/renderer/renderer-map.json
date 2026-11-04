@@ -1,0 +1,5425 @@
+{
+ "purecall": "0x10120b90",
+ "extensions": {
+  "glCreateProgramObjectARB": "DAT_10194824",
+  "glDeleteObjectARB": "DAT_10194828",
+  "glUseProgramObjectARB": "DAT_1019482c",
+  "glCreateShaderObjectARB": "DAT_10194830",
+  "glShaderSourceARB": "DAT_10194834",
+  "glCompileShaderARB": "DAT_10194838",
+  "glGetObjectParameterivARB": "DAT_1019483c",
+  "glAttachObjectARB": "DAT_10194840",
+  "glGetInfoLogARB": "DAT_10194844",
+  "glLinkProgramARB": "DAT_10194848",
+  "glGetUniformLocationARB": "DAT_1019484c",
+  "glUniform4fARB": "DAT_10194850",
+  "glUniform3fvARB": "DAT_10194854",
+  "glUniform4fvARB": "DAT_10194858",
+  "glUniform2fARB": "DAT_1019485c",
+  "glUniform3fARB": "DAT_10194860",
+  "glUniform1iARB": "DAT_10194864",
+  "glUniform1fARB": "DAT_10194868",
+  "glUniformMatrix3fvARB": "DAT_1019486c",
+  "glUniformMatrix4fvARB": "DAT_10194870",
+  "glGenQueriesARB": "DAT_101948a0",
+  "glDeleteQueriesARB": "DAT_101948a4",
+  "glBeginQueryARB": "DAT_101948a8",
+  "glEndQueryARB": "DAT_101948ac",
+  "glGetQueryObjectuivARB": "DAT_101948b0",
+  "glEnableVertexAttribArrayARB": "DAT_10194874",
+  "glDisableVertexAttribArrayARB": "DAT_10194878",
+  "glVertexAttribPointerARB": "DAT_1019487c",
+  "glGetAttribLocationARB": "DAT_10194880",
+  "glBindAttribLocationARB": "DAT_10194884",
+  "glGenBuffersARB": "DAT_10194808",
+  "glBindBufferARB": "DAT_1019480c",
+  "glBufferDataARB": "DAT_10194810",
+  "glDeleteBuffersARB": "DAT_10194814",
+  "glMapBufferARB": "DAT_10194818",
+  "glUnmapBufferARB": "DAT_1019481c",
+  "glPointParameterfARB": "DAT_101948b4",
+  "glPointParameterfvARB": "DAT_101948b8",
+  "glGenFramebuffersEXT": "DAT_101948bc",
+  "glBindFramebufferEXT": "DAT_101948c0",
+  "glFramebufferTexture2DEXT": "DAT_101948c4",
+  "glDeleteFramebuffersEXT": "DAT_101948c8",
+  "glBlitFramebufferEXT": "DAT_101948cc",
+  "glCheckFramebufferStatusEXT": "DAT_101948d0",
+  "glGenerateMipmapEXT": "DAT_101948d4",
+  "glGenRenderbuffersEXT": "DAT_101948d8",
+  "glBindRenderbufferEXT": "DAT_101948dc",
+  "glRenderbufferStorageEXT": "DAT_101948e0",
+  "glRenderbufferStorageMultisampleEXT": "DAT_101948e4",
+  "glFramebufferRenderbufferEXT": "DAT_101948e8",
+  "glDeleteRenderbuffersEXT": "DAT_101948ec",
+  "wglGetExtensionsStringARB": "DAT_10194894",
+  "wglChoosePixelFormatARB": "DAT_10194898",
+  "wglSwapIntervalEXT": "DAT_1019489c",
+  "glCompressedTexImage2DARB": "DAT_10194820",
+  "glActiveTexture": "DAT_10194888",
+  "glClientActiveTexture": "DAT_1019488c",
+  "glMultiTexCoord2f": "DAT_10194890"
+ },
+ "glUsage": {
+  "glActiveTexture": 41,
+  "glAlphaFunc": 11,
+  "glAttachObjectARB": 4,
+  "glBegin": 7,
+  "glBeginQueryARB": 3,
+  "glBindBufferARB": 13,
+  "glBindFramebufferEXT": 19,
+  "glBindRenderbufferEXT": 4,
+  "glBindTexture": 32,
+  "glBlendFunc": 17,
+  "glBlitFramebufferEXT": 1,
+  "glBufferDataARB": 4,
+  "glCheckFramebufferStatusEXT": 2,
+  "glClear": 7,
+  "glClearColor": 5,
+  "glClearDepth": 3,
+  "glClientActiveTexture": 11,
+  "glColor4f": 6,
+  "glColor4ub": 4,
+  "glColor4ubv": 1,
+  "glColorMaterial": 3,
+  "glColorPointer": 2,
+  "glCompileShaderARB": 1,
+  "glCompressedTexImage2DARB": 2,
+  "glCreateProgramObjectARB": 2,
+  "glCreateShaderObjectARB": 1,
+  "glCullFace": 1,
+  "glDeleteBuffersARB": 2,
+  "glDeleteFramebuffersEXT": 7,
+  "glDeleteObjectARB": 5,
+  "glDeleteQueriesARB": 3,
+  "glDeleteRenderbuffersEXT": 6,
+  "glDeleteTextures": 1,
+  "glDepthFunc": 1,
+  "glDepthMask": 8,
+  "glDisable": 103,
+  "glDisableClientState": 8,
+  "glDrawArrays": 6,
+  "glDrawBuffer": 4,
+  "glDrawElements": 1,
+  "glEnable": 66,
+  "glEnableClientState": 10,
+  "glEnd": 9,
+  "glEndQueryARB": 3,
+  "glFinish": 1,
+  "glFogf": 3,
+  "glFogfv": 1,
+  "glFogi": 1,
+  "glFramebufferRenderbufferEXT": 3,
+  "glFramebufferTexture2DEXT": 14,
+  "glGenBuffersARB": 2,
+  "glGenFramebuffersEXT": 4,
+  "glGenQueriesARB": 3,
+  "glGenRenderbuffersEXT": 3,
+  "glGenTextures": 1,
+  "glGenerateMipmapEXT": 2,
+  "glGetError": 8,
+  "glGetFloatv": 2,
+  "glGetInfoLogARB": 2,
+  "glGetIntegerv": 2,
+  "glGetObjectParameterivARB": 2,
+  "glGetQueryObjectuivARB": 3,
+  "glGetString": 16,
+  "glGetTexImage": 6,
+  "glGetUniformLocationARB": 27,
+  "glHint": 1,
+  "glInterleavedArrays": 5,
+  "glLightModelfv": 1,
+  "glLightf": 3,
+  "glLightfv": 6,
+  "glLinkProgramARB": 1,
+  "glLoadIdentity": 21,
+  "glLoadMatrixf": 8,
+  "glMaterialf": 2,
+  "glMaterialfv": 24,
+  "glMatrixMode": 22,
+  "glNormal3fv": 2,
+  "glNormalPointer": 3,
+  "glOrtho": 8,
+  "glPolygonOffset": 5,
+  "glPopMatrix": 2,
+  "glPushMatrix": 2,
+  "glReadPixels": 1,
+  "glRenderbufferStorageEXT": 3,
+  "glRenderbufferStorageMultisampleEXT": 2,
+  "glScalef": 2,
+  "glScissor": 5,
+  "glShaderSourceARB": 1,
+  "glTexCoord2f": 9,
+  "glTexCoord2fv": 6,
+  "glTexCoordPointer": 8,
+  "glTexImage2D": 11,
+  "glTexParameterf": 4,
+  "glTexParameterfv": 1,
+  "glTexParameteri": 31,
+  "glTexSubImage2D": 1,
+  "glTranslatef": 6,
+  "glUniform1fARB": 2,
+  "glUniform1iARB": 8,
+  "glUniform3fvARB": 2,
+  "glUniform4fvARB": 10,
+  "glUniformMatrix3fvARB": 1,
+  "glUniformMatrix4fvARB": 4,
+  "glUseProgramObjectARB": 2,
+  "glVertex2f": 10,
+  "glVertex3f": 3,
+  "glVertex3fv": 6,
+  "glVertexPointer": 1,
+  "glViewport": 6,
+  "wglChoosePixelFormatARB": 1,
+  "wglCreateContext": 2,
+  "wglDeleteContext": 2,
+  "wglGetExtensionsStringARB": 2,
+  "wglGetProcAddress": 58,
+  "wglMakeCurrent": 10,
+  "wglSwapIntervalEXT": 2
+ },
+ "interfaces": [
+  {
+   "name": "gsICamera",
+   "bases": [
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015b05c",
+   "implementers": [
+    "gsCamera_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10043b10",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004fed0",
+       "bytes": 29,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ff00",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ff10",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIClipArea",
+   "bases": [
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015a888",
+   "implementers": [
+    "gsClipArea_OGL",
+    "gsViewport_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsClipArea_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446c0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsClipArea_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446d0",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsClipArea_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10047450",
+       "bytes": 159,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsClipArea_OGL": {
+       "address": "0x100448c0",
+       "bytes": 37,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100448f0",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsClipArea_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446e0",
+       "bytes": 48,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIGuiPrimitive",
+   "bases": [
+    "gsIGuiVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015a840",
+   "implementers": [
+    "gsGuiPrimitive_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044050",
+       "bytes": 299,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043640",
+       "bytes": 62,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043680",
+       "bytes": 34,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436b0",
+       "bytes": 33,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436e0",
+       "bytes": 50,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIGuiText",
+   "bases": [
+    "gsIGuiVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015a7f4",
+   "implementers": [
+    "gsGuiText_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043a00",
+       "bytes": 81,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043a60",
+       "bytes": 36,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043a90",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043ab0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043ad0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b10",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b30",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b40",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 12,
+     "offset": "0x30",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b50",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 13,
+     "offset": "0x34",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 14,
+     "offset": "0x38",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10044230",
+       "bytes": 187,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 15,
+     "offset": "0x3c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b60",
+       "bytes": 485,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 16,
+     "offset": "0x40",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043d80",
+       "bytes": 65,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 17,
+     "offset": "0x44",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043de0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIGuiVideoItem",
+   "bases": [
+    "gsIGuiPrimitive",
+    "gsIVideoElement",
+    "gsIVideoItem",
+    "gsVideoItem_OGL"
+   ],
+   "ownVtable": null,
+   "implementers": [
+    "gsGuiPrimitive_OGL",
+    "gsGuiText_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044050",
+       "bytes": 299,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a00",
+       "bytes": 81,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043640",
+       "bytes": 62,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a60",
+       "bytes": 36,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043680",
+       "bytes": 34,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a90",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436b0",
+       "bytes": 33,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043ab0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436e0",
+       "bytes": 50,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043ad0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b10",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b30",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b40",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 12,
+     "offset": "0x30",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b50",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 13,
+     "offset": "0x34",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 14,
+     "offset": "0x38",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10044230",
+       "bytes": 187,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 15,
+     "offset": "0x3c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b60",
+       "bytes": 485,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 16,
+     "offset": "0x40",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043d80",
+       "bytes": 65,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 17,
+     "offset": "0x44",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043de0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 18,
+     "offset": "0x48",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsILight",
+   "bases": [
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015b084",
+   "implementers": [
+    "gsLight_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsLight_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsLight_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsLight_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsLight_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsLight_OGL": {
+       "address": "0x1004ff20",
+       "bytes": 32,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsLight_OGL": {
+       "address": "0x1004ff40",
+       "bytes": 35,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsLight_OGL": {
+       "address": "0x1004ff70",
+       "bytes": 35,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIMaterial",
+   "bases": [
+    "gsIVideoItem"
+   ],
+   "ownVtable": null,
+   "implementers": [
+    "gsMaterial_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004d970",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004d980",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004d990",
+       "bytes": 46,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004d9c0",
+       "bytes": 32,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004d9e0",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004d9f0",
+       "bytes": 64,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004da30",
+       "bytes": 64,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004da70",
+       "bytes": 78,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dac0",
+       "bytes": 73,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004db10",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004db20",
+       "bytes": 64,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004db60",
+       "bytes": 43,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 12,
+     "offset": "0x30",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004db90",
+       "bytes": 14,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 13,
+     "offset": "0x34",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dba0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 14,
+     "offset": "0x38",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dbb0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 15,
+     "offset": "0x3c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dbc0",
+       "bytes": 27,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 16,
+     "offset": "0x40",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dbe0",
+       "bytes": 27,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 17,
+     "offset": "0x44",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dc00",
+       "bytes": 50,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 18,
+     "offset": "0x48",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dc40",
+       "bytes": 41,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 19,
+     "offset": "0x4c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dc70",
+       "bytes": 27,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 20,
+     "offset": "0x50",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dc90",
+       "bytes": 7,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 21,
+     "offset": "0x54",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dca0",
+       "bytes": 43,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 22,
+     "offset": "0x58",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dcd0",
+       "bytes": 250,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 23,
+     "offset": "0x5c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004f070",
+       "bytes": 5,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 24,
+     "offset": "0x60",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004e5e0",
+       "bytes": 64,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIMesh",
+   "bases": [
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015aa54",
+   "implementers": [
+    "gsMesh_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100485f0",
+       "bytes": 82,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x10048650",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x10048660",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x10048670",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004cd20",
+       "bytes": 297,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004ce50",
+       "bytes": 301,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004cf80",
+       "bytes": 347,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x10043b50",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004b1b0",
+       "bytes": 126,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 12,
+     "offset": "0x30",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x10048680",
+       "bytes": 61,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 13,
+     "offset": "0x34",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100493c0",
+       "bytes": 33,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 14,
+     "offset": "0x38",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004b230",
+       "bytes": 86,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 15,
+     "offset": "0x3c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004c2b0",
+       "bytes": 139,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 16,
+     "offset": "0x40",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004c140",
+       "bytes": 362,
+       "gl": [
+        "glGenBuffersARB",
+        "glGenQueriesARB"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 17,
+     "offset": "0x44",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004c340",
+       "bytes": 331,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 18,
+     "offset": "0x48",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004b290",
+       "bytes": 291,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 19,
+     "offset": "0x4c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004c490",
+       "bytes": 424,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 20,
+     "offset": "0x50",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100493f0",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 21,
+     "offset": "0x54",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004a4b0",
+       "bytes": 26,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 22,
+     "offset": "0x58",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486c0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 23,
+     "offset": "0x5c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486d0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 24,
+     "offset": "0x60",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486e0",
+       "bytes": 7,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 25,
+     "offset": "0x64",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486f0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIParticleSystem",
+   "bases": [
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015b0e8",
+   "implementers": [
+    "gsParticleSystem_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x100514a0",
+       "bytes": 188,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x10050390",
+       "bytes": 68,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x100503e0",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x100509a0",
+       "bytes": 177,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x100503f0",
+       "bytes": 112,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsParticleSystem_OGL": {
+       "address": "0x10050460",
+       "bytes": 54,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIPrimitive",
+   "bases": [
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015b0cc",
+   "implementers": [
+    "gsPrimitive_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsPrimitive_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsPrimitive_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsPrimitive_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsPrimitive_OGL": {
+       "address": "0x10050870",
+       "bytes": 304,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsPrimitive_OGL": {
+       "address": "0x100538b0",
+       "bytes": 156,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsPrimitive_OGL": {
+       "address": "0x10050360",
+       "bytes": 34,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIScene",
+   "bases": [
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015b10c",
+   "implementers": [
+    "gsScene_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsScene_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsScene_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsScene_OGL": {
+       "address": "0x1004fe00",
+       "bytes": 68,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsScene_OGL": {
+       "address": "0x1004fe50",
+       "bytes": 67,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIShader",
+   "bases": [
+    "gsShaderProgramBase_OGL",
+    "gsIVideoItem"
+   ],
+   "ownVtable": null,
+   "implementers": [
+    "gsShaderProgram_OGL",
+    "gsShaderProgramBase_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10001000",
+       "bytes": 1,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10001000",
+       "bytes": 1,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036eb0",
+       "bytes": 30,
+       "gl": [
+        "glDeleteObjectARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10036a10",
+       "bytes": 31,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x1003ca40",
+       "bytes": 141,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369b0",
+       "bytes": 5,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x100365f0",
+       "bytes": 756,
+       "gl": [
+        "glUniform1fARB",
+        "glUniform1iARB",
+        "glUniform3fvARB",
+        "glUniform4fvARB",
+        "glUniformMatrix3fvARB",
+        "glUniformMatrix4fvARB",
+        "glUseProgramObjectARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369c0",
+       "bytes": 3,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x100368f0",
+       "bytes": 9,
+       "gl": [
+        "glUseProgramObjectARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10001000",
+       "bytes": 1,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d70",
+       "bytes": 141,
+       "gl": [
+        "glUniformMatrix4fvARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369c0",
+       "bytes": 3,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d00",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369d0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d10",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x1001c4f0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d20",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369e0",
+       "bytes": 3,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d30",
+       "bytes": 25,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369f0",
+       "bytes": 14,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d50",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10067c00",
+       "bytes": 3,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d60",
+       "bytes": 11,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10036a00",
+       "bytes": 3,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsISkeleton",
+   "bases": [
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015b0a4",
+   "implementers": [
+    "gsSkeleton_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x10050700",
+       "bytes": 357,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x1004fff0",
+       "bytes": 61,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x10050030",
+       "bytes": 101,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x100500a0",
+       "bytes": 110,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x10050110",
+       "bytes": 223,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsSkeleton_OGL": {
+       "address": "0x10051cf0",
+       "bytes": 432,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsISubMesh",
+   "bases": [
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015aa20",
+   "implementers": [
+    "gsHWSkinSubMesh_OGL",
+    "gsSubMesh_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x10049320",
+       "bytes": 153,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x10049320",
+       "bytes": 153,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x100485b0",
+       "bytes": 42,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x100485b0",
+       "bytes": 42,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x100485e0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x100485e0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsITexture",
+   "bases": [
+    "gsIVideoItem"
+   ],
+   "ownVtable": null,
+   "implementers": [
+    "gsTexture_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsTexture_OGL": {
+       "address": "0x10040c30",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsTexture_OGL": {
+       "address": "0x10040c40",
+       "bytes": 246,
+       "gl": [
+        "glBindTexture",
+        "glTexImage2D",
+        "glTexParameterf",
+        "glTexParameteri"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsTexture_OGL": {
+       "address": "0x10040d40",
+       "bytes": 132,
+       "gl": [
+        "glBindTexture",
+        "glGetTexImage"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsTexture_OGL": {
+       "address": "0x10042f20",
+       "bytes": 91,
+       "gl": [
+        "glDeleteTextures"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsITextureContainer",
+   "bases": [],
+   "ownVtable": "0x1015a434",
+   "implementers": [
+    "gsTextureVariant_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsTextureVariant_OGL": {
+       "address": "0x10040fa0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIVideoElement",
+   "bases": [
+    "gsICamera",
+    "gsI3DVideoItem",
+    "gsIVideoItem",
+    "gs3DVideoItem_OGL",
+    "gsVideoItem_OGL"
+   ],
+   "ownVtable": null,
+   "implementers": [
+    "gsCamera_OGL",
+    "gsClipArea_OGL",
+    "gsGuiPrimitive_OGL",
+    "gsGuiText_OGL",
+    "gsLight_OGL",
+    "gsMesh_OGL",
+    "gsParticleSystem_OGL",
+    "gsPrimitive_OGL",
+    "gsScene_OGL",
+    "gsSkeleton_OGL",
+    "gsViewport_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446c0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446d0",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100485f0",
+       "bytes": 82,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100514a0",
+       "bytes": 188,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x1004fe00",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10047450",
+       "bytes": 159,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x100448c0",
+       "bytes": 37,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044050",
+       "bytes": 299,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a00",
+       "bytes": 81,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048650",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x10050390",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10050870",
+       "bytes": 304,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x1004fe50",
+       "bytes": 67,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10050700",
+       "bytes": 357,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100448f0",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10043b10",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043640",
+       "bytes": 62,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a60",
+       "bytes": 36,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ff20",
+       "bytes": 32,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048660",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100503e0",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x100538b0",
+       "bytes": 156,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x100505f0",
+       "bytes": 268,
+       "gl": [
+        "glActiveTexture",
+        "glBlendFunc",
+        "glDisable",
+        "glEnable"
+       ]
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x1004fff0",
+       "bytes": 61,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446e0",
+       "bytes": 48,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004fed0",
+       "bytes": 29,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043680",
+       "bytes": 34,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a90",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ff40",
+       "bytes": 35,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048670",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100509a0",
+       "bytes": 177,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10050360",
+       "bytes": 34,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10050030",
+       "bytes": 101,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044710",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436b0",
+       "bytes": 33,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043ab0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ff70",
+       "bytes": 35,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004cd20",
+       "bytes": 297,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100503f0",
+       "bytes": 112,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x100500a0",
+       "bytes": 110,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044740",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ff00",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436e0",
+       "bytes": 50,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043ad0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004ce50",
+       "bytes": 301,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x10050460",
+       "bytes": 54,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10050110",
+       "bytes": 223,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044770",
+       "bytes": 17,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ff10",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004cf80",
+       "bytes": 347,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10051cf0",
+       "bytes": 432,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044790",
+       "bytes": 17,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b10",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10043b50",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100474f0",
+       "bytes": 91,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b30",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10047550",
+       "bytes": 89,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b40",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004b1b0",
+       "bytes": 126,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100475b0",
+       "bytes": 120,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 12,
+     "offset": "0x30",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b50",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048680",
+       "bytes": 61,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100468a0",
+       "bytes": 92,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 13,
+     "offset": "0x34",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100493c0",
+       "bytes": 33,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10046390",
+       "bytes": 8,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 14,
+     "offset": "0x38",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10044230",
+       "bytes": 187,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004b230",
+       "bytes": 86,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447b0",
+       "bytes": 15,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 15,
+     "offset": "0x3c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b60",
+       "bytes": 485,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004c2b0",
+       "bytes": 139,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10043b40",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 16,
+     "offset": "0x40",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043d80",
+       "bytes": 65,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004c140",
+       "bytes": 362,
+       "gl": [
+        "glGenBuffersARB",
+        "glGenQueriesARB"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044920",
+       "bytes": 40,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 17,
+     "offset": "0x44",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043de0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004c340",
+       "bytes": 331,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447c0",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 18,
+     "offset": "0x48",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004b290",
+       "bytes": 291,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447d0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 19,
+     "offset": "0x4c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004c490",
+       "bytes": 424,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100463a0",
+       "bytes": 205,
+       "gl": [
+        "glScissor",
+        "glViewport"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 20,
+     "offset": "0x50",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100493f0",
+       "bytes": 37,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044ef0",
+       "bytes": 4259,
+       "gl": [
+        "glActiveTexture",
+        "glAlphaFunc",
+        "glBeginQueryARB",
+        "glBlendFunc",
+        "glClear",
+        "glClearColor",
+        "glClearDepth",
+        "glColorMaterial",
+        "glCullFace",
+        "glDeleteQueriesARB",
+        "glDepthFunc",
+        "glDepthMask",
+        "glDisable",
+        "glDrawArrays",
+        "glEnable",
+        "glEndQueryARB",
+        "glGenQueriesARB",
+        "glGetQueryObjectuivARB",
+        "glHint",
+        "glInterleavedArrays",
+        "glLightModelfv",
+        "glLoadIdentity",
+        "glLoadMatrixf",
+        "glMatrixMode",
+        "glOrtho",
+        "glPopMatrix",
+        "glPushMatrix"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 21,
+     "offset": "0x54",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004a4b0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447e0",
+       "bytes": 218,
+       "gl": [
+        "glAlphaFunc",
+        "glDisable",
+        "glEnable",
+        "glLoadIdentity",
+        "glMatrixMode",
+        "glOrtho"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 22,
+     "offset": "0x58",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486c0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100471a0",
+       "bytes": 405,
+       "gl": [
+        "glActiveTexture",
+        "glAlphaFunc",
+        "glBlendFunc",
+        "glColor4f",
+        "glColorMaterial",
+        "glDisable",
+        "glEnable",
+        "glLoadIdentity",
+        "glMatrixMode",
+        "glOrtho",
+        "glViewport"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 23,
+     "offset": "0x5c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486d0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 24,
+     "offset": "0x60",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486e0",
+       "bytes": 7,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 25,
+     "offset": "0x64",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486f0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 26,
+     "offset": "0x68",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004d0e0",
+       "bytes": 1840,
+       "gl": [
+        "glGenBuffersARB",
+        "glGenQueriesARB"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIVideoItem",
+   "bases": [
+    "gsICamera",
+    "gsI3DVideoItem",
+    "gsIVideoElement",
+    "gs3DVideoItem_OGL",
+    "gsVideoItem_OGL"
+   ],
+   "ownVtable": null,
+   "implementers": [
+    "gsCamera_OGL",
+    "gsClipArea_OGL",
+    "gsGuiPrimitive_OGL",
+    "gsGuiText_OGL",
+    "gsHWSkinSubMesh_OGL",
+    "gsLight_OGL",
+    "gsMaterial_OGL",
+    "gsMesh_OGL",
+    "gsParticleSystem_OGL",
+    "gsPrimitive_OGL",
+    "gsScene_OGL",
+    "gsShaderProgram_OGL",
+    "gsShaderProgramBase_OGL",
+    "gsSkeleton_OGL",
+    "gsSubMesh_OGL",
+    "gsTexture_OGL",
+    "gsViewport_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004d970",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10001000",
+       "bytes": 1,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10001000",
+       "bytes": 1,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x1004ffe0",
+       "bytes": 16,
+       "gl": []
+      },
+      "gsTexture_OGL": {
+       "address": "0x10040c30",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446c0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x10049320",
+       "bytes": 153,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004d980",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036eb0",
+       "bytes": 30,
+       "gl": [
+        "glDeleteObjectARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10036a10",
+       "bytes": 31,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10044680",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x10049320",
+       "bytes": 153,
+       "gl": []
+      },
+      "gsTexture_OGL": {
+       "address": "0x10040c40",
+       "bytes": 246,
+       "gl": [
+        "glBindTexture",
+        "glTexImage2D",
+        "glTexParameterf",
+        "glTexParameteri"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446d0",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x100485b0",
+       "bytes": 42,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004d990",
+       "bytes": 46,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100485f0",
+       "bytes": 82,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100514a0",
+       "bytes": 188,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x1004fe00",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x1003ca40",
+       "bytes": 141,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369b0",
+       "bytes": 5,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10051450",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x100485b0",
+       "bytes": 42,
+       "gl": []
+      },
+      "gsTexture_OGL": {
+       "address": "0x10040d40",
+       "bytes": 132,
+       "gl": [
+        "glBindTexture",
+        "glGetTexImage"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x10047450",
+       "bytes": 159,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x100448c0",
+       "bytes": 37,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10044050",
+       "bytes": 299,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a00",
+       "bytes": 81,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x100485e0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004d9c0",
+       "bytes": 32,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048650",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x10050390",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10050870",
+       "bytes": 304,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x1004fe50",
+       "bytes": 67,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x100365f0",
+       "bytes": 756,
+       "gl": [
+        "glUniform1fARB",
+        "glUniform1iARB",
+        "glUniform3fvARB",
+        "glUniform4fvARB",
+        "glUniformMatrix3fvARB",
+        "glUniformMatrix4fvARB",
+        "glUseProgramObjectARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369c0",
+       "bytes": 3,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10050700",
+       "bytes": 357,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x100485e0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsTexture_OGL": {
+       "address": "0x10042f20",
+       "bytes": 91,
+       "gl": [
+        "glDeleteTextures"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x100448f0",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x10043b10",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsClipArea_OGL": {
+       "address": "0x10044690",
+       "bytes": 48,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043640",
+       "bytes": 62,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a60",
+       "bytes": 36,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x10049710",
+       "bytes": 2903,
+       "gl": [
+        "glBindBufferARB",
+        "glBufferDataARB"
+       ]
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ff20",
+       "bytes": 32,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004d9e0",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048660",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100503e0",
+       "bytes": 10,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x100538b0",
+       "bytes": 156,
+       "gl": []
+      },
+      "gsScene_OGL": {
+       "address": "0x100505f0",
+       "bytes": 268,
+       "gl": [
+        "glActiveTexture",
+        "glBlendFunc",
+        "glDisable",
+        "glEnable"
+       ]
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x100368f0",
+       "bytes": 9,
+       "gl": [
+        "glUseProgramObjectARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10001000",
+       "bytes": 1,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x1004fff0",
+       "bytes": 61,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x10049710",
+       "bytes": 2903,
+       "gl": [
+        "glBindBufferARB",
+        "glBufferDataARB"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x100446e0",
+       "bytes": 48,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004fed0",
+       "bytes": 29,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x10043680",
+       "bytes": 34,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043a90",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x100552d0",
+       "bytes": 2751,
+       "gl": []
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ff40",
+       "bytes": 35,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004d9f0",
+       "bytes": 64,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048670",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100509a0",
+       "bytes": 177,
+       "gl": []
+      },
+      "gsPrimitive_OGL": {
+       "address": "0x10050360",
+       "bytes": 34,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d70",
+       "bytes": 141,
+       "gl": [
+        "glUniformMatrix4fvARB"
+       ]
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369c0",
+       "bytes": 3,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10050030",
+       "bytes": 101,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x100480d0",
+       "bytes": 132,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044710",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436b0",
+       "bytes": 33,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043ab0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x10048160",
+       "bytes": 850,
+       "gl": [
+        "glBindBufferARB",
+        "glClientActiveTexture",
+        "glColorPointer",
+        "glDisableClientState",
+        "glDrawElements",
+        "glEnableClientState",
+        "glNormalPointer",
+        "glTexCoordPointer",
+        "glVertexPointer"
+       ]
+      },
+      "gsLight_OGL": {
+       "address": "0x1004ff70",
+       "bytes": 35,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004da30",
+       "bytes": 64,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004cd20",
+       "bytes": 297,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x100503f0",
+       "bytes": 112,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d00",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369d0",
+       "bytes": 6,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x100500a0",
+       "bytes": 110,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x10048160",
+       "bytes": 850,
+       "gl": [
+        "glBindBufferARB",
+        "glClientActiveTexture",
+        "glColorPointer",
+        "glDisableClientState",
+        "glDrawElements",
+        "glEnableClientState",
+        "glNormalPointer",
+        "glTexCoordPointer",
+        "glVertexPointer"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044740",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ff00",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100436e0",
+       "bytes": 50,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043ad0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x10048f50",
+       "bytes": 804,
+       "gl": [
+        "glGetQueryObjectuivARB"
+       ]
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004da70",
+       "bytes": 78,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004ce50",
+       "bytes": 301,
+       "gl": []
+      },
+      "gsParticleSystem_OGL": {
+       "address": "0x10050460",
+       "bytes": 54,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d10",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x1001c4f0",
+       "bytes": 6,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10050110",
+       "bytes": 223,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x10048f50",
+       "bytes": 804,
+       "gl": [
+        "glGetQueryObjectuivARB"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044770",
+       "bytes": 17,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsCamera_OGL": {
+       "address": "0x1004ff10",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsGuiPrimitive_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsGuiText_OGL": {
+       "address": "0x10043af0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x10049280",
+       "bytes": 151,
+       "gl": [
+        "glBegin",
+        "glColor4f",
+        "glEnd",
+        "glTexCoord2f",
+        "glVertex2f"
+       ]
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004dac0",
+       "bytes": 73,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004cf80",
+       "bytes": 347,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d20",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369e0",
+       "bytes": 3,
+       "gl": []
+      },
+      "gsSkeleton_OGL": {
+       "address": "0x10051cf0",
+       "bytes": 432,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x10049280",
+       "bytes": 151,
+       "gl": [
+        "glBegin",
+        "glColor4f",
+        "glEnd",
+        "glTexCoord2f",
+        "glVertex2f"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044790",
+       "bytes": 17,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b10",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsHWSkinSubMesh_OGL": {
+       "address": "0x100551e0",
+       "bytes": 109,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004db10",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10043b50",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d30",
+       "bytes": 25,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x100369f0",
+       "bytes": 14,
+       "gl": []
+      },
+      "gsSubMesh_OGL": {
+       "address": "0x1004a270",
+       "bytes": 109,
+       "gl": [
+        "glGenBuffersARB",
+        "glGenQueriesARB"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x100474f0",
+       "bytes": 91,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b30",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004db20",
+       "bytes": 64,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d50",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10067c00",
+       "bytes": 3,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10047550",
+       "bytes": 89,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b40",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004db60",
+       "bytes": 43,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004b1b0",
+       "bytes": 126,
+       "gl": []
+      },
+      "gsShaderProgram_OGL": {
+       "address": "0x10036d60",
+       "bytes": 11,
+       "gl": []
+      },
+      "gsShaderProgramBase_OGL": {
+       "address": "0x10036a00",
+       "bytes": 3,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100475b0",
+       "bytes": 120,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 12,
+     "offset": "0x30",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b50",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004db90",
+       "bytes": 14,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x10048680",
+       "bytes": 61,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100468a0",
+       "bytes": 92,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 13,
+     "offset": "0x34",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x1004fef0",
+       "bytes": 13,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004dba0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100493c0",
+       "bytes": 33,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10046390",
+       "bytes": 8,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 14,
+     "offset": "0x38",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10044230",
+       "bytes": 187,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004dbb0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004b230",
+       "bytes": 86,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447b0",
+       "bytes": 15,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 15,
+     "offset": "0x3c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043b60",
+       "bytes": 485,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004dbc0",
+       "bytes": 27,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004c2b0",
+       "bytes": 139,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10043b40",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 16,
+     "offset": "0x40",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043d80",
+       "bytes": 65,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004dbe0",
+       "bytes": 27,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004c140",
+       "bytes": 362,
+       "gl": [
+        "glGenBuffersARB",
+        "glGenQueriesARB"
+       ]
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044920",
+       "bytes": 40,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 17,
+     "offset": "0x44",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x10043de0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004dc00",
+       "bytes": 50,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004c340",
+       "bytes": 331,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447c0",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 18,
+     "offset": "0x48",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsGuiText_OGL": {
+       "address": "0x100435f0",
+       "bytes": 68,
+       "gl": []
+      },
+      "gsMaterial_OGL": {
+       "address": "0x1004dc40",
+       "bytes": 41,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004b290",
+       "bytes": 291,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447d0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 19,
+     "offset": "0x4c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dc70",
+       "bytes": 27,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004c490",
+       "bytes": 424,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100463a0",
+       "bytes": 205,
+       "gl": [
+        "glScissor",
+        "glViewport"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 20,
+     "offset": "0x50",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dc90",
+       "bytes": 7,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100493f0",
+       "bytes": 37,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044ef0",
+       "bytes": 4259,
+       "gl": [
+        "glActiveTexture",
+        "glAlphaFunc",
+        "glBeginQueryARB",
+        "glBlendFunc",
+        "glClear",
+        "glClearColor",
+        "glClearDepth",
+        "glColorMaterial",
+        "glCullFace",
+        "glDeleteQueriesARB",
+        "glDepthFunc",
+        "glDepthMask",
+        "glDisable",
+        "glDrawArrays",
+        "glEnable",
+        "glEndQueryARB",
+        "glGenQueriesARB",
+        "glGetQueryObjectuivARB",
+        "glHint",
+        "glInterleavedArrays",
+        "glLightModelfv",
+        "glLoadIdentity",
+        "glLoadMatrixf",
+        "glMatrixMode",
+        "glOrtho",
+        "glPopMatrix",
+        "glPushMatrix"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 21,
+     "offset": "0x54",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dca0",
+       "bytes": 43,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x1004a4b0",
+       "bytes": 26,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100447e0",
+       "bytes": 218,
+       "gl": [
+        "glAlphaFunc",
+        "glDisable",
+        "glEnable",
+        "glLoadIdentity",
+        "glMatrixMode",
+        "glOrtho"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 22,
+     "offset": "0x58",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004dcd0",
+       "bytes": 250,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100486c0",
+       "bytes": 4,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100471a0",
+       "bytes": 405,
+       "gl": [
+        "glActiveTexture",
+        "glAlphaFunc",
+        "glBlendFunc",
+        "glColor4f",
+        "glColorMaterial",
+        "glDisable",
+        "glEnable",
+        "glLoadIdentity",
+        "glMatrixMode",
+        "glOrtho",
+        "glViewport"
+       ]
+      }
+     }
+    },
+    {
+     "slot": 23,
+     "offset": "0x5c",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004f070",
+       "bytes": 5,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100486d0",
+       "bytes": 4,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 24,
+     "offset": "0x60",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMaterial_OGL": {
+       "address": "0x1004e5e0",
+       "bytes": 64,
+       "gl": []
+      },
+      "gsMesh_OGL": {
+       "address": "0x100486e0",
+       "bytes": 7,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 25,
+     "offset": "0x64",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x100486f0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 26,
+     "offset": "0x68",
+     "abstract": false,
+     "declared": null,
+     "impls": {
+      "gsMesh_OGL": {
+       "address": "0x1004d0e0",
+       "bytes": 1840,
+       "gl": [
+        "glGenBuffersARB",
+        "glGenQueriesARB"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIVideoOutput_OGL",
+   "bases": [],
+   "ownVtable": "0x101591b8",
+   "implementers": [
+    "gsBloomEffect_OGL",
+    "gsPostEffect_OGL",
+    "gsShaderEffect_OGL",
+    "gsShadowEffect_OGL",
+    "gsTextureTarget_OGL",
+    "gsViewport_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsBloomEffect_OGL": {
+       "address": "0x1002f730",
+       "bytes": 29,
+       "gl": []
+      },
+      "gsPostEffect_OGL": {
+       "address": "0x1002f730",
+       "bytes": 29,
+       "gl": []
+      },
+      "gsShaderEffect_OGL": {
+       "address": "0x1002f730",
+       "bytes": 29,
+       "gl": []
+      },
+      "gsShadowEffect_OGL": {
+       "address": "0x10030ae0",
+       "bytes": 19,
+       "gl": []
+      },
+      "gsTextureTarget_OGL": {
+       "address": "0x1002f730",
+       "bytes": 29,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x100d47b0",
+       "bytes": 3,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsBloomEffect_OGL": {
+       "address": "0x100316d0",
+       "bytes": 508,
+       "gl": [
+        "glActiveTexture",
+        "glColor4ub",
+        "glDisable",
+        "glDrawArrays",
+        "glEnable",
+        "glInterleavedArrays",
+        "glLoadIdentity",
+        "glMatrixMode",
+        "glOrtho"
+       ]
+      },
+      "gsPostEffect_OGL": {
+       "address": "0x100312b0",
+       "bytes": 107,
+       "gl": [
+        "glActiveTexture",
+        "glColor4ub",
+        "glDisable",
+        "glDrawArrays",
+        "glEnable",
+        "glInterleavedArrays",
+        "glLoadIdentity",
+        "glMatrixMode",
+        "glOrtho"
+       ]
+      },
+      "gsShaderEffect_OGL": {
+       "address": "0x10031390",
+       "bytes": 126,
+       "gl": [
+        "glActiveTexture",
+        "glColor4ub",
+        "glDisable",
+        "glDrawArrays",
+        "glEnable",
+        "glInterleavedArrays",
+        "glLoadIdentity",
+        "glMatrixMode",
+        "glOrtho"
+       ]
+      },
+      "gsShadowEffect_OGL": {
+       "address": "0x10030b00",
+       "bytes": 447,
+       "gl": [
+        "glActiveTexture",
+        "glDisable",
+        "glEnable",
+        "glTexParameteri"
+       ]
+      },
+      "gsTextureTarget_OGL": {
+       "address": "0x10067c00",
+       "bytes": 3,
+       "gl": []
+      },
+      "gsViewport_OGL": {
+       "address": "0x10044950",
+       "bytes": 47,
+       "gl": []
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "gsIViewport",
+   "bases": [
+    "gsIClipArea",
+    "gsIVideoElement",
+    "gsIVideoItem"
+   ],
+   "ownVtable": "0x1015a8a4",
+   "implementers": [
+    "gsViewport_OGL"
+   ],
+   "slots": [
+    {
+     "slot": 0,
+     "offset": "0x0",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100446c0",
+       "bytes": 16,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 1,
+     "offset": "0x4",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100446d0",
+       "bytes": 10,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 2,
+     "offset": "0x8",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10047450",
+       "bytes": 159,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 3,
+     "offset": "0xc",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100448f0",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 4,
+     "offset": "0x10",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100446e0",
+       "bytes": 48,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 5,
+     "offset": "0x14",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10044710",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 6,
+     "offset": "0x18",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10044740",
+       "bytes": 37,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 7,
+     "offset": "0x1c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10044770",
+       "bytes": 17,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 8,
+     "offset": "0x20",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10044790",
+       "bytes": 17,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 9,
+     "offset": "0x24",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100474f0",
+       "bytes": 91,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 10,
+     "offset": "0x28",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10047550",
+       "bytes": 89,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 11,
+     "offset": "0x2c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100475b0",
+       "bytes": 120,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 12,
+     "offset": "0x30",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100468a0",
+       "bytes": 92,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 13,
+     "offset": "0x34",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10046390",
+       "bytes": 8,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 14,
+     "offset": "0x38",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100447b0",
+       "bytes": 15,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 15,
+     "offset": "0x3c",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10043b40",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 16,
+     "offset": "0x40",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x10044920",
+       "bytes": 40,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 17,
+     "offset": "0x44",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100447c0",
+       "bytes": 13,
+       "gl": []
+      }
+     }
+    },
+    {
+     "slot": 18,
+     "offset": "0x48",
+     "abstract": true,
+     "declared": "0x10120b90",
+     "impls": {
+      "gsViewport_OGL": {
+       "address": "0x100447d0",
+       "bytes": 6,
+       "gl": []
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

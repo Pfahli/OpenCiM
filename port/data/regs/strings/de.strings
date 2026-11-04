@@ -1,0 +1,23 @@
+﻿// ReGS strings (German; UTF-8 with BOM)
+$regs_preset_item = "Grafikvoreinstellung: %0";
+$regs_preset_values = ["Niedrig", "Mittel", "Original", "Hoch", "Ultra"];
+$regs_preset_custom = "Benutzerdefiniert";
+$regs_viewDistance_item = "Sichtweite: %0%%";
+$regs_detailDistance_item = "Detailentfernung: %0%%";
+$regs_fpsLimit_item = "Bildratenbegrenzung: %0";
+$regs_fpsLimit_values = ["Aus", "30", "60", "90", "120", "144"];
+$regs_shadows_values = ["Aus", "Niedrig", "Hoch", "Sehr hoch", "Ultra"];
+$regs_antialiasing_values = ["Aus", "2x", "4x", "8x"];
+// nach gespeichertem Wert ($shadows) bzw. Samples / 2 indiziert, wie die Seite des Spiels es tut
+$regs_shadows_byValue = ["Aus", "Niedrig", "Hoch", "Sehr hoch", "Sehr hoch", "Ultra", "Ultra", "Ultra", "Ultra"];
+$regs_antialiasing_byHalf = ["Aus", "2x", "4x", "6x", "8x"];
+$regs_colorStyle_item = "Farbstil: %0";
+$regs_colorStyle_values = ["Original", "Lebendig", "Warm", "Kühl", "Filmisch", "Schwarzweiß"];
+$regs_lensBlur_item = "Tiefenunschärfe: %0";
+$regs_lensBlur_values = ["Aus", "Leicht", "Stark", "Tilt-Shift"];
+$regs_renderer_item = "Grafik-Engine:";
+$regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
+$regs_renderer_planned = "Geplant: moderne Grafik-Engine (Vulkan) für Raytracing und DLSS";
+$regs_trafficDensity_item = "Verkehrsdichte: %0";
+$regs_populationDensity_item = "Bevölkerungsdichte: %0";
+$regs_density_values = ["0,5x", "1x (Original)", "2x", "4x"];

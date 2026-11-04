@@ -1,0 +1,233 @@
+// ReGS extension of the game's graphics page (metro/ui/menus/graphics.script, used as installed). The part before
+// //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds
+// presets, the port's options (stored as regs* settings, or fpsLimit, which the game reads but never offered here),
+// more steps for shadows and antialiasing, the style effects and the graphics engine choice. New options: a row in
+// the middle column, a column in $regsPresets if it is a quality option, and a line in save().
+//@rename save regsBaseSave
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regs = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regs = load "/regs/strings/en_US.strings";
+}
+// the original page indexes these with the stored values ($shadows, $antialiasing / 2): cover the extended ones
+MAIN.$strings.$menu_shadows_values = $regs.$regs_shadows_byValue;
+MAIN.$strings.$menu_antialiasing_values = $regs.$regs_antialiasing_byHalf;
+
+//@base
+
+// ---- after the original page ----
+
+$shadowValues = [0, 1, 2, 4, 8];                // $settings.$shadows; the map is $shadows × 1024 texels square
+$antialiasValues = [0, 2, 4, 8];                // MSAA samples
+$fpsValues = [0.0, 30.0, 60.0, 90.0, 120.0, 144.0];
+
+function regsStepOf($values, $value) {
+  $step = 0;
+  for ($i = 0; $i < #$values; ++$i) {
+    if ($values[$i] <= $value) $step = $i;
+  }
+  return $step;
+}
+
+$regsShadowStep = regsStepOf($shadowValues, $settings.$shadows : 0);
+$regsAntialiasStep = regsStepOf($antialiasValues, $settings.$antialiasing : 0);
+$shadows = $shadowValues[$regsShadowStep];
+$antialiasing = $antialiasValues[$regsAntialiasStep] / 2;
+$viewDistance = $settings.$regsViewDistance : 1.0;
+$detailDistance = $settings.$regsDetailDistance : 1.0;
+$fpsLimit = regsStepOf($fpsValues, $settings.$fpsLimit : 0.0);
+$colorStyle = int($settings.$regsColorStyle : 0);
+$lensBlur = int($settings.$regsLensBlur : 0);
+$renderer = int($settings.$regsRenderer : 0);
+
+function regsLabel($x, $y, $text) {
+  with ($label = new_control($box.$content)) {
+    .setRect($x, $y, 240, 18);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $label;
+}
+
+function regsSlider($x, $y, $steps, $step) {
+  return MAIN.$ui.createSlider($box.$content, $step * ($steps - 0.01) / ($steps - 1), 0.0, $steps - 0.01, $x, $y, 210, 27);
+}
+
+// ---- the original sliders with more steps ----
+
+$shadowsSlider.$max = 4.99;
+$shadowsSlider.$action = regsSetShadows;
+$shadowsItem.setArg(0, macro :: $regs.$regs_shadows_values[$regsShadowStep]);
+MAIN.$ui.setSliderPos($shadowsSlider, $regsShadowStep * 4.99 / 4.0);
+function regsSetShadows() {
+  $regsShadowStep = int($shadowsSlider.$value);
+  $shadows = $shadowValues[$regsShadowStep];
+  regsUpdatePreset();
+}
+
+$antialiasSlider.$action = regsSetAntialias;
+$antialiasItem.setArg(0, macro :: $regs.$regs_antialiasing_values[$regsAntialiasStep]);
+MAIN.$ui.setSliderPos($antialiasSlider, $regsAntialiasStep * 3.99 / 3.0);
+function regsSetAntialias() {
+  $regsAntialiasStep = int($antialiasSlider.$value);
+  $antialiasing = $antialiasValues[$regsAntialiasStep] / 2;
+  regsUpdatePreset();
+}
+
+$anisotropySlider.$action = regsSetAnisotropy;
+function regsSetAnisotropy() {
+  setAnisotropy();
+  regsUpdatePreset();
+}
+
+$lightingButton.$action = macro :: regsSetHDR(!$hdrLighting);
+function regsSetHDR($value) {
+  setHDRlighting($value);
+  regsUpdatePreset();
+}
+
+// ---- middle column: presets, distances, frame rate, style ----
+
+// presets: shadows step, antialiasing step, anisotropy step, HDR lighting, view distance, detail distance.
+// "Original" is the game's own defaults (metro/defaults/settings.script).
+$regsPresets = [
+  [1, 0, 1, false, 1.0, 1.0],   // low
+  [2, 1, 2, true, 1.0, 1.0],    // medium
+  [2, 2, 3, true, 1.0, 1.0],    // original
+  [3, 2, 4, true, 1.5, 1.5],    // high
+  [4, 3, 4, true, 2.5, 2.0]     // ultra
+];
+
+$regsPresetName = "";
+with ($regsPresetItem = regsLabel(300, 60, $regs.$regs_preset_item)) {
+  .setArg(0, macro :: $regsPresetName);
+}
+with ($regsPresetArea = new_control($box.$content)) {
+  .setRect(300, 78, 210, 5 * 18 + 4);
+  .setBorder(0xFF777777, 2);
+  .visible = true;
+  .canActivate = false;
+}
+$regsPresetButtons = [];
+for ($i = 0; $i < #$regsPresets; ++$i) {
+  $regsPresetButtons[$i] = MAIN.$ui.createChoiceButton($regsPresetArea, $regsPresetArea, 2, 2 + $i * 18, 206, 18, $regs.$regs_preset_values[$i], macro($i) :: regsApplyPreset($0));
+}
+
+with (regsLabel(300, 180, $regs.$regs_viewDistance_item)) {
+  .setArg(0, macro :: int($viewDistance * 100.0 + 0.5));
+}
+$viewDistanceSlider = MAIN.$ui.createSlider($box.$content, $viewDistance, 1.0, 3.0, 300, 198, 210, 27);
+$viewDistanceSlider.$action = regsSetViewDistance;
+function regsSetViewDistance() {
+  $viewDistance = int($viewDistanceSlider.$value * 20.0 + 0.5) / 20.0;  // 5 % steps
+  regsUpdatePreset();
+}
+
+with (regsLabel(300, 230, $regs.$regs_detailDistance_item)) {
+  .setArg(0, macro :: int($detailDistance * 100.0 + 0.5));
+}
+$detailDistanceSlider = MAIN.$ui.createSlider($box.$content, $detailDistance, 1.0, 3.0, 300, 248, 210, 27);
+$detailDistanceSlider.$action = regsSetDetailDistance;
+function regsSetDetailDistance() {
+  $detailDistance = int($detailDistanceSlider.$value * 20.0 + 0.5) / 20.0;
+  regsUpdatePreset();
+}
+
+with (regsLabel(300, 280, $regs.$regs_fpsLimit_item)) {
+  .setArg(0, macro :: $regs.$regs_fpsLimit_values[$fpsLimit]);
+}
+$fpsLimitSlider = regsSlider(300, 298, #$fpsValues, $fpsLimit);
+$fpsLimitSlider.$action = macro :: regsSetFpsLimit();
+function regsSetFpsLimit() {
+  $fpsLimit = int($fpsLimitSlider.$value);
+}
+
+// style (not part of the presets): colour grade and lens blur after the scene
+with (regsLabel(300, 330, $regs.$regs_colorStyle_item)) {
+  .setArg(0, macro :: $regs.$regs_colorStyle_values[$colorStyle]);
+}
+$colorStyleSlider = regsSlider(300, 348, #$regs.$regs_colorStyle_values, $colorStyle);
+$colorStyleSlider.$action = macro :: regsSetColorStyle();
+function regsSetColorStyle() {
+  $colorStyle = int($colorStyleSlider.$value);
+}
+
+with (regsLabel(300, 380, $regs.$regs_lensBlur_item)) {
+  .setArg(0, macro :: $regs.$regs_lensBlur_values[$lensBlur]);
+}
+$lensBlurSlider = regsSlider(300, 398, #$regs.$regs_lensBlur_values, $lensBlur);
+$lensBlurSlider.$action = macro :: regsSetLensBlur();
+function regsSetLensBlur() {
+  $lensBlur = int($lensBlurSlider.$value);
+}
+
+// ---- graphics engine (left column): OpenGL 3.3 now; the others are listed until they exist ----
+
+regsLabel(60, 450, $regs.$regs_renderer_item);
+$regsRendererButtons = [];
+for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
+  with ($regsRendererButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsRenderer", 170 + $i * 78, 450, 76, 18, $regs.$regs_renderer_values[$i], macro($i) :: regsSetRenderer($0))) {
+    if ($i > 0) {
+      .enabled = false;   // planned
+      .visibility = 0.35;
+    }
+  }
+}
+MAIN.$ui.setTooltip($regsRendererButtons[1], $regs.$regs_renderer_planned, 0, -1);
+function regsSetRenderer($index) {
+  if ($index > 0) return;
+  $renderer = $index;
+  MAIN.$ui.selectChoiceButton($regsRendererButtons[$renderer], "regsRenderer");
+}
+regsSetRenderer(0);
+
+function regsCurrentPreset() {
+  for ($i = 0; $i < #$regsPresets; ++$i) {
+    $p = $regsPresets[$i];
+    if ($p[0] == $regsShadowStep && $p[1] == $regsAntialiasStep && $p[2] == $anisotropy && $p[3] == $hdrLighting && abs($p[4] - $viewDistance) < 0.01 && abs($p[5] - $detailDistance) < 0.01) return $i;
+  }
+  return -1;
+}
+
+// highlights the matching preset (none for custom values) and names it in the label
+function regsUpdatePreset() {
+  $i = regsCurrentPreset();
+  MAIN.$ui.selectChoiceButton($i >= 0 ? $regsPresetButtons[$i] : null, $regsPresetArea);
+  $regsPresetName = $i >= 0 ? $regs.$regs_preset_values[$i] : $regs.$regs_preset_custom;
+}
+
+function regsApplyPreset($index) {
+  $p = $regsPresets[$index];
+  $regsShadowStep = $p[0];
+  $shadows = $shadowValues[$regsShadowStep];
+  $regsAntialiasStep = $p[1];
+  $antialiasing = $antialiasValues[$regsAntialiasStep] / 2;
+  $anisotropy = $p[2];
+  setHDRlighting($p[3]);
+  $viewDistance = $p[4];
+  $detailDistance = $p[5];
+  MAIN.$ui.setSliderPos($shadowsSlider, $regsShadowStep * 4.99 / 4.0);
+  MAIN.$ui.setSliderPos($antialiasSlider, $regsAntialiasStep * 3.99 / 3.0);
+  MAIN.$ui.setSliderPos($anisotropySlider, $anisotropy * 4.99 / 4.0);
+  MAIN.$ui.setSliderPos($viewDistanceSlider, $viewDistance);
+  MAIN.$ui.setSliderPos($detailDistanceSlider, $detailDistance);
+  regsUpdatePreset();
+}
+regsUpdatePreset();
+
+// the original save() (renamed regsBaseSave) stores its options, then the port's
+function save() {
+  regsBaseSave();
+  $settings.$regsViewDistance = $viewDistance;
+  $settings.$regsDetailDistance = $detailDistance;
+  $settings.$fpsLimit = $fpsValues[$fpsLimit];
+  MAIN.fpsLimit = $settings.$fpsLimit;
+  $settings.$regsColorStyle = $colorStyle;
+  $settings.$regsLensBlur = $lensBlur;
+  $settings.$regsRenderer = $renderer;
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer");
+}

@@ -1,0 +1,23 @@
+# Cities in Motion RE workspace and the ReGS source port.
+# The repository holds only our own work: the port's sources and data, the RE docs and the tools. Game files and
+# anything copied or generated from them stay out, so the repository can be published like OpenRCT2 (the player
+# brings the original game).
+
+# game files extracted from the archives, and decompiled pseudocode of the game's binaries
+/extracted/
+/decompiled/
+# sample maps and saves (game data and copies of the user's saves)
+/samples/
+# raw string dump of GSystem.dll
+/docs/gsystem-strings.txt
+
+# port build output and test runs (stand-in Documents folders with saves, settings, logs and screenshots)
+/port/build/
+/port/run/
+
+# editors and OS
+.vs/
+.vscode/
+*.user
+Thumbs.db
+desktop.ini

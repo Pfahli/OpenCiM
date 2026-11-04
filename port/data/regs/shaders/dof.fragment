@@ -1,0 +1,28 @@
+// ReGS distance lens blur (setting regsLensBlur 1-2): one direction of a separable 9-tap blur whose radius is the
+// circle of confusion of a thin lens focused on the camera target, |1/focus − 1/z|. Zoomed in, the distance falls out
+// of focus quickly; zoomed out, the whole view stays nearly sharp. The foreground blurs at a third of the rate.
+// custom0 = (texel step x, texel step y, max radius in texels, 0), custom1 = (near, far, focus distance, strength)
+uniform sampler2D texture0;  // colour
+uniform sampler2D texture1;  // depth of the same image
+uniform vec4 custom0;
+uniform vec4 custom1;
+varying vec4 texCoord;
+
+float eyeDepth(vec2 uv) {
+  float d = texture2D(texture1, uv).r * 2.0 - 1.0;
+  return 2.0 * custom1.x * custom1.y / (custom1.y + custom1.x - d * (custom1.y - custom1.x));
+}
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  float z = eyeDepth(uv), f = custom1.z;
+  float c = z > f ? 1.0 / f - 1.0 / z : (1.0 / z - 1.0 / f) * 0.35;
+  float r = clamp(c * custom1.w, 0.0, 1.0) * custom0.z;
+  vec2 o = custom0.xy * (r * 0.25);
+  vec4 col = texture2D(texture0, uv) * 0.2270270270;
+  col += (texture2D(texture0, uv + o) + texture2D(texture0, uv - o)) * 0.1945945946;
+  col += (texture2D(texture0, uv + o * 2.0) + texture2D(texture0, uv - o * 2.0)) * 0.1216216216;
+  col += (texture2D(texture0, uv + o * 3.0) + texture2D(texture0, uv - o * 3.0)) * 0.0540540541;
+  col += (texture2D(texture0, uv + o * 4.0) + texture2D(texture0, uv - o * 4.0)) * 0.0162162162;
+  gl_FragColor = col;
+}
