@@ -55,6 +55,21 @@ script::Object* simCitizenController(GridObj* grid, int citizen);
 // with <item> and <model> set), or null for other items.
 script::Object* simStopController(GridObj* grid, int item);
 
+// ---- line editing (engine/sim_lines.cpp), for the add-stop tool ----
+
+// the TRANSPORTLINE_* type of a gsTransportLine of the simulation, −1 for anything else
+int simLineType(script::Object* line);
+// gsTransportLine::addStop(item, isTemp) (L:0x081c2fa0): the ring position of the new stop (0 when it closed the ring),
+// −1 when refused (the item is on the line already, or no leg to it has a path on a closed ring)
+int simLineAddStop(script::VM& vm, script::Object* line, int item, bool temp);
+// the items of the line's temporary stops (node flag 1)
+std::vector<int> simLineTempStopItems(script::Object* line);
+// gsTransportLine::removeTempStops (L:0x081c2ee0)
+void simLineRemoveTempStops(script::VM& vm, script::Object* line);
+// finishTool case 9: the temporary stops become permanent, or all go when a leg to or from one has no path; the
+// items to unselect are appended; true when a stop was added
+bool simLineCommitTempStops(script::VM& vm, script::Object* line, std::vector<int>& unselect);
+
 // ---- engine hooks ----
 
 // gsGridObject.setPathFlags / addPath, gsTransportLines / gsTransportLine / gsTransportVehicle natives.

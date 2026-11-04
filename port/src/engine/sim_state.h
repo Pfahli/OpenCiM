@@ -20,6 +20,7 @@ namespace regs::engine {
 
 class Display;
 struct SimState;
+class TransportObj;
 
 namespace sim {
 
@@ -108,6 +109,9 @@ struct LineStopState {
   int docked = -1;              // vehicle in the doors-open window
   int waiting = 0, mood[3] = {0, 0, 0};  // citizens waiting here, and those in each mood tier (node +0x58..+0x64)
   std::vector<int> transfers;   // global node ids reachable by a transfer after riding this node (§6.1)
+  // the route strip of the segment (gsTransportSegment::updateMesh, engine/sim_paths.cpp), drawn while the line is visible
+  std::shared_ptr<render::GpuMesh> pathMesh;
+  uint64_t pathKey = 0;
 };
 
 struct VehicleState {
@@ -126,6 +130,7 @@ struct VehicleState {
   bool broken = false;
   bool brokenHalted = false;    // agent flag 0x10000: broken down and standing at the next stop
   float breakdownClock = 0;     // +0x18c: one breakdown roll per second
+  bool deleted = false;         // destroyed (sold, moved to the depot): a tombstone, so vehicle indices stay valid
 };
 
 struct LineState {
@@ -136,6 +141,8 @@ struct LineState {
   std::vector<LineStopState> stops;
   std::vector<int> vehicles;
   int firstNode = 0;            // global id of stops[0] (line nodes are counted across all lines in file order)
+  bool deleted = false;         // destroyed (deleteLine): a tombstone without stops or vehicles, not saved
+  std::vector<render::GpuMaterial> pathMaterials, tempPathMaterials;  // the route strips' materials as last drawn
 };
 
 // ---- citizens (docs/simulation/citizens.md) ----
@@ -235,7 +242,26 @@ struct WalkGrid {
   }
 };
 
-// ---- helpers shared by the two files (engine/sim.cpp) ----
+// ---- helpers shared by the files (engine/sim.cpp) ----
+
+SimState* simOf(GridObj* g);
+TransportObj* transport(script::Object* o);
+LineState* lineOf(script::Object* o);
+VehicleState* vehicleOf(script::Object* o);
+int newMover(SimState& s);
+bool lineActive(script::VM& vm, const LineState& line);
+bool spawnLineVehicle(SimState& s, VehicleState& v, LineState& line, int at);
+// the stop vector entry of a stop item (false for other items or one already registered)
+bool registerStop(script::VM& vm, GridObj* grid, SimState& s, size_t i);
+// FUN_10110c10: a stop's platform nodes for its line
+void stopPlatforms(script::VM& vm, GridObj* grid, SimState& s, const LineState& line, LineStopState& st);
+// FUN_10114200: the travel cost a → b (0 = unreachable); with out, the leg is stored there
+float segmentBetween(SimState& s, const LineState& line, const LineStopState& a, const LineStopState& b, LineStopState* out);
+// the segment of stop k to the next one (cleared at the end of an open line); true when reachable
+bool computeSegment(SimState& s, LineState& line, size_t k);
+// platforms and every segment of a line; the unreachable count
+int relinkLine(script::VM& vm, GridObj* grid, SimState& s, LineState& line);
+void syncVehicleFields(const SimState& s);
 
 // MSVC rand(): the engine's random stream
 int rnd(SimState& s);
@@ -376,6 +402,7 @@ struct SimState {
   int walkFailKind[2] = {};  // debug: failed walk searches that hit the expansion cap / found no connection
   int breakdowns = 0, evacuated = 0, replanned = 0, crashes = 0;
   int walkPaths = 0, walkFailed = 0, walkCodes[4] = {};  // debugging: q-cells of the walked paths by walk code
+  bool tearingDown = false;  // a new map replaces this state: its script objects go without touching it
 };
 
 // script objects of the transport classes, pointing back into the state
@@ -384,6 +411,15 @@ class TransportObj : public script::Object {
   using Object::Object;
   std::weak_ptr<SimState> sim;
   int index = -1;  // line, vehicle, stop, citizen or character index
+  // a line or vehicle leaves the simulation (engine/sim_lines.cpp: deleteLine, selling, the depot)
+  void onDestroy(script::VM& vm) override;
 };
+
+// gsTransportLines.createLine, gsTransportLine stop and vehicle editing, active, statistics (engine/sim_lines.cpp)
+void registerLineNatives(script::VM& vm);
+// the route strips of the visible lines (engine/sim_paths.cpp)
+void collectLinePaths(Display& d, script::VM& vm, SimState& s, const render::Vec3& eye, float farZ, std::vector<render::DrawItem>& items);
+// gsGaugeCtrl, gsVideo_OGL.renderViewport, gsTextureTarget_OGL.resetTexture (engine/ui_lines.cpp)
+void registerLinePanelNatives(script::VM& vm);
 
 }  // namespace regs::engine

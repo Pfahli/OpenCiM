@@ -607,6 +607,11 @@ stop); `passengerCount--`; no `passengersTransported` credit; flag 0x4000000; st
 | `gsGridVehicleController.getCitizen()` | owner citizen of the agent (`agent+0x30`), for cars | `0x10107280.c` |
 | `getID()` | the agent's 16-bit colour seed (`agent+0x80`) | `0x10107bd0.c` |
 | `playSound(s)` | play at the agent | `0x10107b60.c` |
+| `line.deleteStop(i)` / `moveStop(i, j)` | §3.3 by ring position; `moveStop` swaps the nodes at positions i and j when both exist (`exchangeStops`) | `L:0x081c2f30`, `L:0x081c2790`, `L:0x081c24a0` |
+| `line.active = b` | the 0x10000 module bit; each vehicle's statusUpdated frees its agent and fires onUnspawn (§4.1) | `L:0x081b83e0`, `0x10110840.c` |
+| `line.calculateCoverage()` / `countConnectedStops(mask)` | above; nodes whose transfer list holds a node of an active line of the mask | `L:0x081b7670`, `L:0x081b9d80` |
+
+The line panel, the add-stop tool (mode 9), the route strips and the vehicle shop: `docs/ui/lines.md`.
 
 Events: `onSpawn()`, `onUnspawn()`, `onGetPassenger(citizen, waitTime, alreadyPaid)`, `onBroken()`, `onFixed()`,
 `onCannotReach(pos)`, `onJammed()` on vehicles; `onMoodChange(mood)` on stops; `onCrashBegin(vehicle)` /

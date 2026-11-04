@@ -12,10 +12,10 @@ with the live simulation (zlib-compressed like the original); sandbox traffic an
 
 ## 1. Construction tools (the biggest gap)
 
-The grid player only implements the select mode. All tool modes of `gsGridPlayer` need porting (`docs/ui/selection.md`
-§4.1 lists them; the code is `L:0x08190700` createRoadBlock, `L:0x081926b0` createTramBlock, `L:0x08195400`
-createTrackBlock, `L:0x08196b00` placeObject, `L:0x08198b10` removeObject, `L:0x0819a3e0` finishTool and the
-mouseMove* functions; *RE needed*, most of it):
+Spec: `docs/ui/construction.md`. The tool framework is done (`engine/tools.h`): the mode dispatch of mouseMove /
+mouseDown / mouseUp / finishTool / cancelTool, preview items, replaced items, `checkConflict`, `mountObject`, the
+price lists the hover script reads, and the green/red highlight overlay; the select mode runs on it. The game's
+modes (the editor's roads, terrain and paint tools come later):
 - [ ] Lay roads, alleys, tram tracks, metro tracks (ground, elevated, underground), bridges and tunnels, with the
   slope, conflict and price checks (`canApplyTool`, `getNewItems`/`getReplacedItems` for the cost preview).
 - [ ] Place stops and stations: bus and tram stops, metro stations and transitions, docks, heliports
@@ -32,12 +32,18 @@ mouseMove* functions; *RE needed*, most of it):
 
 ## 2. Lines and vehicles
 
-- [ ] Create, edit and delete lines: add, move and delete stops, line colour (`docs/simulation/transport.md`; natives
-  `createLine`, `addVehicle`, `deleteStop`, `moveStop` are named in the simulation's next steps).
-- [ ] Buy, sell and assign vehicles (vehicle panel), vehicle condition and repairs.
-- [ ] `routeExists`, `countStops`, `countLines` (stubs today; scenarios and the UI use them).
-- [ ] Check every panel against the original: the line list and vehicle list appeared empty on their first (bus) tab
-  with Cim2's tram line loaded; check the tram tab, the line statistics and the vehicle management panel.
+- [x] Create, edit and delete lines (`docs/ui/lines.md`, `engine/sim_lines.cpp`): new lines, the add-stop tool
+  (`GRIDMODE_ADD_STOP`, `engine/tool_addstop.cpp`: hover over a stop or its bubble, click, close the ring), moving
+  and deleting stops, pausing (vehicles leave the map), deleting lines; new lines route, run and survive a save and
+  reload (Vienna, Berlin bus and tram lines checked). Route strips on the map (`engine/sim_paths.cpp`), stop bubbles
+  (`transportStopCreated`). Still open: boat strips smoothed as the original, the strips' coverage counters,
+  `gsGridItemController.setColor` (stops in the company colour), the bubbles' overlap layout.
+- [x] Buy, sell and assign vehicles: shop with the turning 3D previews (`renderViewport`), depot, to/from the line,
+  selling; usage and condition gauges (`gsGaugeCtrl`); condition and repairs are script-side and run.
+- [x] `routeExists`, `countStops`, `countLines`, `calculateCoverage`, `countConnectedStops`.
+- [x] Panels: the empty first tab was right (Cim2 has no bus line); the tram tab, line statistics and vehicle lists
+  work. Cim2's vehicle panel stops on its community-mod vehicles unless `--community-addons` is given (as the
+  original without those mods).
 
 ## 3. The city over time
 

@@ -578,17 +578,32 @@ void writeCharacters(VM& vm, SimState& s, Plan& p, Out& o) {
 }
 
 // ---- 0x07060000 ----
+// the 1-based record of every line vehicle in the order the lines write them (deleted lines and vehicles have none);
+// the citizens' vehicle refs and the loader count vehicles that way
+std::vector<uint32_t> vehicleRecords(const SimState& s) {
+  std::vector<uint32_t> rec(s.vehicles.size(), 0);
+  uint32_t next = 0;
+  for (const LineState& line : s.lines)
+    if (!line.deleted)
+      for (int vi : line.vehicles) rec[size_t(vi)] = ++next;
+  return rec;
+}
+
 void writeLines(VM& vm, SimState& s, Plan& p, Out& o) {
   Names models;
-  uint32_t vehicles = 0;
-  for (const VehicleState& v : s.vehicles) {
-    ++vehicles;
-    for (const Unit& u : v.units)
-      if (u.model >= 0) models.of(idName(vm, s, u.model));
+  uint32_t vehicles = 0, lines = 0;
+  for (const LineState& line : s.lines) {
+    if (line.deleted) continue;
+    ++lines;
+    for (int vi : line.vehicles) {
+      ++vehicles;
+      for (const Unit& u : s.vehicles[size_t(vi)].units)
+        if (u.model >= 0) models.of(idName(vm, s, u.model));
+    }
   }
   size_t root = o.open(0x07060000);
   o.u32(uint32_t(models.list.size()));
-  o.u32(uint32_t(s.lines.size()));
+  o.u32(lines);
   o.u32(vehicles);
   o.u32(uint32_t(s.lineNodes.size()));
   {
@@ -597,6 +612,7 @@ void writeLines(VM& vm, SimState& s, Plan& p, Out& o) {
     o.close(b);
   }
   for (const LineState& line : s.lines) {
+    if (line.deleted) continue;
     size_t b = o.open(0x07060200);
     Object* lo = line.object.get();
     o.f32(line.headway);
@@ -658,6 +674,7 @@ void writeCitizens(VM& vm, SimState& s, Plan& p, Out& o) {
   for (const int* stat : {s.walkCount, s.driveCount, s.travelCount, s.canTravelCount, s.priceTooHighCount})
     for (int k = 0; k < 7; ++k) o.i32(stat[k]);
   auto item = [&p](int i) { return p.item(i); };
+  std::vector<uint32_t> vehicleRec = vehicleRecords(s);
   for (const Citizen& c : s.citizens) {
     if (!c.alive) continue;
     size_t b = o.open(0x07070100);
@@ -671,7 +688,7 @@ void writeCitizens(VM& vm, SimState& s, Plan& p, Out& o) {
     const auto* agents = c.car >= 0 && size_t(c.car) < p.moverAgents.size() ? &p.moverAgents[size_t(c.car)] : nullptr;
     o.u32(agents && !agents->empty() ? (*agents)[0] : 0);
     o.u32(c.lineNode >= 0 ? uint32_t(c.lineNode + 1) : 0);
-    o.u32(c.vehicle >= 0 ? uint32_t(c.vehicle + 1) : 0);
+    o.u32(c.vehicle >= 0 && size_t(c.vehicle) < vehicleRec.size() ? vehicleRec[size_t(c.vehicle)] : 0);
     o.u32(item(c.home)), o.u32(item(c.work)), o.u32(item(c.start)), o.u32(item(c.target));
     o.u32(uint32_t(std::max(0, c.charModel)));
     o.u32(c.carModel >= 0 ? uint32_t(c.carModel) : 0xffffffffu);

@@ -21,3 +21,6 @@
 *.user
 Thumbs.db
 desktop.ini
+
+# agent worktrees
+/.claude/worktrees/
