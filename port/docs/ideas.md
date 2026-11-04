@@ -23,6 +23,19 @@ it is, what already exists, and the open decisions. Order is not priority.
     one pass.
   * Open decisions: which formats first (SBS and anaglyph are the cheapest to build and test), a comfort limit for
     the depth at high zoom, and how the mouse picks in SBS (one half as the input view).
+* **VR mode for Meta Quest headsets.** Play the city as a table-top model or walk through it at street level.
+  * How: OpenXR, which the Quest supports over Quest Link / Air Link and Steam Link on a PC; a native Quest build is
+    a later, bigger step (Android/ARM, see Platforms). Builds on the stereoscopic mode (two eye cameras, shared
+    shadow maps, per-eye effects) but takes the eye poses from the headset at its refresh rate (72-120 Hz), so the
+    renderer must hold that frame rate or use the runtime's reprojection.
+  * Views: a table-top view (the map as a model in front of the player, scaled and turned with the controllers) suits
+    the game best; a street-level view (stand at a stop, ride along with a vehicle, using the follow camera) as an
+    extra.
+  * Input: the controllers as laser pointers for the HUD and the tools (the HUD on a panel in the scene), grab to
+    move and scale the map; hand tracking later.
+  * Sound: the 3D sound follows the head pose (the listener), and headphone (HRTF) output fits VR.
+  * Open decisions: which views first, comfort options (snap turning, vignette at street level), how the 2D HUD and
+    dialogs move into the scene, and the minimum PC performance at Quest resolutions.
 
 ## Gameplay and comfort
 
