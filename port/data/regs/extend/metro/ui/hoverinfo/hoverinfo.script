@@ -26,3 +26,16 @@ event $player.onHoverConstruct::() {
     }
   }
 }
+
+// Bus lines at tram stops (port QoL, docs/ui/lines.md §6): the hover pin of a stop the add-stop tool would add takes
+// the colour of the tool's line, not of the stop's own type (a tram stop hovered for a bus line is pinned blue, like
+// the line's other stops). Runs after the original onHoverAddStop, which made the pin (visibility 0.3).
+event $player.onHoverAddStop::($stop) {
+  if ($stop && $player.toolLine) {
+    if (defined $stop.$stopIndex) {
+      if ($stop.$stopIndex) {
+        if ($stop.$stopIndex.visibility < 1.0) $stop.$stopIndex.background = MAIN.$linepanel.$pinColors[$player.toolLine.type];
+      }
+    }
+  }
+}

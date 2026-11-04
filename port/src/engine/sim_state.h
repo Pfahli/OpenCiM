@@ -366,6 +366,7 @@ struct SimState {
   float birdAcc = 0, animalAcc = 0;
   int birdCursor = 0, animalCursor = 0;
   int followed = -1, followShots = 0, followFrame = 0;  // REGS_DEBUG_FOLLOW: the vehicle, a screenshot burst
+  std::string followShotName = "follow-turn-";             // the burst's file names
   std::vector<std::vector<sim::Unit>> roadConsists;
   int roadTarget = 0, roadLive = 0, trainsLive = 0;
   int extraLive = 0;               // background trips running for the traffic density

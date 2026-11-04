@@ -55,6 +55,12 @@ script::Object* simCitizenController(GridObj* grid, int citizen);
 // with <item> and <model> set), or null for other items.
 script::Object* simStopController(GridObj* grid, int item);
 
+// Port QoL, bus lines at tram stops (docs/ui/lines.md §6): the road lane of a tram stop item (GRID_ITEM_*_TRAM) where
+// a bus halts, −1 when the stop does not sit in a street (own track, an avenue's middle strip) or is no tram stop.
+int simBusPlatformAtTramStop(script::VM& vm, GridObj* grid, int item);
+// the port option (settings regsBusAtTramStops, default on) that lets the add-stop tool give bus lines tram stops
+bool simBusAtTramStops(script::VM& vm);
+
 // ---- line editing (engine/sim_lines.cpp), for the add-stop tool ----
 
 // the TRANSPORTLINE_* type of a gsTransportLine of the simulation, −1 for anything else

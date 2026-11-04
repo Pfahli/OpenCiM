@@ -22,6 +22,7 @@
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/scene3d.h"
+#include "engine/settings.h"
 #include "engine/sim_graph.h"
 #include "engine/sim_state.h"
 
@@ -817,7 +818,7 @@ bool reverseConsist(SimState& s, VehicleState& v, LineState& line, int k, int ar
   v.extraNodes = 0;
   claimBody(s, v.mover);
   if (debugSim()) LOG_INFO("sim: vehicle %d turns round at stop %d", int(&v - s.vehicles.data()), k);
-  if (s.followed == int(&v - s.vehicles.data())) s.followShots = 16;  // REGS_DEBUG_FOLLOW films the turn
+  if (s.followed == int(&v - s.vehicles.data())) s.followShots = 16, s.followShotName = "follow-turn-";  // films the turn
   return true;
 }
 
@@ -933,7 +934,17 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
   }
   if (arrived && (b.docked < 0 || b.docked == vi || v.halted)) {
     float D = std::clamp(line.headway + 4 - b.sinceDeparture, 4.0f, 15.0f);
-    if (!v.halted && debugSim()) LOG_INFO("sim: vehicle %d halts at stop %d (dwell %.1f s)", vi, v.stopB, D);
+    if (!v.halted && debugSim()) LOG_INFO("sim: vehicle %d (line %d) halts at stop %d (dwell %.1f s)", vi, v.line, v.stopB, D);
+    // debugging: REGS_DEBUG_FOLLOW films the followed bus halting at a tram stop (docs/ui/lines.md §6), and
+    // REGS_DEBUG_CAMERA every vehicle halting at the camera's stop item (halt-<line type>-<burst>-<n>.png)
+    if (!v.halted && (s.followShots == 0 || line.type == 0)) {  // a bus takes over another vehicle's burst
+      static const int camItem = std::getenv("REGS_DEBUG_CAMERA") ? std::atoi(std::getenv("REGS_DEBUG_CAMERA")) : -1;
+      static int bursts = 0;
+      if (s.followed == vi && line.type == 0 && b.stop && fieldInt(vm, b.stop.get(), u"type", 0) == 1)
+        s.followShots = 16, s.followShotName = "follow-bustram-";
+      else if (camItem >= 0 && b.item == camItem)
+        s.followShots = 16, s.followShotName = "halt-" + std::to_string(line.type) + "-" + std::to_string(++bursts) + "-";
+    }
     v.halted = true;
     v.stopTime += dt;
     if (v.boardingReserved != 0) {  // citizens walking to the doors keep them open (0x101152a0.c:323-330)
@@ -945,7 +956,9 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
     }
     v.doorPos = v.stopTime < D ? doors(v.stopTime, D) : -1;
     if (v.stopTime >= D) {  // depart
-      if (debugSim()) LOG_INFO("sim: vehicle %d departs stop %d after %.1f s", vi, v.stopB, v.stopTime);
+      if (debugSim())
+        LOG_INFO("sim: vehicle %d departs stop %d after %.1f s (%d aboard, %d boarded here so far, %d still waiting)", vi,
+                 v.stopB, v.stopTime, v.passengerCount, b.passengersTransported, b.waiting);
       if (b.docked == vi) b.docked = -1;
       if (b.docked < 0) b.sinceDeparture = 0;
       v.halted = false;
@@ -1348,6 +1361,40 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   return true;
 }
 
+// Port QoL (docs/ui/lines.md §6): the road lane where a bus halts at a tram stop, −1 when no bus can halt there. A stop
+// item owns no lanes; the road piece and the tram track piece under it do. Every road piece has a road STOP lane
+// (0x340 small, 0x540 large/avenue: its curb lane at the piece's middle, where a bus stop item makes buses halt), and
+// the tram track piece a tram STOP lane at the stop's platform. A tram stop in a street (small and large roads, straight
+// and diagonal) has its tram running in the road's curb lane: the road STOP lane and the tram STOP lane coincide (same
+// ends, same direction), so a bus halts where the tram does, at the platform. On its own track (grass, a tram-only
+// track) there is no road lane in the footprint; in an avenue's middle strip the road STOP lanes are the carriageways'
+// curb lanes, away from the platform. Both have no coincident pair and do not qualify. Only lanes whose chord midpoint
+// lies in the stop's own footprint count, so a neighbouring piece's or the other carriageway's lane is never taken.
+int busPlatformInFootprint(const SimState& s, int x, int z, int sx, int sz, const Vec3& centre) {
+  const LaneGraph& G = s.graph;
+  std::vector<int> found;
+  G.query(x, z, sx, sz, kPathStop, found);
+  std::vector<int> road, tram;
+  for (int n : found) {
+    const LaneNode& L = G.nodes[size_t(n)];
+    if (L.cellX < x || L.cellX >= x + sx || L.cellZ < z || L.cellZ >= z + sz || (L.flags & (kPathDeleted | 0x4000000))) continue;
+    if ((L.flags & kPathClassMask & ~0x600u) == kPathRoad && !(L.flags & kPathPark)) road.push_back(n);
+    else if ((L.flags & kPathClassMask) == kPathTram) tram.push_back(n);
+  }
+  int best = -1;
+  float bestD = 0;
+  for (int r : road)
+    for (int t : tram) {
+      const LaneNode &a = G.nodes[size_t(r)], &b = G.nodes[size_t(t)];
+      Vec3 d0 = a.p0 - b.p0, d1 = a.p1 - b.p1;
+      if (d0.x * d0.x + d0.z * d0.z > 0.25f || d1.x * d1.x + d1.z * d1.z > 0.25f || std::fabs(d0.y) > 1 || std::fabs(d1.y) > 1) continue;
+      Vec3 m = (a.p0 + a.p1) * 0.5f - centre;
+      float d = m.x * m.x + m.z * m.z;
+      if (best < 0 || d < bestD) best = r, bestD = d;
+    }
+  return best;
+}
+
 // FUN_10110c10: the platform nodes of a stop for its line's transport class (the primary STOP node nearest to the
 // item centre, and its ALTERNATIVE_STOP node if the stop has one)
 void stopPlatforms(VM& vm, GridObj* grid, SimState& s, const LineState& line, LineStopState& st) {
@@ -1370,6 +1417,10 @@ void stopPlatforms(VM& vm, GridObj* grid, SimState& s, const LineState& line, Li
   Vec3 c{(float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs, float(itemHeight(g, it, uint32_t(tf), ty)) * cs / 256.0f,
          (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs};
   if (line.type == 3 || line.type == 4) c.y = -1.25f * cs;
+  if (line.type == 0 && ty >= 10 && ty <= 12) {  // port: a bus at a tram stop (the add-stop tool admits street ones)
+    st.platform = busPlatformInFootprint(s, it.x, it.z, sx, sz, c);
+    return;
+  }
   st.platform = s.graph.nearest(c, mask);
   // FUN_10110c10 with alt: the ALTERNATIVE_STOP node, if the stop has one (not another stop's)
   st.altPlatform = s.graph.nearest(c, (mask & ~kPathStop) | kPathAlternativeStop);
@@ -1683,6 +1734,14 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
   for (auto& st : s->stops)
     if (auto* t = transport(st.get())) t->sim = s;
   syncVehicleFields(*s);
+  if (debugSim())  // which tram stops a bus line may take (docs/ui/lines.md §6)
+    for (const auto& [item, si] : s->stopOfItem) {
+      if (fieldInt(vm, s->stops[size_t(si)].get(), u"type", -1) != 1) continue;
+      const auto& it = grid->data->items[size_t(item)];
+      int lane = simBusPlatformAtTramStop(vm, grid, item);
+      LOG_INFO("sim: tram stop item %d (%s at %d,%d): %s", item, grid->data->types[it.type].c_str(), it.x, it.z,
+               lane >= 0 ? ("buses halt on lane " + std::to_string(lane)).c_str() : "no road lane at the platform, not for buses");
+    }
 }
 
 void tickSimulation(VM& vm, GridObj* grid, float dt) {
@@ -1709,6 +1768,19 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
         }
         type = -1;
       }
+  }
+  // debugging: REGS_DEBUG_CAMERA=<item> puts the camera on that item once, 30 ticks into the game (for scripted clicks)
+  if (const char* c = std::getenv("REGS_DEBUG_CAMERA"); c && *c) {
+    static int ticks = 0;
+    int item = std::atoi(c);
+    if (++ticks == 30 && item >= 0 && size_t(item) < grid->data->items.size()) {
+      Vec3 p = itemCentre(vm, grid, item);
+      try {
+        if (Value* main = vm.findGlobal(u"MAIN"))
+          vm.call(vm.getMember(vm.getMember(*main, u"$gameUI"), u"setCameraPos"), {Value::real(p.x), Value::real(p.z), Value::boolean(true)});
+      } catch (...) {
+      }
+    }
   }
   // test harness: REGS_TEST_TERMINUS=<line> removes (gridEditRemoveItem) the stop items of that line except its first
   // two after 300 ticks, so the line's trains must turn round at both ends (transport.md §4.4)
@@ -2021,8 +2093,9 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
   if (!s) return;
   collectCharacters(d, vm, *s, eye, viewProj, farZ, items);
   collectLinePaths(d, vm, *s, eye, farZ, items);
-  if (s->followShots > 0 && ++s->followFrame % 12 == 0)  // the followed vehicle turned round: a screenshot burst
-    d.requestScreenshot("follow-turn-" + std::to_string(16 - s->followShots--) + ".png");
+  // the followed vehicle turned round or halts: a screenshot burst (every 12 frames; every 4 for the short halts)
+  if (s->followShots > 0 && ++s->followFrame % (s->followShotName.rfind("halt-", 0) == 0 ? 4 : 12) == 0)
+    d.requestScreenshot(s->followShotName + std::to_string(16 - s->followShots--) + ".png");
   forEachUnit(*s, [&](const Mover& m, int, const Unit& u, const PlacedPose& p) {
     Vec3 e = p.position - eye;
     if (dot(e, e) > farZ * farZ) return;
@@ -2073,6 +2146,22 @@ Object* simStopController(GridObj* grid, int item) {
   auto it = s->stopOfItem.find(item);
   return it == s->stopOfItem.end() ? nullptr : s->stops[size_t(it->second)].get();
 }
+
+int simBusPlatformAtTramStop(VM& vm, GridObj* grid, int item) {
+  SimState* s = simOf(grid);
+  if (!s || !grid->data || item < 0 || size_t(item) >= grid->data->items.size()) return -1;
+  const GridData& g = *grid->data;
+  const auto& it = g.items[size_t(item)];
+  auto t = it.type < g.types.size() ? grid->templates.find(g.types[it.type]) : grid->templates.end();
+  if (it.removed || t == grid->templates.end()) return -1;
+  int ty = fieldInt(vm, t->second.get(), u"type", 0);
+  if (ty < 10 || ty > 12) return -1;
+  int sx = 1, sz = 1;
+  Vec3 c = itemCentre(vm, grid, item, &sx, &sz);
+  return busPlatformInFootprint(*s, it.x, it.z, sx, sz, c);
+}
+
+bool simBusAtTramStops(VM& vm) { return settingNumber(vm, u"regsBusAtTramStops", 1.0f) != 0.0f; }
 
 void forEachSimVehicle(GridObj* grid, const std::function<void(const SimVehicleView&)>& fn) {
   SimState* s = simOf(grid);
