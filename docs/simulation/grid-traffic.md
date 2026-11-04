@@ -305,8 +305,90 @@ Visual and audio only (*obs*):
   for 15 s at each new year.
 * Animation (template `doorOpenStart/Len` 0x398/0x39c, `doorCloseStart/Len` 0x3a0/0x3a4): without item flag 0x1000 a
   loop (`phase = (phase + dt) mod openLen`). With 0x1000 a door: it opens over 1 s while any of the item's nodes with
-  flag 0x1000 has an occupant, and closes over 1 s otherwise (`:63-121`).
+  flag 0x1000 has an occupant, and closes over 1 s otherwise (`:63-121`; §5.1.1).
 * Ambient sounds `engineSound` 0x37c / `moveSound` 0x380 start when `eyeDist < sound.range` (`:122-140`).
+
+#### 5.1.1 Door items (level crossings)
+
+A **door item** is an item with flag 0x1000 and a template `doorOpenLen ≠ 0`. Item flag 0x1000 is the template flag
+`GRID_ITEM_CROSS_TRACK`: the item ctor sets `item+0x48 = ctorFlags | template.flags` (L:0x08187fc0, W+0x20c), so the
+map files store 0 and the flag comes from the template. Node flag 0x1000 is `GRID_PATH_TRAIN_TRACK`. Two vanilla
+templates have `GRID_ITEM_CROSS_TRACK`, both `double_cross_small` (4×4 cells, small road over a double train track,
+`GRID_ITEM_DISABLE_TRAM`): `metro/objects/rail-props/` (registered by every road envset as
+`track_double_cross_small`, `default-roads.script:179`) and the unused `metro/objects/tracks/` copy (no skeleton, no
+door fields, so not a door). The add-on station tracks set `GRID_PATH_TRAIN_TRACK` only. So the only door item is the
+**level crossing** (Vienna 2, Berlin 6, Cim2 7 placed); trams never trigger it (tram track is 0x800). *obs*
+
+The crossing (`rail-props/double_cross_small.script`): `loadSkeleton("crossing_scene.skeleton")`, slot `default` =
+`crossing_anim.animation` (one take of 2.1667 s, speed 1.0); `doorOpenStart = 0`, `doorOpenLen = 30/30`,
+`doorCloseStart = 35/30`, `doorCloseLen = 30/30`; the road paths `t-a*`, `t-b*` are `INTERSECTION | ROAD_SMALL`, the
+track paths `t-c0/c1/d0/d1` `INTERSECTION | TRAIN_TRACK`; `moveSound` = "Level crossing warning bell-1.wav",
+volume 0.5, min 50, max 300. The clip turns the bones `crossing_barrier01/02` (children of `crossing_main`) about
+their X axis from 0° (bind pose: barrier up) to 90° (down, across the road) over 0..0.83 s, holds 90° to 1.167 s, and
+turns back to 0° at 2.167 s. *obs* (asset decode); up/down *obs* in the port's renders.
+
+```
+doorUpdate(item, dt):                       gsGridItem::move L:0x08182b10.c:96-167 (W:0x100eb5a0.c:63-121)
+  T = item.template
+  if T.doorOpenLen == 0 or (bucket.eyeDist >= 300 and item.flags & 0x4000000):
+      if T.moveSound and item.sound: free(item.sound); item.sound = 0            // :96-104
+      goto ambient
+  if item.flags & 0x1000 == 0: loop animation (§5.1)
+  for node in item.nodes:                                                        // :122
+      if node.flags & 0x1000 and node.occupant:                                  // a train holds a track node
+          p = item.phase; if p < 0: p += 1                                      // a closing door turns round
+          item.phase = min(p + dt, 1)
+          animate(item, T.doorOpenStart + item.phase·T.doorOpenLen)
+          if T.moveSound and !item.sound and bucket.eyeDist < T.moveSound.maxDistance:   // :136-144
+              item.sound = T.moveSound.createInstance(grid); setRelative(false); position = item centre
+              setPlaying(true, loop)
+          goto ambient
+  if item.phase > 0: item.phase -= 1                                             // an opening door turns round
+  item.phase -= dt
+  if item.phase <= -1: item.phase = -1; animate(item, -1)                        // rest: the skeleton goes
+  else: animate(item, T.doorCloseStart − item.phase·T.doorCloseLen)
+  if item.sound: free(item.sound); item.sound = 0                                // :166-167
+ambient: engineSound loop as in §5.1 (:169-179; the crossing has none)
+
+animate(item, t):                           gsGridItem::animate L:0x08181ff0 (grid-items.md §3.3)
+  if bucket.eyeDist >= 400 or t == −1: remove the item's skeleton clone (bind pose)
+  else: clone the template skeleton if needed; first slot weight 1, time t·speed; animateBones
+```
+*obs*. Meaning:
+* **Trigger:** the occupant slot (+0x18) of the crossing's own track nodes, nothing else. Agents claim nodes ahead
+  of them (§6.3: `look = speed/(6·braking) + 1 + L` nodes, braking 0.1–0.12 for the vanilla trains), so the barrier
+  starts to lower when the train's claims reach the crossing, a few seconds before it arrives, and rises as soon as
+  the last car released the last track node. There is no distance check and no timer.
+* **Timing:** phase 0→1 in 1 s of grid time (clip 0..1 s: barriers down), held at clip 1.0 while occupied; then
+  phase 0→−1 in 1 s (clip 1.167..2.167 s: barriers up), then the bind pose. A direction change mid-way continues
+  from the mirrored phase (±1), so the barrier never jumps far.
+* **Initial state quirk:** the ctor sets `phase = 0`, which is the start of the close clip. The first update of each
+  crossing (when its bucket first becomes active) therefore poses it at clip 1.167 s (barriers down) and raises the
+  barriers over the next second. At game speed 0 the grid ticks with dt = 0 (§2), so a game loaded paused shows the
+  crossings near the camera with their barriers down until it is unpaused (*inf* from the code; the port does the
+  same, not checked against the original).
+* **Only near the camera:** the update runs in active buckets only (§3.1); elsewhere the phase is frozen and the
+  sound is freed when the bucket goes inactive.
+* **Road traffic:** the barrier does not block anything. No code sets node flag 0x20000000 at run time (its only
+  writer is `gsGridPlayer::createTrackBlock`, the track tools' end block; readers `gsGridPathSegment::isFree`
+  L:0x08175700/0x081757e0). Cars stop because the crossing's road nodes cross its track nodes: `canEnter` refuses a
+  node whose conflict list holds an occupied node (§6.3), and the road nodes are no-stop junction nodes (0x10), so a
+  car waits before the crossing, never on it, exactly while a train holds a track node, and it may drive while the
+  barrier is still rising. The reverse holds too: a train cannot claim the track nodes while a car is on the crossing.
+* **Sound:** the bell (`moveSound`) loops at the item centre from the first update with an occupied track node while
+  the bucket's eyeDist < 300 (its maxDistance), at volume 0.5, pitch 1, linear rolloff 50..300; the sound's own tick
+  stops it 0.5 s out of range and starts the loop again in range (audio §6.5). It is freed when the door starts to
+  close, so the bell stops as the barriers rise.
+
+Port: `port/src/engine/sim_doors.cpp` (phase and clip time per door item, every sub-step and with dt = 0 at speed 0),
+`grid_items.cpp` `collectSkinnedItems` (the item's own pose), `sim_sounds.cpp` `tickDoors` (the bell). The active
+bucket is approximated by the horizontal eye distance < 450 (the same stand-in as the pedestrians' real walks).
+Checked on Vienna's crossing item 7776 (`port/run/barriers/sheet-e1.png` lowering, `sheet-f-rise.png` rising behind
+the last wagon, `sheet-f-wait.png` a car waiting through a train and crossing once the barriers are up): the
+barriers start down several seconds before a cargo train at 7 cells/s reaches the crossing (its claims run about
+`7/0.6 + 1 + L` nodes ahead) and are up about 1 s after its last wagon left. Vienna's other crossing (1751, by the
+freight yard) stays down for minutes: trains standing south of it at the yard keep their claims across it, and
+cars queue on both sides (*obs* in the port; whether the original's trains hold claims that long is not checked).
 
 ### 5.2 Area raster (`FUN_100b6240`)
 
@@ -763,8 +845,8 @@ timeline's buildings** (*inf*; the slot-pop inside `FUN_100d2ac0` is citizens.md
 
 1. The scene scale `S` (`scene+0x13c`, and the object at `grid+0x40`): its value and writer. It scales the
    activation radius and all LOD distances.
-2. The meaning of node flags 0x20000000 and 0x400000, and which graph builder sets them (pathfinding.md). Also: is
-   0x20000000 ever set at run time, for example by level crossings?
+2. The meaning of node flags 0x20000000 and 0x400000, and which graph builder sets them (pathfinding.md). (Not at run
+   time by level crossings: its only writer is `gsGridPlayer::createTrackBlock`, §5.1.1.)
 3. How crashed agents (0x40000) are finally removed, and the citizen-side rule (citizens.md).
 4. The aircraft spawners `FUN_1010b430`/`FUN_1010c190`: the approach/departure geometry built from inline air-lane
    nodes, and the state at vehicles+0x180…0x190. The boat spawner `FUN_1010ce70`, and the train route choice in

@@ -110,14 +110,19 @@ modes (the editor's roads, terrain and paint tools come later):
   sounds (`gsGridVehicleController.playSound`). Done with miniaudio's device and decoders and a mixer of the port's
   own: script sounds, ambience by area, world sounds of vehicles, animals and items, speaker modes and a Headphones
   mode (`docs/audio/README.md` §18).
-- [ ] Door-item sounds (level-crossing bells, needs the door items' animation), a Prologic encoder with phase shift.
+- [x] Door-item sounds: the level-crossing bell loops while a train holds the crossing (`engine/sim_sounds.cpp`
+  `tickDoors`; `port/run/barriers/bell-f.wav`).
+- [ ] A Prologic encoder with phase shift.
 
 ## 7. Effects and remaining graphics
 
 - [ ] Particles (`gsParticleEmitter`: smoke, fires, fountains, sparks; `addColorRange`, `setTexture`,
   `setParticleScale`).
 - [ ] Sky mesh (`gsSky.generateMesh`), night lighting with the illumination maps, `gsTracerCtrl.enableFade`.
-- [ ] Map-edge base walls and the water-edge curtain, door items, scene nodes attached to bones, the stop catchment
+- [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
+  cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;
+  `port/run/barriers/sheet-f-rise.png`, `sheet-f-wait.png`).
+- [ ] Map-edge base walls and the water-edge curtain, scene nodes attached to bones, the stop catchment
   circle, the tracer organizer layout for overlapping pins.
 
 ## 8. Map editor

@@ -309,7 +309,10 @@ L:0x08166080.c:3737-4100; group :1840-1858). The exact edge enumeration was not 
 * Skeletal templates (`loadSkeleton`, 11 buildings, `tennisanim`, animals): while the division's `eyeDist < 400` the
   item gets a clone of the template's renderer skeleton, set on its mesh, and the skeleton's first slot is posed at
   `phase·speed` (`gsGridItem::animate` L:0x08181ff0.c; phase loop = `doorOpenLen`, grid-traffic §5.1); otherwise
-  the skeleton is removed (bind pose).
+  the skeleton is removed (bind pose). Door items (flag 0x1000 `GRID_ITEM_CROSS_TRACK`: the level crossing
+  `track_double_cross_small`) are posed instead at the clip time of their door state, which their train-track nodes'
+  occupancy drives: barriers down over clip 0..1 s, up over 1.167..2.167 s, bind pose (up) at rest
+  (grid-traffic §5.1.1).
 * Particle emitters (`createEffects`, chimney smoke etc.) are separate scene objects (grid-traffic §5.1).
 
 ### 3.4 LOD and distances — obs H (mesh collect W:0x1004a4d0.c, interfaces-3d §1.3)

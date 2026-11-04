@@ -17,6 +17,7 @@
 #include "engine/grid.h"
 #include "engine/grid_render.h"
 #include "engine/scene3d.h"
+#include "engine/sim.h"
 
 namespace regs::engine {
 
@@ -472,6 +473,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     clock.first = now;
   }
   std::map<const ObjectObj*, std::shared_ptr<const std::vector<Mat4>>> poses;  // one pose per template per frame
+  const std::unordered_map<uint32_t, float>* doorTimes = simDoorTimes(grid);   // door items: their own clip time
   for (int r = 0; r < tc.rows; ++r)
     for (int c = 0; c < tc.cols; ++c) {
       int index = r * tc.cols + c;
@@ -517,7 +519,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         it.shadowOnly = !visible(mc, m->radius);
         items.push_back(it);
       }
-      collectSkinnedItems(d, vm, g, tc, index, dv.world, dist, show, clock.second, !visible(gc, gr), poses, items);
+      collectSkinnedItems(d, vm, g, tc, index, dv.world, dist, show, clock.second, !visible(gc, gr), doorTimes, poses, items);
     }
   // the tool highlight overlay: rebuilt when a tool changed the highlighted cells or items, drawn in world space
   if (tc.highlightVersion != grid->highlightVersion) {

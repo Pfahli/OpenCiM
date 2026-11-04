@@ -513,6 +513,7 @@ Mat4 itemPlacement(const GridData& g, const TerrainCache& tc, uint32_t item, int
 
 void collectSkinnedItems(Display& d, VM& vm, const GridData& g, const TerrainCache& tc, int division,
                          const Mat4& divisionWorld, float distance, int lod, double gridTime, bool shadowOnly,
+                         const std::unordered_map<uint32_t, float>* doorTimes,
                          std::map<const ObjectObj*, std::shared_ptr<const std::vector<Mat4>>>& poses,
                          std::vector<DrawItem>& out) {
   for (uint32_t i : tc.divisionItems[size_t(division)]) {
@@ -526,7 +527,12 @@ void collectSkinnedItems(Display& d, VM& vm, const GridData& g, const TerrainCac
     // gsGridItem::animate (L:0x08181ff0): no pose (bind pose) at 400 units and beyond. Items start at phase 0, so
     // all items of a template run in step.
     Pose pose;
-    if (tp.animLength > 0 && distance < 400.0f && !(it.flags & 0x1000) && !(flags & kFlagHidden)) {
+    if ((flags & 0x1000) && tp.animLength != 0) {
+      // a door item (engine/sim_doors.cpp): its own clip time; animate(-1) and 400 units or more: the bind pose
+      if (doorTimes && distance < 400.0f && !(flags & kFlagHidden))
+        if (auto t = doorTimes->find(i); t != doorTimes->end() && t->second != -1.0f)
+          pose = poseFirstAnimation(vm, tp.object, t->second);
+    } else if (tp.animLength > 0 && distance < 400.0f && !(flags & kFlagHidden)) {
       auto cached = poses.find(tp.object);
       if (cached == poses.end()) {
         float t = float(std::fmod(gridTime, double(tp.animLength))) + tp.animStart;

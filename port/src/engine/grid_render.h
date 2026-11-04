@@ -6,6 +6,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "render/math3d.h"
@@ -98,10 +99,12 @@ render::Mat4 itemPlacement(const GridData& g, const TerrainCache& tc, uint32_t i
 
 // The skinned items of a division (docs/renderer/skinning.md §4): each drawn with its template's mesh, posed by
 // gsGridItem::move / animate: a loop of doorOpenLen seconds from doorOpenStart on the grid clock, the first
-// animation slot at weight 1; bind pose from 400 units on, for items without a loop and for door items (0x1000).
+// animation slot at weight 1; bind pose from 400 units on and for items without a loop. Door items (0x1000) take
+// their clip time from doorTimes (the simulation's, engine/sim_doors.cpp; −1 or absent = bind pose).
 // poses caches one pose per template for the frame.
 void collectSkinnedItems(Display& d, script::VM& vm, const GridData& g, const TerrainCache& tc, int division,
                          const render::Mat4& divisionWorld, float distance, int lod, double gridTime, bool shadowOnly,
+                         const std::unordered_map<uint32_t, float>* doorTimes,
                          std::map<const ObjectObj*, std::shared_ptr<const std::vector<render::Mat4>>>& poses,
                          std::vector<render::DrawItem>& out);
 

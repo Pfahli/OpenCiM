@@ -1738,6 +1738,7 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
   buildLaneGraph(vm, grid, *grid->data, s->graph, fileFlags.empty() ? nullptr : &fileFlags);
   s->rt.assign(s->graph.nodes.size(), NodeRt());
   collectSources(*s);
+  buildDoors(vm, grid, *s);
   grid->sim = s;
   loadTransport(vm, grid, *s, file);
   for (auto& l : s->lines)
@@ -1786,6 +1787,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   if (!s || dt <= 0) return;
   float x = dt * fieldFloat(vm, grid, u"timeSpeed", 1.0f);
   if (x <= 0) {  // game speed 0: the grid still ticks with dt = 0 (loops keep playing, docs/audio/README.md §14)
+    stepDoors(*s, 0);  // the item update runs with step 0 too
     simSoundsTick(vm, grid, *s, 0);
     return;
   }
@@ -1846,6 +1848,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
         vm.call(vm.getMember(vm.getMember(*main, u"$main"), u"saveGameData"), {Value::string(utf8ToUtf16(colon + 1))});
   }
   for (int i = 0; i < n; ++i) {
+    stepDoors(*s, step);  // the active buckets' item updates come before the children (grid tick :231-276)
     stepCitizens(vm, *s, step);
     stepTraffic(vm, *s, step);
     for (auto& line : s->lines)
@@ -1952,6 +1955,31 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
                s->walkCodes[3], s->walkCodes[0]);
       LOG_INFO("sim: %d marked nodes; waiting > 10 s: %d behind a vehicle, %d at a crossing, %d at a marker, %d before a junction", markers,
                waitOcc, waitCross, waitMark, waitOther);
+      for (const DoorItem& dr : s->doors) {  // door items near the camera: who holds their track nodes, who waits
+        if (!dr.active) continue;
+        std::string held, waiting;
+        for (int n : dr.nodes) {
+          int o = s->rt[size_t(n)].occupant;
+          if (o < 0) continue;
+          const Mover& m = s->movers[size_t(o)];
+          char b[96];
+          std::snprintf(b, sizeof b, " %d(%s%s v%.1f wait %.0f)", o, m.train ? "train" : "car", m.live ? "" : " dead", m.speed, m.waitTime);
+          held += b;
+        }
+        for (size_t id = 0; id < s->movers.size(); ++id) {
+          const Mover& m = s->movers[id];
+          if (!m.live || m.parked || m.train || m.holdEnd > lastUsable(m) || m.speed > 0.1f) continue;
+          int nd = m.track.nodes[size_t(m.holdEnd)];
+          if (std::find(dr.nodes.begin(), dr.nodes.end(), nd) != dr.nodes.end()) continue;
+          for (int c : s->graph.nodes[size_t(nd)].crossings)
+            if (std::find(dr.nodes.begin(), dr.nodes.end(), c) != dr.nodes.end()) {
+              waiting += " " + std::to_string(id);
+              break;
+            }
+        }
+        LOG_INFO("sim: door item %u phase %.2f clip %.2f; track held by%s; cars waiting:%s", dr.item, dr.phase, dr.time,
+                 held.empty() ? " nobody" : held.c_str(), waiting.empty() ? " none" : waiting.c_str());
+      }
     }
   }
 }
@@ -2113,6 +2141,7 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
     s.landing = s.departing = AirPending();
     for (int k = 0; k < 2; ++k) s.trainStarts[k].clear(), s.trainEnds[k].clear();
     collectSources(s);
+    buildDoors(vm, grid, s);
   }
 
   // 5. citizens: place pools and evictions; the walk layers of the touched cells

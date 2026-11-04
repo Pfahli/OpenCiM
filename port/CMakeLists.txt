@@ -73,6 +73,7 @@ add_library(regs_engine STATIC
   src/engine/sim_paths.cpp
   src/engine/sound.cpp
   src/engine/sim_sounds.cpp
+  src/engine/sim_doors.cpp
   src/platform/window_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp
