@@ -262,34 +262,33 @@ void debugConflicts(VM& vm, GridObj* grid, uint32_t item, bool conflict) {
 // ---------------------------------------------------------------------------------------------------------------
 // highlights
 
-// gsGrid::selectObjectArea (L:0x08141ae0): the cells the item covers get the highlight (red when negative), the item
-// and the live items overlapping it in space are selected
-void selectObjectArea(VM& vm, GridObj* grid, uint32_t item, bool negative) {
+// gsGridItem::gsGridItem (L:0x08187fc0.c:152-161): a STOP item gets its controller at once and the grid announces it
+// with event 6 transportStopCreated, previews too (the simulation announces the mounted ones); ui.script gives a
+// preview bus or tram stop its direction arrow there, which goes with the controller when the preview is removed
+void announcePreviewStop(VM& vm, GridObj* grid, uint32_t item) {
   Info n = infoOf(vm, grid, item);
-  if (!n.ok) return;
-  GridData& g = *grid->data;
-  ItemFootprint fp{n.sx, n.sz, n.diag};
-  for (int pz = 0; pz < n.sz; ++pz)
-    for (int px = 0; px < n.sx; ++px) {
-      int cx = n.x + px, cz = n.z + pz;
-      if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length || !itemCellCover(fp, n.flags, px, pz)) continue;
-      size_t c = size_t(cz) * size_t(g.width) + size_t(cx);
-      g.flags[c] = uint16_t(g.flags[c] | kCellHighlight | (negative ? kCellNegative : 0));
-      grid->highlightCells.insert(uint32_t(c));
+  if (!n.ok || !(n.flags & kFlagStop) || !(n.flags & kItemTemp)) return;
+  int ty = n.type();
+  int stopType = (ty == 2 || ty == 5 || ty == 6) ? 0 : (ty >= 10 && ty <= 12) ? 1 : (ty >= 13 && ty <= 15) ? 2
+                 : ty == kTypeDock ? 3 : ty == 0x12 ? 4 : -1;
+  if (stopType < 0) return;
+  Object* c = gridItemController(vm, grid, item);
+  if (!c) return;
+  c->fieldValues[u"type"] = Value::integer(stopType);
+  try {
+    bool fired = vm.fireEvent(grid, u"transportStopCreated", {obj(c)});
+    static const bool debug = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+    if (debug) {
+      Value tr;
+      try {
+        tr = vm.resolve(vm.getMember(obj(c), u"$tracer1"));
+      } catch (const ScriptError&) {
+      }
+      LOG_INFO("preview stop %u announced (%d), tracer %s", item, fired, tr.object() ? "made" : "none");
     }
-  gridSetSelected(vm, grid, item, true, negative);
-  int top = n.y + n.tpl.height, bottom = n.y - n.tpl.negHeight * 0x100;
-  for (uint32_t o : gridObjectsOverlapping(vm, grid, n.x, n.z, n.sx, n.sz)) {
-    if (o == item) continue;
-    Info m = infoOf(vm, grid, o);
-    if (!m.ok) continue;
-    if (m.y - m.tpl.negHeight * 0x100 < top && bottom < m.y + m.tpl.height) {
-      gridSetSelected(vm, grid, o, true, negative);
-      static const bool debug = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
-      if (debug) LOG_INFO("  selected %u %s at %d,%d", o, m.tpl.name.c_str(), m.x, m.z);
-    }
+  } catch (const std::exception& e) {
+    LOG_ERROR("transportStopCreated: %s", e.what());
   }
-  ++grid->highlightVersion;
 }
 
 void unselectItemArea(VM& vm, GridObj* grid, uint32_t item) {
@@ -475,7 +474,7 @@ int stopPreview(VM& vm, GridObj* grid, int cx, int cz, int toolMode, int toolTyp
   int road = -1;
   uint32_t mask = 0;
   bool unfit = false;
-  for (uint32_t o : gridObjectsOverlapping(vm, grid, cx, cz, 1, 1)) {
+  for (uint32_t o : gridGetObjects(vm, grid, cx, cz, 1, 1)) {
     Info n = infoOf(vm, grid, o);
     if (!n.ok) continue;
     bool bus = n.type() >= 2 && n.type() <= 6, tram = n.type() >= 10 && n.type() <= 12;
@@ -497,7 +496,7 @@ int stopPreview(VM& vm, GridObj* grid, int cx, int cz, int toolMode, int toolTyp
   if (road >= 0 && !unfit) {
     Info r = infoOf(vm, grid, uint32_t(road));
     std::string name;  // the stop facing the other way on this block
-    for (uint32_t o : gridObjectsOverlapping(vm, grid, r.x, r.z, r.sx, r.sz)) {
+    for (uint32_t o : gridGetObjects(vm, grid, r.x, r.z, r.sx, r.sz)) {
       Info s = infoOf(vm, grid, o);
       if (s.ok && (s.flags & kFlagStop) && !(s.conn & mask)) name = o < g.names.size() ? g.names[o] : std::string();
     }
@@ -543,7 +542,7 @@ void testStops(VM& vm, GridObj* grid) {
     else if (checked - same <= 12) {
       LOG_INFO("stop test: %s at %d,%d orient %d y %d (cell %d,%d) -> %s at %d,%d orient %d y %d", s.tpl.name.c_str(), s.x,
                s.z, s.orient, s.y, cx, cz, n.ok ? n.tpl.name.c_str() : "none", n.x, n.z, n.orient, n.y);
-      for (uint32_t o : gridObjectsOverlapping(vm, grid, s.x - 4, s.z - 4, s.sx + 8, s.sz + 8)) {
+      for (uint32_t o : gridGetObjects(vm, grid, s.x - 4, s.z - 4, s.sx + 8, s.sz + 8)) {
         Info m = infoOf(vm, grid, o);
         if (m.type() < 2 || m.type() > 12) continue;
         LOG_INFO("    cell item %s type %d at %d,%d size %dx%d orient %d conn %08x flags %08x parent %d", m.tpl.name.c_str(),
@@ -573,14 +572,16 @@ void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float m
   t.newItems.clear();
   t.replaced.clear();
   int stop = stopPreview(vm, grid, cx, cz, intField(vm, player, u"toolMode", 0), intField(vm, player, u"toolType", 0));
+  int announce = -1;
+  bool announceError = false;
   if (stop >= 0) {
     if (!(g.items[size_t(stop)].flags & kItemNegative)) {
       t.newItems.push_back(uint32_t(stop));
       bool conflict = gridCheckConflict(vm, grid, uint32_t(stop), {});
-      // (the engine also fires the controller's onError, event 7, when the item already has one; a new preview has none)
       if (conflict) addItemFlags(grid, uint32_t(stop), kItemNegative);
       debugConflicts(vm, grid, uint32_t(stop), conflict);
-      selectObjectArea(vm, grid, uint32_t(stop), conflict);
+      gridSelectObjectArea(vm, grid, uint32_t(stop), conflict);
+      announce = stop, announceError = conflict;
     } else {
       gridEditRemoveItem(vm, grid, uint32_t(stop));  // no fitting template: nothing is shown (not even the red cell)
     }
@@ -588,6 +589,11 @@ void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float m
     gridSelectArea(vm, grid, cx, cz, 1, 1, true);
   }
   gridEditEnd(vm, grid);
+  if (announce >= 0) {  // after the batch, when the preview's controller can be made
+    announcePreviewStop(vm, grid, uint32_t(announce));
+    if (announceError)  // the engine fires the controller's onError (event 7) for a conflicting stop: the arrow goes
+      if (Object* c = gridItemController(vm, grid, uint32_t(announce))) vm.fireEvent(c, u"onError", {});
+  }
   t.cellX = cx;
   t.cellZ = cz;
   vm.fireEvent(player, u"onHoverConstruct", {});
@@ -597,20 +603,6 @@ void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float m
 // GRIDMODE_PLACE_OBJECT (L:0x08198400): toolObject (or toolObject2, the diagonal variant, on odd toolMode) centred on
 // the cursor, turned by toolMode, raised by toolType; stations and ALIGN_4 objects snap to the 4-cell grid, elevated
 // ones (BRIDGE) stand 2 cells above the picked point, underground ones (TUNNEL) on the level toolSize·2 cells.
-
-// the cell under the cursor on the horizontal plane at engine height y (gsGrid::intersectGrid with a given height)
-bool pickPlane(VM& vm, ControlObj* player, GridObj* grid, float mx, float my, int y, int& cx, int& cz) {
-  Vec3 start, end;
-  if (!toolSegment(vm, player, mx, my, start, end)) return false;
-  const GridData& g = *grid->data;
-  float cs = g.cellSize, py = float(y) * cs / 256.0f;
-  if ((start.y - py) * (end.y - py) > 0 || start.y == end.y) return false;
-  float k = (py - start.y) / (end.y - start.y);
-  float px = start.x + (end.x - start.x) * k, pz = start.z + (end.z - start.z) * k;
-  cx = int(std::floor((px + float(g.width) * cs * 0.5f) / cs));
-  cz = int(std::floor((pz + float(g.length) * cs * 0.5f) / cs));
-  return true;
-}
 
 void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   ToolState& t = toolState(player);
@@ -629,16 +621,14 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
   int y = (tp.flags & kFlagTunnel) ? intField(vm, player, u"toolSize", 0) << 9 : kNoY;
   int cx = -1, cz = -1, hovered = -1;
   if (y != kNoY) {
-    if (!pickPlane(vm, player, grid, mx, my, y, cx, cz)) return;
+    ToolPick p = toolPickLevel(vm, player, mx, my, y);  // the subway level: the plane at y, tunnels only
+    if (!p.hit) return;
+    cx = p.cellX, cz = p.cellZ;
   } else {
     ToolPick p = toolPick(vm, player, mx, my, false);
     if (!p.hit) return;
     cx = p.cellX, cz = p.cellZ, hovered = p.item;
-    if (hovered >= 0) {
-      y = infoOf(vm, grid, uint32_t(hovered)).y;
-    } else if (cx >= 0 && cz >= 0 && cx < g.width && cz < g.length) {
-      y = (int(g.height[size_t(cz) * size_t(g.width) + size_t(cx)]) + 0x80) & ~0xff;
-    }
+    y = p.y;  // the hit item's height, else the ground's rounded to a cell
   }
   if (hovered >= 0 && (gridItemShape(vm, grid, uint32_t(hovered)).flags & kItemOptional)) hovered = -1;
   if (tp.flags & kFlagBridge) {
@@ -704,10 +694,11 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
     }
     for (uint32_t i : t.newItems) {
       debugConflicts(vm, grid, i, conflict);
-      selectObjectArea(vm, grid, i, conflict);
+      gridSelectObjectArea(vm, grid, i, conflict);
     }
   }
   gridEditEnd(vm, grid);
+  for (uint32_t i : t.newItems) announcePreviewStop(vm, grid, i);  // docks, heliports, station platforms
   t.cellX = x;
   t.cellZ = z;
   vm.fireEvent(player, u"onHoverConstruct", {});
@@ -743,7 +734,7 @@ bool finishPlace(VM& vm, ControlObj* player, GridObj* grid) {
     Info n = infoOf(vm, grid, i);
     if (mode == kGridModeCreateStop && n.ok && (n.flags & kFlagStop)) {
       int old = -1;
-      for (uint32_t o : gridObjectsOverlapping(vm, grid, n.x, n.z, n.sx, n.sz)) {
+      for (uint32_t o : gridGetObjects(vm, grid, n.x, n.z, n.sx, n.sz)) {
         Info s = infoOf(vm, grid, o);
         if (s.ok && (s.flags & kFlagStop) && s.conn == n.conn && s.type() == n.type() && s.x == n.x && s.z == n.z &&
             s.y == n.y && s.tpl.obj != n.tpl.obj) {
@@ -819,7 +810,7 @@ void moveRemove(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
       gridSetSelected(vm, grid, uint32_t(item), true, true);
     } else {
       gridSetSelected(vm, grid, uint32_t(item), true, false);
-      for (uint32_t o : gridObjectsOverlapping(vm, grid, n.x - 5, n.z - 5, n.sx + 10, n.sz + 10))
+      for (uint32_t o : gridGetObjects(vm, grid, n.x - 5, n.z - 5, n.sx + 10, n.sz + 10))
         if (g.items[o].parent == uint32_t(item) + 1 && (g.items[o].flags & kItemAutoChild)) t.replaced.insert(o);
     }
   }
@@ -896,7 +887,7 @@ bool removeObjectTool(VM& vm, ControlObj* player, GridObj* grid, uint32_t item, 
     }
     return np;
   };
-  for (uint32_t o : gridObjectsOverlapping(vm, grid, r.x - 5, r.z - 5, r.sx + 10, r.sz + 10)) {
+  for (uint32_t o : gridGetObjects(vm, grid, r.x - 5, r.z - 5, r.sx + 10, r.sz + 10)) {
     if (o == item || g.items[o].parent == item + 1) continue;
     Info n = infoOf(vm, grid, o);
     if (!n.ok) continue;
@@ -1015,7 +1006,7 @@ bool removeObjectTool(VM& vm, ControlObj* player, GridObj* grid, uint32_t item, 
     keep(np, n);
   }
   if (refused) {
-    for (uint32_t o : gridObjectsOverlapping(vm, grid, r.x - 5, r.z - 5, r.sx + 10, r.sz + 10))
+    for (uint32_t o : gridGetObjects(vm, grid, r.x - 5, r.z - 5, r.sx + 10, r.sz + 10))
       g.items[o].flags &= ~kItemNegative;
     for (auto i = t.newItems.rbegin(); i != t.newItems.rend(); ++i) gridEditRemoveItem(vm, grid, *i);
     t.newItems.clear();
@@ -1043,7 +1034,7 @@ bool removeObjectTool(VM& vm, ControlObj* player, GridObj* grid, uint32_t item, 
   // the neighbours that could not be cut go too
   while (cascade) {
     int next = -1;
-    for (uint32_t o : gridObjectsOverlapping(vm, grid, r.x - 5, r.z - 5, r.sx + 10, r.sz + 10))
+    for (uint32_t o : gridGetObjects(vm, grid, r.x - 5, r.z - 5, r.sx + 10, r.sz + 10))
       if (g.items[o].flags & kItemNegative) {
         next = int(o);
         break;
@@ -1107,6 +1098,15 @@ bool landmark(Object* t) {
 }
 
 void registerNatives(VM& vm) {
+  // gsGridItemController.getConnections (W:0x100e94a0): the item's connection mask as turned with it (+0x4c), 0
+  // without an item; ui.script points a preview stop's direction arrow with it
+  implement(vm, "gsGridItemController", u"getConnections", [](VM& v, Object* s, int, const Value*) {
+    auto it = s->fieldValues.find(u"<item>");
+    auto* grid = dynamic_cast<GridObj*>(s->parent);
+    if (it == s->fieldValues.end() || !grid || !grid->data) return Value::integer(0);
+    Info n = infoOf(v, grid, uint32_t(v.toInt(it->second)));
+    return Value::integer(n.ok ? int32_t(n.conn) : 0);
+  });
   // getAverageY(x, z, w, l) (0x100b5c30, handlers/batch-A.md): the mid-range (min + max) / 512 of the heights over
   // [x, x+w] × [z, z+l], clamped to the map
   implement(vm, "gsGrid", u"getAverageY", [](VM& v, Object* s, int, const Value* a) {

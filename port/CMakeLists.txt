@@ -58,6 +58,7 @@ add_library(regs_engine STATIC
   src/engine/interaction.cpp
   src/engine/tools.cpp
   src/engine/tool_objects.cpp
+  src/engine/tool_tracks.cpp
   src/engine/grid_save.cpp
   src/engine/grid_edit.cpp
   src/engine/timeline.cpp
@@ -66,6 +67,10 @@ add_library(regs_engine STATIC
   src/engine/sim_air.cpp
   src/engine/sim_citizens.cpp
   src/engine/sim_save.cpp
+  src/engine/sim_lines.cpp
+  src/engine/tool_addstop.cpp
+  src/engine/ui_lines.cpp
+  src/engine/sim_paths.cpp
   src/platform/window_win32.cpp
 )
 target_include_directories(regs_engine PUBLIC src)

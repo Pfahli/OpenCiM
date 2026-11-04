@@ -45,7 +45,7 @@ Debugging switches (environment variables): `REGS_NO_COMBINER=1` (built-in shade
 (fallback shader views), `REGS_DUMP_TARGET=<file.png>` (render-target contents), `REGS_DEBUG_VIEWPORT=1` (viewport
 scene/camera and large GUI images, once each), `REGS_DEBUG_MATERIALS=1` (failed `getMaterial` lookups), `REGS_MINIMAP_CHECK=amsterdam,tutorialcity` (renders
 shipped maps with the loaded templates and compares them with the editor's saved minimaps, `metro/maps/<map>.dds`),
-`REGS_DEBUG_PICK=1` (logs each newly hovered item or vehicle), `REGS_REPORT_MISSING=1` (lists the unimplemented natives
+`REGS_DEBUG_PICK=1` (logs each newly hovered item or vehicle), `REGS_DEBUG_TOOLS=1` (pieces and time of each rebuilt track preview; `=2` lists the pieces), `REGS_REPORT_MISSING=1` (lists the unimplemented natives
 the scripts called, at exit), `REGS_DEBUG_GROUPS=1` (the script thread groups' pause count, speed and time every 300
 frames), `REGS_DEBUG_SAVE_AT=<ticks>:<name>` (saves the game after that many simulation ticks, for round trips),
 `REGS_DEBUG_FOLLOW=<line type>[:n]` (the main camera follows the n-th line vehicle of that transport type, given as

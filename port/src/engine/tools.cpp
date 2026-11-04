@@ -59,8 +59,8 @@ Object* itemTemplate(GridObj* grid, uint32_t item) {
   return t == grid->templates.end() ? nullptr : t->second.get();
 }
 
-// the template's second connection mask, turned with the item (gsGridItem +0x50: gsRotateConnections(connections2,
-// orient·2)); checkConflict's join rule reads it (L:0x0813f5e0.c:238), not the first mask (+0x4c)
+// the template's second connection mask (multi-block pieces: bridges, ramps, map-edge exits), turned with the item
+// (gsGridItem +0x50: gsRotateConnections(connections2, orient·2)); gsGrid::checkConflict's join test reads this one
 uint32_t itemConnections2(VM& vm, GridObj* grid, uint32_t item) {
   Object* t = itemTemplate(grid, item);
   if (!t) return 0;
@@ -69,6 +69,37 @@ uint32_t itemConnections2(VM& vm, GridObj* grid, uint32_t item) {
 
 // an item's base height in the engine's units (cell heights carry the same shift)
 int engineY(const GridData& g, const GridData::Item& it) { return it.y + (0x200 - int(g.heightBase)); }
+
+// the footprint, height range and cover of an item (gsGridItem +0x2c..+0x54)
+struct Geo {
+  int x = 0, z = 0, sx = 1, sz = 1, y = 0, top = 0, bottom = 0;
+  uint32_t flags = 0;
+  ItemFootprint f;
+};
+Geo geoOf(VM& vm, GridObj* grid, uint32_t item) {
+  const GridData& g = *grid->data;
+  const GridData::Item& it = g.items[item];
+  Object* t = itemTemplate(grid, item);
+  GridItemShape s = gridItemShape(vm, grid, item);
+  Geo o;
+  int w = t ? std::max(1, intField(vm, t, u"width", 1)) : 1, l = t ? std::max(1, intField(vm, t, u"length", 1)) : 1;
+  o.f = itemFootprint(w, l, t ? uint32_t(intField(vm, t, u"diagonals", 0)) : 0, it.orient);
+  o.x = it.x, o.z = it.z, o.sx = o.f.sx, o.sz = o.f.sz;
+  o.y = engineY(g, it);
+  o.top = o.y + s.height;
+  o.bottom = o.y - (t ? intField(vm, t, u"negHeight", 0) : 0) * 0x100;
+  o.flags = s.flags;
+  return o;
+}
+bool geoCovers(const Geo& a, int cx, int cz) { return !a.f.diag || itemCellCover(a.f, a.flags, cx - a.x, cz - a.z) != 0; }
+bool geoOverlapsRect(const Geo& a, int x, int z, int w, int l) {
+  if (!(x < a.x + a.sx && z < a.z + a.sz && a.x < x + w && a.z < z + l)) return false;
+  if (!a.f.diag) return true;
+  for (int cz = std::max(z, a.z); cz < std::min(z + l, a.z + a.sz); ++cz)
+    for (int cx = std::max(x, a.x); cx < std::min(x + w, a.x + a.sx); ++cx)
+      if (geoCovers(a, cx, cz)) return true;
+  return false;
+}
 
 bool isAncestorIn(const GridData& g, uint32_t item, const std::set<uint32_t>& set) {
   for (int depth = 0; depth < 64 && item < g.items.size(); ++depth) {
@@ -153,7 +184,9 @@ void gridSelectArea(VM& vm, GridObj* grid, int x, int z, int w, int l, bool nega
       g.flags[c] = uint16_t(g.flags[c] | kCellHighlight | (negative ? kCellNegative : 0));
       grid->highlightCells.insert(uint32_t(c));
     }
-  for (uint32_t i : gridObjectsOverlapping(vm, grid, x, z, w, l)) gridSetSelected(vm, grid, i, true, negative);
+  // the items overlapping the area (gsGrid::getObjects; the port keeps previews in the search too)
+  for (uint32_t i : gridItemsNear(vm, grid, x, z, x + w - 1, z + l - 1))
+    if (geoOverlapsRect(geoOf(vm, grid, i), x, z, w, l)) gridSetSelected(vm, grid, i, true, negative);
   ++grid->highlightVersion;
 }
 
@@ -167,34 +200,55 @@ void gridUnselectArea(VM& vm, GridObj* grid, int x, int z, int w, int l) {
       g.flags[c] &= uint16_t(~(kCellHighlight | kCellNegative));  // the engine keeps the low 14 bits (& 0x3fff)
       grid->highlightCells.erase(uint32_t(c));
     }
-  for (uint32_t i : gridObjectsOverlapping(vm, grid, x, z, w, l)) gridSetSelected(vm, grid, i, false, false);
+  for (uint32_t i : gridItemsNear(vm, grid, x, z, x + w - 1, z + l - 1))
+    if (g.items[i].flags & kItemSelected)
+      if (geoOverlapsRect(geoOf(vm, grid, i), x, z, w, l)) gridSetSelected(vm, grid, i, false, false);
   ++grid->highlightVersion;
 }
 
-std::vector<uint32_t> gridObjectsOverlapping(VM& vm, GridObj* grid, int x, int z, int w, int l) {
+std::vector<uint32_t> gridGetObjects(VM& vm, GridObj* grid, int x, int z, int w, int l) {
   std::vector<uint32_t> out;
-  if (!grid || !grid->data || w <= 0 || l <= 0) return out;
-  const GridData& g = *grid->data;
+  if (!grid || !grid->data) return out;
   for (uint32_t i : gridItemsNear(vm, grid, x, z, x + w - 1, z + l - 1)) {
-    const GridData::Item& it = g.items[i];
-    GridItemShape s = gridItemShape(vm, grid, i);
-    if (s.flags & kItemTemp) continue;
-    int x0 = std::max(x, int(it.x)), x1 = std::min(x + w, it.x + s.sx);
-    int z0 = std::max(z, int(it.z)), z1 = std::min(z + l, it.z + s.sz);
-    if (x1 <= x0 || z1 <= z0) continue;
-    bool hit = true;
-    Object* t = itemTemplate(grid, i);
-    if (uint32_t diag = t ? uint32_t(intField(vm, t, u"diagonals", 0)) : 0) {
-      ItemFootprint f = itemFootprint(std::max(1, intField(vm, t, u"width", 1)), std::max(1, intField(vm, t, u"length", 1)),
-                                      diag, it.orient);
-      hit = false;
-      for (int cz = z0; cz < z1 && !hit; ++cz)
-        for (int cx = x0; cx < x1 && !hit; ++cx)
-          if (itemCellCover(f, s.flags, cx - it.x, cz - it.z)) hit = true;
-    }
-    if (hit) out.push_back(i);
+    const GridData::Item& it = grid->data->items[i];
+    if (it.removed || it.x >= x + w || it.z >= z + l || it.x + 64 <= x || it.z + 64 <= z) continue;  // cheap reject
+    Geo a = geoOf(vm, grid, i);
+    if (!(a.flags & kItemTemp) && geoOverlapsRect(a, x, z, w, l)) out.push_back(i);
   }
   return out;
+}
+
+bool gridItemsOverlap(VM& vm, GridObj* grid, uint32_t ia, uint32_t ib) {
+  Geo a = geoOf(vm, grid, ia), b = geoOf(vm, grid, ib);
+  if (!(b.x < a.x + a.sx && b.z < a.z + a.sz && a.x < b.x + b.sx && a.z < b.z + b.sz)) return false;
+  if (!(b.bottom < a.top && a.bottom < b.top)) return false;
+  if (!a.f.diag && !b.f.diag) return true;
+  for (int cz = std::max(a.z, b.z); cz < std::min(a.z + a.sz, b.z + b.sz); ++cz)
+    for (int cx = std::max(a.x, b.x); cx < std::min(a.x + a.sx, b.x + b.sx); ++cx)
+      if (geoCovers(a, cx, cz) && geoCovers(b, cx, cz)) return true;
+  return false;
+}
+
+void gridItemRect(VM& vm, GridObj* grid, uint32_t item, int& x, int& z, int& w, int& l) {
+  Geo a = geoOf(vm, grid, item);
+  x = a.x, z = a.z, w = a.sx, l = a.sz;
+}
+
+void gridSelectObjectArea(VM& vm, GridObj* grid, uint32_t item, bool negative) {
+  if (!grid || !grid->data || item >= grid->data->items.size()) return;
+  GridData& g = *grid->data;
+  Geo a = geoOf(vm, grid, item);
+  for (int cz = a.z; cz < a.z + a.sz; ++cz)
+    for (int cx = a.x; cx < a.x + a.sx; ++cx) {
+      if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length || !geoCovers(a, cx, cz)) continue;
+      size_t c = size_t(cz) * size_t(g.width) + size_t(cx);
+      g.flags[c] = uint16_t(g.flags[c] | kCellHighlight | (negative ? kCellNegative : 0));
+      grid->highlightCells.insert(uint32_t(c));
+    }
+  gridSetSelected(vm, grid, item, true, negative);
+  for (uint32_t o : gridGetObjects(vm, grid, a.x, a.z, a.sx, a.sz))
+    if (o != item && gridItemsOverlap(vm, grid, o, item)) gridSetSelected(vm, grid, o, true, negative);
+  ++grid->highlightVersion;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -244,9 +298,9 @@ bool gridCheckConflict(VM& vm, GridObj* grid, uint32_t item, const std::set<uint
         if (h > y || h < y - 0xa00) return true;
       }
   }
-  // the items around (L:0x0813f5e0.c:216-367). An item with flag 2 and a second connection mask (+0x50) must meet a
-  // neighbour along one of its four edges at its own height (n/e/s/w bits 1, 4, 0x10, 0x40), else it conflicts.
-  uint32_t conn = itemConnections2(vm, grid, item);
+  // the items around (L:0x0813f5e0.c:216-367). An item with flag 2 and connections2 must meet a neighbour along one
+  // of its four edges at its own height (n/e/s/w bits 1, 4, 0x10, 0x40), else it conflicts.
+  uint32_t conn = itemConnections2(vm, grid, item);  // +0x50
   bool needsJoin = conn != 0 && (flags & 2);
   for (uint32_t o : gridItemsNear(vm, grid, x, z, x + w - 1, z + l - 1)) {
     if (o == item || g.items[o].removed || exclude.count(o) || isAncestorIn(g, o, exclude)) continue;
@@ -291,7 +345,7 @@ int gridMountObject(VM& vm, GridObj* grid, uint32_t temp) {
     auto m = grid->mountedCopies.find(uint32_t(parent));
     if (m != grid->mountedCopies.end()) parent = int(m->second);
   }
-  uint32_t flags = it.flags & ~(kItemTemp | kItemSelected | kItemNegative);
+  uint32_t flags = it.flags & ~(kItemTemp | kItemSelected | kItemNegative | 2u);  // the copy ctor clears 0x100302
   int copy = gridEditAddItem(vm, grid, g.types[it.type], it.x, engineY(g, it), it.z, it.orient, flags, parent, true);
   if (copy < 0) return -1;
   g.items[size_t(copy)].variation = it.variation;
@@ -338,7 +392,8 @@ void toolClearPreview(VM& vm, Object* player, GridObj* grid) {
   gridEditEnd(vm, grid);
 }
 
-bool toolCommit(VM& vm, Object* player, GridObj* grid) {
+bool toolCommit(VM& vm, Object* player, GridObj* grid,
+                const std::function<void(uint32_t preview, uint32_t mounted)>& onMounted) {
   ToolState& t = toolState(player);
   if (!grid) return true;
   GridData& g = *grid->data;
@@ -356,10 +411,14 @@ bool toolCommit(VM& vm, Object* player, GridObj* grid) {
     }
   grid->mountedCopies.clear();
   for (uint32_t i : t.newItems) {
+    int ax, az, aw, al;  // unselectArea over the preview: its cells and the items under it
+    gridItemRect(vm, grid, i, ax, az, aw, al);
+    gridUnselectArea(vm, grid, ax, az, aw, al);
     gridSetSelected(vm, grid, i, false, false);
     if (!conflict) {
       int m = gridMountObject(vm, grid, i);
       if (m >= 0) mounted.push_back(uint32_t(m));
+      if (m >= 0 && onMounted) onMounted(i, uint32_t(m));
     }
   }
   for (auto i = t.newItems.rbegin(); i != t.newItems.rend(); ++i) gridEditRemoveItem(vm, grid, *i);

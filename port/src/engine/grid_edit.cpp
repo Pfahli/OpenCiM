@@ -16,7 +16,6 @@
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
-#include "engine/tools.h"
 
 namespace regs::engine {
 
@@ -24,7 +23,7 @@ using namespace regs::script;
 
 namespace {
 
-constexpr uint32_t kFlagCover = 0x4, kFlagStop = 0x2000, kFlagBridge = 0x4000, kFlagTunnel = 0x8000, kFlagTemp = 0x100000,
+constexpr uint32_t kFlagCover = 0x4, kFlagBridge = 0x4000, kFlagTunnel = 0x8000, kFlagTemp = 0x100000,
                    kFlagOptional = 0x200000, kFlagHidden = 0x400000;
 constexpr int kTypeTree = 0x13, kTypeMarker = 0x15;
 
@@ -40,7 +39,7 @@ float fieldFloat(VM& vm, const Object* o, const char16_t* name, float def) {
 
 struct TypeInfo {
   bool valid = false;
-  int width = 1, length = 1, type = 0, height = 0;
+  int width = 1, length = 1, type = 0, height = 0x100, negHeight = 0, offx = 0, offz = 0;
   uint32_t flags = 0, diagonals = 0, connections = 0;
 };
 
@@ -79,8 +78,11 @@ TypeInfo typeInfoOf(VM& vm, GridObj* grid, const std::string& name) {
   t.type = fieldInt(vm, o, u"type", 0);
   t.flags = uint32_t(fieldInt(vm, o, u"flags", 0));
   t.diagonals = uint32_t(fieldInt(vm, o, u"diagonals", 0));
+  t.height = int(fieldFloat(vm, o, u"height", 1) * 256.0f);  // gsGridObject ctor default: 1 cell
+  t.negHeight = fieldInt(vm, o, u"negHeight", 0);
+  t.offx = fieldInt(vm, o, u"offsetx", 0);
+  t.offz = fieldInt(vm, o, u"offsetz", 0);
   t.connections = uint32_t(fieldInt(vm, o, u"connections", 0));
-  t.height = int(fieldFloat(vm, o, u"height", 0) * 256.0f);
   return t;
 }
 
@@ -331,6 +333,7 @@ int gridEditAddItem(VM& vm, GridObj* grid, const std::string& templateName, int 
   it.z = int16_t(z);
   it.parent = parent >= 0 && size_t(parent) < g.items.size() ? uint32_t(parent) + 1 : 0;
   it.flags = flags & ~0xFFu;
+  if (flags & kFlagTemp) it.flags |= flags & 2u;  // a tool's replacement piece (createRoadItem: joins its neighbours)
   uint32_t index = uint32_t(g.items.size());
   g.items.push_back(it);
   if (g.names.size() < g.items.size()) g.names.resize(g.items.size());
@@ -396,52 +399,129 @@ GridItemShape gridItemShape(VM& vm, GridObj* grid, uint32_t item) {
   return item < grid->data->items.size() ? shapeOf(st, grid->data->items[item]) : GridItemShape{};
 }
 
+// gsGridItem::checkConflict(a, b) (L:0x08183aa0). Port: the templates' per-cell masks (+0x274), which let some
+// footprints share a cell, are not read; overlapping covered cells at overlapping heights conflict.
 bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   EditState& st = state(vm, grid);
   const GridData& g = *grid->data;
   if (a == b || a >= g.items.size() || b >= g.items.size()) return false;
   const GridData::Item &ia = g.items[a], &ib = g.items[b];
   if (ia.removed || ib.removed) return false;
-  // related items (gsGridItem::checkConflict L:0x08183aa0, first rules)
-  if (ia.parent == b + 1 || ib.parent == a + 1) return false;
+  constexpr uint32_t kStop = 0x2000, kPillar = 0x800000, kLock = 0x8, kBase = 0x1;
+  auto parentOf = [&](const GridData::Item& it) {
+    return it.parent && it.parent <= g.items.size() ? int(it.parent) - 1 : -1;
+  };
+  int pa = parentOf(ia), pb = parentOf(ib);
   GridItemShape sa = shapeOf(st, ia), sb = shapeOf(st, ib);
-  if (ia.parent && ia.parent == ib.parent && !((sa.flags ^ sb.flags) & kFlagTemp)) return false;
+  // related items: parent and child, grandparent (not for stops), siblings of the same kind (preview or not)
+  if (pb == int(a) || pa == int(b)) return false;
+  if (pb >= 0 && parentOf(g.items[size_t(pb)]) == int(a) && !(sb.flags & kStop)) return false;
+  if (pa >= 0) {
+    if (parentOf(g.items[size_t(pa)]) == int(b) && !(sa.flags & kStop)) return false;
+    if (pa == pb && !((sa.flags ^ sb.flags) & kFlagTemp)) return false;
+  }
   if (sa.type == kTypeMarker || sb.type == kTypeMarker) return false;
   if ((sa.flags & 0x500000) == 0x500000 && (sb.flags & kFlagOptional) && sb.type != kTypeTree) return false;
   if ((sb.flags & 0x500000) == 0x500000 && (sa.flags & kFlagOptional) && sa.type != kTypeTree) return false;
   if ((sa.flags & 0x500000) == kFlagHidden || (sb.flags & 0x500000) == kFlagHidden) return false;
-  // stops (L:0x08183aa0.c:153-210): a stop and a road or track of its family (small, large, avenue) do not conflict
-  // when the stop runs along it (the road's connections are the stop's turned by ±90°); metro platform parts (stops of
-  // the metro track types) conflict with no other item; two stops only when they face the same way, and not when they
-  // are variants of one stop (same type and place, another template: an upgrade)
-  if ((sa.flags | sb.flags) & kFlagStop) {
-    auto conn = [&](const GridData::Item& it) {
-      return rotateConnections(st.types[it.type].connections, (it.orient & 3) * 2);
-    };
-    auto across = [](uint32_t c) {
-      return (c & 0x3030303u) << 6 | (c >> 2 & 0x3f3f3f3fu) | (c >> 6 & 0x3030303u) | (c << 2 & 0xfcfcfcfcu);
-    };
-    auto family = [](int a, int b) {
-      auto f = [](int t) { return t == 2 || t == 10 ? 1 : t == 5 || t == 11 ? 2 : t == 6 || t == 12 ? 3 : 0; };
-      return f(a) && f(a) == f(b);
-    };
-    if ((sa.flags & kFlagStop) && (sb.flags & kFlagStop)) {
-      if (conn(ia) != conn(ib)) return false;
-      if (sa.type == sb.type && ia.x == ib.x && ia.z == ib.z && ia.y == ib.y && ia.type != ib.type) return false;
-    } else {
-      const GridData::Item &stop = (sa.flags & kFlagStop) ? ia : ib, &other = (sa.flags & kFlagStop) ? ib : ia;
-      int stopType = (sa.flags & kFlagStop) ? sa.type : sb.type, otherType = (sa.flags & kFlagStop) ? sb.type : sa.type;
-      if (stopType >= 0xd && stopType <= 0xf) return false;
-      if (conn(other) == across(conn(stop)) && family(stopType, otherType)) return false;
-    }
-  }
-  // port simplification of the layer rules: tunnels only meet tunnels; elsewhere the height ranges must overlap
-  if ((sa.flags & kFlagTunnel) != (sb.flags & kFlagTunnel)) return false;
+  auto tram = [](int t) { return t >= 10 && t <= 12; };
+  // the layer of each: cover, block, bridge, tunnel; a tram track on a road is on its road's layer
+  uint32_t la = sa.flags & 0x1c004, lb = sb.flags & 0x1c004;
+  if (pa >= 0 && tram(sa.type) && !(sb.flags & kStop)) la = shapeOf(st, g.items[size_t(pa)]).flags & 0x1c004;
+  if (pb >= 0 && tram(sb.type) && !(sb.flags & kStop)) lb = shapeOf(st, g.items[size_t(pb)]).flags & 0x1c004;
+  const TypeInfo& ta = st.types[ia.type];
+  const TypeInfo& tb = st.types[ib.type];
   int shift = 0x200 - int(g.heightBase);
-  int ya = ia.y + shift, yb = ib.y + shift;
-  int ha = std::max(sa.height, 0x80), hb = std::max(sb.height, 0x80);
-  if (((sa.flags | sb.flags) & kFlagBridge) && !(ya < yb + hb && yb < ya + ha)) return false;
-  return coversAny(st, ia, ib);
+  int ya = ia.y + shift, yb = ib.y + shift, topA = ya + sa.height, topB = yb + sb.height;
+  int lowA = ya - ta.negHeight * 0x100, lowB = yb - tb.negHeight * 0x100;
+  auto overlap = [&] { return lowB < topA && lowA < topB && coversAny(st, ia, ib); };  // gsGridItem::overlap
+  auto roadXZ = [&](const GridData::Item& it, const TypeInfo& t, const GridItemShape& s) {
+    switch (it.orient & 3) {
+      case 1: return std::pair<int, int>{it.x - t.offz, it.z + t.offx - 4 + s.sz};
+      case 0: return std::pair<int, int>{it.x - t.offx, it.z - t.offz};
+      case 2: return std::pair<int, int>{it.x + t.offx - 4 + s.sx, it.z + t.offz - 4 + s.sz};
+      default: return std::pair<int, int>{it.x + t.offz - 4 + s.sx, it.z - t.offx};
+    }
+  };
+  auto turn = [](uint32_t c, int n) {  // gsRotateConnections: each byte rotated right by n
+    uint32_t out = 0;
+    for (int k = 0; k < 4; ++k) {
+      uint32_t v = (c >> (8 * k)) & 0xff;
+      out |= (((v >> n) | (v << (8 - n))) & 0xff) << (8 * k);
+    }
+    return out;
+  };
+  uint32_t ca = turn(ta.connections, (ia.orient & 3) * 2), cb = turn(tb.connections, (ib.orient & 3) * 2);
+  auto samePair = [&] {
+    int x = sa.type, y = sb.type;
+    return ((x == 2 || x == 10) && (y == 2 || y == 10)) || ((x == 5 || x == 0xb) && (y == 5 || y == 0xb)) ||
+           ((x == 6 || x == 0xc) && (y == 6 || y == 0xc));
+  };
+  bool stopA = sa.flags & kStop, stopB = sb.flags & kStop;
+  if (!stopA && !stopB) {
+    if ((tram(sa.type) && sb.type >= 2 && sb.type <= 6) || (tram(sb.type) && sa.type >= 2 && sa.type <= 6)) {
+      auto ra = roadXZ(ia, ta, sa), rb = roadXZ(ib, tb, sb);
+      if (((la | lb) & 0xc000) && ya == yb && (pa >= 0 || pb >= 0)) return false;
+      if (ra == rb && ya == yb) return false;  // a tram track on its road block
+    }
+  } else if (!stopA) {  // a stop on its road or track
+    if (sb.type >= 0xd && sb.type <= 0xf) return false;
+    if (ca == (turn(cb, 2) | turn(cb, 6)) && samePair()) return false;
+  } else if (!stopB) {
+    if (sa.type >= 0xd && sa.type <= 0xf) return false;
+    if (cb == (turn(ca, 2) | turn(ca, 6)) && samePair()) return false;
+  } else {
+    if (ca != cb) return false;
+    if (sa.type == sb.type && ia.x == ib.x && ia.z == ib.z && ya == yb && ia.type != ib.type) return false;
+  }
+  bool pilA = sa.flags & kPillar, pilB = sb.flags & kPillar;
+  if ((la == kFlagBridge && !pilB) || (lb == kFlagBridge && !pilA)) {  // a bridge: clear of what is below it
+    if (!overlap()) return false;
+    if (topB <= ya - 0x80 - ta.negHeight * 0x100) return false;
+    return lowB - 0x7f <= topA;
+  }
+  auto tunnel = [&] { return overlap() && topB > lowA && lowB < topA; };
+  if (la == kFlagTunnel && !pilB) return tunnel();
+  if (lb == kFlagTunnel && !pilA) return tunnel();
+  if (pilA || lb == kFlagTunnel) {
+    if (topA <= yb) return false;
+    if (pilB && topB <= ya) return false;
+  } else if (pilB) {
+    if (topB <= ya) return false;
+  } else if (((la & 0x10004) || (lb & 0xc000)) && ((lb & 0x10004) || (la & 0xc000))) {
+    // covering and block items: overlapping is a conflict; ground pieces next to each other must meet at their corners
+    if (!((tram(sa.type) && sb.type == 1) || (tram(sb.type) && sa.type == 1)) && overlap()) return true;
+    if (!(sa.flags & kLock) || !(sb.flags & kLock)) return false;
+    if ((sa.flags & kBase) && (sb.flags & kBase)) return false;
+    ItemFootprint fa = footprintOf(st, ia), fb = footprintOf(st, ib);
+    auto cornerY = [&](const GridData::Item& it, const GridItemShape& s, const ItemFootprint& f, int y, int px, int pz) {
+      if (f.diag) {  // outside the diagonal cuts: no height
+        bool inside = false;
+        for (int dz = -1; dz <= 0 && !inside; ++dz)
+          for (int dx = -1; dx <= 0 && !inside; ++dx)
+            if (px + dx >= 0 && pz + dz >= 0 && px + dx < s.sx && pz + dz < s.sz && itemCellCover(f, s.flags, px + dx, pz + dz))
+              inside = true;
+        if (!inside) return INT32_MAX;
+      }
+      return int(rampY(y, s.sx, s.sz, it.orient, s.flags, f.diag, px, pz));
+    };
+    int x0 = std::max(ia.x, ib.x), x1 = std::min(ia.x + sa.sx, ib.x + sb.sx);
+    int z0 = std::max(ia.z, ib.z), z1 = std::min(ia.z + sa.sz, ib.z + sb.sz);
+    for (int z = z0; z <= z1; ++z)
+      for (int x = x0; x <= x1; ++x) {
+        int ha = cornerY(ia, sa, fa, ya, x - ia.x, z - ia.z), hb = cornerY(ib, sb, fb, yb, x - ib.x, z - ib.z);
+        if (ha == INT32_MAX || hb == INT32_MAX) continue;
+        if (!(sa.flags & kBase) && !(sb.flags & kBase)) {
+          if (ha != hb) return true;
+          if (sa.type == 1 ? ((ha & 0x3f) || (sb.type != 1 && (ha & 0x7f))) : ((ha & 0x7f) || (sb.type == 1 && (ha & 0x3f))))
+            return true;
+        } else if (!(sa.flags & kBase) ? hb < ha : ha < hb) {
+          return true;
+        }
+      }
+    return false;
+  }
+  return lowB < topA && lowA < topB && coversAny(st, ia, ib);
 }
 
 

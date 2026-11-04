@@ -843,8 +843,36 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
   VehicleState& v = s.vehicles[size_t(vi)];
   if (v.units.empty() || v.units[0].model < 0 || v.mover < 0) return;
   if (!s.movers[size_t(v.mover)].live) {
-    if (!spawnLineVehicle(s, v, line, 0) || !canEnter(s, s.movers[size_t(v.mover)].track.nodes[0], v.mover, true)) {
-      s.movers[size_t(v.mover)].live = false;
+    // broken without an agent (taken off the line while broken): repaired after 60 s, no spawn before
+    // (0x101152a0.c:32-43)
+    if (v.broken) {
+      v.stopTime = std::max(0.0f, v.stopTime) + dt;
+      if (v.stopTime >= 60) {
+        v.broken = false;
+        v.stopTime = 0;
+        vm.fireEvent(v.object.get(), u"onFixed", {});
+      }
+      return;
+    }
+    // spawning (transport.md §4.2): at the first stop of the ring whose platform is free and whose leg has a path
+    bool placed = false;
+    for (int k = 0; k < int(line.stops.size()) && !placed; ++k) {
+      if (!line.stops[size_t(k)].reachable || line.stops[size_t(k)].legStart < 0) continue;
+      placed = spawnLineVehicle(s, v, line, k) && canEnter(s, s.movers[size_t(v.mover)].track.nodes[0], v.mover, true);
+      if (!placed) s.movers[size_t(v.mover)].live = false;
+    }
+    if (!placed) {
+      if (debugSim()) {
+        static int throttle = 0;
+        if (++throttle % 300 == 1) {
+          std::string why;
+          for (const auto& st : line.stops) {
+            int occ = st.legStart >= 0 ? s.rt[size_t(st.legStart)].occupant : -2;
+            why += " [reach " + std::to_string(st.reachable) + " start " + std::to_string(st.legStart) + " occupant " + std::to_string(occ) + "]";
+          }
+          LOG_INFO("sim: vehicle %d cannot spawn:%s", vi, why.c_str());
+        }
+      }
       return;
     }
     claimBody(s, v.mover);
@@ -991,6 +1019,7 @@ void stepLine(VM& vm, SimState& s, LineState& line, float dt) {
     sum += st.cost + 5;
   }
   if (!line.vehicles.empty()) line.headway = sum / float(line.vehicles.size());
+  if (line.stops.size() < 2) return;  // nothing to drive (the scripts only activate closed lines)
   for (int vi : line.vehicles) stepVehicle(vm, s, line, vi, dt);
 }
 
@@ -1312,68 +1341,97 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   o->fieldValues[u"<item>"] = Value::integer(int(i));
   s.stopOfItem[int(i)] = int(s.stops.size());
   s.stops.push_back(o);
+  if (auto* to = transport(o.get()); to && grid->sim.get() == &s) to->sim = grid->sim;
+  // gsGridItem::gsGridItem (L:0x08187fc0.c:152-161): a STOP item's controller is announced with grid event 6; the game
+  // makes the stop's bubble (passengers, mood) there and sets its attractiveness (ui.script:317)
+  vm.fireEvent(grid, u"transportStopCreated", {Value::heap(VT::Object, o.get())});
   return true;
 }
 
-// platforms and segments (FUN_10110c10, FUN_10114200): primary platform to primary platform; the unreachable count
-int relinkLine(VM& vm, GridObj* grid, SimState& s, LineState& line) {
+// FUN_10110c10: the platform nodes of a stop for its line's transport class (the primary STOP node nearest to the
+// item centre, and its ALTERNATIVE_STOP node if the stop has one)
+void stopPlatforms(VM& vm, GridObj* grid, SimState& s, const LineState& line, LineStopState& st) {
   const GridData& g = *grid->data;
   static const uint32_t kClass[5] = {kPathRoad, kPathTram, kPathMetro, kPathWater, kPathAir};
   uint32_t mask = kPathStop | (line.type >= 0 && line.type < 5 ? kClass[line.type] : 0);
-  for (auto& st : line.stops) {
-    if (st.item < 0) continue;
-    const auto& it = g.items[size_t(st.item)];
-    auto t = grid->templates.find(g.types[it.type]);
-    int w = 1, l = 1, ty = 0, tf = 0;
-    if (t != grid->templates.end()) {
-      w = std::max(1, fieldInt(vm, t->second.get(), u"width", 1));
-      l = std::max(1, fieldInt(vm, t->second.get(), u"length", 1));
-      ty = fieldInt(vm, t->second.get(), u"type", 0);
-      tf = fieldInt(vm, t->second.get(), u"flags", 0);
-    }
-    int sx = (it.orient & 1) ? l : w, sz = (it.orient & 1) ? w : l;
-    float cs = g.cellSize;
-    Vec3 c{(float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs, float(itemHeight(g, it, uint32_t(tf), ty)) * cs / 256.0f,
-           (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs};
-    if (line.type == 3 || line.type == 4) c.y = -1.25f * cs;
-    st.platform = s.graph.nearest(c, mask);
-    // FUN_10110c10 with alt: the ALTERNATIVE_STOP node, if the stop has one (not another stop's)
-    st.altPlatform = s.graph.nearest(c, (mask & ~kPathStop) | kPathAlternativeStop);
-    if (st.altPlatform >= 0) {
-      Vec3 d = s.graph.nodes[size_t(st.altPlatform)].p0 - c;
-      float reach = float(std::max(sx, sz) + 2) * cs;
-      if (d.x * d.x + d.z * d.z > reach * reach) st.altPlatform = -1;
-    }
+  st.platform = st.altPlatform = -1;
+  if (st.item < 0 || size_t(st.item) >= g.items.size()) return;
+  const auto& it = g.items[size_t(st.item)];
+  auto t = grid->templates.find(g.types[it.type]);
+  int w = 1, l = 1, ty = 0, tf = 0;
+  if (t != grid->templates.end()) {
+    w = std::max(1, fieldInt(vm, t->second.get(), u"width", 1));
+    l = std::max(1, fieldInt(vm, t->second.get(), u"length", 1));
+    ty = fieldInt(vm, t->second.get(), u"type", 0);
+    tf = fieldInt(vm, t->second.get(), u"flags", 0);
   }
+  int sx = (it.orient & 1) ? l : w, sz = (it.orient & 1) ? w : l;
+  float cs = g.cellSize;
+  Vec3 c{(float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs, float(itemHeight(g, it, uint32_t(tf), ty)) * cs / 256.0f,
+         (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs};
+  if (line.type == 3 || line.type == 4) c.y = -1.25f * cs;
+  st.platform = s.graph.nearest(c, mask);
+  // FUN_10110c10 with alt: the ALTERNATIVE_STOP node, if the stop has one (not another stop's)
+  st.altPlatform = s.graph.nearest(c, (mask & ~kPathStop) | kPathAlternativeStop);
+  if (st.altPlatform >= 0) {
+    Vec3 d = s.graph.nodes[size_t(st.altPlatform)].p0 - c;
+    float reach = float(std::max(sx, sz) + 2) * cs;
+    if (d.x * d.x + d.z * d.z > reach * reach) st.altPlatform = -1;
+  }
+}
+
+// FUN_10114200: the leg from stop a's platform to stop b's. Metro and boat lines, or a primary platform with
+// FIND_ALTERNATIVE, take the cheapest of the primary/alternative pairs; the others primary to primary; a helipad gets
+// the "direct" result without a search (pathfinding.md §4.4). Returns the travel cost, 0 when unreachable (as the
+// original, which treats a zero cost as no path).
+float segmentBetween(SimState& s, const LineState& line, const LineStopState& a, const LineStopState& b, LineStopState* out) {
+  bool reachable = false;
+  std::vector<int> best;
+  float bestCost = 0;
+  int legStart = a.platform, legEnd = b.platform;
+  if (a.platform >= 0 && b.platform >= 0 && (s.graph.nodes[size_t(a.platform)].flags & 0x1003f940) == 0x4040) {
+    Vec3 d = s.graph.nodes[size_t(a.platform)].p1 - s.graph.nodes[size_t(b.platform)].p0;
+    reachable = true, bestCost = std::sqrt(dot(d, d)) / 6.0f;
+  } else {
+    bool alt = line.type == 2 || line.type == 3 || (a.platform >= 0 && (s.graph.nodes[size_t(a.platform)].flags & kPathFindAlternative));
+    std::vector<int> path;
+    float cost = 0;
+    for (int from : {a.platform, alt ? a.altPlatform : -1})
+      for (int to : {b.platform, alt ? b.altPlatform : -1}) {
+        if (from < 0 || to < 0 || !s.graph.search(from, to, true, path, cost)) continue;
+        if (reachable && cost >= bestCost) continue;
+        reachable = true, best = path, bestCost = cost, legStart = from, legEnd = to;
+      }
+  }
+  if (out) {
+    out->reachable = reachable;
+    out->path = reachable ? best : std::vector<int>();
+    out->cost = reachable ? bestCost : 0;
+    out->legStart = legStart, out->legEnd = legEnd;
+  }
+  return reachable ? std::max(bestCost, 1e-6f) : 0.0f;
+}
+
+// the segment of stop k to the next stop of the ring; cleared at the end of an open line (FUN_101131f0 with no path)
+bool computeSegment(SimState& s, LineState& line, size_t k) {
+  size_t n = line.stops.size();
+  if (k >= n) return false;
+  LineStopState& a = line.stops[k];
+  if ((k + 1 == n && !line.closed) || n < 2) {
+    a.reachable = false, a.path.clear(), a.cost = 0, a.legStart = a.platform, a.legEnd = -1;
+    return false;
+  }
+  segmentBetween(s, line, a, line.stops[(k + 1) % n], &a);
+  return a.reachable;
+}
+
+// platforms and segments of a whole line (FUN_10110c10, FUN_10114200); the unreachable count
+int relinkLine(VM& vm, GridObj* grid, SimState& s, LineState& line) {
+  for (auto& st : line.stops) stopPlatforms(vm, grid, s, line, st);
   int unreachable = 0;
   size_t n = line.stops.size();
-  for (size_t k = 0; k < n; ++k) {
-    LineStopState& a = line.stops[k];
-    if (k + 1 == n && !line.closed) break;
-    const LineStopState& b = line.stops[(k + 1) % n];
-    if (a.platform >= 0 && b.platform >= 0 && (s.graph.nodes[size_t(a.platform)].flags & 0x1003f940) == 0x4040) {
-      // a helipad: the "direct" result without a search (pathfinding.md §4.4)
-      Vec3 d = s.graph.nodes[size_t(a.platform)].p1 - s.graph.nodes[size_t(b.platform)].p0;
-      a.path.clear(), a.cost = std::sqrt(dot(d, d)) / 6.0f, a.reachable = true;
-      a.legStart = a.platform, a.legEnd = b.platform;
-    } else {
-      // FUN_10114200: metro and boat lines, or a primary platform with FIND_ALTERNATIVE, take the cheapest of the
-      // primary/alternative pairs; the others primary to primary
-      bool alt = line.type == 2 || line.type == 3 ||
-                 (a.platform >= 0 && (s.graph.nodes[size_t(a.platform)].flags & kPathFindAlternative));
-      a.reachable = false;
-      std::vector<int> path;
-      float cost = 0;
-      for (int from : {a.platform, alt ? a.altPlatform : -1})
-        for (int to : {b.platform, alt ? b.altPlatform : -1}) {
-          if (from < 0 || to < 0 || !s.graph.search(from, to, true, path, cost)) continue;
-          if (a.reachable && cost >= a.cost) continue;
-          a.reachable = true, a.path = path, a.cost = cost, a.legStart = from, a.legEnd = to;
-        }
-    }
-    if (a.legStart < 0 || !a.reachable) a.legStart = a.platform, a.legEnd = b.platform;
-    if (!a.reachable) ++unreachable;
-  }
+  for (size_t k = 0; k < n; ++k)
+    if (!computeSegment(s, line, k) && (k + 1 < n || line.closed)) ++unreachable;
   return unreachable;
 }
 
@@ -1586,6 +1644,7 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
   if (const char* off = std::getenv("REGS_NO_SIM"); off && *off && *off != '0') return;  // debugging: no simulation
   // the old state's script objects leave the lines module and the grid
   if (grid->sim) {
+    grid->sim->tearingDown = true;
     for (auto& l : grid->sim->lines)
       if (l.object && !l.object->destroyed) vm.destroy(l.object.get());
     for (auto& m : grid->sim->movers)
@@ -1961,6 +2020,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
   SimState* s = simOf(grid);
   if (!s) return;
   collectCharacters(d, vm, *s, eye, viewProj, farZ, items);
+  collectLinePaths(d, vm, *s, eye, farZ, items);
   if (s->followShots > 0 && ++s->followFrame % 12 == 0)  // the followed vehicle turned round: a screenshot burst
     d.requestScreenshot("follow-turn-" + std::to_string(16 - s->followShots--) + ".png");
   forEachUnit(*s, [&](const Mover& m, int, const Unit& u, const PlacedPose& p) {
@@ -2142,7 +2202,8 @@ void registerSimNatives(VM& vm) {
     };
     auto usable = [&](int node) {
       const LineState& line = s.lines[size_t(s.lineNodes[size_t(node)].first)];
-      return ((mask >> line.type) & 1) && lineActive(v, line);
+      // FUN_10114560 / the ride edges: temporary nodes (the add-stop tool's hover) take no part
+      return ((mask >> line.type) & 1) && lineActive(v, line) && !(line.stops[size_t(s.lineNodes[size_t(node)].second)].flags & 1);
     };
     auto stopOf = [&](int node) -> const LineStopState& {
       auto [l, k] = s.lineNodes[size_t(node)];
@@ -2214,7 +2275,7 @@ void registerSimNatives(VM& vm) {
     uint32_t mask = uint32_t(v.toInt(a[0]));
     bool activeOnly = v.truthy(a[1]);
     for (const LineState& line : s ? s->lines : std::vector<LineState>())
-      if (((mask >> line.type) & 1) && (!activeOnly || lineActive(v, line))) ++n;
+      if (!line.deleted && ((mask >> line.type) & 1) && (!activeOnly || lineActive(v, line))) ++n;
     return Value::integer(n);
   });
 
@@ -2340,6 +2401,7 @@ void registerSimNatives(VM& vm) {
     rw(u"broken", [](const VehicleState& v) { return Value::boolean(v.broken); }, [](VehicleState& v, const Value& x) { v.broken = x.toBool(); });
   }
   implement(vm, "gsTransportVehicle", u"isSpawned", [](VM&, Object* s, int, const Value*) { return Value::boolean(vehicleSpawned(s)); });
+  registerLineNatives(vm);
 }
 
 }  // namespace regs::engine

@@ -17,6 +17,7 @@
 #include "engine/settings.h"
 #include "engine/shaders.h"
 #include "engine/sim.h"
+#include "engine/skinning.h"
 #include "engine/terrain.h"
 #include "vfs/vfs.h"
 
@@ -251,7 +252,12 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
     if (c->cls->isA(vm.findClass("gsSky")) && c->enabled()) sky = c;  // fog applies even when the dome is hidden
     if (!c->visible()) continue;
     if (auto* g = dynamic_cast<GridObj*>(c)) grids.push_back(g);
-    if (auto* o = dynamic_cast<ObjectObj*>(c); o && o->data) {
+    if (auto* o = dynamic_cast<ObjectObj*>(c); o && o->data && isSkinnedModel(vm, o)) {
+      // a skinned model (vehicle templates in the vehicle shop's preview scene): the skinning variant, bind pose
+      size_t first = items.size();
+      collectSkinned(d, vm, o, worldOf(vm, o), Pose(), items);
+      for (size_t i = first; i < items.size(); ++i) argbToFloats(o->colorizeArgb, items[i].colorize);
+    } else if (o && o->data) {
       if (!o->gpu) {
         o->gpu = std::make_shared<GpuMesh>(d.r3d().upload(o->data->mesh));
         o->materials = std::make_shared<std::vector<GpuMaterial>>();

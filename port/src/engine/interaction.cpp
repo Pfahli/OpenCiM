@@ -164,14 +164,17 @@ float lineRect(const Vec3& e1, const Vec3& e2, const Vec3& a, const Vec3& D) {
 }
 
 // gsGrid::intersectCell (L:0x0813f280): the parallelogram through the corners (x,z), (x+1,z), (x,z+1)
-float intersectCell(const GridData& g, const Vec3& start, const Vec3& D, int x, int z) {
+// With a plane height (planeY != −0x8000, the subway level) the cell is the flat square at that height, covered or not.
+constexpr int kNoPlane = -0x8000;
+float intersectCell(const GridData& g, const Vec3& start, const Vec3& D, int x, int z, int planeY = kNoPlane) {
   if (x < 0 || z < 0 || x >= g.width || z >= g.length) return -1;
   size_t c = size_t(z) * size_t(g.width) + size_t(x);
-  if ((g.flags[c] & 0xF00) == 0xF00) return -1;  // fully covered by items
+  if (planeY == kNoPlane && (g.flags[c] & 0xF00) == 0xF00) return -1;  // fully covered by items
   float cs = g.cellSize, k = cs / 256.0f;
   float h00 = g.height[c] * k;
   float h10 = (x < g.width - 1 ? g.height[c + 1] : g.height[c]) * k;
   float h01 = (z < g.length - 1 ? g.height[c + size_t(g.width)] : g.height[c]) * k;
+  if (planeY != kNoPlane) h00 = h10 = h01 = float(planeY) * k;
   Vec3 C{float(x - (g.width >> 1)) * cs, h00, float(z - (g.length >> 1)) * cs};
   return lineRect({cs, h10 - h00, 0}, {0, h01 - h00, cs}, start - C, D);
 }
@@ -182,10 +185,14 @@ struct Hit {
   int item = -1;                // item index (after the parent walk)
   Object* vehicle = nullptr;    // the vehicle's gsTransportVehicle or gsGridVehicleController
   Object* character = nullptr;  // the pedestrian's gsGridCharacterController
+  int y = kNoPlane;             // the hit height in the engine's 1/256 cells (intersectGrid's int* out parameter)
   bool hit() const { return t < 1.0f; }
 };
 
-Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, bool terrainOnly, bool vehicles) {
+// planeY (the engine's int* in/out height): −0x8000 for the normal pick; else only tunnel items are hit and the
+// terrain is the plane at that height (the subway level)
+Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, bool terrainOnly, bool vehicles,
+                  int planeY = kNoPlane) {
   Hit h;
   if (!grid || !grid->data || grid->data->height.empty()) return h;
   const GridData& g = *grid->data;
@@ -219,6 +226,7 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
         h.cellZ = cz;
         h.vehicle = v.object;
         h.item = -1;
+        h.y = int(std::lround(v.position.y / cs * 256.0f));
       }
     });
 
@@ -239,6 +247,7 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
       h.vehicle = nullptr;
       h.character = c.object;
       h.item = -1;
+      h.y = int(std::lround(c.position.y / cs * 256.0f));
     }
   });
 
@@ -255,6 +264,7 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
           const PickTemplate& tp = st.templates[it.type];
           uint32_t f = it.flags | tp.flags;
           if (f & (kFlagTemp | kFlagHidden)) continue;
+          if (planeY != kNoPlane && !(f & kFlagTunnel)) continue;
           if (!itemVisible(g, st, i, viewMode)) continue;
           if (tp.type == kTypeMarker || tp.type == kTypeSpawnPoint) {
             if (!showMarkers) continue;
@@ -286,6 +296,7 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
           h.cellZ = hz;
           h.item = int(r);
           h.vehicle = h.character = nullptr;
+          h.y = it.y + (0x200 - int(g.heightBase));
         }
   }
 
@@ -294,11 +305,12 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
     int x = x0, z = z0;
     float fx = start.x - float(x0 - (g.width >> 1)) * cs, fz = start.z - float(z0 - (g.length >> 1)) * cs;
     auto testCell = [&](int cx, int cz) {
-      float t = intersectCell(g, start, D, cx, cz);
+      float t = intersectCell(g, start, D, cx, cz, planeY);
       if (t >= 0 && t < h.t) {
         h.t = t;
         h.cellX = cx;
         h.cellZ = cz;
+        h.y = planeY != kNoPlane ? planeY : (g.height[size_t(cz) * size_t(g.width) + size_t(cx)] + 0x80) & ~0xff;
         h.item = -1;
         h.vehicle = h.character = nullptr;
       }
@@ -472,22 +484,24 @@ void gridPlayerMouseUp(VM& vm, ControlObj* c, float x, float y, int key) {
   guarded([&] { toolMouseUp(vm, c, x, y, key); });
 }
 
-bool toolSegment(VM& vm, ControlObj* player, float x, float y, Vec3& start, Vec3& end) {
-  return pickSegment(vm, player, x + player->desktopLeft(), y + player->desktopTop(), start, end);
-}
-
 // a pick for the editing tools: intersectGrid without vehicles and characters, under a player-local position
 ToolPick toolPick(VM& vm, ControlObj* player, float x, float y, bool terrainOnly) {
+  return toolPickLevel(vm, player, x, y, kNoPlane, terrainOnly);
+}
+
+// the same with intersectGrid's height parameter (the subway level: tunnels only, and the plane at that height)
+ToolPick toolPickLevel(VM& vm, ControlObj* player, float x, float y, int planeY, bool terrainOnly) {
   ToolPick out;
   auto* grid = dynamic_cast<GridObj*>(member(vm, player, u"grid").object());
   Vec3 start, end;
   if (!grid || !pickSegment(vm, player, x + player->desktopLeft(), y + player->desktopTop(), start, end)) return out;
-  Hit h = intersectGrid(vm, grid, start, end, terrainOnly, false);
+  Hit h = intersectGrid(vm, grid, start, end, terrainOnly, false, planeY);
   if (!h.hit()) return out;
   out.hit = true;
   out.cellX = h.cellX;
   out.cellZ = h.cellZ;
   out.item = h.item;
+  out.y = h.y;
   out.point = start + (end - start) * h.t;
   return out;
 }

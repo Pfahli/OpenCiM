@@ -18,6 +18,8 @@
 #include "engine/shaders.h"
 #include "engine/tools.h"
 #include "engine/tool_objects.h"
+#include "engine/tool_addstop.h"
+#include "engine/tool_tracks.h"
 #include "engine/grid.h"
 #include "engine/host.h"
 
@@ -51,6 +53,8 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerInteractionNatives(*vm_);
   registerToolNatives(*vm_);
   registerObjectTools(*vm_);
+  registerAddStopTool(*vm_);
+  registerTrackTools(*vm_);
   registerSaveNatives(*vm_);
   registerTimelineNatives(*vm_);
   registerGridEditNatives(*vm_);

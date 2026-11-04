@@ -118,7 +118,9 @@ void toolReplace(script::VM& vm, script::Object* player, GridObj* grid, uint32_t
 // finishTool's case for the laying modes (L:0x0819a3e0.c:134-298) and the core of placing: when no preview item
 // conflicts (gsGrid::checkConflict against the map without the replaced items, and each with the one before it), the
 // replaced items are removed and every preview item is mounted; the previews are removed either way. Returns true.
-bool toolCommit(script::VM& vm, script::Object* player, GridObj* grid);
+// onMounted(preview, mounted) runs after each mount (the laying modes soften the ground there).
+bool toolCommit(script::VM& vm, script::Object* player, GridObj* grid,
+                const std::function<void(uint32_t preview, uint32_t mounted)>& onMounted = {});
 
 // gsGrid::mountObject (L:0x08148470): a permanent copy of a preview item (TEMP cleared, the controller's name carried
 // over), its optional overlaps removed; returns the new item or −1
@@ -130,12 +132,19 @@ bool gridCheckConflict(script::VM& vm, GridObj* grid, uint32_t item, const std::
 // gsGridItem::setSelected(selected, negative) (L:0x08185a70): the highlight flags of one item
 void gridSetSelected(script::VM& vm, GridObj* grid, uint32_t item, bool selected, bool negative);
 // gsGrid::selectArea / unselectArea (L:0x08141df0 / L:0x08141cb0): the cells [x, x+w) × [z, z+l) and the items
-// overlapping them (gridObjectsOverlapping) get (or lose) the highlight; negative = red
+// overlapping them (gridGetObjects) get (or lose) the highlight; negative = red
 void gridSelectArea(script::VM& vm, GridObj* grid, int x, int z, int w, int l, bool negative);
 void gridUnselectArea(script::VM& vm, GridObj* grid, int x, int z, int w, int l);
-// gsGrid::getObjects(x, z, w, l) (L:0x0813fdb0): the live items, not previews (TEMP), whose footprint overlaps the
-// area (gsGridItem::overlap: the rectangle, then the cell cover of diagonal items)
-std::vector<uint32_t> gridObjectsOverlapping(script::VM& vm, GridObj* grid, int x, int z, int w, int l);
+// gsGrid::getObjects(x, z, w, l) (L:0x0813fdb0): the live (not TEMP) items around whose footprint overlaps the area
+// (gsGridItem::overlap: the rectangle, and a covered cell for diagonal footprints)
+std::vector<uint32_t> gridGetObjects(script::VM& vm, GridObj* grid, int x, int z, int w, int l);
+// gsGridItem::overlap(a, b) (L:0x081834e0): footprints and height ranges (y − negHeight·256 .. y + height) overlap
+bool gridItemsOverlap(script::VM& vm, GridObj* grid, uint32_t a, uint32_t b);
+// gsGrid::selectObjectArea(item, negative) (L:0x08141ae0): the item's covered cells, the item and the live items
+// overlapping it get the highlight
+void gridSelectObjectArea(script::VM& vm, GridObj* grid, uint32_t item, bool negative);
+// an item's footprint (x, z, sx, sz after the orientation swap), for unselectArea over a preview
+void gridItemRect(script::VM& vm, GridObj* grid, uint32_t item, int& x, int& z, int& w, int& l);
 // gsRotateConnections (L:0x08181230): each byte of a connection mask (8 directions, 45° per bit) rotated right by n
 uint32_t rotateConnections(uint32_t connections, int n);
 
@@ -145,10 +154,11 @@ struct ToolPick {
   int cellX = -1, cellZ = -1;  // the terrain cell under the cursor (or under the hit item point)
   int item = -1;               // the item hit (after the parent walk), −1 for terrain
   render::Vec3 point;          // the hit point in world space
+  int y = -0x8000;             // intersectGrid's height out: the item's y, else the ground rounded ((h + 0x80) & ~0xff)
 };
 ToolPick toolPick(script::VM& vm, ControlObj* player, float x, float y, bool terrainOnly);
-// the pick segment (eye to far plane, world space) under a player-local mouse position; false without a view
-bool toolSegment(script::VM& vm, ControlObj* player, float x, float y, render::Vec3& start, render::Vec3& end);
+// intersectGrid with a height (planeY != −0x8000): only tunnel items, the terrain as the plane at planeY (subway level)
+ToolPick toolPickLevel(script::VM& vm, ControlObj* player, float x, float y, int planeY, bool terrainOnly = false);
 
 // ---- the framework (called by interaction.cpp's player hooks and natives) ----
 void toolMouseMove(script::VM& vm, ControlObj* player, float x, float y, int buttons = 0);
