@@ -549,6 +549,7 @@ bool toolFinish(VM& vm, Object* player) {
   }
   t.inProgress = t.right = t.middle = false;
   t.cellX = t.cellZ = -1;
+  t.upgraded.clear();
   if (mode != kGridModeSelectObject) player->fieldValues[u"hoverObject"] = Value::null();
   return ok;
 }
@@ -618,6 +619,15 @@ void registerToolNatives(VM& vm) {
     if (GridObj* grid = toolGrid(v, s))
       for (uint32_t i : toolState(s).replaced)
         if (Object* c = gridItemController(v, grid, i)) out.push_back(obj(c));
+    return newArray(out);
+  });
+  // port: regsGetUpgradedItems(), the templates of the live stops the preview would upgrade (ToolState::upgraded)
+  if (ClassInfo* c = vm.findClass("gsGridPlayer")) addMethod(c, u"regsGetUpgradedItems", 0, 0);
+  implement(vm, "gsGridPlayer", u"regsGetUpgradedItems", [](VM& v, Object* s, int, const Value*) {
+    std::vector<Value> out;
+    if (GridObj* grid = toolGrid(v, s))
+      for (uint32_t i : toolState(s).upgraded)
+        if (Object* t = itemTemplate(grid, i)) out.push_back(obj(t));
     return newArray(out);
   });
 }
