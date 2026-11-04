@@ -27,3 +27,6 @@ $regs_effectsVolume_item = "Effektlautstärke (Fahrzeuge, Gebäude, Tiere): %0%%
 $regs_ambienceVolume_item = "Umgebungslautstärke: %0%%";
 $regs_interfaceVolume_item = "Menü- und Hinweistöne: %0%%";
 $regs_menuMusicFollows_item = "Menümusik folgt den Musikeinstellungen";
+$regs_menu_version = "OpenCiM %0";
+$regs_menu_build = "Build %0 (%1), %2";
+$regs_menu_info = "Inoffizielle Portierung, benötigt Cities in Motion";

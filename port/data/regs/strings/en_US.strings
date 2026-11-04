@@ -27,3 +27,6 @@ $regs_effectsVolume_item = "Effects volume (vehicles, buildings, animals): %0%%"
 $regs_ambienceVolume_item = "Ambience volume: %0%%";
 $regs_interfaceVolume_item = "Interface volume: %0%%";
 $regs_menuMusicFollows_item = "Menu music follows the music settings";
+$regs_menu_version = "OpenCiM %0";
+$regs_menu_build = "Build %0 (%1), %2";
+$regs_menu_info = "Unofficial source port, requires Cities in Motion";

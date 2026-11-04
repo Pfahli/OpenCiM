@@ -1,9 +1,43 @@
-// ReGS extension of the main menu (metro/ui/menus/mainmenu.script, used as installed; see VM::extendSource). The
-// original plays the menu music at volume 1.0 whatever the music settings (docs/audio/README.md §10). With the port's
-// optional fix $regsMenuMusicFollowsMusicVolume (Audio page, off by default as the original) it follows the in-game
-// music's settings: $musicVolume, silent when music is off. The Audio page's OK applies a change at once.
+// ReGS extension of the main menu (metro/ui/menus/mainmenu.script, used as installed; see VM::extendSource).
+// * The original plays the menu music at volume 1.0 whatever the music settings (docs/audio/README.md §10). With the
+//   port's optional fix $regsMenuMusicFollowsMusicVolume (Audio page, off by default as the original) it follows the
+//   in-game music's settings: $musicVolume, silent when music is off. The Audio page's OK applies a change at once.
+// * The port's title "OPENCiM" above the CITIES in MOTION logo (the port's own art, regs/ui/opencim-title.dds, made by
+//   tools/make-opencim-logo.ps1), and the version, build and a short note in the bottom right corner.
 //@base
 
 if (MAIN.$settings.$regsMenuMusicFollowsMusicVolume : false) {
   $menuMusic.volume = (MAIN.$settings.$music : true) ? (MAIN.$settings.$musicVolume : 0.3) : 0.0;
 }
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regsStrings = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regsStrings = load "/regs/strings/en_US.strings";
+}
+
+// above the logo: the logo's art spans its top half in the 256 x 128 image, so the title sits just over it
+with ($regsTitle = new_control($menuArea)) {
+  .setRect(int($menuArea.width*0.5)-128, int($buttonArea.top*0.5) - 112, 256, 64);
+  .setImage("/regs/ui/opencim-title.dds");
+  .visible = true;
+  .canActivate = false;
+  .clickThrough = true;
+}
+
+function regsCornerLine($y, $text, $color) {
+  with ($line = new_control($background)) {
+    .setRect($background.width - 520, $background.height - $y, 510, 18);
+    .textAlign = ALIGN_RIGHT | ALIGN_MIDDLE;
+    MAIN.$ui.setTextFont($line, $color);
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+    .clickThrough = true;
+  }
+  return $line;
+}
+
+$regsVersionLine = regsCornerLine(62, expandPattern($regsStrings.$regs_menu_version, REGS_VERSION), 0xFFE0E0E0);
+$regsBuildLine = regsCornerLine(44, expandPattern($regsStrings.$regs_menu_build, REGS_BUILD, REGS_COMMIT, REGS_BUILD_DATE), 0xB0C8C8C8);
+$regsInfoLine = regsCornerLine(26, $regsStrings.$regs_menu_info, 0xB0C8C8C8);

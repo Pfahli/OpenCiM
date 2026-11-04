@@ -6,6 +6,7 @@
 #include <ctime>
 #include <filesystem>
 
+#include "build_info.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
@@ -128,6 +129,11 @@ void exportVariables(VM& vm, Object* self, const std::u16string& dest, int argc,
 }  // namespace
 
 void registerCoreNatives(VM& vm) {
+  // ---- the port's version (build_info.h, cmake/build_info.cmake): shown in the main menu's corner ----
+  vm.setGlobal(u"REGS_VERSION", Value::string(utf8ToUtf16(REGS_VERSION_STRING)));
+  vm.setGlobal(u"REGS_BUILD", Value::integer(REGS_BUILD_NUMBER));
+  vm.setGlobal(u"REGS_COMMIT", Value::string(utf8ToUtf16(REGS_BUILD_COMMIT)));
+  vm.setGlobal(u"REGS_BUILD_DATE", Value::string(utf8ToUtf16(REGS_BUILD_DATE)));
   // ---- output ----
   implementGlobal(vm, u"print", [](VM& v, Object*, int argc, const Value* a) {
     std::string s;

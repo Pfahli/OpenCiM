@@ -1,5 +1,5 @@
 ﻿cmake_minimum_required(VERSION 3.20)
-project(regs LANGUAGES CXX)
+project(regs VERSION 0.1.0 LANGUAGES CXX)
 
 # ReGS: a from-source reimplementation of the GSystem engine that runs Cities in Motion from an installed copy.
 # No game data is part of this tree; everything is read from the user's install at run time.
@@ -79,6 +79,14 @@ add_library(regs_engine STATIC
   src/audio/miniaudio_impl.cpp
 )
 target_include_directories(regs_engine PUBLIC src)
+# the version and the build's git state (build_info.h: REGS_VERSION_STRING, REGS_BUILD_NUMBER = commit count,
+# REGS_BUILD_COMMIT, REGS_BUILD_DATE), refreshed at every build; the main menu shows them
+add_custom_target(regs_build_info
+  COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${CMAKE_BINARY_DIR}/generated/build_info.h
+          -DVERSION=${PROJECT_VERSION} -P ${CMAKE_SOURCE_DIR}/cmake/build_info.cmake
+  BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/build_info.h)
+add_dependencies(regs_engine regs_build_info)
+target_include_directories(regs_engine PUBLIC ${CMAKE_BINARY_DIR}/generated)
 # third-party: miniaudio (public domain / MIT-0), the audio output and the WAV/MP3 decoders; its implementation file is
 # compiled without the port's warning level
 target_include_directories(regs_engine PRIVATE third_party/miniaudio)
