@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "engine/grid.h"
@@ -97,6 +98,20 @@ struct AirPending {
 struct NodeRt {
   int occupant = -1, reserver = -1;  // node +0x18 / +0x1c
   bool marker = false;               // flag 0x1000000: someone waits to enter
+};
+
+// A door item (item flag 0x1000 GRID_ITEM_CROSS_TRACK with a doorOpenLen; vanilla: the level crossing
+// track_double_cross_small), gsGridItem::move L:0x08182b10.c:96-167 (docs/simulation/grid-traffic.md §5.1.1)
+struct DoorItem {
+  uint32_t item = 0;
+  std::vector<int> nodes;  // its train-track nodes (node flag 0x1000): any occupant opens the door
+  render::Vec3 centre;     // the item centre: the bell's position
+  float openStart = 0, openLen = 0, closeStart = 0, closeLen = 0;  // doorOpenStart/Len, doorCloseStart/Len
+  float phase = 0;         // item +0x64: 0..1 opening, 0..−1 closing, −1 at rest (the ctor sets 0)
+  float time = -1;         // the clip time animate() got last, −1 = no skeleton (bind pose)
+  bool opening = false;    // an occupied node in the last update: the bell (moveSound) loops
+  bool active = false;     // the item's bucket is active (camera stand-in): updated, its sound may play
+  bool nearOnly = false;   // item flag 0x4000000: animated only while eyeDist < 300
 };
 
 struct LineStopState {
@@ -298,6 +313,13 @@ bool aircraftDone(const SimState& s, const Mover& m);
 // a helicopter leg from pad node to pad node: inline Bézier nodes, then the arrival pad
 void helicopterLeg(SimState& s, int from, int to, std::vector<int>& out);
 bool debugSim();
+// ---- door items (engine/sim_doors.cpp) ----
+// the door items of the map with their train-track nodes, after the load and after live edits (phases kept by item)
+void buildDoors(script::VM& vm, GridObj* grid, SimState& s);
+// one item update of the door items (gsGridItem::move), every sub-step and with dt = 0 at game speed 0
+void stepDoors(SimState& s, float dt);
+// the port's stand-in for gsGridItem::move running in an active bucket: within this horizontal distance of the eye
+constexpr float kActiveRadius = 450.0f;
 // the port's density knobs for new sandbox games (gsGridCitizens.regsPopulationDensity, gsGridVehicles.regsTrafficDensity;
 // 0.5, 1, 2 or 4, default 1)
 float populationDensity(SimState& s);
@@ -368,6 +390,8 @@ struct SimState {
   std::vector<int> airEntries, airGatesIn, airGatesOut, airExits;
   int aircraftLive = 0;
   sim::AirPending landing, departing;  // a spawn waiting for its nodes to be free (vehicles+0x168..0x197)
+  std::vector<sim::DoorItem> doors;    // engine/sim_doors.cpp
+  std::unordered_map<uint32_t, float> doorTimes;  // per door item: DoorItem::time, for the item renderer
   std::vector<int> freeInline;         // inline flight nodes to reuse
   std::vector<uint32_t> spawnPoints;   // GRID_ITEM_SPAWNPOINT items still to turn into animals (characters+0x114)
   float birdAcc = 0, animalAcc = 0;

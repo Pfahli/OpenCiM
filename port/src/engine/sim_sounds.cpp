@@ -6,6 +6,7 @@
 // check per tick.
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <random>
 
 #include "core/log.h"
@@ -54,6 +55,14 @@ struct ItemSound {
   float outOfRange = 0;
 };
 
+// a door item's slot: its template's moveSound (the level crossing bell)
+struct DoorSound {
+  bool resolved = false, has = false;
+  SoundTemplate t;
+  int voice = 0;
+  float outOfRange = 0;
+};
+
 bool isForced(const Object* ctl) {
   if (!ctl) return false;
   auto it = ctl->fieldValues.find(u"forceSounds");
@@ -74,6 +83,7 @@ struct SimSounds {
   std::vector<OneShot> loose;  // one-shots not following an agent (announcements at stops, animals)
   std::vector<ItemSound> items;
   uint64_t itemsGeneration = ~0ull, itemsVersion = ~0ull;
+  std::map<uint32_t, DoorSound> doors;  // by item
   std::minstd_rand rng{12345};  // the port's own stream: the simulation's rand() sequence stays untouched
   float rnd(float a, float b) { return a + (b - a) * float(rng() - rng.min()) / float(rng.max() - rng.min()); }
 
@@ -84,6 +94,7 @@ struct SimSounds {
     }
     for (OneShot& o : loose) worldSoundStop(o.voice, "simulation ends");
     for (ItemSound& it : items) worldSoundStop(it.voice, "simulation ends");
+    for (auto& [item, d] : doors) worldSoundStop(d.voice, "simulation ends");
   }
 
   const ModelSounds& model(const SimState& s, int index) {
@@ -302,6 +313,48 @@ void tickItems(VM& vm, GridObj* grid, SimSounds& ss, const Vec3& eye, float dt) 
   }
 }
 
+// gsGridItem::move (L:0x08182b10.c:137-146, 163-166): while a door item opens (a train holds one of its track nodes)
+// its template's moveSound loops at the item centre, started when eyeDist < maxDistance; it is freed when the door
+// closes and when the item's bucket goes inactive. In between the clone's own tick stops it 0.5 s out of range and a
+// loop comes back in range (§6.5).
+void tickDoors(GridObj* grid, SimState& s, SimSounds& ss, const Vec3& eye, float dt) {
+  if (s.doors.empty() && ss.doors.empty()) return;
+  if (ss.doors.size() > s.doors.size()) {  // doors that left the map
+    for (auto it = ss.doors.begin(); it != ss.doors.end();) {
+      bool kept = std::any_of(s.doors.begin(), s.doors.end(), [&](const DoorItem& d) { return d.item == it->first; });
+      if (!kept) worldSoundStop(it->second.voice, "door item gone"), it = ss.doors.erase(it);
+      else ++it;
+    }
+  }
+  for (const DoorItem& d : s.doors) {
+    DoorSound& ds = ss.doors[d.item];
+    if (!ds.resolved) {
+      ds.resolved = true;
+      const GridData& g = *grid->data;
+      const auto& it = g.items[d.item];
+      auto t = grid->templates.find(g.types[it.type]);
+      ds.has = t != grid->templates.end() && soundTemplate(templateSound(t->second.get(), u"moveSound"), ds.t);
+    }
+    if (!ds.has) continue;
+    if (!d.opening || !d.active) {
+      if (ds.voice) worldSoundStop(ds.voice, d.active ? "door closes" : "bucket inactive"), ds.voice = 0;
+      continue;
+    }
+    Vec3 q = d.centre - eye;
+    float dist = std::sqrt(dot(q, q));
+    if (ds.voice && !worldSoundAlive(ds.voice)) ds.voice = 0;
+    if (!ds.voice) {
+      if (dist < ds.t.maxDistance) {
+        ds.voice = worldSoundPlay(grid, ds.t, d.centre, Vec3{}, false, true, 1.0f, 1.0f, "door bell");
+        ds.outOfRange = 0;
+      }
+      continue;
+    }
+    if (dist <= ds.t.maxDistance) ds.outOfRange = 0;
+    else if ((ds.outOfRange += dt) >= 0.5f) worldSoundStop(ds.voice, "out of range"), ds.voice = 0;
+  }
+}
+
 }  // namespace
 
 void simSoundsTick(VM& vm, GridObj* grid, SimState& s, float dt) {
@@ -312,6 +365,7 @@ void simSoundsTick(VM& vm, GridObj* grid, SimState& s, float dt) {
   tickMovers(vm, s, ss, eye, dt);
   tickCharacters(s, ss, eye, dt);
   tickItems(vm, grid, ss, eye, dt);
+  if (grid->data) tickDoors(grid, s, ss, eye, dt);
   std::erase_if(ss.loose, [](const OneShot& o) { return !worldSoundAlive(o.voice); });
 }
 
