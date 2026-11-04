@@ -16,6 +16,7 @@
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
+#include "engine/tools.h"
 
 namespace regs::engine {
 
@@ -23,7 +24,7 @@ using namespace regs::script;
 
 namespace {
 
-constexpr uint32_t kFlagCover = 0x4, kFlagBridge = 0x4000, kFlagTunnel = 0x8000, kFlagTemp = 0x100000,
+constexpr uint32_t kFlagCover = 0x4, kFlagStop = 0x2000, kFlagBridge = 0x4000, kFlagTunnel = 0x8000, kFlagTemp = 0x100000,
                    kFlagOptional = 0x200000, kFlagHidden = 0x400000;
 constexpr int kTypeTree = 0x13, kTypeMarker = 0x15;
 
@@ -40,7 +41,7 @@ float fieldFloat(VM& vm, const Object* o, const char16_t* name, float def) {
 struct TypeInfo {
   bool valid = false;
   int width = 1, length = 1, type = 0, height = 0;
-  uint32_t flags = 0, diagonals = 0;
+  uint32_t flags = 0, diagonals = 0, connections = 0;
 };
 
 struct Rect {
@@ -78,6 +79,7 @@ TypeInfo typeInfoOf(VM& vm, GridObj* grid, const std::string& name) {
   t.type = fieldInt(vm, o, u"type", 0);
   t.flags = uint32_t(fieldInt(vm, o, u"flags", 0));
   t.diagonals = uint32_t(fieldInt(vm, o, u"diagonals", 0));
+  t.connections = uint32_t(fieldInt(vm, o, u"connections", 0));
   t.height = int(fieldFloat(vm, o, u"height", 0) * 256.0f);
   return t;
 }
@@ -408,6 +410,31 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   if ((sa.flags & 0x500000) == 0x500000 && (sb.flags & kFlagOptional) && sb.type != kTypeTree) return false;
   if ((sb.flags & 0x500000) == 0x500000 && (sa.flags & kFlagOptional) && sa.type != kTypeTree) return false;
   if ((sa.flags & 0x500000) == kFlagHidden || (sb.flags & 0x500000) == kFlagHidden) return false;
+  // stops (L:0x08183aa0.c:153-210): a stop and a road or track of its family (small, large, avenue) do not conflict
+  // when the stop runs along it (the road's connections are the stop's turned by ±90°); metro platform parts (stops of
+  // the metro track types) conflict with no other item; two stops only when they face the same way, and not when they
+  // are variants of one stop (same type and place, another template: an upgrade)
+  if ((sa.flags | sb.flags) & kFlagStop) {
+    auto conn = [&](const GridData::Item& it) {
+      return rotateConnections(st.types[it.type].connections, (it.orient & 3) * 2);
+    };
+    auto across = [](uint32_t c) {
+      return (c & 0x3030303u) << 6 | (c >> 2 & 0x3f3f3f3fu) | (c >> 6 & 0x3030303u) | (c << 2 & 0xfcfcfcfcu);
+    };
+    auto family = [](int a, int b) {
+      auto f = [](int t) { return t == 2 || t == 10 ? 1 : t == 5 || t == 11 ? 2 : t == 6 || t == 12 ? 3 : 0; };
+      return f(a) && f(a) == f(b);
+    };
+    if ((sa.flags & kFlagStop) && (sb.flags & kFlagStop)) {
+      if (conn(ia) != conn(ib)) return false;
+      if (sa.type == sb.type && ia.x == ib.x && ia.z == ib.z && ia.y == ib.y && ia.type != ib.type) return false;
+    } else {
+      const GridData::Item &stop = (sa.flags & kFlagStop) ? ia : ib, &other = (sa.flags & kFlagStop) ? ib : ia;
+      int stopType = (sa.flags & kFlagStop) ? sa.type : sb.type, otherType = (sa.flags & kFlagStop) ? sb.type : sa.type;
+      if (stopType >= 0xd && stopType <= 0xf) return false;
+      if (conn(other) == across(conn(stop)) && family(stopType, otherType)) return false;
+    }
+  }
   // port simplification of the layer rules: tunnels only meet tunnels; elsewhere the height ranges must overlap
   if ((sa.flags & kFlagTunnel) != (sb.flags & kFlagTunnel)) return false;
   int shift = 0x200 - int(g.heightBase);

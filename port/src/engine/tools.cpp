@@ -11,6 +11,7 @@
 #include "engine/api.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
+#include "engine/grid_render.h"
 #include "engine/gui.h"
 #include "engine/interaction.h"
 
@@ -58,11 +59,12 @@ Object* itemTemplate(GridObj* grid, uint32_t item) {
   return t == grid->templates.end() ? nullptr : t->second.get();
 }
 
-// the template's connection mask, turned with the item (gsGridItem +0x50: gsRotateConnections(connections, orient·2))
-uint32_t itemConnections(VM& vm, GridObj* grid, uint32_t item) {
+// the template's second connection mask, turned with the item (gsGridItem +0x50: gsRotateConnections(connections2,
+// orient·2)); checkConflict's join rule reads it (L:0x0813f5e0.c:238), not the first mask (+0x4c)
+uint32_t itemConnections2(VM& vm, GridObj* grid, uint32_t item) {
   Object* t = itemTemplate(grid, item);
   if (!t) return 0;
-  return rotateConnections(uint32_t(intField(vm, t, u"connections", 0)), (grid->data->items[item].orient & 3) * 2);
+  return rotateConnections(uint32_t(intField(vm, t, u"connections2", 0)), (grid->data->items[item].orient & 3) * 2);
 }
 
 // an item's base height in the engine's units (cell heights carry the same shift)
@@ -151,10 +153,7 @@ void gridSelectArea(VM& vm, GridObj* grid, int x, int z, int w, int l, bool nega
       g.flags[c] = uint16_t(g.flags[c] | kCellHighlight | (negative ? kCellNegative : 0));
       grid->highlightCells.insert(uint32_t(c));
     }
-  for (uint32_t i : gridItemsNear(vm, grid, x, z, x + w - 1, z + l - 1)) {
-    const GridData::Item& it = g.items[i];
-    if (it.x >= x && it.x < x + w && it.z >= z && it.z < z + l) gridSetSelected(vm, grid, i, true, negative);
-  }
+  for (uint32_t i : gridObjectsOverlapping(vm, grid, x, z, w, l)) gridSetSelected(vm, grid, i, true, negative);
   ++grid->highlightVersion;
 }
 
@@ -168,11 +167,34 @@ void gridUnselectArea(VM& vm, GridObj* grid, int x, int z, int w, int l) {
       g.flags[c] &= uint16_t(~(kCellHighlight | kCellNegative));  // the engine keeps the low 14 bits (& 0x3fff)
       grid->highlightCells.erase(uint32_t(c));
     }
+  for (uint32_t i : gridObjectsOverlapping(vm, grid, x, z, w, l)) gridSetSelected(vm, grid, i, false, false);
+  ++grid->highlightVersion;
+}
+
+std::vector<uint32_t> gridObjectsOverlapping(VM& vm, GridObj* grid, int x, int z, int w, int l) {
+  std::vector<uint32_t> out;
+  if (!grid || !grid->data || w <= 0 || l <= 0) return out;
+  const GridData& g = *grid->data;
   for (uint32_t i : gridItemsNear(vm, grid, x, z, x + w - 1, z + l - 1)) {
     const GridData::Item& it = g.items[i];
-    if (it.x >= x && it.x < x + w && it.z >= z && it.z < z + l) gridSetSelected(vm, grid, i, false, false);
+    GridItemShape s = gridItemShape(vm, grid, i);
+    if (s.flags & kItemTemp) continue;
+    int x0 = std::max(x, int(it.x)), x1 = std::min(x + w, it.x + s.sx);
+    int z0 = std::max(z, int(it.z)), z1 = std::min(z + l, it.z + s.sz);
+    if (x1 <= x0 || z1 <= z0) continue;
+    bool hit = true;
+    Object* t = itemTemplate(grid, i);
+    if (uint32_t diag = t ? uint32_t(intField(vm, t, u"diagonals", 0)) : 0) {
+      ItemFootprint f = itemFootprint(std::max(1, intField(vm, t, u"width", 1)), std::max(1, intField(vm, t, u"length", 1)),
+                                      diag, it.orient);
+      hit = false;
+      for (int cz = z0; cz < z1 && !hit; ++cz)
+        for (int cx = x0; cx < x1 && !hit; ++cx)
+          if (itemCellCover(f, s.flags, cx - it.x, cz - it.z)) hit = true;
+    }
+    if (hit) out.push_back(i);
   }
-  ++grid->highlightVersion;
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -222,15 +244,15 @@ bool gridCheckConflict(VM& vm, GridObj* grid, uint32_t item, const std::set<uint
         if (h > y || h < y - 0xa00) return true;
       }
   }
-  // the items around (L:0x0813f5e0.c:216-367). An item with flag 2 and connections must meet a neighbour along one
-  // of its four edges at its own height (n/e/s/w bits 1, 4, 0x10, 0x40), else it conflicts.
-  uint32_t conn = itemConnections(vm, grid, item);
+  // the items around (L:0x0813f5e0.c:216-367). An item with flag 2 and a second connection mask (+0x50) must meet a
+  // neighbour along one of its four edges at its own height (n/e/s/w bits 1, 4, 0x10, 0x40), else it conflicts.
+  uint32_t conn = itemConnections2(vm, grid, item);
   bool needsJoin = conn != 0 && (flags & 2);
   for (uint32_t o : gridItemsNear(vm, grid, x, z, x + w - 1, z + l - 1)) {
     if (o == item || g.items[o].removed || exclude.count(o) || isAncestorIn(g, o, exclude)) continue;
     const GridData::Item& ot = g.items[o];
     if (needsJoin) {
-      uint32_t oc = itemConnections(vm, grid, o);
+      uint32_t oc = itemConnections2(vm, grid, o);
       if (oc) {
         GridItemShape os = gridItemShape(vm, grid, o);
         int oy = engineY(g, ot);
@@ -355,9 +377,10 @@ bool toolCommit(VM& vm, Object* player, GridObj* grid) {
 // ---------------------------------------------------------------------------------------------------------------
 // the framework
 
-void toolMouseMove(VM& vm, ControlObj* player, float x, float y) {
+void toolMouseMove(VM& vm, ControlObj* player, float x, float y, int buttons) {
   ToolState& t = toolState(player);
   if (t.middle) return;  // +0x25a: the camera drags
+  t.buttons = buttons;
   // debugging: REGS_DEBUG_HIGHLIGHT=1 highlights 5×5 cells under the cursor (green) and the item there (red)
   static const bool debugHighlight = std::getenv("REGS_DEBUG_HIGHLIGHT") != nullptr;
   if (debugHighlight)
@@ -402,9 +425,10 @@ void toolMouseDown(VM& vm, ControlObj* player, float x, float y, int key) {
       }
     }
   } else if (key == kMouseRight) {
-    if (mode == kGridModePlaceObject) {  // turn the object; eight steps when it has a diagonal variant
+    if (mode == kGridModePlaceObject) {  // turn the object (toolMode, +0x24c); eight steps with a diagonal variant
       bool eight = player->fieldValues.count(u"toolObject2") && player->fieldValues[u"toolObject2"].object();
-      t.orient = eight ? (t.orient + 7) & 7 : (t.orient + 3) & 3;
+      int o = intField(vm, player, u"toolMode", 0);
+      player->fieldValues[u"toolMode"] = Value::integer(eight ? (o + 7) & 7 : (o + 3) & 3);
       toolCancel(vm, player);
       player->mouseMove(vm, x, y, 0, 0, 0);
     } else if (mode == kGridModeRename || mode == kGridModeSetVariation) {

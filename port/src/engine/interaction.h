@@ -19,7 +19,7 @@ void gridItemControllerRemoved(script::VM& vm, GridObj* grid, uint32_t item);
 
 // gsGridPlayer's native mouse handlers (vtable slots 65-67, §3-4), run before the gsControl base behaviour of the
 // same call; they do nothing for other controls.
-void gridPlayerMouseMove(script::VM& vm, ControlObj* c, float x, float y);
+void gridPlayerMouseMove(script::VM& vm, ControlObj* c, float x, float y, int buttons = 0);
 void gridPlayerMouseDown(script::VM& vm, ControlObj* c, float x, float y, int key);
 void gridPlayerMouseUp(script::VM& vm, ControlObj* c, float x, float y, int key);
 

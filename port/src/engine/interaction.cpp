@@ -223,7 +223,8 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
     });
 
   // characters (§2.4): within 1 unit of the point 1 above the feet, ranked by the distance to that point minus 2
-  forEachSimCharacter(grid, [&](const SimCharacterView& c) {
+  // The tools pick without vehicles and characters (intersectGrid(..., null, null), tools.h toolPick).
+  if (vehicles) forEachSimCharacter(grid, [&](const SimCharacterView& c) {
     if (!c.object) return;  // no controller: no displayName, not pickable
     int cx = int((c.position.x + hW) / cs), cz = int((c.position.z + hL) / cs);
     if (cx < rx0 - 3 || cx > rx1 + 3 || cz < rz0 - 3 || cz > rz1 + 3) return;
@@ -456,9 +457,9 @@ void guarded(F&& f) {
 }  // namespace
 
 // the player's mouse handlers: the tool framework (engine/tools.cpp) dispatches by editMode
-void gridPlayerMouseMove(VM& vm, ControlObj* c, float x, float y) {
+void gridPlayerMouseMove(VM& vm, ControlObj* c, float x, float y, int buttons) {
   if (!isPlayer(vm, c)) return;
-  guarded([&] { toolMouseMove(vm, c, x, y); });
+  guarded([&] { toolMouseMove(vm, c, x, y, buttons); });
 }
 
 void gridPlayerMouseDown(VM& vm, ControlObj* c, float x, float y, int key) {
@@ -469,6 +470,10 @@ void gridPlayerMouseDown(VM& vm, ControlObj* c, float x, float y, int key) {
 void gridPlayerMouseUp(VM& vm, ControlObj* c, float x, float y, int key) {
   if (!isPlayer(vm, c)) return;
   guarded([&] { toolMouseUp(vm, c, x, y, key); });
+}
+
+bool toolSegment(VM& vm, ControlObj* player, float x, float y, Vec3& start, Vec3& end) {
+  return pickSegment(vm, player, x + player->desktopLeft(), y + player->desktopTop(), start, end);
 }
 
 // a pick for the editing tools: intersectGrid without vehicles and characters, under a player-local position

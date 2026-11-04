@@ -70,9 +70,13 @@ struct ToolState {
   int cellX = -1, cellY = 0, cellZ = -1, cellW = 0;
   // +0x25c .. +0x268: that cell when the button went down (the start of a drag)
   int startX = -1, startY = 0, startZ = -1, startW = 0;
-  int orient = 0;       // +0x24c: placement orientation (right click turns it in GRIDMODE_PLACE_OBJECT)
-  int orientExtra = 0;  // +0x250
-  int brush = 0;        // +0x254: brush radius of the terrain tools
+  // +0x24c / +0x250 / +0x254 are the script fields toolMode, toolType and toolSize (the player's fieldValues): in
+  // GRIDMODE_PLACE_OBJECT toolMode is the orientation (right click turns it) and toolType the height offset; the
+  // brush tools read toolSize as their radius. These three stay for modes that keep a private copy.
+  int orient = 0;
+  int orientExtra = 0;
+  int brush = 0;
+  int buttons = 0;  // the mouse buttons of the mouseMove being handled (gsGridPlayer::mouseMove's mask: 1 = left)
 };
 ToolState& toolState(script::Object* player);
 
@@ -125,10 +129,13 @@ int gridMountObject(script::VM& vm, GridObj* grid, uint32_t tempItem);
 bool gridCheckConflict(script::VM& vm, GridObj* grid, uint32_t item, const std::set<uint32_t>& exclude);
 // gsGridItem::setSelected(selected, negative) (L:0x08185a70): the highlight flags of one item
 void gridSetSelected(script::VM& vm, GridObj* grid, uint32_t item, bool selected, bool negative);
-// gsGrid::selectArea / unselectArea (L:0x08141df0 / L:0x08141cb0): the cells [x, x+w) × [z, z+l) and the items whose
-// footprint corner lies there get (or lose) the highlight; negative = red
+// gsGrid::selectArea / unselectArea (L:0x08141df0 / L:0x08141cb0): the cells [x, x+w) × [z, z+l) and the items
+// overlapping them (gridObjectsOverlapping) get (or lose) the highlight; negative = red
 void gridSelectArea(script::VM& vm, GridObj* grid, int x, int z, int w, int l, bool negative);
 void gridUnselectArea(script::VM& vm, GridObj* grid, int x, int z, int w, int l);
+// gsGrid::getObjects(x, z, w, l) (L:0x0813fdb0): the live items, not previews (TEMP), whose footprint overlaps the
+// area (gsGridItem::overlap: the rectangle, then the cell cover of diagonal items)
+std::vector<uint32_t> gridObjectsOverlapping(script::VM& vm, GridObj* grid, int x, int z, int w, int l);
 // gsRotateConnections (L:0x08181230): each byte of a connection mask (8 directions, 45° per bit) rotated right by n
 uint32_t rotateConnections(uint32_t connections, int n);
 
@@ -140,9 +147,11 @@ struct ToolPick {
   render::Vec3 point;          // the hit point in world space
 };
 ToolPick toolPick(script::VM& vm, ControlObj* player, float x, float y, bool terrainOnly);
+// the pick segment (eye to far plane, world space) under a player-local mouse position; false without a view
+bool toolSegment(script::VM& vm, ControlObj* player, float x, float y, render::Vec3& start, render::Vec3& end);
 
 // ---- the framework (called by interaction.cpp's player hooks and natives) ----
-void toolMouseMove(script::VM& vm, ControlObj* player, float x, float y);
+void toolMouseMove(script::VM& vm, ControlObj* player, float x, float y, int buttons = 0);
 void toolMouseDown(script::VM& vm, ControlObj* player, float x, float y, int key);
 void toolMouseUp(script::VM& vm, ControlObj* player, float x, float y, int key);
 bool toolFinish(script::VM& vm, script::Object* player);

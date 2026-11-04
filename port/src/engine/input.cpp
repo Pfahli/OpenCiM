@@ -236,7 +236,7 @@ void ControlObj::mouseOut(VM& vm) {
 
 bool ControlObj::mouseMove(VM& vm, float x, float y, float dx, float dy, int buttons) {
   if (!firesMouseEvents()) return true;
-  gridPlayerMouseMove(vm, this, x, y);  // gsGridPlayer's override: hover picking (selection.md §3)
+  gridPlayerMouseMove(vm, this, x, y, buttons);  // gsGridPlayer's override: hover picking (selection.md §3)
   std::vector<Value> a{Value::real(x), Value::real(y), Value::real(dx), Value::real(dy)};
   if (dragging) {
     if (ControlObj* t = asControl(dragTarget)) t->setRect(vm, t->left + x - dragX, t->top + y - dragY, t->width, t->height);
