@@ -49,11 +49,14 @@ shipped maps with the loaded templates and compares them with the editor's saved
 the scripts called, at exit), `REGS_DEBUG_GROUPS=1` (the script thread groups' pause count, speed and time every 300
 frames), `REGS_DEBUG_SAVE_AT=<ticks>:<name>` (saves the game after that many simulation ticks, for round trips),
 `REGS_DEBUG_FOLLOW=<line type>[:n]` (the main camera follows the n-th line vehicle of that transport type, given as
-a number: 0 bus, 1 tram, 2 metro, 3 boat, 4 helicopter),
+a number: 0 bus, 1 tram, 2 metro, 3 boat, 4 helicopter; a screenshot burst `follow-turn-<n>.png` when it turns round,
+`follow-bustram-<n>.png` when a followed bus halts at a tram stop), `REGS_DEBUG_CAMERA=<item>` (puts the camera on that
+map item once, 30 ticks into the game; every line vehicle halting at that stop item films a burst
+`halt-<line type>-<k>-<n>.png`), `$regsBusAtTramStops = false;` in `settings.script` (bus lines take no tram stops),
 `REGS_TEST_CRASH=<n>` (drivers near the camera turn reckless until n crashes happened). Test
 saves with every transport type: `node tools/gstool.mjs pack samples/saves/vienna "<documents>/Cities In Motion/saves/vienna.gs"`
-(keep the folder name: the save's `level.scenario` points at it), `REGS_DEBUG_SIM=1` (logs the stop cycle and replays the
-saved traffic routes), `REGS_NO_SIM=1` (simulation off). Runs with `--at` actions ignore the real mouse, keyboard and
+(keep the folder name: the save's `level.scenario` points at it), `REGS_DEBUG_SIM=1` (logs the stop cycle, which tram
+stops bus lines may take, and replays the saved traffic routes), `REGS_NO_SIM=1` (simulation off). Runs with `--at` actions ignore the real mouse, keyboard and
 window focus, so scripted clicks land the same with or without focus.
 
 ### Port files and graphics options
@@ -87,6 +90,13 @@ setup page (`data/regs/extend/metro/ui/menus/sandbox.script`). They are stored i
 loads (`environment.script` extension → `gsGridCitizens.regsPopulationDensity`, `gsGridVehicles.regsTrafficDensity`)
 and cannot be changed during a game. Population scales the home slots per building; traffic scales car use and
 background traffic.
+
+**Bus lines at tram stops** (gameplay QoL, a deviation from the original; on by default): a bus line's add-stop mode
+also takes a tram stop that sits in a street (small and large roads, where the tram runs in the curb lane), and its
+buses halt there in the tram's lane and serve passengers like at a bus stop; tram lines keep the stop. Tram stops in an
+avenue's middle strip or on their own track stay refused. Settings key `$regsBusAtTramStops` in `settings.script`
+(`false` turns it off for the tool; saves with such lines keep running either way, but the original game would not
+handle them). Rules and data: `docs/ui/lines.md` §6.
 
 ## Tools
 

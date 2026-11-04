@@ -74,6 +74,9 @@ The hover script (`hoverinfo.script:318-364`) puts a 30 % pin on the hovered sto
 line". `ui.script:383-387` makes the stop bubbles set `hoverObject` and call `player.mouseMove(0, 0)` in mode 9, and
 a click on a bubble applies the tool directly (`:439-449`).
 
+**Port deviation:** with the option `$regsBusAtTramStops` (default on), toolMode 0 also serves tram stops (10..12)
+that sit in a street (§6).
+
 ### 2.2 finishTool case 9 (`L:0x0819a3e0.c:554-618`)
 
 A click (mouse up → 24 `onTryApplyTool` → `tryApplyTool` → `applyTool` → `finishTool`):
@@ -144,3 +147,45 @@ coverage counters are not written.
   without those mods.
 * Not ported: `gsGridItemController.setColor` (the stops' company colour on their own mesh), the stop bubbles'
   overlap layout (`gsTracerOrganizer`).
+
+## 6. Port QoL: bus lines at tram stops in a street (deviation from the original)
+
+The original's add-stop tool gives a bus line (type 0) only bus stops (item types 2-6, §2.1). The port lets a bus line
+also take a **tram stop that sits in a street**, so buses and trams can share a stop. Port option, on by default:
+settings key `$regsBusAtTramStops` in `<documents>\Cities In Motion\settings.script` (`= false;` or `= 0;` turns it off;
+no menu entry, the only port options page is the graphics one). Saves with a bus line through a tram stop are a
+port-only state: the file format is unchanged (a line stop is just an item id), but the original game would look for
+a bus platform at such a stop with its plain nearest-STOP-node rule and could pick a wrong lane.
+
+**Which tram stops qualify.** A stop item owns no lanes. The lanes come from the pieces under it: the road piece
+(`road_small_*`, `road_large_*`, `road_avenue_*`) and the tram track piece (`tram_small_*`, …). Every road piece has
+a road STOP lane (flags `0x340` small road, `0x540` large road and avenue: the curb lane at the middle of the piece;
+a bus stop item only marks where buses use it), and the tram track piece has a tram STOP lane (`0x840`) at its
+platform. Data from the Vienna and Berlin saves (`REGS_DEBUG_SIM=1` lists every tram stop at load):
+
+| Tram stop kind | Lanes in the stop's footprint | Bus lines |
+|---|---|---|
+| small road, straight or diagonal (`stop_tram0x_small`, `_smallb` over `road_small_*`) | tram STOP lane = the road's curb STOP lane (same ends, same direction) | qualify |
+| large road, straight or diagonal (`_large`, `_largeb` over `road_large_*`) | the tram runs in the curb lane: tram STOP lane = road STOP lane | qualify |
+| avenue (`_avenue` over `road_avenue_basic` + `tram_avenue_basic`) | tram tracks in the middle strip; the footprint reaches one carriageway, whose STOP lane is its curb lane on the far side, away from the platform | refused |
+| own track (tram piece only, in grass or a tram-only track: Vienna items 71515/71516, Berlin 115954) | no road lane, at most a neighbouring road piece's curb connector | refused |
+
+Rule (`busPlatformInFootprint`, `engine/sim.cpp`): among the STOP lanes whose chord midpoint lies in the stop item's
+own footprint, a road-class lane (not parking) whose two ends coincide with a tram STOP lane's (within 0.5 units, the
+same direction) is the bus platform; the one nearest to the item centre if there are several. No such pair: the stop
+is not for buses. Lanes of neighbouring pieces or of the other carriageway are never considered. The add-stop tool
+(`tool_addstop.cpp` `isStopOf`) admits a tram stop for a bus line only with the option on and a bus platform found;
+refused stops are not highlighted, as before. The simulation applies the rule to every bus line stop at a tram item
+(also with the option off, so a save keeps running): `stopPlatforms` takes that lane as the platform, no alternative
+platform (a tram stop serves one direction, like a bus stop), and the legs, the route strip (§3) and the stop cycle are
+the bus line's usual ones. A bus halts in the tram's lane at the platform; a tram behind it waits, as behind any
+vehicle.
+
+**Passengers and scripts.** Waiting, boarding and alighting are per line node (transport.md §8), so one stop item
+serving a tram and a bus line needs nothing new: each line's waiters board that line's vehicles, transfers between
+the two lines at the same stop work as between any two stops in reach, and fares are paid once per transport type.
+The stop keeps its own type (1, tram): its bubble, colour, name check (`stopExists`), maintenance (`player.script`,
+`policy.script`) and the stops roster stay the tram's; the line panel's pins and the roster's per-line rows use the
+line's type. `countStops(mask, true)` counts the tram stop for the bus mask too when an active bus line serves it.
+One script change: the add-stop hover pin (`hoverinfo.script` `onHoverAddStop`) is coloured by the stop's type; the
+extension `data/regs/extend/metro/ui/hoverinfo/hoverinfo.script` recolours it with the tool line's colour.

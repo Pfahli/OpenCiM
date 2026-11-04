@@ -35,7 +35,8 @@ int intField(VM& vm, const Object* o, const char16_t* name, int def) {
   return it == o->fieldValues.end() || it->second.isNone() ? def : vm.toInt(it->second);
 }
 
-// the stop item types a line type serves (GRID_ITEM_*: bus stops 2-6, tram 10-12, metro 13-15, dock 0x11, heliport 0x12)
+// the stop item types a line type serves in the original (GRID_ITEM_*: bus stops 2-6, tram 10-12, metro 13-15, dock
+// 0x11, heliport 0x12); isStopOf adds the port's street tram stops for buses
 bool servesType(int lineType, int itemType) {
   switch (lineType) {
     case 0: return itemType >= 2 && itemType <= 6;
@@ -50,7 +51,11 @@ bool servesType(int lineType, int itemType) {
 bool isStopOf(VM& vm, GridObj* grid, uint32_t item, int lineType) {
   if (!grid->data || item >= grid->data->items.size() || grid->data->items[item].removed) return false;
   GridItemShape sh = gridItemShape(vm, grid, item);
-  return (sh.flags & kFlagStop) && servesType(lineType, sh.type);
+  if (!(sh.flags & kFlagStop)) return false;
+  if (servesType(lineType, sh.type)) return true;
+  // port QoL (docs/ui/lines.md §6, settings regsBusAtTramStops): a bus line also takes a tram stop in a street, one
+  // with a road lane through its platform where a bus can halt; not one on its own track or an avenue's middle strip
+  return lineType == 0 && servesType(1, sh.type) && simBusAtTramStops(vm) && simBusPlatformAtTramStop(vm, grid, int(item)) >= 0;
 }
 
 void unselectItem(VM& vm, GridObj* grid, int item) {
