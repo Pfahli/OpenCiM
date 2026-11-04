@@ -4,8 +4,9 @@
 // device layer and decoders are used): clips are decoded from the game's archives (WAV effects decoded once to PCM,
 // MP3 music and ambience decoded while playing from the compressed bytes in memory, like FMOD's compressed samples),
 // voices are resampled (linear, like FMOD Ex's default resampler) at file rate · pitch · Doppler, 3D voices get FMOD's
-// linear rolloff and are panned over the chosen speaker layout, 2D voices pass through. One master gain
-// (set_audio_volume). Headless runs (tools, tests) open no device: loading still decodes, playing is a no-op.
+// linear rolloff and are panned over the chosen speaker layout, 2D voices pass through. Every voice belongs to a volume
+// group (the port's Effects / Ambience / Interface sliders, docs/audio/README.md §16.2); one master gain
+// (set_audio_volume) sits after the mix, on top of the groups. Headless runs (tools, tests) open no device: loading still decodes, playing is a no-op.
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -36,6 +37,12 @@ std::string describeOutput();  // e.g. "48000 Hz, 6 channels (FL FR FC LFE SL SR
 // The playback devices' names (a temporary context; works before init).
 std::vector<std::string> deviceNames();
 
+// Volume groups (§16.2, §18.2): Effects = the world (engine voices: vehicles, items, animals, bells, doors),
+// Ambience = the area loops, Interface = UI and other script sounds, Music = the music tracks (gain 1: the original's
+// $musicVolume is a per-object volume set by the scripts).
+enum class Group : int { Effects, Ambience, Interface, Music, Count };
+const char* groupName(Group g);  // "effects", "ambience", "interface", "music"
+
 struct Clip;  // decoded PCM, or the encoded bytes of a stream
 using ClipRef = std::shared_ptr<Clip>;
 
@@ -61,6 +68,7 @@ struct VoiceParams {
   float vel[3] = {0, 0, 0};   // units per second (Doppler)
   float minDistance = 10.0f, maxDistance = 100.0f;
   double startSeconds = 0;    // start offset (resume after pause)
+  Group group = Group::Interface;
 };
 
 // Start a voice; returns its id (> 0), or 0 when nothing plays (no device, no clip).
@@ -77,6 +85,9 @@ double positionSeconds(int voice);  // within the clip (wrapped for loops); 0 fo
 // The listener (the 3D camera eye): position, forward and up in world space, velocity for Doppler.
 void setListener(const float pos[3], const float forward[3], const float up[3], const float vel[3]);
 void setMasterVolume(float volume);
+// A group's gain (0..1), applied with each voice's channel volume (so it also ranks the voices for the voice cap)
+void setGroupVolume(Group g, float volume);
+float groupVolume(Group g);
 
 // Once per frame: 3D gains, Doppler and pan of every voice, the voice cap (64 mixed, the quietest beyond are
 // virtual: they advance silently), finished voices freed, the capture file written.
@@ -86,8 +97,10 @@ struct Stats {
   int voices = 0, mixed = 0, virtualized = 0, paused = 0;
   float rms[8] = {};  // per output channel since the last call, after the master gain
   uint32_t channels = 0;
+  float groupRms[int(Group::Count)] = {};  // per group: RMS over the bus channels, after group and master gain
   struct Top {
     int voice = 0;
+    Group group = Group::Effects;
     float gain = 0;               // distance gain · volume
     float x = 0, z = 0, d = 0;    // listener space (x right, −z forward) and distance; 0 for 2D voices
     float ch[8] = {};             // gain per bus channel

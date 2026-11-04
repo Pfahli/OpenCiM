@@ -112,6 +112,10 @@ modes (the editor's roads, terrain and paint tools come later):
   mode (`docs/audio/README.md` §18).
 - [x] Door-item sounds: the level-crossing bell loops while a train holds the crossing (`engine/sim_sounds.cpp`
   `tickDoors`; `port/run/barriers/bell-f.wav`).
+- [x] Separate volumes (port addition): Effects, Ambience and Interface sliders on the Audio page under the master
+  volume (`$regsEffectsVolume`, `$regsAmbienceVolume`, `$regsInterfaceVolume`), and the optional menu-music fix
+  `$regsMenuMusicFollowsMusicVolume` (off by default, as the original). Sounds are tagged where they are created;
+  rule and measurements in `docs/audio/README.md` §18.7.
 - [ ] A Prologic encoder with phase shift.
 
 ## 7. Effects and remaining graphics

@@ -521,6 +521,9 @@ Quirks (*obs* in scripts):
 * Ambience ignores `$music`/`$musicVolume`; it always plays at 0.2 × master.
 * `$musicVolume` changes take effect when the game resumes (`ambience.resumeGame`, `ambience.script:91-108`).
 
+The port adds group volumes for effects, ambience and interface under the master volume, and an optional fix for the
+menu-music quirk (§16.2, §18.7).
+
 ---
 
 ## 11. Engine-driven world sounds
@@ -755,7 +758,7 @@ FMOD channels, but the gsSound object stops its previous channel first (§6.3); 
 Keep the original keys: `$sounds`, `$music`, `$volume` (master), `$musicVolume` (script-applied), `$audiodevice`,
 `$audiospeakers`. Optional port additions, named like the other port settings (`regs…`, `port/data/regs/`):
 `$regsEffectsVolume`, `$regsAmbienceVolume` (would multiply the scripted 0.2), `$regsMenuMusicFollowsMusicVolume`
-(fixes the §10 quirk; off by default to match the original).
+(fixes the §10 quirk; off by default to match the original). Done, with `$regsInterfaceVolume` as a third group: §18.7.
 
 ### 16.3 Speaker modes the port could offer
 
@@ -818,7 +821,8 @@ The menu needs the label strings `menu_audio<Name>_item` for new entries (`audio
 
 ## 18. Port status (ReGS)
 
-State of `port/` as of 2026-11-04: §16.4 steps 1–8 are done, with the deviations in §18.4.
+State of `port/` as of 2026-11-05: §16.4 steps 1–8 are done, with the deviations in §18.4; the port's volume groups
+(§16.2) are in §18.7.
 
 | Part | Port files |
 |---|---|
@@ -826,7 +830,9 @@ State of `port/` as of 2026-11-04: §16.4 steps 1–8 are done, with the deviati
 | Script natives: `enable_sounds` … `audio_speakers`, `gsSound`/`gsMusic`, `gsListener`, the sound cache, statusUpdated | `port/src/engine/sound.{h,cpp}` |
 | Engine-driven world sounds (§11) and `gsGridVehicleController.playSound` | `port/src/engine/sim_sounds.{h,cpp}`, hooks in `sim.cpp` (`tickSimulation`, `stepVehicle`) |
 | `gsGrid.getAreaType` (§12.1) | `port/src/engine/grid.cpp` |
-| Label of the port's Headphones mode | `port/data/regs/extend/metro/ui/menus/audio.script`, `port/data/regs/strings/{en_US,de}.strings` |
+| Label of the port's Headphones mode; the volume-group sliders and the menu-music option (§18.7) | `port/data/regs/extend/metro/ui/menus/audio.script`, `port/data/regs/strings/{en_US,de}.strings` |
+| Volume groups: tagging (`scriptSoundGroup`, `worldSoundPlay`), settings read per frame; group gains in the mixer | `port/src/engine/sound.cpp`; `port/src/audio/audio.{h,cpp}` (`Group`, `setGroupVolume`) |
+| Menu-music fix `$regsMenuMusicFollowsMusicVolume` | `port/data/regs/extend/metro/ui/menus/mainmenu.script`, `port/data/regs/extend/metro/ui/ending/ending.script` |
 
 ### 18.1 What runs
 
@@ -858,8 +864,12 @@ delay or filter for a headphone mode. The port mixes in the device callback itse
 * **Voice cap.** 64 voices are mixed; every frame the voices are ranked by `distance gain · volume`, the rest (and
   every voice at gain 0) is virtual: it advances without being mixed. No hard limit on voice handles.
 * **Gains** are recomputed once per frame and ramped over the next device period.
-* One master gain after the mix (`set_audio_volume`); no groups (the layer's former `Effects`/`Music` groups are
-  gone, §16.1).
+* **Groups.** Every voice carries one of four volume groups (Effects, Ambience, Interface, Music; §18.7). Its gain
+  multiplies the voice's clamped channel volume when the targets are computed, so a group change ramps in with the
+  next frame and a quiet group also ranks lower for the voice cap. Each group is mixed into a bus of its own and the
+  buses are summed (for the per-group RMS in the debug log).
+* One master gain after the mix (`set_audio_volume`), on top of the groups. The Music group's gain is always 1: the
+  original's `$musicVolume` stays a per-object volume set by the scripts (§16.1).
 
 ### 18.3 Speaker modes
 
@@ -913,7 +923,7 @@ or speaker mode applies at the next start, as in the original (`$requireRestart`
 ### 18.5 Open
 
 * Prologic with a real ±90° phase shift; HRTF-based headphones (would need a data set shipped with the port).
-* The optional extra volume settings of §16.2 (`$regsEffectsVolume`, …).
+* The ending screen's part of the menu-music fix (§18.7) is untested (the ending was not reached in a test run).
 * Device changes while running (unplugging, a new default device) are left to miniaudio's backend; not tested.
 * Industrial and harbour ambience (types 3, 4) did not come up in the test runs (Vienna); the item weighting is in
   place.
@@ -934,3 +944,51 @@ capture.
 | Speaker modes | captures have 1 / 2 / 4 / 6 / 8 / 2 / 2 channels for Mono / Default / Quad / 5p1 / 7p1 / Prologic / Headphones; the menu music sits on FL/FR only. `regs-tool sound … at=x,y,z layout=…` places a test voice: stereo centre 0.707/0.707, hard left 1/0; quad at (−14, 0, 14) → BL only; 5.0 at +90° → FR 0.38, BR 0.92; headphones at +90° → L 0.064, R 0.142 RMS. |
 | Level crossing | Vienna, camera on crossing item 7776 (`REGS_DEBUG_CAMERA`), `REGS_AUDIO_ONLY=crossing`: "Level crossing warning bell-1.wav" starts as a loop (vol 0.5, min 50 / max 300) when a train's claims reach the crossing and stops ("door closes") when its last car has left; four rings in 136 s of capture (`port/run/barriers/bell-f.wav`): RMS 0.014–0.020 at 51–58 s, 70–87 s, 95–113 s, 115–133 s, 0.0000 in between, matching the barrier frames. |
 | Regression | `regs-tool script tests\vm_basics.script` passes; `regs-tool run` stays silent ("headless, sounds stay off") and exits 0. |
+
+### 18.7 Volume groups (port addition, §16.2)
+
+Three sliders of the port's own on the Audio page, in the left column under the music volume, and a checkbox under
+them (`port/data/regs/extend/metro/ui/menus/audio.script`). Like the original's sliders they apply on OK (`save()`)
+and are stored in `settings.script`; the engine reads the keys every frame (`soundsFrame`), so a saved value applies at
+once and a stored one at start. The master volume (`$volume`) stays after the mix, on top of every group.
+
+| Slider | Setting (0..1, default 1) | Group | Sounds |
+|---|---|---|---|
+| Effects | `$regsEffectsVolume` | Effects | every engine world voice (§11, `worldSoundPlay`): vehicle engine, move, tunnel and rotor loops, horns, vehicle bells, stop announcements, doors, animal voices, item loops (church bells, market stalls, industry), the passenger fare (`gsGridVehicleController.playSound`); script sounds owned by a grid |
+| Ambience | `$regsAmbienceVolume` | Ambience | the area loops of `ambience.script` and their clones (the scripted 0.2, then the slider), the DLC's replacements |
+| Interface | `$regsInterfaceVolume` | Interface | every other script sound (§13): menu hover and click, UI click, error, construction and tool sounds (`hoverinfo.script`), purchase, loan and campaign sounds, achievements, petitions, news and ticker, scenario jingles, query sounds (also the citizens' voices) |
+| (original) Music volume | `$musicVolume` | Music, gain 1 | menu, ending and era music; `$musicVolume` stays the scripts' per-object volume |
+
+**Rule** (`scriptSoundGroup` in `engine/sound.cpp`; a script sound gets its group whenever it starts a voice, so a
+`load` of another file, e.g. Tokyo's ambience into `$ambiences[0]`, takes the new file's group):
+
+1. a file in a `music` folder (`/metro/music/`, `addons/<dlc>/music/`) → Music;
+2. a file whose name contains "ambience", or any other `gsMusic` (`new_music`) → Ambience (every shipped `new_music`
+   outside the music folders is an area loop);
+3. a sound with a `gsGrid` among its owners → Effects (no shipped script plays one; for mods);
+4. everything else → Interface (every shipped script sound sits on `$desktop`, §13).
+
+Engine voices are tagged Effects where they are created (`worldSoundPlay`), so `sim_sounds.cpp` needs no tag of its own.
+The path rule covers the DLC files too (`addons/tokyo/sounds/Tokyo- Ambience2 (close -light).mp3`,
+`addons/usa/music/era3.mp3`).
+
+**Menu music** (§10 quirk): `$regsMenuMusicFollowsMusicVolume` (checkbox "Menu music follows the music settings",
+off by default = the original). When on, the main-menu and ending music play at `$musicVolume`, silent when `$music`
+is off (`data/regs/extend/metro/ui/menus/mainmenu.script`, `.../ui/ending/ending.script`); the Audio page's OK applies
+it to the running menu music at once (`$menu.$menuMusic`; the pause menu has none).
+
+**Debug:** `REGS_DEBUG_AUDIO=1` logs each play with its group, `audio: <group> volume <v>` when a group changes, and
+once per second `RMS by group` (each group's RMS over the bus channels, after its gain and the master).
+
+**Checks** (2026-11-05, Vienna save, `--documents run\documents-volumes`, helper scripts in `port/run/volumes/`; each run
+starts from the same `settings.script`; a drag to "50 %" stores 0.497 = −6.07 dB, to "25 %" 0.246 = −12.18 dB):
+
+| Check | Result |
+|---|---|
+| Effects (in game, live: pause → Audio → 50 % → OK → resume) | church bells only (`REGS_AUDIO_ONLY=Church bells`): capture RMS 0.02049 → 0.01028, **−5.99 dB**. Full mix, group RMS over 19 s before / after: effects −6.4 dB, ambience +0.4 dB, music +0.1 dB, the voices' own variation. |
+| Ambience | ambience only, two runs from the same start, `$regsAmbienceVolume` 1 vs 0.5 in `settings.script`: **−6.02 dB** in every 2 s window from the onset. Live in the full mix: ambience −5.5 dB (the loop is not stationary), effects −0.4 dB, music 0.0 dB. |
+| Interface (main menu, live) | hover sounds only: peak 0.0486 → 0.0242, **−6.06 dB**; menu music only, against a run without changes: 0.00 dB in every window. |
+| Music volume and the fix | menu music only, against a reference run: music volume 50 % → 25 % with the fix off: 0.00 dB (the original's quirk kept); with the fix on: **−12.18 dB** from the OK on. Era music stays at `$musicVolume` (group gain 1). |
+| Master | master 80 % → 29 %: menu music −8.69 dB; interface 50 % and master 29 % together: hover peaks −14.74 dB (= −6.06 − 8.69). |
+| Persistence | after OK, `settings.script` holds `$regsEffectsVolume = 0.749`, `$regsAmbienceVolume = 0.246`, `$regsInterfaceVolume = 0.497`, `$regsMenuMusicFollowsMusicVolume = true`; the next start logs those group volumes before the first sound, plays the menu music at 0.50 and the page shows 74 % / 24 % / 49 % and the ticked box. |
+| Regression | `regs-tool script tests\vm_basics.script` passes. |
