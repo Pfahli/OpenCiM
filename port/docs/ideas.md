@@ -65,7 +65,7 @@ it is, what already exists, and the open decisions. Order is not priority.
      is paused) and spawns again two stops further on, as soon as that platform is free. Its passengers get off at
      the vehicle's last position and plan their trip again from there.
   * The original's ticker message stays; a second message could say that the vehicle was moved.
-  * An option (`$regsJamRelief`, on by default, off = the original's behaviour), with the times as settings keys.
+  * Always on (the owner's decision): no option to switch it off; the times are fixed (2 minutes, then 30 s).
   * Open: which cars count as "surrounding" (the cars on the nodes the vehicle waits for and their queues, up to a
     radius), and whether trains and metro need the same (they deadlock less, since they claim whole blocks).
 * **Sandbox densities.** Traffic and population density (0.5×-4×) for new sandbox games: **done** (README, "Port files
