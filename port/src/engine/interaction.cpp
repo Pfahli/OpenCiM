@@ -16,6 +16,7 @@
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "engine/sim.h"
+#include "engine/tools.h"
 #include "render/math3d.h"
 
 namespace regs::engine {
@@ -424,22 +425,20 @@ void mouseMoveSelectObject(VM& vm, ControlObj* player, float x, float y) {
   setHover(vm, player, ctrl, true);
 }
 
-// cancelTool (L:0x0819bcc0): in select mode only the hover is dropped, without an event
-void cancelTool(VM& vm, Object* player) {
-  player->fieldValues[u"<busy>"] = Value::boolean(false);
-  if (editMode(vm, player) == kModeSelectObject) player->fieldValues[u"hoverObject"] = Value::null();
-}
-
-// finishTool (L:0x0819a3e0): select mode fires event 20 with the hovered controller and drops the hover
-bool finishTool(VM& vm, Object* player) {
-  int mode = editMode(vm, player);
-  player->fieldValues[u"<busy>"] = Value::boolean(false);
-  if (mode != kModeSelectObject) return false;  // the editing tools are not ported yet
-  Value hover = player->fieldValues[u"hoverObject"];
-  if (!hover.object()) return true;
-  vm.fireEvent(player, u"onSelectObject", {hover});
-  player->fieldValues[u"hoverObject"] = Value::null();
-  return true;
+// the select mode's cases of cancelTool (L:0x0819bcc0: the hover is dropped without an event) and finishTool
+// (L:0x0819a3e0: event 20 with the hovered controller, then the hover is dropped)
+ToolMode selectMode() {
+  ToolMode m;
+  m.move = [](VM& vm, ControlObj* player, GridObj*, float x, float y) { mouseMoveSelectObject(vm, player, x, y); };
+  m.cancel = [](VM&, ControlObj* player, GridObj*) { player->fieldValues[u"hoverObject"] = Value::null(); };
+  m.finish = [](VM& vm, ControlObj* player, GridObj*) {
+    Value hover = player->fieldValues[u"hoverObject"];
+    if (!hover.object()) return true;
+    vm.fireEvent(player, u"onSelectObject", {hover});
+    player->fieldValues[u"hoverObject"] = Value::null();
+    return true;
+  };
+  return m;
 }
 
 Value emptyArray() { return Value::heap(VT::Array, make<ArrayObj>().get()); }
@@ -456,36 +455,36 @@ void guarded(F&& f) {
 
 }  // namespace
 
+// the player's mouse handlers: the tool framework (engine/tools.cpp) dispatches by editMode
 void gridPlayerMouseMove(VM& vm, ControlObj* c, float x, float y) {
   if (!isPlayer(vm, c)) return;
-  guarded([&] {
-    int mode = editMode(vm, c);
-    if (flagField(vm, c, u"<middle>") || mode > 0x15) return;  // middle drag (camera) or no tool
-    if (mode == kModeSelectObject) mouseMoveSelectObject(vm, c, x, y);
-  });
+  guarded([&] { toolMouseMove(vm, c, x, y); });
 }
 
 void gridPlayerMouseDown(VM& vm, ControlObj* c, float x, float y, int key) {
   if (!isPlayer(vm, c)) return;
-  guarded([&] {
-    if (key == kMouseLeft && !flagField(vm, c, u"<busy>")) {
-      c->fieldValues[u"<toolX>"] = Value::real(x);
-      c->fieldValues[u"<toolY>"] = Value::real(y);
-      c->fieldValues[u"<busy>"] = Value::boolean(true);
-      c->mouseMove(vm, x, y, 0, 0, 0);  // re-pick at the press point
-      int mode = editMode(vm, c);
-      if (mode >= 0 && mode < 32 && (0x302002u >> mode & 1)) {  // modes 1, 0xd, 0x14, 0x15 apply at once
-        c->fieldValues[u"<busy>"] = Value::boolean(false);
-        vm.fireEvent(c, u"onTryApplyTool", {});
-      }
-    }
-    c->fieldValues[u"<middle>"] = Value::boolean(key == kMouseMiddle);
-  });
+  guarded([&] { toolMouseDown(vm, c, x, y, key); });
 }
 
-void gridPlayerMouseUp(VM& vm, ControlObj* c, int key) {
+void gridPlayerMouseUp(VM& vm, ControlObj* c, float x, float y, int key) {
   if (!isPlayer(vm, c)) return;
-  if (key == kMouseMiddle) c->fieldValues[u"<middle>"] = Value::boolean(false);
+  guarded([&] { toolMouseUp(vm, c, x, y, key); });
+}
+
+// a pick for the editing tools: intersectGrid without vehicles and characters, under a player-local position
+ToolPick toolPick(VM& vm, ControlObj* player, float x, float y, bool terrainOnly) {
+  ToolPick out;
+  auto* grid = dynamic_cast<GridObj*>(member(vm, player, u"grid").object());
+  Vec3 start, end;
+  if (!grid || !pickSegment(vm, player, x + player->desktopLeft(), y + player->desktopTop(), start, end)) return out;
+  Hit h = intersectGrid(vm, grid, start, end, terrainOnly, false);
+  if (!h.hit()) return out;
+  out.hit = true;
+  out.cellX = h.cellX;
+  out.cellZ = h.cellZ;
+  out.item = h.item;
+  out.point = start + (end - start) * h.t;
+  return out;
 }
 
 void placeTracer(VM& vm, ControlObj* c) {
@@ -553,28 +552,15 @@ void registerInteractionNatives(VM& vm) {
     }
     return Value::vector(end.x, end.y, end.z);
   });
-  implement(vm, "gsGridPlayer", u"canApplyTool", [](VM&, Object*, int, const Value*) { return Value::boolean(true); });
-  // applyTool([repick]) (L:0x0819cbe0): finishTool, then a re-pick at the press point unless false is passed
-  implement(vm, "gsGridPlayer", u"applyTool", [](VM& v, Object* s, int argc, const Value* a) {
-    bool ok = finishTool(v, s);
-    if (argc == 0 || v.truthy(a[0]))
-      if (auto* c = dynamic_cast<ControlObj*>(s))
-        c->mouseMove(v, floatField(v, s, u"<toolX>", 0), floatField(v, s, u"<toolY>", 0), 0, 0, 0);
-    return Value::boolean(ok);
-  });
-  implement(vm, "gsGridPlayer", u"resetTool", [](VM& v, Object* s, int, const Value*) {
-    cancelTool(v, s);
-    return Value();
-  });
-  for (const char16_t* m : {u"getNewItems", u"getNewObjects", u"getReplacedItems", u"getReplacedObjects"})
-    implement(vm, "gsGridPlayer", m, [](VM&, Object*, int, const Value*) { return emptyArray(); });
+  // canApplyTool, applyTool, resetTool and the new/replaced item lists: engine/tools.cpp
+  registerToolMode(kGridModeSelectObject, selectMode());
   // editMode: the constructor starts in select mode. editMode = m (setEditMode L:0x0819c2c0, §4.5): cancel the old
   // tool, clear the tool objects, drop the hover with event 17, then event 21 onModeChange(old mode)
   if (ClassInfo* c = vm.findClass("gsGridPlayer"); c && c->fields.count(u"editMode")) {
     c->fields[u"editMode"].get = [](VM& v, Object* o) { return Value::integer(editMode(v, o)); };
     c->fields[u"editMode"].set = [](VM& v, Object* o, const Value& val) {
       int old = editMode(v, o);
-      cancelTool(v, o);
+      toolCancel(v, o);
       o->fieldValues[u"toolMode"] = Value::integer(0);
       o->fieldValues[u"toolType"] = Value::integer(0);
       o->fieldValues[u"editMode"] = Value::integer(v.toInt(val));

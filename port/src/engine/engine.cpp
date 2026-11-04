@@ -16,6 +16,7 @@
 #include "engine/gui.h"
 #include "engine/scene3d.h"
 #include "engine/shaders.h"
+#include "engine/tools.h"
 #include "engine/grid.h"
 #include "engine/host.h"
 
@@ -47,6 +48,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerGridNatives(*vm_);
   registerMinimapNatives(*vm_);
   registerInteractionNatives(*vm_);
+  registerToolNatives(*vm_);
   registerSaveNatives(*vm_);
   registerTimelineNatives(*vm_);
   registerGridEditNatives(*vm_);

@@ -263,7 +263,7 @@ void ControlObj::mouseDown(VM& vm, float x, float y, int key, int buttons) {
 
 void ControlObj::mouseUp(VM& vm, float x, float y, int key, int buttons) {
   if (!firesMouseEvents()) return;
-  gridPlayerMouseUp(vm, this, key);
+  gridPlayerMouseUp(vm, this, x, y, key);
   if (key == kMouseLeft) dragging = false;
   Value k = keyValue(key);
   vm.fireEvent(this, u"mouseUp", {Value::real(x), Value::real(y)}, &k);

@@ -56,7 +56,16 @@ struct TerrainCache {
   size_t itemsBucketed = 0;
   std::map<std::string, int> fileMaterials;
   std::set<int> dirtyTerrain, dirtyItems;
+  // the tool highlight overlay (engine/tools.h): highlighted cells and copies of highlighted items in world space,
+  // with positiveMaterial / negativeMaterial (indices into materials), rebuilt when GridObj::highlightVersion moves
+  int positiveMaterial = -1, negativeMaterial = -1;
+  uint64_t highlightVersion = ~0ull;
+  render::GpuMesh highlight;
+  bool highlightBuilt = false;
 };
+
+// The tool highlight overlay of the map (cells and items flagged by gsGrid::selectArea / gsGridItem::setSelected).
+void buildHighlightOverlay(const GridData& g, const GridObj& grid, const TerrainCache& tc, render::MeshData& out);
 
 // Registers the templates the map uses (materials, tints) and buckets the items per division.
 void initGridItems(Display& d, script::VM& vm, GridObj* grid, TerrainCache& tc);

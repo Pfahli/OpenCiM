@@ -548,4 +548,86 @@ void collectSkinnedItems(Display& d, VM& vm, const GridData& g, const TerrainCac
   }
 }
 
+// The engine draws a highlighted cell as a fan of the terrain cell with positiveMaterial / negativeMaterial
+// (terrain.md §5, group "highlight + / −") and a highlighted item as a copy of its mesh with the same material as a
+// layer (grid-items.md §3.1). Port: one overlay mesh in world space for the whole map (only the highlighted things),
+// cells as flat-shaded quads through their four corners, items as their LOD 0 geometry; both selection materials are
+// decals (MATERIAL_DECAL), drawn after the scene with a depth offset.
+void buildHighlightOverlay(const GridData& g, const GridObj& grid, const TerrainCache& tc, MeshData& out) {
+  const float cs = g.cellSize, k = cs / 256.0f, lift = 0.02f;
+  struct Part {
+    std::vector<float> positions;
+    std::vector<uint32_t> indices;
+  } parts[2];  // positive, negative
+  auto vertex = [](Part& p, const Vec3& v) {
+    p.positions.insert(p.positions.end(), {v.x, v.y, v.z});
+    return uint32_t(p.positions.size() / 3 - 1);
+  };
+  for (uint32_t c : grid.highlightCells) {
+    if (c >= g.flags.size() || !(g.flags[c] & 0x4000)) continue;
+    int x = int(c % uint32_t(g.width)), z = int(c / uint32_t(g.width));
+    // corner (cx, cz) at the height the cell array stores for it (the last row and column repeat their neighbour)
+    auto at = [&](int cx, int cz) {
+      size_t hc = size_t(std::min(cz, g.length - 1)) * size_t(g.width) + size_t(std::min(cx, g.width - 1));
+      return Vec3{float(cx - (g.width >> 1)) * cs, g.height[hc] * k + lift, float(cz - (g.length >> 1)) * cs};
+    };
+    Part& p = parts[(g.flags[c] & 0x8000) ? 1 : 0];
+    uint32_t a = vertex(p, at(x, z)), b = vertex(p, at(x + 1, z)), d = vertex(p, at(x, z + 1)),
+             e = vertex(p, at(x + 1, z + 1));
+    p.indices.insert(p.indices.end(), {a, d, b, b, d, e});
+  }
+  for (uint32_t i : grid.highlightItems) {
+    if (i >= g.items.size() || g.items[i].removed || !(g.items[i].flags & 0x100)) continue;
+    const GridData::Item& it = g.items[i];
+    int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
+    int division = itemDivision(g, tc, i);
+    if (ti < 0 || division < 0) continue;
+    const GridTemplate& tp = tc.templates[size_t(ti)];
+    if (!tp.object || !tp.object->data) continue;
+    const MeshData& mesh = tp.object->data->mesh;
+    Mat4 world = tc.divisions[size_t(division)].world * itemPlacement(g, tc, i, division);
+    Part& p = parts[(it.flags & 0x200) ? 1 : 0];
+    uint32_t base = uint32_t(p.positions.size() / 3);
+    for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+      Vec3 q = transformPoint(world, {mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]});
+      vertex(p, q);
+    }
+    for (uint32_t idx : mesh.indices) p.indices.push_back(base + idx);
+  }
+  out = MeshData{};
+  for (int s = 0; s < 2; ++s) {
+    if (parts[s].indices.empty()) continue;
+    int material = s ? tc.negativeMaterial : tc.positiveMaterial;
+    if (material < 0) continue;
+    Submesh sm;
+    sm.firstVertex = uint32_t(out.vertexCount());
+    sm.vertexCount = uint32_t(parts[s].positions.size() / 3);
+    sm.firstIndex = uint32_t(out.indices.size());
+    sm.indexCount = uint32_t(parts[s].indices.size());
+    sm.material = material;
+    for (uint32_t idx : parts[s].indices) out.indices.push_back(sm.firstVertex + idx);
+    out.positions.insert(out.positions.end(), parts[s].positions.begin(), parts[s].positions.end());
+    for (uint32_t v = 0; v < sm.vertexCount; ++v) {
+      out.normals.insert(out.normals.end(), {0, 1, 0});
+      out.uv0.insert(out.uv0.end(), {0, 0});
+      out.uv1.insert(out.uv1.end(), {0, 0});
+      out.tangents.insert(out.tangents.end(), {1, 0, 0, 1});
+      out.colors.push_back(0xFFFFFFFFu);
+    }
+    out.submeshes.push_back(sm);
+  }
+  float r2 = 0;
+  out.boundsMin = {1e30f, 1e30f, 1e30f};
+  out.boundsMax = {-1e30f, -1e30f, -1e30f};
+  for (size_t v = 0; v < out.vertexCount(); ++v) {
+    const float* q = &out.positions[v * 3];
+    for (int a = 0; a < 3; ++a) {
+      out.boundsMin[size_t(a)] = std::min(out.boundsMin[size_t(a)], q[a]);
+      out.boundsMax[size_t(a)] = std::max(out.boundsMax[size_t(a)], q[a]);
+    }
+    r2 = std::max(r2, q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+  }
+  out.radius = std::sqrt(r2);
+}
+
 }  // namespace regs::engine

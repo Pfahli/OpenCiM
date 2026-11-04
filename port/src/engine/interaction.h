@@ -21,7 +21,7 @@ void gridItemControllerRemoved(script::VM& vm, GridObj* grid, uint32_t item);
 // same call; they do nothing for other controls.
 void gridPlayerMouseMove(script::VM& vm, ControlObj* c, float x, float y);
 void gridPlayerMouseDown(script::VM& vm, ControlObj* c, float x, float y, int key);
-void gridPlayerMouseUp(script::VM& vm, ControlObj* c, int key);
+void gridPlayerMouseUp(script::VM& vm, ControlObj* c, float x, float y, int key);
 
 // gsTracerCtrl::move (L:0x081cfc00): before it is drawn, a tracer control (the selection arrow, citizen pins) moves
 // so that its anchor lies on its target's screen point in targetViewport, or off screen when the point is not in view

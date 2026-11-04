@@ -363,6 +363,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         d.r3d().destroy(dv.terrain[k]);
         d.r3d().destroy(dv.items[k]);
       }
+    if (tc.highlightBuilt) d.r3d().destroy(tc.highlight);
     tc = TerrainCache();
     tc.generation = grid->generation;
     tc.n = 1 << std::min(g.bucketShift, 8u);
@@ -379,6 +380,16 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         dv.radius = tc.n * cs * 0.7071f;
       }
     for (int group = 0; group < kGroupCount; ++group) tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
+    // the tool highlights (terrain.md §5: positiveMaterial / negativeMaterial, selection.shader decals)
+    for (const char16_t* key : {u"positiveMaterial", u"negativeMaterial"}) {
+      Object* m = nullptr;
+      try {
+        m = vm.resolve(vm.getMember(Value::heap(VT::Object, grid), key)).object();
+      } catch (const ScriptError&) {
+      }
+      (key[0] == u'p' ? tc.positiveMaterial : tc.negativeMaterial) = int(tc.materials.size());
+      tc.materials.push_back(scriptMaterial(d, vm, m));
+    }
     initGridItems(d, vm, grid, tc);
     fixGridCover(vm, *grid->data, tc);
     LOG_INFO("terrain: %dx%d divisions of %d cells", tc.cols, tc.rows, tc.n);
@@ -508,6 +519,26 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
       collectSkinnedItems(d, vm, g, tc, index, dv.world, dist, show, clock.second, !visible(gc, gr), poses, items);
     }
+  // the tool highlight overlay: rebuilt when a tool changed the highlighted cells or items, drawn in world space
+  if (tc.highlightVersion != grid->highlightVersion) {
+    if (tc.highlightBuilt) d.r3d().destroy(tc.highlight);
+    tc.highlightBuilt = false;
+    tc.highlightVersion = grid->highlightVersion;
+    if (!grid->highlightCells.empty() || !grid->highlightItems.empty()) {
+      MeshData out;
+      buildHighlightOverlay(g, *grid, tc, out);
+      if (out.vertexCount()) {
+        tc.highlight = d.r3d().upload(out);
+        tc.highlightBuilt = true;
+      }
+    }
+  }
+  if (tc.highlightBuilt && !tc.highlight.parts.empty()) {
+    DrawItem it;
+    it.mesh = &tc.highlight;
+    it.materials = &tc.materials;
+    items.push_back(it);
+  }
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame

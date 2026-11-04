@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,12 @@ class GridObj : public script::Object {
   uint64_t itemsVersion = 0;  // bumped after each batch of live map edits (engine/grid_edit.h)
   std::shared_ptr<TerrainCache> terrain;  // division meshes, owned by the renderer
   std::shared_ptr<SimState> sim;          // lane graph, lines and vehicles (engine/sim.h)
+  // tool highlights (engine/tools.h): cells with flag 0x4000 (0x8000 = red) and items with flag 0x100 (0x200 = red),
+  // drawn as an overlay with positiveMaterial / negativeMaterial; the version changes with every change
+  std::set<uint32_t> highlightCells, highlightItems;
+  uint64_t highlightVersion = 0;
+  // gsGrid::mountObject: preview item → its mounted copy while a tool commits (children follow their parent's copy)
+  std::map<uint32_t, uint32_t> mountedCopies;
 
   // gsGrid.tick (0x100c48c0): the simulation in sub-steps, then the modules
   void tick(script::VM& vm, float dt) override;

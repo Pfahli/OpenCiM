@@ -292,8 +292,16 @@ void gridEditEnd(VM& vm, GridObj* grid) {
   st.cells = Rect{};
   st.heightCells = Rect{};
   // the simulation first (graph, walk layers, pools), then the controllers of removed items (their onDestroy
-  // handlers may look at the map)
-  if (!added.empty() || !removed.empty()) simItemsChanged(vm, grid, added, removed);
+  // handlers may look at the map). Tool previews (TEMP) are not part of the simulated city: the graph and the stops
+  // skip them anyway, and a preview is rebuilt on every mouse move.
+  auto real = [&](const std::vector<uint32_t>& list) {
+    std::vector<uint32_t> out;
+    for (uint32_t i : list)
+      if (i < g.items.size() && !(shapeOf(st, g.items[i]).flags & kFlagTemp)) out.push_back(i);
+    return out;
+  };
+  std::vector<uint32_t> simAdded = real(added), simRemoved = real(removed);
+  if (!simAdded.empty() || !simRemoved.empty()) simItemsChanged(vm, grid, simAdded, simRemoved);
   if (!heights.empty()) simTerrainChanged(vm, grid, heights.x0, heights.z0, heights.x1, heights.z1);
   for (uint32_t i : removed) gridItemControllerRemoved(vm, grid, i);
 }
