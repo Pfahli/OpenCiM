@@ -87,6 +87,17 @@ struct ToolMode {
 };
 void registerToolMode(int mode, ToolMode m);
 
+// gsGridPlayer::createTrackBlock / createRoadBlock (L:0x08195400 / L:0x08190700): the preview pieces of track or road
+// for one cell and connection mask, as the laying tools make them and as placeObject makes a placed object's road and
+// track parts (L:0x08196b00.c:289, :359). The track tools register them; they are empty until then.
+struct ToolBlocks {
+  // (player, grid, x, z, connections, flagA, flagB, track type, y): createTrackBlock(x, z, conn, a, b, type, y)
+  std::function<void(script::VM&, ControlObj*, GridObj*, int, int, uint32_t, bool, bool, int, int)> track;
+  // (player, grid, x, z, connections, flagA, flagB, variant, y): createRoadBlock(x, z, conn, a, b, variant, y)
+  std::function<void(script::VM&, ControlObj*, GridObj*, int, int, uint32_t, bool, bool, int, int)> road;
+};
+ToolBlocks& toolBlocks();
+
 // ---- helpers for the modes ----
 
 // the player's grid (gsGridPlayer.grid)

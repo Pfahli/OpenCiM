@@ -105,6 +105,11 @@ void fireInstanceEvents(VM& vm, GridObj* grid, const std::vector<uint32_t>& item
 
 ToolState& toolState(Object* player) { return g_tools[player]; }
 
+ToolBlocks& toolBlocks() {
+  static ToolBlocks blocks;
+  return blocks;
+}
+
 void registerToolMode(int mode, ToolMode m) { g_modes[mode] = std::move(m); }
 
 GridObj* toolGrid(VM& vm, Object* player) {
