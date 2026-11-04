@@ -2552,9 +2552,16 @@ void registerCitizenNatives(VM& vm) {
   for (auto [name, member] : {std::pair{u"getWalkCount", &SimState::walkCount}, std::pair{u"getDriveCount", &SimState::driveCount},
                               std::pair{u"getTravelCount", &SimState::travelCount}, std::pair{u"getCanTravelCount", &SimState::canTravelCount},
                               std::pair{u"getPriceTooHighCount", &SimState::priceTooHighCount}}) {
+    // class −1 = the sum over all seven classes (L:0x081589e0): the monthly coverage, usage and car-usage
+    // statistics ask for −1 (player.script)
     implement(vm, "gsGridCitizens", name, [stateFor, member](VM& v, Object* o, int, const Value* a) {
       SimState* s = stateFor(o);
       int k = v.toInt(a[0]);
+      if (s && k == -1) {
+        int n = 0;
+        for (int i = 0; i < 7; ++i) n += (s->*member)[i];
+        return Value::integer(n);
+      }
       return Value::integer(s && k >= 0 && k < 7 ? (s->*member)[k] : 0);
     });
   }
