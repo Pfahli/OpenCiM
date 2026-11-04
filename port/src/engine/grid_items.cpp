@@ -578,6 +578,7 @@ void buildHighlightOverlay(const GridData& g, const GridObj& grid, const Terrain
   }
   for (uint32_t i : grid.highlightItems) {
     if (i >= g.items.size() || g.items[i].removed || !(g.items[i].flags & 0x100)) continue;
+    if (g.items[i].flags & kFlagHidden) continue;  // hidden items (gave way to a tool's preview) are not drawn at all
     const GridData::Item& it = g.items[i];
     int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
     int division = itemDivision(g, tc, i);

@@ -16,8 +16,11 @@ The grid player only implements the select mode. All tool modes of `gsGridPlayer
 §4.1 lists them; the code is `L:0x08190700` createRoadBlock, `L:0x081926b0` createTramBlock, `L:0x08195400`
 createTrackBlock, `L:0x08196b00` placeObject, `L:0x08198b10` removeObject, `L:0x0819a3e0` finishTool and the
 mouseMove* functions; *RE needed*, most of it):
-- [ ] Lay roads, alleys, tram tracks, metro tracks (ground, elevated, underground), bridges and tunnels, with the
-  slope, conflict and price checks (`canApplyTool`, `getNewItems`/`getReplacedItems` for the cost preview).
+- [x] Lay tram tracks and metro tracks (ground, elevated with pillars, underground on the three levels) with junctions,
+  slopes, conflicts and prices (`engine/tool_tracks.cpp`, `docs/ui/construction.md` §6-§9); station track parts
+  through `toolBlocks().track`.
+- [ ] Lay roads, alleys, bridges and tunnels (editor only; `createRoadBlock` is a plain stand-in), the double track's
+  road crossings, the underground view (`GRID_VIEW_UNDERGROUND`) to see subway tracks.
 - [ ] Place stops and stations: bus and tram stops, metro stations and transitions, docks, heliports
   (`GRIDMODE_CREATE_STOP`, `selectStation`).
 - [ ] Bulldoze (`GRIDMODE_REMOVE_OBJECTS`), with the demolition cost of buildings.
