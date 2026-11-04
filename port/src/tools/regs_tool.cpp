@@ -470,8 +470,10 @@ int cmdShadowTest(int, char**) {
   return bad == 0 && ok ? 0 : 1;
 }
 
-// regs-tool sound <gameDir> <path> [seconds] [stream]: decode a sound from the VFS, print its format, play it for a
-// few seconds (the audio layer's smoke test)
+// regs-tool sound <gameDir> <path> [seconds] [stream] [layout=<name>] [at=x,y,z] [capture=<file.wav>]: decode a sound
+// from the VFS, print its format, play it for a few seconds (the audio layer's smoke test). at= plays it as a 3D voice
+// (min 10, max 100) with the listener at the origin looking down −Z; layout= picks a speaker layout
+// (audio_speakers() names); capture= also writes the mix to a WAV file.
 int cmdSound(int argc, char** argv) {
   if (argc < 4) return 2;
   Vfs vfs;
@@ -483,8 +485,18 @@ int cmdSound(int argc, char** argv) {
     std::printf("not found: %s (%s)\n", argv[3], err.c_str());
     return 1;
   }
-  double seconds = argc > 4 ? std::atof(argv[4]) : 3.0;
-  bool stream = argc > 5 && std::string(argv[5]) == "stream";
+  double seconds = 3.0;
+  bool stream = false, spatial = false;
+  float at[3] = {0, 0, 0};
+  audio::InitOptions io;
+  for (int i = 4; i < argc; ++i) {
+    std::string a = argv[i];
+    if (a == "stream") stream = true;
+    else if (a.rfind("layout=", 0) == 0) io.layout = audio::layoutFromName(a.substr(7));
+    else if (a.rfind("capture=", 0) == 0) io.capture = a.substr(8);
+    else if (a.rfind("at=", 0) == 0) spatial = std::sscanf(a.c_str() + 3, "%f,%f,%f", &at[0], &at[1], &at[2]) == 3;
+    else seconds = std::atof(a.c_str());
+  }
   auto t0 = std::chrono::steady_clock::now();
   audio::ClipRef clip = audio::loadClip(std::move(data), stream, &err);
   auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
@@ -496,9 +508,14 @@ int cmdSound(int argc, char** argv) {
   std::printf("%s: %u ch, %u Hz, %llu frames (%.2f s), %s, decoded in %lld ms\n", argv[3], ci.channels, ci.sampleRate,
               (unsigned long long)ci.frames, ci.sampleRate ? double(ci.frames) / ci.sampleRate : 0.0,
               ci.stream ? "stream" : "pcm", (long long)ms);
-  if (!audio::init(false)) return 1;
+  if (!audio::init(io)) return 1;
+  std::printf("output: %s\n", audio::describeOutput().c_str());
+  const float origin[3] = {0, 0, 0}, fwd[3] = {0, 0, -1}, up[3] = {0, 1, 0};
+  audio::setListener(origin, fwd, up, origin);
   audio::VoiceParams p;
-  p.group = stream ? audio::Group::Music : audio::Group::Effects;
+  p.loop = !stream && spatial;  // a short effect keeps going for the measurement
+  p.spatial = spatial;
+  for (int k = 0; k < 3; ++k) p.pos[k] = at[k];
   int v = audio::play(clip, p);
   std::printf("voice %d\n", v);
   auto start = std::chrono::steady_clock::now();
@@ -507,8 +524,11 @@ int cmdSound(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     audio::update();
   }
-  std::printf("played %.2f s, %s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
+  audio::Stats stats = audio::takeStats();
+  std::printf("played %.2f s, %s; RMS per channel:", std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
               audio::isPlaying(v) ? "still playing (cut)" : "finished");
+  for (uint32_t c = 0; c < stats.channels && c < 8; ++c) std::printf(" %.4f", stats.rms[c]);
+  std::printf("\n");
   audio::shutdown();
   return v > 0 ? 0 : 1;
 }

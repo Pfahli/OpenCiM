@@ -407,12 +407,6 @@ void registerObjectNatives(VM& vm) {
                             u"waterMaterial", u"waterEdgeMaterial", u"dataMaterial", u"reservedMaterial"})
     subObjectField(vm, "gsGrid", m, "gsMaterialVariant");
   subObjectField(vm, "gsGrid", u"graph", "gsGridGraph");
-  // sounds are silent for now; clone() still has to give the ambience script a new sound object
-  implement(vm, "gsSound", u"clone", [](VM& v, Object* s, int, const Value*) {
-    Ref<Object> c = v.newObject(s->cls, s->parent);
-    c->fieldValues = s->fieldValues;
-    return Value::heap(VT::Object, c.get());
-  });
   subObjectField(vm, "gsGrid", u"vehicles", "gsGridVehicles");
   subObjectField(vm, "gsGrid", u"characters", "gsGridCharacters");
   subObjectField(vm, "gsGrid", u"citizens", "gsGridCitizens");

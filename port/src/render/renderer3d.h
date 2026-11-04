@@ -112,6 +112,10 @@ struct DrawItem {
   float colorize[4] = {1, 1, 1, 1};
   float alpha = 1;
   bool shadowOnly = false;  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
+  // a per-instance custom4.xy over the material's (vehicles' animated parts: rotor angle and spin-up, which the engine
+  // writes into each vehicle's own material copy, L:0x081adca0.c:604-690); z and w stay the material's
+  bool hasCustom4 = false;
+  float custom4[2] = {0, 0};
   // skin matrices per skeleton bone for skinned meshes (docs/renderer/skinning.md); null = bind pose
   std::shared_ptr<const std::vector<Mat4>> bones;
 };

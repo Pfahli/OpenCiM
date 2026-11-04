@@ -1,10 +1,11 @@
 #pragma once
-// The port's audio output (replaces FMOD Ex, which the original's GSystem.dll uses; docs/audio/README.md). A thin layer
-// over miniaudio (third_party/miniaudio, public domain / MIT-0): clips are decoded from the game's archives (WAV
-// effects decoded once to PCM, MP3 music streamed from the compressed bytes in memory), every play is a voice of its
-// own (FMOD's playSound makes a new channel each time), voices belong to a volume group, 3D voices are panned and
-// attenuated around the listener. Headless runs (tools, tests) open no device: loading still decodes, playing is a
-// no-op.
+// The port's audio output (replaces FMOD Ex, which the original's GSystem.dll uses; docs/audio/README.md §16). A small
+// software mixer of its own on a miniaudio playback device (third_party/miniaudio, public domain / MIT-0; only its
+// device layer and decoders are used): clips are decoded from the game's archives (WAV effects decoded once to PCM,
+// MP3 music and ambience decoded while playing from the compressed bytes in memory, like FMOD's compressed samples),
+// voices are resampled (linear, like FMOD Ex's default resampler) at file rate · pitch · Doppler, 3D voices get FMOD's
+// linear rolloff and are panned over the chosen speaker layout, 2D voices pass through. One master gain
+// (set_audio_volume). Headless runs (tools, tests) open no device: loading still decodes, playing is a no-op.
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -12,55 +13,88 @@
 
 namespace regs::audio {
 
-enum class Group : int { Effects = 0, Music = 1, Count };
+// The $audiospeakers values (§4.1, audio_speakers()) plus the port's Headphones (§16.3).
+enum class Layout : int { Default, Mono, Stereo, Quad, Surround, P51, P71, Prologic, Headphones, Count };
+Layout layoutFromName(const std::string& name);  // unknown names → Default (as the original: no setSpeakerMode)
+const char* layoutName(Layout l);                // "Default", "Mono", ..., "5p1", "7p1", "Prologic", "Headphones"
+
+struct InitOptions {
+  std::string device = "Default";  // a name from deviceNames(); "Default" (or an unknown name) = the system default
+  Layout layout = Layout::Default;
+  std::string capture;             // also write the final mix to this WAV file (16-bit PCM, REGS_AUDIO_CAPTURE)
+};
+
+// Open the output device (false when there is none; the game then runs silent).
+bool init(const InitOptions& options);
+void shutdown();
+bool available();  // a device is open
+uint32_t outputChannels();  // channels the device is fed (2 for Prologic and Headphones)
+uint32_t sampleRate();
+Layout layout();
+std::string describeOutput();  // e.g. "48000 Hz, 6 channels (FL FR FC LFE SL SR), layout 5p1"
+
+// The playback devices' names (a temporary context; works before init).
+std::vector<std::string> deviceNames();
 
 struct Clip;  // decoded PCM, or the encoded bytes of a stream
 using ClipRef = std::shared_ptr<Clip>;
 
 struct ClipInfo {
   uint32_t channels = 0, sampleRate = 0;
-  uint64_t frames = 0;  // 0 when unknown (some streams)
+  uint64_t frames = 0;  // 0 when unknown
   bool stream = false;
+  double seconds() const { return sampleRate ? double(frames) / sampleRate : 0.0; }
 };
-
-// Open the output device (false when there is none; the game then runs silent). Headless: no device.
-bool init(bool headless);
-void shutdown();
-bool available();  // a device is open
 
 // Decode a WAV/MP3/FLAC file's bytes. stream: keep the encoded bytes and decode while playing (music).
 ClipRef loadClip(std::vector<uint8_t> bytes, bool stream, std::string* error = nullptr);
 ClipInfo clipInfo(const ClipRef& clip);
 
 struct VoiceParams {
-  Group group = Group::Effects;
-  float volume = 1.0f;
-  float pitch = 1.0f;
+  float volume = 1.0f;        // clamped to 0..1 like an FMOD channel
+  float pitch = 1.0f;         // playback rate factor (the file's rate is matched to the device's)
   bool loop = false;
-  bool paused = false;         // start paused (FMOD playSound(paused = true))
-  bool positional = false;     // 3D: panned and attenuated around the listener
-  float x = 0, y = 0, z = 0;   // world position (3D voices)
-  float minDistance = 1.0f, maxDistance = 10000.0f;
+  bool paused = false;
+  bool spatial = false;       // 3D (a clip loaded 3D): attenuated and panned around the listener; else 2D pass-through
+  bool relative = false;      // head-relative: pos and vel are in listener space (x right, y up, −z forward)
+  float pos[3] = {0, 0, 0};   // world units
+  float vel[3] = {0, 0, 0};   // units per second (Doppler)
+  float minDistance = 10.0f, maxDistance = 100.0f;
+  double startSeconds = 0;    // start offset (resume after pause)
 };
 
 // Start a voice; returns its id (> 0), or 0 when nothing plays (no device, no clip).
 int play(const ClipRef& clip, const VoiceParams& params);
-bool isPlaying(int voice);     // started and not yet finished or stopped (paused counts as playing)
+bool isPlaying(int voice);  // started and not yet finished or stopped (paused counts as playing)
 void stop(int voice);
 void setPaused(int voice, bool paused);
 void setVolume(int voice, float volume);
 void setPitch(int voice, float pitch);
 void setLooping(int voice, bool loop);
-void setPosition(int voice, float x, float y, float z);
-void setDistances(int voice, float minDistance, float maxDistance);
+void set3D(int voice, bool relative, const float pos[3], const float vel[3], float minDistance, float maxDistance);
+double positionSeconds(int voice);  // within the clip (wrapped for loops); 0 for an unknown voice
 
-// The listener (the 3D camera): position, look direction and up vector in world space.
-void setListener(float x, float y, float z, float fx, float fy, float fz, float ux, float uy, float uz);
-void setGroupVolume(Group group, float volume);
+// The listener (the 3D camera eye): position, forward and up in world space, velocity for Doppler.
+void setListener(const float pos[3], const float forward[3], const float up[3], const float vel[3]);
 void setMasterVolume(float volume);
 
-// Once per frame: frees finished voices.
+// Once per frame: 3D gains, Doppler and pan of every voice, the voice cap (64 mixed, the quietest beyond are
+// virtual: they advance silently), finished voices freed, the capture file written.
 void update();
-size_t liveVoices();
+
+struct Stats {
+  int voices = 0, mixed = 0, virtualized = 0, paused = 0;
+  float rms[8] = {};  // per output channel since the last call, after the master gain
+  uint32_t channels = 0;
+  struct Top {
+    int voice = 0;
+    float gain = 0;               // distance gain · volume
+    float x = 0, z = 0, d = 0;    // listener space (x right, −z forward) and distance; 0 for 2D voices
+    float ch[8] = {};             // gain per bus channel
+    float rate = 1;               // resampling ratio incl. pitch and Doppler
+  };
+  std::vector<Top> top;  // the loudest 3D voices (up to 4)
+};
+Stats takeStats();  // and resets the RMS window
 
 }  // namespace regs::audio

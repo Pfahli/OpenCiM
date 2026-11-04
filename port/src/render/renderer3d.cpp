@@ -765,6 +765,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform4fv(l.colorize, 1, tint);
   gl::Uniform1f(l.reflection, m.reflection);
   for (int i = 0; i < 8; ++i) gl::Uniform4fv(l.custom[i], 1, m.custom[i]);
+  if (it.hasCustom4) gl::Uniform4f(l.custom[4], it.custom4[0], it.custom4[1], m.custom[4][2], m.custom[4][3]);
   gl::UniformMatrix4fv(l.matrix, 1, 0, it.world.m);
   for (size_t i = 0; i < m.textures.size() && i < 7; ++i) {
     gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(i));

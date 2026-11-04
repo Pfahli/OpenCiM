@@ -20,6 +20,7 @@ namespace regs::engine {
 
 class Display;
 struct SimState;
+struct SimSounds;
 class TransportObj;
 
 namespace sim {
@@ -81,6 +82,10 @@ struct Mover {
   bool crashing = false; // agent flag 0x40000: claims frozen, decelerates 4/s, drifts by crashOffset
   render::Vec3 crashOffset{};
   script::Ref<script::Object> controller;  // traffic: the gsGridVehicleController that picking sees
+  // animated parts (rotors, propellers, paddle wheels; gsGridVehicle::move L:0x081adca0.c:604-690): the shader
+  // parameter custom4 of the model's materials, x = the accumulated angle, y = the spin-up r (0..12; −1 = the
+  // template's initial value, read as full speed when moving); stepAnimatedParts
+  float rotorAngle = 0, rotorSpin = -1;
 };
 
 // a pending aircraft spawn: entry/exit, the runway nodes 15 and 30 steps on (back), the gate and its taxi path
@@ -131,6 +136,8 @@ struct VehicleState {
   bool brokenHalted = false;    // agent flag 0x10000: broken down and standing at the next stop
   float breakdownClock = 0;     // +0x18c: one breakdown roll per second
   bool deleted = false;         // destroyed (sold, moved to the depot): a tombstone, so vehicle indices stay valid
+  bool bellRung = false, announced = false;  // +0x184 / +0x185: the vehicle bell (< 8 nodes left) and the stop's
+                                             // announcement (< 32) played on this leg
 };
 
 struct LineState {
@@ -404,6 +411,7 @@ struct SimState {
   int breakdowns = 0, evacuated = 0, replanned = 0, crashes = 0;
   int walkPaths = 0, walkFailed = 0, walkCodes[4] = {};  // debugging: q-cells of the walked paths by walk code
   bool tearingDown = false;  // a new map replaces this state: its script objects go without touching it
+  std::shared_ptr<SimSounds> sounds;  // world sound slots (engine/sim_sounds.cpp), made on first use
 };
 
 // script objects of the transport classes, pointing back into the state

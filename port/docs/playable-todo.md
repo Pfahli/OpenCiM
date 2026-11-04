@@ -106,9 +106,11 @@ modes (the editor's roads, terrain and paint tools come later):
 
 ## 6. Sound and music (milestone 7)
 
-- [ ] `gsSound` (`load`, `play`, `pause`, 2D and 3D sounds), music, `set_audio_volume`, `enable_sounds`, vehicle
-  sounds (`gsGridVehicleController.playSound`). Needs WAV/MP3 decoding and an audio output (WASAPI directly, or a
-  library such as miniaudio, which would be a download decision).
+- [x] `gsSound` (`load`, `play`, `pause`, 2D and 3D sounds), music, `set_audio_volume`, `enable_sounds`, vehicle
+  sounds (`gsGridVehicleController.playSound`). Done with miniaudio's device and decoders and a mixer of the port's
+  own: script sounds, ambience by area, world sounds of vehicles, animals and items, speaker modes and a Headphones
+  mode (`docs/audio/README.md` §18).
+- [ ] Door-item sounds (level-crossing bells, needs the door items' animation), a Prologic encoder with phase shift.
 
 ## 7. Effects and remaining graphics
 

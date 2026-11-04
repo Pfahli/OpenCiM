@@ -34,6 +34,7 @@ are wrong; the first two are std::map helpers). The Windows addresses below were
 15. [Data: archives and formats](#15-data-archives-and-formats)
 16. [Port plan](#16-port-plan)
 17. [Open questions](#17-open-questions)
+18. [Port status (ReGS)](#18-port-status-regs)
 
 ---
 
@@ -810,3 +811,124 @@ The menu needs the label strings `menu_audio<Name>_item` for new entries (`audio
    frequency floats (+0x14/+0x18).
 7. Whether `gsMain::errorMsg` from failed loads is visible to the player (MAIN event 7 handler in the scripts) or only
    logged.
+
+---
+
+## 18. Port status (ReGS)
+
+State of `port/` as of 2026-11-04: §16.4 steps 1–8 are done, with the deviations in §18.4.
+
+| Part | Port files |
+|---|---|
+| Output, mixer, speaker layouts, capture | `port/src/audio/audio.{h,cpp}` (miniaudio's device layer and decoders, a mixer of its own) |
+| Script natives: `enable_sounds` … `audio_speakers`, `gsSound`/`gsMusic`, `gsListener`, the sound cache, statusUpdated | `port/src/engine/sound.{h,cpp}` |
+| Engine-driven world sounds (§11) and `gsGridVehicleController.playSound` | `port/src/engine/sim_sounds.{h,cpp}`, hooks in `sim.cpp` (`tickSimulation`, `stepVehicle`) |
+| `gsGrid.getAreaType` (§12.1) | `port/src/engine/grid.cpp` |
+| Label of the port's Headphones mode | `port/data/regs/extend/metro/ui/menus/audio.script`, `port/data/regs/strings/{en_US,de}.strings` |
+
+### 18.1 What runs
+
+| §16.4 step | State |
+|---|---|
+| 1 Output, master volume | `enable_sounds(device, speakers)` opens the device once (by name; "Default" or an unknown name = the system default) with the chosen layout; `set_audio_volume` is one master gain after the mix; `audio_devices()` = `"Default"` + the playback device names (a temporary context, works before init); `audio_speakers()` = the original's eight values + `"Headphones"`. A failed init leaves the game silent, as in the original. |
+| 2 gsSound / gsMusic | path-keyed cache (the first load fixes 2D/3D and compressed mode; failed loads are not cached and are retried), `load` (gsSound resets `length`, gsMusic does not), `play(loop)` with the restart and "a live loop is kept" rules, `stop`, `pause` (position kept, loop cleared), `clone` (copies sound, relative, distances, pitch, volume, length), live setters for `volume`, `pitch`, `relative`, `minDistance`, `maxDistance`, `currentPos` (channel position, 0 without a channel), `length` (filled on the first activation). One channel per object. The enabled + audible gate along the owner chain, and statusUpdated (loops restart when their module becomes enabled + audible again, other sounds stop). |
+| 3 Listener | `new_listener` makes the last created listener current; once per frame it takes the tracked camera's eye and orientation as the 3D pass draws them; range start (`distance < maxDistance`) and the 0.5 s out-of-range stop in the sound's own tick (desktop sounds in real time, grid clones in game time). |
+| 4 getAreaType | as §12.1, with the item weights (`w·l·2`, harbour `·8`) and the tie rules of L:0x0813ca60. |
+| 5 World sounds | vehicle engine loops (`volumeMult = clamp(accelSmoothed, 0.4, 1)`, `pitchMult = clamp(0.2·speed, 0.4, 1)`, hidden in the underground view off tunnel nodes), move / tunnel loops (swapped on node flag 0x800000), the rotor variant for helicopters and aircraft, horns (`waitTime > 5`, `rand(0, 50) < dt`, pitch 0.8–1.0), the sound list (one-shots follow their vehicle), stop announcements (< 32 nodes left, the stop template's `bellSound` at the stop), vehicle bells (< 8), doors (open at stopTime 0, close when the vehicle leaves the docked slot), animal voices (idle, `rand(0, 5) < dt`), item ambient loops (template `engineSound` at the item centre), `forceSounds` (head-relative at the listener), `gsGridVehicleController.playSound` (the passenger fare). Agents farther from the listener than every sound range of their model cost one distance check per tick. |
+| 6 Time, pause, focus, speed | as §14: game speed changes no pitch; at speed 0 the grid ticks with dt = 0 (loops keep their last pitch and volume, horns and voices stop); the pause menu (scene disabled and inaudible) stops every world voice, loops come back on resume; `ambience.pauseGame` / `resumeGame` pause and resume ambience and music at their position. Focus loss goes through the same Paused state (scripted `--at` runs ignore focus, so it was not run). |
+| 7 Doppler and the rest | source velocity `forward · 3·speed`, `disable_sounds`, `gsListener.volume`, `tracked2`, `offset2` stored only. |
+| 8 Speaker modes | §18.3. |
+
+### 18.2 Mixer
+
+miniaudio's `ma_engine` is not used: its spatializer pans by dot products against every channel (front sources leak
+into the surrounds, LFE gets the full signal, 2D stereo is spread by its channel converter), and it has no per-ear
+delay or filter for a headphone mode. The port mixes in the device callback itself:
+
+* **Voices.** WAV decoded once to f32 PCM; MP3 (music, ambience) decoded per voice from the in-memory file while it
+  plays. Linear-interpolation resampling at `fileRate · pitch · Doppler / deviceRate` (FMOD Ex's default resampler is
+  linear too). Whole-file loops.
+* **3D.** Listener basis from the camera (forward, up made orthogonal, right = forward × up). Linear rolloff (§9.2),
+  channel volume clamped to 0..1. Doppler `f' = f·(c − vL·u)/(c − vS·u)` with c = 340, clamped to 0.5–2; the
+  listener velocity is 0 (§17 Q5). Head-relative voices take their position in listener space.
+* **2D.** Clips loaded 2D are never attenuated or panned (§17 Q1: kept 2D): stereo to the front pair, mono to both
+  front channels at −3 dB (mono layout: the average of a stereo clip, a mono clip as it is).
+* **Voice cap.** 64 voices are mixed; every frame the voices are ranked by `distance gain · volume`, the rest (and
+  every voice at gain 0) is virtual: it advances without being mixed. No hard limit on voice handles.
+* **Gains** are recomputed once per frame and ramped over the next device period.
+* One master gain after the mix (`set_audio_volume`); no groups (the layer's former `Effects`/`Music` groups are
+  gone, §16.1).
+
+### 18.3 Speaker modes
+
+`$audiospeakers` picks the device's channel count and map; 3D voices are panned over it, 2D stereo goes to the front
+pair, LFE stays silent.
+
+| Value | Device channels | 3D pan |
+|---|---|---|
+| `Default` | the device's own layout and map (port choice, §17 Q2) | by that map, as below |
+| `Mono` | 1 | attenuation only |
+| `Stereo` | 2 (FL FR) | constant power by the lateral component `x/d`: `L = cos((asin(x/d) + π/2)/2)`, front and back alike |
+| `Quad` | 4 (FL FR BL BR) | pairwise constant power (2D VBAP) between the two speakers around the azimuth; ±45°, ±135° |
+| `Surround` | 5 (FL FR FC BL BR) | VBAP; 0°, ±30°, ±110° |
+| `5p1` | 6 (FL FR FC LFE SL SR) | VBAP; sides ±110° |
+| `7p1` | 8 (FL FR FC LFE BL BR SL SR) | VBAP; sides ±90°, backs ±150° |
+| `Prologic` | 2 | panned on a 5.0 bus, then a passive Lt/Rt matrix: centre −3 dB to both, the surrounds summed (−3 dB) and fed in antiphase; the ±90° phase shift of a real encoder is left out |
+| `Headphones` (new) | 2 | data-free binaural: interaural time difference by Woodworth's formula (head radius 8.75 cm, at most 0.66 ms, a fractional delay line on the far ear), a level difference (`√(0.5·(1 ∓ 0.6·x/d))`), a head-shadow one-pole low-pass on the far ear (18 kHz in front down to 1.8 kHz at 90°) and a slight low-pass on both ears for sources behind (down to 6.3 kHz). No HRTF data. |
+
+With 3+ speakers a source more than 45° above or below the listener's horizontal plane fades from the VBAP pair to
+an even spread over all speakers (straight below the camera: everywhere). The original's executable treats unknown
+`$audiospeakers` strings as "use the control-panel layout" (§4.2), so `Headphones` does not hurt it. A changed device
+or speaker mode applies at the next start, as in the original (`$requireRestart`). The menu label
+`menu_audioHeadphones_item` comes from the port's string overlay ("Headphones (binaural stereo)",
+"Kopfhörer (binaurales Stereo)").
+
+### 18.4 Deviations
+
+* **Engine clones are native voices.** The original clones the template gsSound under the grid for every play
+  (`createInstance`); the port plays the template's sound, volume, pitch and distances as a world voice and keeps
+  the agent's slots (engine loop, sound list) in `sim_sounds.cpp`. Scripts never saw those clones, so nothing visible
+  changes. They stop when the grid is disabled or inaudible (the clones' statusUpdated).
+* **Range** is the distance from the listener (the main camera's eye) to the agent, not the bucket's `eyeDist`
+  (minimum over the grid's cameras to the bucket centre + 25 up): a secondary camera does not activate sounds near
+  it. Item loops stop after 0.5 s beyond `maxDistance`, or at once beyond `maxDistance + 100` (the stand-in for the
+  bucket deactivation).
+* **No one-tick paused start** (§6.3): voices start at once.
+* **pause() keeps the paused voice** and the next `play` resumes it; a resume from another position seeks the MP3
+  decoder on the main thread (slow for a long track; the scripts never do it).
+* **Positions of script sounds:** the sound's `position` plus the `globalPos` (or `position`) of its 3D-element
+  owners, orientation ignored. Every shipped script-played sound is head-relative or on a 2D control (§9.4).
+* **Listener:** the camera's eye as drawn (eased), velocity 0.
+* **Vehicle details:** `accelSmoothed` is updated once per grid tick with the tick's scaled time (the original: per
+  sub-step); horns and animal voices roll once per tick with the tick's dt and use the port's own random stream (the
+  simulation's `rand()` sequence stays untouched); the "< 32 / < 8 left" counts are track nodes to the leg end, not
+  `pathStepsLeft + ringCount`. The rotor path uses the spin-up `r` of the rotor animation (`Mover::rotorSpin`,
+  L:0x081adca0.c:604-690: aircraft spin up by 1/s to 12, halve per second while halted, broken or crashing).
+* **statusUpdated** is polled once per frame for sounds that play, loop or wait for a resume, instead of a callback.
+* **Headless** (`regs-tool run`, tests): `enable_sounds` does nothing, as if FMOD's init failed (silent; every load
+  gets no sound); `audio_devices()` is `["Default"]`.
+
+### 18.5 Open
+
+* Door items (§11.3: the level-crossing bell while a door item opens): the port does not animate door items yet.
+* Prologic with a real ±90° phase shift; HRTF-based headphones (would need a data set shipped with the port).
+* The optional extra volume settings of §16.2 (`$regsEffectsVolume`, …).
+* Device changes while running (unplugging, a new default device) are left to miniaudio's backend; not tested.
+* Industrial and harbour ambience (types 3, 4) did not come up in the test runs (Vienna); the item weighting is in
+  place.
+
+### 18.6 Checks
+
+Vienna save, `--documents run\documents-audio`, `REGS_DEBUG_AUDIO=1`, `REGS_AUDIO_CAPTURE=<file.wav>`, RMS from the
+capture.
+
+| Check | Result |
+|---|---|
+| Menu | `Cim-music-Menu.mp3` loops 2D at volume 1.0; hover (vol 0.1) and click (vol 0.5) sounds play on the menu buttons. |
+| Master volume | menu music from its onset, `$volume` 0.4 vs 0.8: −6.0 dB in every 2 s window. The Audio page's OK applies a new volume at once (0.8 → 0.33 logged, the mix drops) and saves `$audiospeakers`; the next start opens that layout. |
+| In game | era music `Cim-music-Era4.mp3` at `$musicVolume` 0.5; city ambience by area after minimap jumps: urban 60 → suburban close, open 40 / water 18 → countryside, water 30 / open 28 → water, back to urban; UI clicks, the newspaper and achievement sounds, the purchase sound on buying a bus; passenger fares (`playSound`), tram bells, stop announcements, doors, church bells and market stalls as item loops. |
+| Vehicles | with only engine sounds audible (`REGS_AUDIO_ONLY=ngine`): RMS 0.015 at zoom 150, 0.045 at zoom 75 (+9.5 dB); idle engines at rate 0.367 (= 0.4 · 44.1/48 kHz), approaching ones up to 0.96 (Doppler). The logged pans follow listener space (x −66 → L 0.042 / R 0.024; x +54 → L 0.051 / R 0.094). |
+| Panning in the capture | church bells only, stereo: two churches left and right, L/R +0.4 dB; after a 180° camera turn one church on the left: L/R +5.3 dB, matching that voice's gains 0.068 / 0.037. In 5.1 after a 90° turn the church on the right: FR −38 dB, SR −42 dB, FL/SL/FC −49 dB, LFE silent. |
+| Pause | pause menu: every world voice stops ("grid disabled or inaudible"), ambience and music pause, the mix is 0.0000 RMS on both channels while the menu is open; resuming continues ambience and music at their position and restarts the loops. Speed 0: 31 voices keep playing. |
+| Speaker modes | captures have 1 / 2 / 4 / 6 / 8 / 2 / 2 channels for Mono / Default / Quad / 5p1 / 7p1 / Prologic / Headphones; the menu music sits on FL/FR only. `regs-tool sound … at=x,y,z layout=…` places a test voice: stereo centre 0.707/0.707, hard left 1/0; quad at (−14, 0, 14) → BL only; 5.0 at +90° → FR 0.38, BR 0.92; headphones at +90° → L 0.064, R 0.142 RMS. |
+| Regression | `regs-tool script tests\vm_basics.script` passes; `regs-tool run` stays silent ("headless, sounds stay off") and exits 0. |

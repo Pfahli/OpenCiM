@@ -12,6 +12,7 @@
 #include "engine/scene3d.h"
 #include "engine/sim.h"
 #include "engine/sim_graph.h"
+#include "engine/sound.h"
 #include "engine/terrain.h"
 #include "vfs/vfs.h"
 
@@ -273,7 +274,65 @@ void registerGridNatives(VM& vm) {
     implement(vm, "gsGridCitizens", m, zero);
   implement(vm, "gsGridCitizens", u"findCitizen", none);
   implement(vm, "gsGridCitizens", u"getRandomCitizen", none);
-  implement(vm, "gsGrid", u"getAreaType", zero);  // ambience zone around the camera (0 = default)
+  // getAreaType(x, z, diameter) (L:0x0813ca60, docs/audio/README.md §12.1): the dominant ambience type around a point.
+  // Every 4th cell inside the circle votes water (flag 0x2000) → 2, paved or covered (0xf08) → 0, else 1; every item of
+  // the buckets overlapping the square whose template has an ambience t ≠ −1 adds w·l·2 to t (w·l·8 for t = 4).
+  implement(vm, "gsGrid", u"getAreaType", [](VM& v, Object* s, int, const Value* a) {
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g || !g->data) return Value::integer(0);
+    const GridData& d = *g->data;
+    const float sc = d.cellSize;
+    int cx = int(std::lrint((v.toFloat(a[0]) + float(d.width) * sc * 0.5f) / sc));
+    int cz = int(std::lrint((float(d.length) * sc * 0.5f + v.toFloat(a[1])) / sc));
+    int r = int(std::lrint(0.5f * v.toFloat(a[2]) / sc));
+    int x0 = std::max(cx - r, 0), x1 = std::min(cx + r, d.width - 1);
+    int z0 = std::max(cz - r, 0), z1 = std::min(cz + r, d.length - 1);
+    int count[5] = {0, 0, 0, 0, 0};
+    for (int j = z0; j <= z1; j += 4)
+      for (int i = x0; i <= x1; i += 4) {
+        if ((i - cx) * (i - cx) + (j - cz) * (j - cz) >= r * r) continue;
+        uint16_t f = d.flags[size_t(j) * size_t(d.width) + size_t(i)];
+        ++count[(f & 0x2000) ? 2 : (f & 0xf08) ? 0 : 1];
+      }
+    // per type: the template's ambience and size (-1 = none); items by the bucket of their origin cell
+    struct TypeAmb {
+      int ambience = -1, width = 1, length = 1;
+    };
+    std::vector<TypeAmb> types(d.types.size());
+    bool any = false;
+    for (size_t t = 0; t < d.types.size(); ++t) {
+      auto it = g->templates.find(d.types[t]);
+      if (it == g->templates.end()) continue;
+      const auto& fv = it->second->fieldValues;
+      auto am = fv.find(u"ambience");
+      if (am == fv.end() || am->second.toInt() == -1) continue;
+      int amb = am->second.toInt();
+      if (amb < 0 || amb > 4) continue;
+      auto w = fv.find(u"width"), l = fv.find(u"length");
+      types[t] = {amb, w == fv.end() ? 1 : std::max(1, w->second.toInt()), l == fv.end() ? 1 : std::max(1, l->second.toInt())};
+      any = true;
+    }
+    if (any && x0 <= x1 && z0 <= z1) {
+      int sh = int(d.bucketShift);
+      int bx0 = x0 >> sh, bx1 = x1 >> sh, bz0 = z0 >> sh, bz1 = z1 >> sh;
+      for (const GridData::Item& it : d.items) {
+        if (it.removed || it.type >= types.size() || types[it.type].ambience < 0) continue;
+        int bx = it.x >> sh, bz = it.z >> sh;
+        if (bx < bx0 || bx > bx1 || bz < bz0 || bz > bz1) continue;
+        const TypeAmb& ta = types[it.type];
+        int w = (it.orient & 1) ? ta.length : ta.width, l = (it.orient & 1) ? ta.width : ta.length;
+        count[ta.ambience] += w * l * (ta.ambience == 4 ? 8 : 2);
+      }
+    }
+    int best = std::max(count[0], count[1]), type = count[0] < count[1] ? 1 : 0;
+    if (count[2] > best) best = count[2], type = 2;
+    if (count[3] > best) best = count[3], type = 3;
+    if (count[4] > best) type = 4;
+    if (soundDebug())
+      LOG_INFO("audio: getAreaType(%.0f, %.0f, %.0f): urban %d, open %d, water %d, industrial %d, harbour %d -> %d", v.toFloat(a[0]),
+               v.toFloat(a[1]), v.toFloat(a[2]), count[0], count[1], count[2], count[3], count[4], type);
+    return Value::integer(type);
+  });
 
   implement(vm, "gsGrid", u"loadFromFile", [](VM& v, Object* s, int, const Value* a) {
     auto* g = dynamic_cast<GridObj*>(s);

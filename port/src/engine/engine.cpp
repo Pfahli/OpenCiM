@@ -6,6 +6,7 @@
 #include "engine/minimap.h"
 #include "engine/skinning.h"
 #include "engine/sim.h"
+#include "engine/sound.h"
 
 #include <cstdio>
 
@@ -42,6 +43,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerGeneratedApi(*vm_);
   registerCoreNatives(*vm_);
   registerObjectNatives(*vm_);
+  registerSoundNatives(*vm_);
   registerUiNatives(*vm_);
   registerDisplayNatives(*vm_);
   registerInputNatives(*vm_);
@@ -74,7 +76,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   };
 }
 
-Engine::~Engine() = default;
+Engine::~Engine() { soundsShutdown(); }
 
 bool Engine::init(const std::u16string& initScript) {
   // the -i start-up file is compiled into MAIN itself (semantics.md §6)
@@ -90,6 +92,7 @@ void Engine::frame(float dt) {
   // gsMain.tick (0x100a0700): script threads first, then the enabled children in order
   vm_->runThreads(dt);
   vm_->tickChildren(main_.get(), dt);
+  soundsFrame(*vm_, dt);  // listener, sound status, mixer update
 }
 
 }  // namespace regs::engine

@@ -21,3 +21,4 @@ $regs_renderer_planned = "Planned: a modern graphics engine (Vulkan) for raytrac
 $regs_trafficDensity_item = "Traffic density: %0";
 $regs_populationDensity_item = "Population density: %0";
 $regs_density_values = ["0.5x", "1x (original)", "2x", "4x"];
+$regs_audioHeadphones_item = "Headphones (binaural stereo)";

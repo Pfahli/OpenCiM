@@ -25,6 +25,7 @@
 #include "engine/settings.h"
 #include "engine/sim_graph.h"
 #include "engine/sim_state.h"
+#include "engine/sim_sounds.h"
 
 namespace regs::engine {
 
@@ -896,6 +897,13 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
     }
     return;
   }
+  // the stop's announcement (< 32 nodes left) and the vehicle bell (< 8) on the way to stop B (0x101152a0.c:221-248)
+  if (!v.halted) {
+    int legEnd = m.limit >= 0 ? m.limit : int(m.track.nodes.size()) - 1;
+    int left = legEnd - int(m.track.at(m.dist));
+    if (left < 32 && !v.announced) v.announced = true, simSoundVehicleEvent(vm, s, vi, SimSoundEvent::Announce);
+    if (left < 8 && !v.bellRung) v.bellRung = true, simSoundVehicleEvent(vm, s, vi, SimSoundEvent::Bell);
+  }
   // the stop cycle (transport.md §4.3, 0x101152a0.c:300-388)
   bool arrived = freeAhead(s, m) < 1.5f && m.speed < 0.1f;
   // the door clip: opening over the first second, open, closing over the last (doorOpenStart/Len, doorCloseStart/Len
@@ -948,6 +956,7 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
         s.followShots = 16, s.followShotName = "halt-" + std::to_string(line.type) + "-" + std::to_string(++bursts) + "-";
     }
     v.halted = true;
+    if (v.stopTime == 0) simSoundVehicleEvent(vm, s, vi, SimSoundEvent::DoorOpen);  // :311-314
     v.stopTime += dt;
     if (v.boardingReserved != 0) {  // citizens walking to the doors keep them open (0x101152a0.c:323-330)
       v.stopTime = std::min(v.stopTime, D - 1);
@@ -961,8 +970,9 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
       if (debugSim())
         LOG_INFO("sim: vehicle %d departs stop %d after %.1f s (%d aboard, %d boarded here so far, %d still waiting)", vi,
                  v.stopB, v.stopTime, v.passengerCount, b.passengersTransported, b.waiting);
-      if (b.docked == vi) b.docked = -1;
+      if (b.docked == vi) b.docked = -1, simSoundVehicleEvent(vm, s, vi, SimSoundEvent::DoorClose);
       if (b.docked < 0) b.sinceDeparture = 0;
+      v.bellRung = v.announced = false;
       v.halted = false;
       v.travelDistance += float(b.path.size()) * 6;
       int arrivedOn = line.stops[size_t(v.stopA)].legEnd;
@@ -979,8 +989,9 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
     } else if (v.stopTime >= 1) {
       if (v.stopTime <= D - 1) {
         if (b.docked < 0) b.docked = vi;
-      } else if (b.docked == vi) {
+      } else if (b.docked == vi) {  // closing
         b.docked = -1;
+        simSoundVehicleEvent(vm, s, vi, SimSoundEvent::DoorClose);
       }
     }
     m.speed = 0;
@@ -1746,11 +1757,38 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
     }
 }
 
+// gsGridVehicle::move (L:0x081adca0.c:604-690): the spin of a vehicle's animated parts, written to custom4 of its
+// meshes (propeller.shader turns rotors and propellers by custom4.x · custom0.w and fades the blades into the blur disk
+// by custom4.y; paddle.shader the paddle wheels). Vehicles with an anchor ≥ 0.11 (ground vehicles, boats) spin with
+// their speed; aircraft spin up by 1/s to 12 while moving and run down by half per second while halted at a stop,
+// broken down or crashing (agent flags 0x50400). The angle advances by dt · r.
+void stepAnimatedParts(SimState& s, float dt) {
+  for (Mover& m : s.movers) {
+    if (!m.live || m.parked || m.units.empty() || m.units[0].model < 0) continue;
+    const UnitModel& um = s.models[size_t(m.units[0].model)];
+    float r;
+    if (um.frontAnchor >= 0.11f || um.rearAnchor >= 0.11f) {
+      r = m.speed <= 6.0f ? std::min(2.0f * m.speed, 6.0f) : 2.0f * m.speed - 6.0f;
+    } else {
+      bool halted = m.crashing;
+      if (m.transit && m.vehicle >= 0 && size_t(m.vehicle) < s.vehicles.size())
+        halted = halted || s.vehicles[size_t(m.vehicle)].halted || s.vehicles[size_t(m.vehicle)].brokenHalted;
+      if (!halted) r = m.rotorSpin < 0 ? 12.0f : std::min(m.rotorSpin + dt, 12.0f);
+      else r = m.rotorSpin < 0 ? 0.0f : m.rotorSpin * std::pow(0.5f, dt);
+    }
+    m.rotorAngle += dt * r;
+    m.rotorSpin = r;
+  }
+}
+
 void tickSimulation(VM& vm, GridObj* grid, float dt) {
   SimState* s = simOf(grid);
   if (!s || dt <= 0) return;
   float x = dt * fieldFloat(vm, grid, u"timeSpeed", 1.0f);
-  if (x <= 0) return;
+  if (x <= 0) {  // game speed 0: the grid still ticks with dt = 0 (loops keep playing, docs/audio/README.md §14)
+    simSoundsTick(vm, grid, *s, 0);
+    return;
+  }
   int n = 1 + int(5.0f * x);  // 1 − ftol(dt·timeSpeed·−5): steps of at most 0.2 s
   float step = x / float(n);
   // debugging: REGS_DEBUG_FOLLOW=<line type>[:<n>] keeps the camera (ui.setCameraPos) on the n-th vehicle of that type
@@ -1813,8 +1851,10 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
     for (auto& line : s->lines)
       if (lineActive(vm, line)) stepLine(vm, *s, line, step);
   }
+  stepAnimatedParts(*s, x);
   syncVehicleFields(*s);
   syncCharacterFields(*s);
+  simSoundsTick(vm, grid, *s, x);
   if (debugSim()) {
     static int frames = 0;
     if (++frames % 600 == 0) {
@@ -2125,6 +2165,11 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       it.world = poseMatrix(p);
       items.push_back(it);
     }
+    for (size_t k = first; k < items.size(); ++k) {  // animated parts: custom4 = (angle, spin), stepAnimatedParts
+      items[k].hasCustom4 = true;
+      items[k].custom4[0] = m.rotorAngle;
+      items[k].custom4[1] = m.rotorSpin;
+    }
     uint32_t argb = u.tint;
     // line vehicles: the line colour tints the colorize materials (gsTransportLine.color, 0x10114ec0)
     if (m.transit && m.vehicle >= 0) {
@@ -2190,6 +2235,7 @@ void forEachSimVehicle(GridObj* grid, const std::function<void(const SimVehicleV
 
 void registerSimNatives(VM& vm) {
   registerPathNatives(vm);
+  registerSimSoundNatives(vm);
   for (auto [cls, name] : {std::pair{"gsGridCitizens", u"regsPopulationDensity"}, std::pair{"gsGridVehicles", u"regsTrafficDensity"}})
     if (ClassInfo* c = vm.findClass(cls)) {
       FieldInfo& f = c->fields[name];

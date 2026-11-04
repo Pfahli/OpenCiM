@@ -1,0 +1,14 @@
+// ReGS extension of the audio page (metro/ui/menus/audio.script, used as installed). The part before //@base runs
+// before the original page (see VM::extendSource). The page labels each audio_speakers() value with
+// $strings.$menu_audio<value>_item; the port's extra value "Headphones" (data-free binaural stereo, docs/audio/README.md
+// "Port status") gets its label here, from the port's strings. A changed device or speaker mode applies at the next
+// start, as in the original ($requireRestart).
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regs = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regs = load "/regs/strings/en_US.strings";
+}
+MAIN.$strings.$menu_audioHeadphones_item = $regs.$regs_audioHeadphones_item;
+
+//@base
