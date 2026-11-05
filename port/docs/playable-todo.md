@@ -136,13 +136,18 @@ modes (the editor's roads, terrain and paint tools come later):
 
 ## 7. Effects and remaining graphics
 
-- [ ] Particles (`gsParticleEmitter`: smoke, fires, fountains, sparks; `addColorRange`, `setTexture`,
-  `setParticleScale`).
 - [x] Sky mesh (`gsSky.generateMesh`), sun disc, night lighting with the illumination maps, `gsTracerCtrl.enableFade`
   (`engine/sky.cpp`, `docs/renderer/sky-and-night.md`). The original has no day/night cycle (fixed time per location;
   New York and Tokyo are the night maps, lit by their DLC illumination maps and additive street-light glows, which
   now blend additively). Port option "Tag und Nacht" adds a cycle; `REGS_DEBUG_TIME=<hour>` for tests
   (`port/run/sky/*.png`). Open: the sun's glow sprite (occlusion-query halo).
+- [x] Particles (`gsParticleEmitter`, `gsEmittingParticleEmitter`, `gsParticleEngine`; `engine/particles.cpp`,
+  `docs/renderer/particles.md`): factory and ship smoke, fountains, fire and sparks, broken-down and crash smoke,
+  helicopter dust, the demolish and construction dust; sorted lit billboards with shadows, capped pool. Port change:
+  helicopters board with a still rotor (`docs/simulation/boats-aircraft.md` §6.3). Screenshots in
+  `port/run/particles/`.
+- [ ] Boat wakes (`gsBoatContrain`: a ribbon mesh per boat in the grid bucket, docs/renderer/particles.md §7) and
+  fires as a simulation event (building pass, `docs/simulation/grid-traffic.md` §4.4).
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
   cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;
   `port/run/barriers/sheet-f-rise.png`, `sheet-f-wait.png`).

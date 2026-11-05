@@ -86,6 +86,25 @@ struct Light {
   float ambient[4] = {0, 0, 0, 1}, diffuse[4] = {1, 1, 1, 1}, specular[4] = {1, 1, 1, 1};
 };
 
+// Particle billboards (docs/renderer/particles.md §4): camera-facing quads built per pass from these sprites, drawn
+// after the blended queue in the order given (far to near), consecutive sprites of one batch in one draw.
+struct ParticleSprite {
+  Vec3 pos;
+  float size = 1, angle = 0;  // half extent, rotation in the view plane
+  uint32_t argb = 0;          // colour over life with the distance fade in alpha
+  uint32_t batch = 0;         // index into ParticleDrawList::batches
+};
+struct ParticleBatch {
+  GpuMaterial* material = nullptr;  // particles.shader variants per pass env, texture unit 0, two-sided
+  uint32_t blend = 0;               // material flags 0x80 additive (ONE, ONE), 0x100 additive alpha (SRC_ALPHA, ONE)
+};
+struct ParticleDrawList {
+  std::vector<ParticleBatch> batches;
+  std::vector<ParticleSprite> sprites;
+  // the pass environment a batch's variant is selected with: additive materials take 0 (W:0x10051150)
+  static uint32_t envFor(const ParticleBatch& b, uint32_t passEnv) { return b.blend ? 0u : passEnv; }
+};
+
 struct SceneView {
   Mat4 view, proj;
   Vec3 eye;
@@ -102,6 +121,7 @@ struct SceneView {
   Mat4 shadowTransform, shadowWarp;
   float shadowParams[4] = {0, 0, 0, 0};
   bool flipCull = false;  // env 0x20: cull front faces (shadow pass with useBackSide)
+  const ParticleDrawList* particles = nullptr;  // drawn at the end of draw() (engine/particles.cpp collects them)
 };
 
 enum : uint32_t { kEnvFog = 0x1, kEnvShadowMap = 0x2, kEnvShadowMapRender = 0x4, kEnvShadowRender = 0x8, kEnvShadow = 0x10 };
@@ -184,6 +204,10 @@ class Renderer3D {
   void setupFallback(const SceneView& v);
   void drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m, uint32_t prog,
                     float alphaRef);
+  void drawParticles(const SceneView& v, const ParticleDrawList& list);
+  GpuMesh particleMesh_;            // stream VBO of the billboards, static quad index buffer
+  size_t particleQuads_ = 0;        // quads the index buffer holds
+  std::vector<uint8_t> particleVerts_;
 };
 
 }  // namespace regs::render

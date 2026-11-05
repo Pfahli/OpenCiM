@@ -15,6 +15,7 @@ whose only implementations are OpenGL classes (`*_OGL`). A replacement backend i
 | [underground.md](underground.md) | the underground view (`viewMode` 0x180): how the scripts switch it, `write_viewMode`, tunnel divisions cut open to the earth plane with inward walls, item/vehicle/character visibility, picking, sounds, port status |
 | [shadows.md](shadows.md) | sun shadow map (`gsShadowEffect_OGL`): script fields, light-camera fit to the view footprint, trapezoid warp (TSM), `shadowTransform`/`shadowWarp`/`shadowParams`, depth pass and receiver shader math, worked example, port checklist |
 | [sky-and-night.md](sky-and-night.md) | sky dome (`gsSky.generateMesh`), sun disc, the fixed time of day per location, the New York / Tokyo night maps and their illumination maps and additive street-light glows, glow sprites, `gsTracerCtrl.enableFade`; the port's optional day/night cycle |
+| [particles.md](particles.md) | particles: `gsParticleEmitter` fields and methods, emission (rate, on/off cycles, cone, ring), the engine's physics, child emitters, the grid's emitters on items and vehicles (conditions, helicopter dust), billboards, sorting, blending, lighting, fog and shadows, port notes |
 | [bloom.md](bloom.md) | bloom / "HDR lighting" post effect: script fields and defaults, per-tick exposure adaptation, render targets, the scene pass and the 10 bloom passes with exact `custom0` and uv mapping, luminance readback, final composite and tone map, bloom on vs off, quirks, port checklist |
 
 ## Interfaces and implementations

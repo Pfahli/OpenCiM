@@ -150,6 +150,9 @@ int main(int argc, char** argv) {
         } else if (sc.action == "shot") {
           d->requestScreenshot(widen(sc.arg.c_str()));
           continue;
+        } else if (sc.action == "vsync") {  // vsync:off after a frame-timed load, for frame-time measurements
+          d->window().setVsync(sc.arg == "on");
+          continue;
         }
         e.x = mx;
         e.y = my;

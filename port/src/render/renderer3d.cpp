@@ -939,10 +939,162 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   }
   run(tested, 0.2f, true);
   run(blended, 0.001f, shadowPass);
+  if (v.particles && !v.particles->sprites.empty()) drawParticles(v, *v.particles);
   gl::Disable(gl::BLEND);
   if (blendSrc != gl::SRC_ALPHA || blendDst != gl::ONE_MINUS_SRC_ALPHA) gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
   gl::DepthMask(1);
   gl::CullFace(gl::BACK);
+  gl::BindVertexArray(0);
+}
+
+// gsParticleSystem_OGL::startRendering / renderParticle / endRendering (L:0x08218b60, 0x08218ee0, 0x08219720;
+// docs/renderer/particles.md §4): CPU billboards facing this pass's camera (its right and up axes rotated by the
+// particle angle, half extent = size), normal +Y, the sprite colour per vertex. The original draws each sorted particle
+// from the blend queue in immediate mode; the port fills one stream buffer and draws runs of consecutive sprites that
+// share a batch. Main pass: blended, no depth writes, alpha GREATER 0.001; shadow-map pass: alpha-blended materials
+// only, depth written, alpha test 0.2 (additive ones are skipped there, W:0x10051560.c:26-34).
+void Renderer3D::drawParticles(const SceneView& v, const ParticleDrawList& list) {
+  const bool shadowPass = (v.env & (kEnvShadowMapRender | kEnvShadowRender)) != 0;
+  if (v.env & kEnvShadowRender) return;
+  struct PVtx {
+    float p[3], n[3], uv[2];
+    uint32_t c;
+  };
+  const size_t n = list.sprites.size();
+  if (!particleMesh_.vao) {
+    gl::GenVertexArrays(1, &particleMesh_.vao);
+    gl::BindVertexArray(particleMesh_.vao);
+    gl::GenBuffers(1, &particleMesh_.vbo);
+    gl::GenBuffers(1, &particleMesh_.ibo);
+    gl::BindBuffer(gl::ARRAY_BUFFER, particleMesh_.vbo);
+    gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, particleMesh_.ibo);
+    auto attr = [](int i, int k, gl::GLenum type, bool norm, size_t off) {
+      gl::EnableVertexAttribArray(gl::GLuint(i));
+      gl::VertexAttribPointer(gl::GLuint(i), k, type, norm, sizeof(PVtx), reinterpret_cast<void*>(off));
+    };
+    attr(0, 3, gl::FLOAT, false, offsetof(PVtx, p));
+    attr(1, 3, gl::FLOAT, false, offsetof(PVtx, n));
+    attr(2, 2, gl::FLOAT, false, offsetof(PVtx, uv));
+    attr(5, 4, gl::UNSIGNED_BYTE, true, offsetof(PVtx, c));
+  }
+  gl::BindVertexArray(particleMesh_.vao);
+  if (n > particleQuads_) {  // the quad index buffer: (0,1,2) (0,2,3) per quad
+    particleQuads_ = std::max(n, particleQuads_ * 2);
+    std::vector<uint32_t> idx(particleQuads_ * 6);
+    for (size_t q = 0; q < particleQuads_; ++q) {
+      uint32_t b = uint32_t(q * 4);
+      uint32_t* o = &idx[q * 6];
+      o[0] = b, o[1] = b + 1, o[2] = b + 2, o[3] = b, o[4] = b + 2, o[5] = b + 3;
+    }
+    gl::BufferData(gl::ELEMENT_ARRAY_BUFFER, gl::GLsizeiptr(idx.size() * 4), idx.data(), gl::STATIC_DRAW);
+  }
+  // the pass camera's right and up axes in world space (rows of the view rotation)
+  Vec3 R{v.view.at(0, 0), v.view.at(0, 1), v.view.at(0, 2)}, U{v.view.at(1, 0), v.view.at(1, 1), v.view.at(1, 2)};
+  particleVerts_.resize(n * 4 * sizeof(PVtx));
+  PVtx* out = reinterpret_cast<PVtx*>(particleVerts_.data());
+  size_t quads = 0;
+  for (const ParticleSprite& s : list.sprites) {
+    if (shadowPass && list.batches[s.batch].blend) continue;
+    float c = std::cos(s.angle) * s.size, sn = std::sin(s.angle) * s.size;
+    Vec3 A = R * c + U * sn, B = U * c - R * sn;
+    // ARGB → R,G,B,A bytes (the TEXCOORD order of upload())
+    uint32_t col = (s.argb >> 16 & 0xFF) | (s.argb & 0xFF00) | (s.argb & 0xFF) << 16 | (s.argb & 0xFF000000u);
+    const Vec3 corner[4] = {s.pos + A + B, s.pos - A + B, s.pos - A - B, s.pos + A - B};
+    static const float uv[4][2] = {{1, 0}, {0, 0}, {0, 1}, {1, 1}};
+    for (int k = 0; k < 4; ++k) {
+      PVtx& o = out[quads * 4 + size_t(k)];
+      o.p[0] = corner[k].x, o.p[1] = corner[k].y, o.p[2] = corner[k].z;
+      o.n[0] = 0, o.n[1] = 1, o.n[2] = 0;
+      o.uv[0] = uv[k][0], o.uv[1] = uv[k][1];
+      o.c = col;
+    }
+    ++quads;
+  }
+  if (!quads) {
+    gl::BindVertexArray(0);
+    return;
+  }
+  gl::BindBuffer(gl::ARRAY_BUFFER, particleMesh_.vbo);
+  gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(quads * 4 * sizeof(PVtx)), nullptr, gl::STREAM_DRAW);  // orphan
+  gl::BufferSubData(gl::ARRAY_BUFFER, 0, gl::GLsizeiptr(quads * 4 * sizeof(PVtx)), particleVerts_.data());
+  gl::Disable(gl::POLYGON_OFFSET_FILL);
+  if (shadowPass) {
+    gl::Disable(gl::BLEND);
+    gl::DepthMask(1);
+  } else {
+    gl::Enable(gl::BLEND);
+    gl::DepthMask(0);
+  }
+  float nm[9];
+  normalMatrix(v.view, nm);
+  Mat4 mvp = v.proj * v.view;
+  gl::Disable(gl::CULL_FACE);  // the system's flag 0x40
+  // the batches of one program differ only in their texture: the pass and material uniforms are set once per program
+  // (sorting interleaves the batches, so runs are short and switch programs often)
+  std::vector<uint32_t> ready;
+  uint32_t current = 0, blend = ~0u, texture = ~0u;
+  size_t q = 0;
+  for (size_t i = 0; i < n;) {  // runs of consecutive sprites of one batch (skipped ones were not written)
+    uint32_t b = list.sprites[i].batch;
+    size_t j = i, count = 0;
+    for (; j < n && list.sprites[j].batch == b; ++j)
+      if (!(shadowPass && list.batches[b].blend)) ++count;
+    const ParticleBatch& pb = list.batches[b];
+    i = j;
+    if (!count || !pb.material) {
+      q += count;
+      continue;
+    }
+    uint32_t prog = pb.material->programFor(ParticleDrawList::envFor(pb, v.env));
+    if (!prog) {
+      q += count;
+      continue;
+    }
+    if (prog != current) {
+      current = prog;
+      gl::UseProgram(prog);
+      if (std::find(ready.begin(), ready.end(), prog) == ready.end()) {
+        ready.push_back(prog);
+        setupProgram(v, prog);
+        const ProgramLocs& l = locs(prog);
+        gl::UniformMatrix4fv(l.mv, 1, 0, v.view.m);
+        gl::UniformMatrix4fv(l.mvp, 1, 0, mvp.m);
+        gl::UniformMatrix3fv(l.nm, 1, 0, nm);
+        const GpuMaterial& m = *pb.material;
+        gl::Uniform1f(l.alphaRef, shadowPass ? 0.2f : 0.001f);
+        gl::Uniform4fv(l.matEmission, 1, m.emission);
+        gl::Uniform4fv(l.matAmbient, 1, m.ambient);
+        gl::Uniform4fv(l.matDiffuse, 1, m.diffuse);
+        gl::Uniform4fv(l.matSpecular, 1, m.specular);
+        int nl = int(std::min<size_t>(v.lights.size(), 8));
+        for (int i = 0; i < nl; ++i) {  // gl_FrontLightProduct
+          const Light& li = v.lights[size_t(i)];
+          float pa[4], pd[4];
+          for (int k = 0; k < 4; ++k) pa[k] = li.ambient[k] * m.ambient[k], pd[k] = li.diffuse[k] * m.diffuse[k];
+          gl::Uniform4fv(l.productAmbient[i], 1, pa);
+          gl::Uniform4fv(l.productDiffuse[i], 1, pd);
+        }
+        static const Mat4 identity;
+        gl::UniformMatrix4fv(l.matrix, 1, 0, identity.m);
+      }
+    }
+    if (!shadowPass && pb.blend != blend) {
+      blend = pb.blend;
+      if (blend & 0x80) gl::BlendFunc(gl::ONE, gl::ONE);
+      else if (blend & 0x100) gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
+      else gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    }
+    uint32_t tex = pb.material->textures.empty() ? 0 : pb.material->textures[0];
+    if (tex != texture) {
+      texture = tex;
+      gl::ActiveTexture(gl::TEXTURE0);
+      gl::BindTexture(gl::TEXTURE_2D, tex);
+    }
+    gl::DrawElements(gl::TRIANGLES, gl::GLsizei(count * 6), gl::UNSIGNED_INT, reinterpret_cast<void*>(q * 6 * 4));
+    q += count;
+  }
+  gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+  gl::DepthMask(1);
   gl::BindVertexArray(0);
 }
 
