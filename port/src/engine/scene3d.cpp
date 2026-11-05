@@ -378,9 +378,11 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       }
   // with a target: the viewport rect as is (pixel mode) or × target height; on screen: its window rect, units being
   // the window height when not in pixel mode (scene-basics.md §7.1, interfaces-2d-output.md §1.5.3)
+  // Port UI scale (docs/ui/scaling.md): script pixels and target texels are d.uiScale window pixels / FBO texels, so
+  // views in the GUI render at full resolution; height units on screen are the real window height
   bool pixels = vm.truthy(fieldOf(vm, vp, u"pixelCoordinates"));
   int bw = d.window().width(), bh = d.window().height();
-  float scale = pixels ? 1.0f : float(target ? target->height : bh);
+  float scale = pixels ? d.uiScale : target ? float(target->height) * d.uiScale : float(bh);
   int x = 0, y = 0, w = std::max(1, int(vp->width * scale)), h = std::max(1, int(vp->height * scale));
   RenderTarget* rt = nullptr;
   if (target) {

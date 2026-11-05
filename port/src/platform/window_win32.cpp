@@ -40,6 +40,10 @@ class Win32Window final : public Window {
 
   bool create(const WindowDesc& desc, std::string* error) override {
     HINSTANCE inst = GetModuleHandleW(nullptr);
+    // real pixels on high-DPI screens: per-monitor aware (v2), so Windows never bitmap-stretches the window. regs.exe
+    // sets this first thing in main(); hosts that did not get it here, before the first window (a no-op otherwise)
+    if (GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()) != DPI_AWARENESS_PER_MONITOR_AWARE)
+      SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     static bool registered = false;
     if (!registered) {
       WNDCLASSEXW wc{sizeof wc};
@@ -154,6 +158,10 @@ class Win32Window final : public Window {
   void showCursor(bool on) override { cursor_ = on; }
   int width() const override { return width_; }
   int height() const override { return height_; }
+  int dpi() const override {
+    DPI_AWARENESS a = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hwnd_));
+    return a == DPI_AWARENESS_PER_MONITOR_AWARE ? int(GetDpiForWindow(hwnd_)) : 0;
+  }
   void* glProc(const char* name) const override {
     void* p = reinterpret_cast<void*>(wglGetProcAddress(name));
     auto bad = reinterpret_cast<intptr_t>(p);
@@ -236,6 +244,17 @@ class Win32Window final : public Window {
         height_ = HIWORD(l);
         { InputEvent e{T::Resize}; e.x = width_; e.y = height_; emit(e); }
         return 0;
+      // moved to a monitor with another DPI: the client keeps its pixel size (the game's resolution and UI scale were
+      // chosen at start), no OS rescaling of the window
+      case WM_GETDPISCALEDSIZE: {
+        RECT r{};
+        GetWindowRect(hwnd_, &r);
+        auto* s = reinterpret_cast<SIZE*>(l);
+        s->cx = r.right - r.left;
+        s->cy = r.bottom - r.top;
+        return TRUE;
+      }
+      case WM_DPICHANGED: return 0;
       case WM_ERASEBKGND: return 1;
       case WM_CLOSE: emit({T::Close}); return 0;  // the game decides (scripts may ask before quitting)
     }
