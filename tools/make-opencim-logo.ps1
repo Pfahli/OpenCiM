@@ -24,10 +24,10 @@ $capEm = 46 * $S          # em size of the capitals
 $smallEm = 24 * $S        # em size of the small "i"
 $fmt = [System.Drawing.StringFormat]::GenericTypographic
 
-# letter by letter, like the logo: narrow capitals, a small lowercase "i" (as the logo's small "in") whose foot sits at
-# three quarters of the capital height, and letters that grow taller towards both ends (the logo's slight perspective)
+# letter by letter, like the logo: narrow capitals, a lowercase "i" (as the logo's small "in"; about two thirds of the
+# capital height) whose foot sits just above the base line, and letters that grow taller towards both ends (the logo's slight perspective)
 $capEm = 50 * $S
-$smallEm = 26 * $S
+$smallEm = 62 * $S
 $letters = @(
   @{ t = "O"; small = $false }, @{ t = "P"; small = $false }, @{ t = "E"; small = $false }, @{ t = "N"; small = $false },
   @{ t = "C"; small = $false }, @{ t = "i"; small = $true }, @{ t = "M"; small = $false }
@@ -57,7 +57,7 @@ foreach ($pt in $parts) {
   if ($pt.small) {
     # foot at 3/4 of the (scaled) capital height measured from the top
     $top = $mid - $capH * $k / 2
-    $foot = $top + $capH * $k * 0.78
+    $foot = $top + $capH * $k * 0.9
     $m.Translate([single]$x, [single]($foot - $pt.b.Bottom * $sx))
     $m.Scale([single]$sx, [single]$sx)
     $m.Translate([single](-$pt.b.Left), 0)
