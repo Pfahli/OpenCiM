@@ -613,6 +613,30 @@ one bound for the same stop is within 30 units of its next three nodes (or lets 
 other is only near the fourth) *inf from the claim code*. This corrects transport.md §4.7 ("reserved for this one").
 * **Arrival** additionally requires `agent.curNode == stopB.segment.start` (the pad); departure adds
   `|stopA.segment.start.p1 − stopA.segment.end.p0|` to `travelDistance` (transport.md §4.3).
+* **Rotor** (`gsGridVehicle::move`, `L:0x081adca0.c:604-690`): the spin `r` (0…12, the shader's `custom4.y`) runs up
+  by 1/s to 12 while moving and halves per second while halted, broken or crashing (agent flags 0x50400). So in the
+  original a helicopter's rotor is still turning (r ≈ 12·0.5^15 only at the very end of a 15 s dwell, and visibly
+  for the first several seconds) while its passengers get on and off. The dust emitters (`GRIDVEHICLE_HELICOPTER_DUST`,
+  [`../renderer/particles.md`](../renderer/particles.md) §5.2) run while the rotor turns with r > 5 when halted.
+
+### 6.3 Port change: still rotor while boarding
+
+A deliberate deviation in the port (user's request), for helicopter **line vehicles** only (line type 4); background
+aircraft and every other vehicle keep the rule above (`engine/sim.cpp` `stepAnimatedParts`, `stepVehicle`):
+
+1. **Landing.** Once halted at the pad the rotor winds down linearly at 6/s (from 12 to 0 in 2 s) and stays at 0;
+   the rotor angle stops advancing.
+2. **Boarding.** The dwell (alighting, boarding, `boardingReserved` holding the doors) runs with the rotor still. The
+   dust follows the spin with the original's threshold (r > 5 halted), so there is no dust.
+3. **Departure.** When the dwell is over (where the original departs), the helicopter closes its doors, releases the
+   docking slot and stays on the pad (`VehicleState::spinUp`) while the rotor spins up at 3/s; dust starts once
+   r > 5. It takes off when r reaches 12, about 4 s later. Its `stopB` is unchanged meanwhile, so
+   `checkHelicopterPaths` keeps the next helicopter for this pad holding in the air as before. The engine sound
+   follows `rotorSpin` (`sim_sounds.cpp`), so it winds down and up with the rotor.
+
+A broken-down (halted at the next stop) or crashing helicopter keeps the original run-down. Checked on Vienna with
+`REGS_DEBUG_FOLLOW=4:2` (`port/run/particles/rotor-cycle.png`: landing with dust, still blades while boarding, spin-up
+with dust, lift-off).
 
 ---
 

@@ -26,6 +26,7 @@
 #include "engine/sim_graph.h"
 #include "engine/sim_state.h"
 #include "engine/sim_sounds.h"
+#include "engine/particles.h"
 
 namespace regs::engine {
 
@@ -966,7 +967,19 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
       m.waitTime = 0;
     }
     v.doorPos = v.stopTime < D ? doors(v.stopTime, D) : -1;
+    if (v.stopTime >= D && line.type == 4 && m.rotorSpin < 12.0f) {
+      // port change (boats-aircraft.md §6.3): a helicopter boards with a still rotor; done, it stays on the pad with
+      // its doors shut while stepAnimatedParts spins the rotor up, and takes off at full speed. The next helicopter
+      // for this pad keeps holding in the air meanwhile (stopB is unchanged, checkHelicopterPaths below)
+      if (!v.spinUp && b.docked == vi) b.docked = -1, simSoundVehicleEvent(vm, s, vi, SimSoundEvent::DoorClose);
+      v.spinUp = true;
+      v.stopTime = D;
+      v.doorPos = -1;
+      m.speed = 0;
+      return;
+    }
     if (v.stopTime >= D) {  // depart
+      v.spinUp = false;
       if (debugSim())
         LOG_INFO("sim: vehicle %d departs stop %d after %.1f s (%d aboard, %d boarded here so far, %d still waiting)", vi,
                  v.stopB, v.stopTime, v.passengerCount, b.passengersTransported, b.waiting);
@@ -1020,6 +1033,14 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
   m.limit = limit;
   // the breakdown roll, once per second while the condition is below 0.99999 (0x101152a0.c:435-451)
   float condition = v.object ? fieldFloat(vm, v.object.get(), u"condition", 1.0f) : 1.0f;
+  // test switch REGS_TEST_BREAKDOWN=<seconds>: the vehicle REGS_DEBUG_FOLLOW follows breaks down once after that much
+  // simulated time (for its smoke, docs/renderer/particles.md)
+  static const float testBreak = std::getenv("REGS_TEST_BREAKDOWN") ? float(std::atof(std::getenv("REGS_TEST_BREAKDOWN"))) : -1;
+  if (testBreak >= 0 && s.followed == vi && !v.broken) {
+    static float clock = 0;
+    static bool done = false;
+    if (!done && (clock += dt) >= testBreak) done = true, v.broken = true, v.stopTime = -1, ++s.breakdowns;
+  }
   if (!v.broken && condition < 0.99999f) {
     v.breakdownClock += dt;
     if (v.breakdownClock >= 1) {
@@ -1772,9 +1793,14 @@ void stepAnimatedParts(SimState& s, float dt) {
       r = m.speed <= 6.0f ? std::min(2.0f * m.speed, 6.0f) : 2.0f * m.speed - 6.0f;
     } else {
       bool halted = m.crashing;
-      if (m.transit && m.vehicle >= 0 && size_t(m.vehicle) < s.vehicles.size())
-        halted = halted || s.vehicles[size_t(m.vehicle)].halted || s.vehicles[size_t(m.vehicle)].brokenHalted;
-      if (!halted) r = m.rotorSpin < 0 ? 12.0f : std::min(m.rotorSpin + dt, 12.0f);
+      const VehicleState* lv = m.transit && m.vehicle >= 0 && size_t(m.vehicle) < s.vehicles.size() ? &s.vehicles[size_t(m.vehicle)] : nullptr;
+      if (lv) halted = halted || lv->halted || lv->brokenHalted;
+      // port change (boats-aircraft.md §6.3): a helicopter line vehicle halted at its pad winds the rotor down to a
+      // standstill in 2 s (6/s) and boards with it still; then it spins up at 3/s and takes off at 12 (stepVehicle)
+      bool heliAtPad = lv && lv->halted && !lv->brokenHalted && !m.crashing && lv->line >= 0 &&
+                       size_t(lv->line) < s.lines.size() && s.lines[size_t(lv->line)].type == 4;
+      if (heliAtPad) r = lv->spinUp ? std::min(std::max(m.rotorSpin, 0.0f) + 3.0f * dt, 12.0f) : std::max(0.0f, m.rotorSpin - 6.0f * dt);
+      else if (!halted) r = m.rotorSpin < 0 ? 12.0f : std::min(m.rotorSpin + dt, 12.0f);
       else r = m.rotorSpin < 0 ? 0.0f : m.rotorSpin * std::pow(0.5f, dt);
     }
     m.rotorAngle += dt * r;
@@ -1858,6 +1884,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   syncVehicleFields(*s);
   syncCharacterFields(*s);
   simSoundsTick(vm, grid, *s, x);
+  simParticlesTick(vm, grid, *s, x);
   if (debugSim()) {
     static int frames = 0;
     if (++frames % 600 == 0) {

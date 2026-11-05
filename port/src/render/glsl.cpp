@@ -47,6 +47,8 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
   sub(R"(\bgl_(FrontMaterial|LightSource|FrontLightProduct|LightModel|Fog)\b)", "regs_$1");
   std::string head = "#version 330 core\n";
   head += kBuiltins;
+  // shadow2D as GLSL 1.10 has it (vec4); the particle shader samples the shadow map in its vertex shader too
+  head += "vec4 regs_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c)); }\n";
   if (!fragment) {
     sub(R"(\battribute\b)", "in");
     sub(R"(\bvarying\b)", "out");
@@ -59,8 +61,7 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     sub(R"(\bvarying\b)", "in");
     sub(R"(\bgl_Color\b)", "regs_FrontColor");
     sub(R"(\bgl_FragColor\b)", "regs_FragColor");
-    head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\n"
-            "vec4 regs_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c)); }\n";
+    head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
     sub(R"(\bvoid\s+main\s*\()", "void regs_main(");
     s += "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";

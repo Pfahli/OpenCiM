@@ -22,6 +22,7 @@ namespace regs::engine {
 class Display;
 struct SimState;
 struct SimSounds;
+struct SimParticles;
 class TransportObj;
 
 namespace sim {
@@ -151,6 +152,7 @@ struct VehicleState {
   bool brokenHalted = false;    // agent flag 0x10000: broken down and standing at the next stop
   float breakdownClock = 0;     // +0x18c: one breakdown roll per second
   bool deleted = false;         // destroyed (sold, moved to the depot): a tombstone, so vehicle indices stay valid
+  bool spinUp = false;          // port: a helicopter done at its pad spins the rotor up before it takes off
   bool bellRung = false, announced = false;  // +0x184 / +0x185: the vehicle bell (< 8 nodes left) and the stop's
                                              // announcement (< 32) played on this leg
 };
@@ -436,6 +438,7 @@ struct SimState {
   int walkPaths = 0, walkFailed = 0, walkCodes[4] = {};  // debugging: q-cells of the walked paths by walk code
   bool tearingDown = false;  // a new map replaces this state: its script objects go without touching it
   std::shared_ptr<SimSounds> sounds;  // world sound slots (engine/sim_sounds.cpp), made on first use
+  std::shared_ptr<SimParticles> particles;  // emitter instances of vehicles and items (engine/particles.cpp)
 };
 
 // script objects of the transport classes, pointing back into the state

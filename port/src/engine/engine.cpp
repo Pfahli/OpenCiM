@@ -6,6 +6,7 @@
 #include "engine/minimap.h"
 #include "engine/skinning.h"
 #include "engine/sim.h"
+#include "engine/particles.h"
 #include "engine/sound.h"
 
 #include <cstdio>
@@ -48,6 +49,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerDisplayNatives(*vm_);
   registerInputNatives(*vm_);
   registerSceneNatives(*vm_);
+  registerParticleNatives(*vm_);
   registerSkinningNatives(*vm_);
   registerShaderNatives(*vm_);
   registerGridNatives(*vm_);

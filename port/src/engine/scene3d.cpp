@@ -14,6 +14,7 @@
 #include "engine/effects.h"
 #include "engine/grid.h"
 #include "engine/gui.h"
+#include "engine/particles.h"
 #include "engine/settings.h"
 #include "engine/shaders.h"
 #include "engine/sim.h"
@@ -429,6 +430,13 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       v.fogEnd = dist;
     }
   }
+  // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
+  ParticleDrawList particles;
+  {
+    float t = std::tan(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
+    collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles);
+    if (!particles.sprites.empty()) v.particles = &particles;
+  }
   // environment flags: light count << 12 outside shadow passes (FUN_10051120)
   v.env = uint32_t(std::min<size_t>(v.lights.size(), 15)) << 12;
   d.r2d().flushAll();
@@ -469,6 +477,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         lv.lights.clear();
         lv.fog = false;
         assignPrograms(d, vm, items, lv.env);
+        if (v.particles) prepareParticlePrograms(d, vm, particles, lv.env);
         d.r3d().begin(map, 0, 0, map->width, map->height, 0, false, bw, bh);
         d.r3d().draw(lv, items);
         d.r3d().end(bw, bh);
@@ -481,6 +490,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     }
   }
   assignPrograms(d, vm, items, v.env);
+  if (v.particles) prepareParticlePrograms(d, vm, particles, v.env);
   uint32_t clear = uint32_t(vm.toInt(fieldOf(vm, vp, u"clearColor")));
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites
   // it into this rect (docs/renderer/bloom.md §3.3)
