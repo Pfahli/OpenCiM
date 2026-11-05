@@ -1,0 +1,33 @@
+// ReGS extension of metro/ui/linepanel/linepanel.script (used as installed; see VM::extendSource). The graphics page
+// can change the window size while the game runs (docs/ui/scaling.md §6). The panel's height is min(900, window
+// height) − 228 and its line and stop lists share it half and half, so when the desktop changes size below 900
+// pixels the panel and both lists are placed again with the script's own formulas (and its one-pixel tweaks of the
+// lists' frames, which createHudElement's resize handler puts back).
+
+//@base
+
+$regsPanelH = 0;
+$regsHalf = 0;
+$regsOldH = 0;
+
+event $desktop.onChangeRect::() {
+  $regsPanelH = min(900, $desktop.height) - 228;
+  if ($regsPanelH == $linepanel.height) return;
+  $regsHalf = int(($regsPanelH - 126) * 0.5);
+  MAIN.$window.regsSetRect($linepanel, $linepanel.left, 0, $linepanel.width, $regsPanelH);
+  regsPlaceList($lineArea, 53, $lineElement, $lineButtons, $lineScrollBar, $lineList, 24, 34);
+  regsPlaceList($stopArea, 53 + $regsHalf + 4, $stopElement, $stopButtons, $stopScrollBar, $stopList, 10, 20);
+  $vehicleArea.top = $stopArea.top + $stopArea.height + 4;
+  MAIN.$ui.resetScrollArea($lineList);
+  MAIN.$ui.resetScrollArea($stopList);
+}
+
+function regsPlaceList($area, $top, $element, $buttons, $bar, $list, $listTop, $listShrink) {
+  $regsOldH = $element.height;
+  MAIN.$window.regsSetRect($area, 19, $top, $area.width, $regsHalf);
+  MAIN.$window.regsSetRect($element, 56, 28, $element.width, $regsHalf - 28);
+  $element.$top.width = $buttons.left - $lineElement.left - $lineElement.$top.left + 3;
+  if ($element.height != $regsOldH) $element.$right.setRect($element.$right.left, $element.$right.top + 1, $element.$right.width, $element.$right.height - 1);
+  MAIN.$window.regsSetRect($bar, $element.width - 23, 10, 23, $element.height - 20);
+  MAIN.$window.regsSetRect($list, 4, $listTop, $element.width - 28, $element.height - $listShrink);
+}

@@ -1,0 +1,57 @@
+// ReGS extension of metro/scripts/engine.script (used as installed; see VM::extendSource): the shadow and bloom
+// effects this script makes from the settings at load can be made again while the game runs, so the graphics page
+// (port/data/regs/extend/metro/ui/menus/graphics.script) applies shadows, HDR lighting and saturation at once.
+// The effects stay this script's own $shadows and $bloom, which its onDestroy deletes.
+
+//@base
+
+MAIN.$regsEngine = this;
+$regsShadowSize = $settings.$shadows : 0;
+
+// Brings the viewport's effects in line with the settings: a new shadow map when $shadows (× 1024 texels) changed,
+// bloom made or removed with $bloom, and the bloom saturation from the location and $saturation.
+function regsApplyEffects() {
+  $wantShadows = $settings.$shadows : 0;
+  $wantBloom = $settings.$bloom : false;
+  $saturationValue = (MAIN.$saturation : 1.0) * ($settings.$saturation : 1.0);
+  if ($wantShadows != $regsShadowSize) {
+    $yPlane = -10.0;
+    if ($shadows) {
+      $yPlane = $shadows.yPlane;   // ui.script keeps it at the camera target's height
+      MAIN.$viewport.removeEffect($shadows);
+      MAIN.$shadows = null;
+      delete $shadows;
+      $shadows = null;
+    }
+    if ($wantShadows) {
+      MAIN.$shadows = $shadows = $window.video.new_shadowEffect($wantShadows * 1024, $wantShadows * 1024);
+      $shadows.viewport = MAIN.$viewport;
+      $shadows.light = $sun.light;
+      $shadows.screenSpaceBlur = false;
+      $shadows.safeMargin = 0.4;
+      $shadows.clipYPlane = true;
+      $shadows.useBackSide = false;
+      $shadows.yPlane = $yPlane;
+      // shadows come before bloom in the viewport's effect list, as at load
+      if ($bloom) MAIN.$viewport.removeEffect($bloom);
+      MAIN.$viewport.addEffect($shadows);
+      if ($bloom) MAIN.$viewport.addEffect($bloom);
+    }
+    $regsShadowSize = $wantShadows;
+    echo "Shadows set to " + $wantShadows * 1024;
+  }
+  if ($wantBloom && !$bloom) {
+    $bloom = $window.video.new_bloomEffect();
+    if ($bloom) {
+      MAIN.$viewport.addEffect($bloom);
+      $bloom.saturationWeight = 1.0;
+    }
+    echo "Bloom on";
+  } else if (!$wantBloom && $bloom) {
+    MAIN.$viewport.removeEffect($bloom);
+    delete $bloom;
+    $bloom = null;
+    echo "Bloom off";
+  }
+  if ($bloom) $bloom.saturation = $saturationValue;
+}

@@ -1,0 +1,17 @@
+// ReGS extension of metro/ui/levelbar/levelbar.script (used as installed; see VM::extendSource). The graphics page
+// can change the window size while the game runs (docs/ui/scaling.md §6): the engine keeps every control at its
+// edge, but this bar's top, height and button spacing follow the window height, so they are placed again here with
+// the script's own formulas when the desktop changes size.
+
+//@base
+
+event $desktop.onChangeRect::() {
+  MAIN.$window.regsSetRect($bg, 0, 42 + int(clamp($desktop.height - 768, 0, 80) * 0.5), 59, clamp($desktop.height - 381, 339, 375));
+  $buttonH = (int($bg.height) - 27) / 6;
+  $i = 0;
+  foreach ([MAIN.$hqpanel, MAIN.$vehiclepanel, MAIN.$linepanel, MAIN.$graphspanel, MAIN.$rosterpanel]) {
+    .$levelButton.top = $i * $buttonH + 13;
+    $i++;
+  }
+  $settingsButton.top = $i * $buttonH + 13;
+}

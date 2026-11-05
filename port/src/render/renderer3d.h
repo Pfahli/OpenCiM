@@ -166,9 +166,13 @@ class Renderer3D {
                   bool clampToEdge = false);
   // A depth-only target whose depth texture can be sampled with sampler2DShadow (compare mode LEQUAL, linear).
   bool makeDepthTarget(RenderTarget& t, int w, int h);
-  // An RGBA16F scene target with depth, multisampled with the given samples (0 = none), resolved into a texture.
-  bool makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture = false);
+  // An RGBA16F (or the given format) scene target with depth, multisampled with the given samples (0 = none),
+  // resolved into a texture.
+  bool makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture = false,
+                       TargetFormat format = TargetFormat::Rgba16f);
   void resolve(const RenderTarget& t);  // multisample → texture (NEAREST blit, depth too); no-op without MSAA
+  // resolves t and copies its bottom-left w×h colour into the back-buffer rect (x, y top-left origin)
+  void blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH);
   // copies the depth of src (its multisample buffer when it has one) into dst's depth, bottom-left w×h
   void blitDepth(const RenderTarget& src, const RenderTarget& dst, int w, int h);
   void destroyTarget(RenderTarget& t);

@@ -518,6 +518,18 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     d.r3d().begin(styled, 0, 0, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);
     d.r3d().end(bw, bh);
+  } else if (const RenderTarget* ms = !rt && d.antialiasing > 0 && (!vp->parentControl() || (clear >> 24))
+                                          ? msaaTarget(d, w, h, d.antialiasing)
+                                          : nullptr) {
+    // window MSAA (port): an offscreen multisampled scene resolved into the view's rect, so the sample count can
+    // change live; the window itself has no samples
+    // always cleared: the blit replaces the rect, and the back buffer under a view without a clear colour is the
+    // frame's black
+    d.r3d().begin(ms, 0, 0, w, h, (clear >> 24) ? clear : 0u, true, bw, bh);
+    d.r3d().draw(v, items);
+    d.r3d().end(bw, bh);
+    msaaFinish(d, x, y, w, h, bh);
+    d.r3d().end(bw, bh);
   } else {
     d.r3d().begin(rt, x, y, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);

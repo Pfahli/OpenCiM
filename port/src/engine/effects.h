@@ -60,4 +60,16 @@ bool fitShadow(const ShadowFitIn& in, ShadowFitOut& out);
 // The effect's depth map (mapWidth × mapHeight from new_shadowEffect), created on first use; null = bypassed.
 const render::RenderTarget* shadowTarget(Display& d, script::Object* shadow);
 
+// Port: window MSAA without a post effect. The window's pixel format has no samples, so the antialiasing setting can
+// change while the game runs (graphics page): an on-screen view without bloom or style effects draws into this
+// w × h RGBA8 target with `samples` MSAA (null: none possible, draw directly), then msaaFinish resolves it into the
+// back-buffer rect (x, y, w, h with a top-left origin).
+const render::RenderTarget* msaaTarget(Display& d, int w, int h, int samples);
+void msaaFinish(Display& d, int x, int y, int w, int h, int backH);
+// Frees the targets of bloom and shadow effects the scripts deleted or dropped (a shadow map size or bloom switched
+// on the graphics page makes new effect objects). Once per frame.
+void sweepEffects(Display& d);
+// The window changed size: the size-dependent effect targets are made again on next use.
+void resetSizedEffects(Display& d);
+
 }  // namespace regs::engine

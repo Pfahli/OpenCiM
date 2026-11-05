@@ -176,8 +176,12 @@ modes (the editor's roads, terrain and paint tools come later):
   message if the game is missing.
 - [ ] Decide where saves and settings live for players (the real `Documents\Cities In Motion`, shared with the
   original, or a ReGS folder) — today a stand-in folder is used on purpose.
-- [ ] Display settings at run time (resolution, fullscreen, Alt-Tab), crash reports, a release build and package
-  without any game files, licence and readme.
+- [x] Display settings at run time: every option of the graphics page applies on OK without a restart (shadows,
+  HDR rendering, saturation, antialiasing, anisotropy, vsync, fullscreen, resolution, UI scale; frequency and colour
+  depth change nothing with borderless fullscreen). New window sizes lay the GUI out again and reopen the page
+  (`docs/ui/scaling.md` §6, `engine/gui_relayout.cpp`). Open: the debug timebar's year/month/day bars (editor, only
+  with `$debug`) keep their proportions only approximately; Alt-Tab behaviour of fullscreen.
+- [ ] Crash reports, a release build and package without any game files, licence and readme.
 - [ ] Performance on the largest maps at speed 10 with all systems running; loading time.
 
 ## 10. Parity pass (milestone 8)

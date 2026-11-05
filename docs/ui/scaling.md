@@ -24,9 +24,9 @@ than 1800 px (4K-class), else 1. While the scripts' window would be smaller than
 by 0.5 (logged): the main menu's buttons run into its bottom links below about 660 script pixels, and the graphics
 page is 1000 wide. So 1.5× needs at least 1536 × 1080, 2× at least 2048 × 1440 (1080p → 1.5×, 1440p and 4K → 2×).
 
-**Applies after a restart**: the scripts build menus and HUD once from the window size, with no relayout path, so the
-page sets the game's `$requireRestart` (its "changes take effect after a restart" notice) when the value changed. The
-page writes `$regsUiScale` only when the player picks another value, so an unset setting stays automatic.
+**Applies on OK** (since the live display settings, §6): the scripts build menus and HUD once from the window size;
+the engine lays them out again for the new size. The page writes `$regsUiScale` only when the player picks another
+value, so an unset setting stays automatic (the page shows the scale in use, `window.regsUiScale()`).
 
 ## 2. Drawing: script pixels × s
 
@@ -86,3 +86,43 @@ verdana) keep plain bilinear, as at 1×. At 1× the filter is off and drawing is
 hosts, so Windows never bitmap-stretches the window; the log line `display: 144 dpi (150 %), per-monitor DPI aware`
 confirms it. Moving the window to a monitor with another DPI keeps its pixel size (`WM_GETDPISCALEDSIZE` returns the
 current size, `WM_DPICHANGED` is ignored): the resolution and UI scale were chosen at start.
+
+## 6. Display changes while the game runs (port)
+
+The graphics page applies fullscreen, resolution and UI scale on OK (`graphics.script` extension → native
+`window.regsApplyDisplay(fullscreen, width, height, true)`, `Display::applyDisplay`):
+
+1. **Window**: the same HWND gets a new style and size (`Window::setMode`: borderless over its monitor, or a captioned
+   window with the resolution as client size, centred when leaving fullscreen). The pixel format and the GL context
+   stay, so every texture, font page, mesh, program and VAO stays valid. The pixel format carries no MSAA any more:
+   views without post effects draw into a multisampled RGBA8 target (`msaaTarget`) resolved into the back buffer,
+   so the antialiasing setting can change too.
+2. **Scale and targets**: the UI scale is chosen again for the new size (`chooseUiScale`). A new scale drops the
+   render-target textures (corner preview, shop previews, menu trams; made again at texture size × scale on next use);
+   a new window size drops the bloom scene, style and MSAA targets (`resetSizedEffects`). The shadow map does not
+   depend on the window.
+3. **GUI** (only when the scripts' window size changes; `window.width/height` then report the new size):
+   `relayoutGui` (`engine/gui_relayout.cpp`) walks the root viewports that fill the scripts' window (the GUI viewport
+   of window.script, the 3D view of viewport.script) and every control in them. Per axis, against the container's old
+   client extent: a control spanning it (flush with both edges, or equal margins of at most 64 px and at least half
+   the extent) grows with it; one centred on it (within 1 px) stays centred with the scripts' `int((W − w) · 0.5)`
+   rounding; one nearer the far edge than the near edge moves with the far edge; others stay. Every HUD formula of the
+   game is one of these (minimap and its icons `h − 300`/`h − 125`, data panel `h − 171`, corner preview `w − 342`,
+   line panel `w − 357`, toolbar `450 + (w − 900 − tw)/2` = centred, dialogs and the graphics page centred, the
+   desktop, overlays, fade, player and HUD layers and the edge-scroll strips spanning) except four, which re-place
+   themselves on the desktop's `onChangeRect` (port extensions, with `window.regsSetRect`, which lays a resized
+   control's children out by the same rules): the level bar (top and height from `clamp(h − 768, 0, 80)` and
+   `clamp(h − 381, 339, 375)`, button spacing from its height), the money bar (`min(59, w − 1010)`), the petition bar
+   (width from `w`) and the line panel (height `min(900, h) − 228`, its line and stop lists half each, with the
+   script's one-pixel frame tweaks). A move alone fires no `onChangeRect` (ui.script's `createHudElement` handler
+   would reset a customised `$content`, e.g. the minimap's icon column); a resize lays out the children first and
+   then fires it.
+4. **Menus**: the main and pause menus place their buttons from the height in ways the rules cannot follow
+   (`max(270, h/2 − 190)`), so `main.script`'s extension (`regsRelayoutMenus`) loads the open menu again and performs
+   `back`, `settings`, `graphics`: the player lands on the graphics page again, laid out for the new size, with the
+   game, its camera and open panels kept (the main menu's music restarts).
+
+Checked in game (Vienna, `port/run/livegfx/s3-*.png`): 1600 × 900 → 1280 × 720 → 1600 × 1200 → 1.5× (1067 × 800)
+→ fullscreen 3840 × 2160 at 1.5× → 1600 × 900; the HUD at 1600 × 900 after the round trip matches the start, and
+1280 × 720 with the line panel open matches a fresh start at 1280 × 720. Not exact: the debug timebar of the editor
+(visible only with `$debug`), whose year, month and day bars split the width proportionally.

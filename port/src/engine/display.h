@@ -32,6 +32,13 @@ class Display {
   // Picks uiScale for a window of w × h pixels from the setting (unset: 2 on windows taller than 1800 px), steps it
   // down while the scripts' window would be smaller than 1024 × 720, and returns it.
   float chooseUiScale(script::VM& vm, int w, int h);
+  float pickUiScale(script::VM& vm, int w, int h) const;  // the same choice without setting uiScale
+  // The graphics page's display options, applied while the game runs (window.regsApplyDisplay): fullscreen
+  // (borderless over the monitor) or a w × h window, and the UI scale setting. Returns 0 when nothing changed, 1
+  // when the window or scale changed but the scripts' window size stayed, 2 when the scripts' size changed (then
+  // window.width/height hold the new size and the GUI must be laid out again). Without relayout a change of the
+  // scripts' size is not made (returns 2, nothing changed).
+  int applyDisplay(script::VM& vm, bool fullscreen, int w, int h, bool relayout);
   // the effect timer (gsShaders_OGL +0xdc, L:0x081ea990): real seconds, wrapped at 1024; the `timer` uniform of 3D and
   // GUI shaders and video.getEffectTimer()
   float effectTimer = 0;
@@ -75,6 +82,9 @@ class Display {
     std::u16string text;
   };
   void drawFpsReadout(script::VM& vm);
+  void syncRenderSettings(script::VM& vm);  // antialiasing, anisotropy and vsync follow the settings (live)
+  bool vsync_ = false, vsyncKnown_ = false;
+  void dropGuiTargets();  // render-target textures are made again at the new UI scale
   FpsReadout fps_;
   bool uiFilterSharp_ = true;  // scaled GUI textures: sharp bilinear (default) or plain bilinear (REGS_UI_FILTER=linear)
   bool saveScreenshot(const std::filesystem::path& file);
@@ -89,6 +99,16 @@ class Display {
   int mx_ = 0, my_ = 0;
   bool mouseKnown_ = false;
 };
+
+// The GUI laid out again for a new size of the scripts' window, ow × oh → nw × nh (engine/gui_relayout.cpp): the
+// root viewports filling the window and every control in them keep their edge, centre or span relation. Returns the
+// number of controls moved or resized.
+int relayoutGui(script::VM& vm, script::Object* video, int ow, int oh, int nw, int nh);
+// One control to a new rect: a move alone is set quietly; a new size lays its children out again (the same
+// anchoring) and then fires its onChangeRect. window.regsSetRect(control, l, t, w, h) for scripts. Returns the
+// number of controls changed.
+class ControlObj;
+int placeControl(script::VM& vm, ControlObj* c, float l, float t, float w, float h);
 
 // The display of the running game, or null when headless.
 Display* display();

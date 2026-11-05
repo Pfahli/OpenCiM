@@ -137,10 +137,9 @@ uint32_t Renderer2D::createTexture(const Image& img) {
   gl::TexParameteri(target, gl::TEXTURE_MAX_LEVEL, mips - 1);
   gl::TexParameteri(target, gl::TEXTURE_MIN_FILTER, mips > 1 ? gl::LINEAR_MIPMAP_LINEAR : gl::LINEAR);
   gl::TexParameteri(target, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
-  if (!img.cube && mips > 1 && anisotropy > 1) {  // gsVideo_OGL clamps it to GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
-    gl::GLint maxAniso = 1;
-    gl::GetIntegerv(0x84FF, &maxAniso);
-    gl::TexParameterf(target, gl::TEXTURE_MAX_ANISOTROPY, std::min(anisotropy, float(std::max(1, maxAniso))));
+  if (!img.cube && mips > 1) {
+    mipTextures_.push_back(t);
+    if (anisotropy > 1) applyAnisotropy(t);
   }
   gl::GLint wrap = img.cube ? gl::CLAMP_TO_EDGE : gl::REPEAT;
   gl::TexParameteri(target, gl::TEXTURE_WRAP_S, wrap);
@@ -174,9 +173,29 @@ void Renderer2D::updateTextureBGRA(uint32_t tex, const uint8_t* bgra, int w, int
   gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::BGRA, gl::UNSIGNED_BYTE, bgra);
 }
 
+void Renderer2D::applyAnisotropy(uint32_t tex) {
+  // gsVideo_OGL clamps it to GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT; 1 = plain trilinear
+  if (!maxAnisotropy_) {
+    gl::GLint maxAniso = 1;
+    gl::GetIntegerv(0x84FF, &maxAniso);
+    maxAnisotropy_ = std::max(1, maxAniso);
+  }
+  gl::BindTexture(gl::TEXTURE_2D, tex);
+  gl::TexParameterf(gl::TEXTURE_2D, gl::TEXTURE_MAX_ANISOTROPY, std::clamp(anisotropy, 1.0f, float(maxAnisotropy_)));
+}
+
+void Renderer2D::setAnisotropy(float a) {
+  if (a == anisotropy) return;
+  flush();
+  anisotropy = a;
+  for (uint32_t t : mipTextures_) applyAnisotropy(t);
+  gl::BindTexture(gl::TEXTURE_2D, 0);
+}
+
 void Renderer2D::destroyTexture(uint32_t tex) {
   if (!tex) return;
   if (tex == batchTex_) flush();
+  std::erase(mipTextures_, tex);
   gl::DeleteTextures(1, &tex);
 }
 

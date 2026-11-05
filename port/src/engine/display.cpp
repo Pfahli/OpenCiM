@@ -12,6 +12,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/effects.h"
 #include "engine/font.h"
 #include "engine/gui.h"
 #include "engine/host.h"
@@ -151,17 +152,64 @@ bool Display::open(const platform::WindowDesc& desc, std::string* error) {
   return true;
 }
 
-float Display::chooseUiScale(VM& vm, int w, int h) {
+float Display::pickUiScale(VM& vm, int w, int h) const {
   // the graphics page's choices 1×, 1.5×, 2×; no setting: 2× on windows taller than 1800 px (4K-class screens)
   float want = settingNumber(vm, u"regsUiScale", h > 1800 ? 2.0f : 1.0f);
   float s = want >= 1.75f ? 2.0f : want >= 1.25f ? 1.5f : 1.0f;
   // the scripts' window stays at least 1024 × 720: the main menu's buttons run into its bottom links below about
   // 660 script pixels, and the graphics page is 1000 wide. Smaller scaled windows step down to the next scale
   while (s > 1.0f && (float(w) / s < 1024.0f || float(h) / s < 720.0f)) s -= 0.5f;
-  if (s != want && settingNumber(vm, u"regsUiScale", 0) != 0)
-    LOG_WARN("ui scale %.1f does not fit a %dx%d window, using %.1f", double(want), w, h, double(s));
+  return s;
+}
+
+float Display::chooseUiScale(VM& vm, int w, int h) {
+  float s = pickUiScale(vm, w, h);
+  float want = settingNumber(vm, u"regsUiScale", 0);
+  if (want != 0 && s != want) LOG_WARN("ui scale %.1f does not fit a %dx%d window, using %.1f", double(want), w, h, double(s));
   if (const char* f = std::getenv("REGS_UI_FILTER")) uiFilterSharp_ = std::string(f) != "linear";
   return uiScale = s;
+}
+
+int Display::applyDisplay(VM& vm, bool fullscreen, int w, int h, bool relayout) {
+  // the graphics page's fullscreen, resolution and UI scale while the game runs (docs/ui/scaling.md §6): the same
+  // window gets a new style and size, the GL context stays. Fullscreen is borderless over the monitor (the desktop's
+  // resolution and refresh rate), so the resolution sizes the window when it is not fullscreen
+  w = std::max(320, w);
+  h = std::max(240, h);
+  int rw = w, rh = h;
+  if (fullscreen) window_->monitorSize(rw, rh);
+  bool sameWindow = fullscreen == window_->fullscreen() && rw == window_->width() && rh == window_->height();
+  float scale = pickUiScale(vm, rw, rh);
+  if (sameWindow && scale == uiScale) return 0;
+  Object* win = windowObj_.get();
+  int oldSW = vm.toInt(field(vm, win, u"width")), oldSH = vm.toInt(field(vm, win, u"height"));
+  int sw = int(std::lround(float(rw) / scale)), sh = int(std::lround(float(rh) / scale));
+  if ((sw != oldSW || sh != oldSH) && !relayout) return 2;
+  int oldW = window_->width(), oldH = window_->height();
+  float oldScale = uiScale;
+  if (!sameWindow) window_->setMode(fullscreen, w, h);
+  rw = window_->width();  // a window larger than the screen may come out smaller than asked
+  rh = window_->height();
+  chooseUiScale(vm, rw, rh);
+  if (uiScale != oldScale) dropGuiTargets();  // they are sized texture × scale
+  if (rw != oldW || rh != oldH) resetSizedEffects(*this);
+  sw = int(std::lround(float(rw) / uiScale));
+  sh = int(std::lround(float(rh) / uiScale));
+  LOG_INFO("display: %s %dx%d, ui scale %.1f (scripts' window %dx%d)", window_->fullscreen() ? "fullscreen" : "window", rw,
+           rh, double(uiScale), sw, sh);
+  if (sw == oldSW && sh == oldSH) return 1;
+  win->fieldValues[u"width"] = Value::integer(sw);
+  win->fieldValues[u"height"] = Value::integer(sh);
+  relayoutGui(vm, field(vm, win, u"video").object(), oldSW, oldSH, sw, sh);
+  return 2;
+}
+
+void Display::dropGuiTargets() {
+  for (auto& [t, rt] : targets_) {
+    if (t->gl == rt.color) t->gl = 0;
+    r3d_.destroyTarget(rt);
+  }
+  targets_.clear();
 }
 
 uint32_t Display::texture(VM& vm, TextureObj* t) {
@@ -186,7 +234,7 @@ uint32_t Display::texture(VM& vm, TextureObj* t) {
     auto* def = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/default.dds").get());
     return def && def != t && !def->loadFailed ? texture(vm, def) : 0;
   }
-  r2d_.anisotropy = settingNumber(vm, u"anisotropy", 0);  // window.script: video.anisotropy = $settings.$anisotropy
+  r2d_.setAnisotropy(settingNumber(vm, u"anisotropy", 0));  // window.script: video.anisotropy = $settings.$anisotropy
   t->gl = r2d_.createTexture(img);
   t->cube = img.cube;
   return t->gl;
@@ -370,6 +418,8 @@ struct GuiPass {
 }  // namespace
 
 void Display::renderFrame(VM& vm, Object* win, Object* video) {
+  syncRenderSettings(vm);
+  sweepEffects(*this);
   int w = window_->width(), h = window_->height();
   uint32_t background = uint32_t(vm.toInt(field(vm, win, u"background")));
   r2d_.timer = effectTimer;
@@ -405,6 +455,32 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     shot_.clear();
   }
   window_->swap();
+}
+
+void Display::syncRenderSettings(VM& vm) {
+  // graphics page, applied live (the page writes the settings when the player presses OK): MSAA samples of the view
+  // targets and anisotropic filtering of every loaded texture. window.script copies the same settings into
+  // window.antialiasing and video.anisotropy at start
+  int aa = std::clamp(int(settingNumber(vm, u"antialiasing", float(antialiasing))), 0, 16);
+  if (aa != antialiasing) {
+    LOG_INFO("antialiasing: %d -> %d samples", antialiasing, aa);
+    antialiasing = aa;
+  }
+  // window.vsync: the page sets it on OK (the original applied it at once too)
+  if (windowObj_) {
+    bool vs = vm.truthy(field(vm, windowObj_.get(), u"vsync"));
+    if (vs != vsync_) {
+      if (vsyncKnown_) LOG_INFO("vsync: %s", vs ? "on" : "off");
+      window_->setVsync(vs);
+      vsync_ = vs;
+      vsyncKnown_ = true;
+    }
+  }
+  float aniso = settingNumber(vm, u"anisotropy", r2d_.anisotropy);
+  if (aniso != r2d_.anisotropy) {
+    LOG_INFO("anisotropic filtering: %.0f -> %.0f", double(r2d_.anisotropy), double(aniso));
+    r2d_.setAnisotropy(aniso);
+  }
 }
 
 void Display::drawFpsReadout(VM& vm) {
@@ -553,6 +629,31 @@ void registerDisplayNatives(VM& vm) {
     Display* d = display();
     return Value::real(d ? d->effectTimer : 0.0f);
   });
+  // port: window.regsApplyDisplay(fullscreen, width, height [, relayout]) for the graphics page (Display::applyDisplay)
+  if (ClassInfo* c = vm.findClass("gsWindow_OGL")) {
+    addMethod(c, u"regsApplyDisplay", 3, 4);
+    addMethod(c, u"regsUiScale", 0, 0);
+    addMethod(c, u"regsSetRect", 5, 5);
+  }
+  // window.regsSetRect(control, left, top, width, height): placeControl, for HUD scripts that place a control again
+  // when the desktop changes size (their extensions' onChangeRect handlers)
+  implement(vm, "gsWindow_OGL", u"regsSetRect", [](VM& v, Object*, int, const Value* a) {
+    Value cv = a[0].ref() ? a[0].ref()->get() : a[0];
+    auto* c = dynamic_cast<ControlObj*>(cv.object());
+    if (c && !c->destroyed) placeControl(v, c, v.toFloat(a[1]), v.toFloat(a[2]), v.toFloat(a[3]), v.toFloat(a[4]));
+    return Value();
+  });
+  // window.regsUiScale(): the UI scale in use (the automatic choice when the setting is unset)
+  implement(vm, "gsWindow_OGL", u"regsUiScale", [](VM&, Object*, int, const Value*) {
+    Display* d = display();
+    return Value::real(d ? d->uiScale : 1.0f);
+  });
+  implement(vm, "gsWindow_OGL", u"regsApplyDisplay", [](VM& v, Object* s, int argc, const Value* a) {
+    Display* d = display();
+    if (!d || d->windowObject() != s) return Value::integer(0);
+    bool relayout = argc > 3 && v.truthy(a[3]);
+    return Value::integer(d->applyDisplay(v, v.truthy(a[0]), v.toInt(a[1]), v.toInt(a[2]), relayout));
+  });
   // window.init(): gsWindow_OGL::start (0x10059200) creates the OS window and context from the fields
   implement(vm, "gsWindow_OGL", u"init", [](VM& v, Object* s, int, const Value*) {
     if (host().headless || g_display) return Value();
@@ -565,8 +666,10 @@ void registerDisplayNatives(VM& vm) {
     // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, the only one so far; others are planned
     if (int engine = int(settingNumber(v, u"regsRenderer", 0)); engine != 0)
       LOG_WARN("graphics engine %d is not available yet, using OpenGL 3.3", engine);
-    // MSAA on the window only without post-processing; with it the effect buffers are multisampled instead
-    if (!v.truthy(field(v, s, u"postProcess"))) desc.samples = std::max(0, v.toInt(field(v, s, u"antialiasing")));
+    // the engine put MSAA into the window's pixel format without post-processing (and into the effect buffers with
+    // it). Port: never into the pixel format, which cannot change once set; views without effects draw into a
+    // multisampled target (msaaTarget), so the antialiasing setting applies while the game runs
+    desc.samples = 0;
     auto d = std::make_unique<Display>();
     d->antialiasing = std::max(0, v.toInt(field(v, s, u"antialiasing")));
     std::string err;
