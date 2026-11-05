@@ -37,6 +37,7 @@ add_library(regs_engine STATIC
   src/engine/engine.cpp
   src/engine/platform_win32.cpp
   src/engine/display.cpp
+  src/engine/gui_relayout.cpp
   src/engine/font.cpp
   src/engine/input.cpp
   src/render/gl.cpp

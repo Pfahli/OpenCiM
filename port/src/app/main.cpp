@@ -139,6 +139,9 @@ int main(int argc, char** argv) {
         } else if (sc.action == "keydown" || sc.action == "keyup") {  // hold a key over several frames
           e.type = sc.action == "keydown" ? T::KeyDown : T::KeyUp;
           e.key = std::atoi(sc.arg.c_str());
+        } else if (sc.action == "wheel") {  // wheel:<notches> at the mouse position, positive away from the user
+          e.type = T::MouseWheel;
+          e.wheel = float(std::atof(sc.arg.c_str()));
         } else if (sc.action == "text") {  // typed characters (edit controls)
           for (unsigned char ch : sc.arg) {
             platform::InputEvent c;

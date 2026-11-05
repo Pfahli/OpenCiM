@@ -1,0 +1,11 @@
+// ReGS extension of metro/ui/petitionbar/petitionbar.script (used as installed; see VM::extendSource). The graphics
+// page can change the window size while the game runs (docs/ui/scaling.md §6): the bar's width follows the window
+// width, so it is placed again with the script's formula when the desktop changes size (its strips and ticker keep
+// their margins: window.regsSetRect lays its children out again).
+
+//@base
+
+event $desktop.onChangeRect::() {
+  $bgWidth = min(($desktop.width >= 1440) ? ($desktop.width - 1100) : ($desktop.width - 724), 480);
+  MAIN.$window.regsSetRect($bg, $desktop.width - $bgWidth - 400, $desktop.height - 74, $bgWidth, 74);
+}

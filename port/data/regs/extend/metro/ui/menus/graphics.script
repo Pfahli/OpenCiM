@@ -286,8 +286,10 @@ function save() {
   }
   // fullscreen, resolution and UI scale: the engine resizes the window (fullscreen is borderless over the monitor, so
   // frequency and colour depth change nothing). While the scripts' window size stays the same the GUI stays as it is;
-  // a new size needs the GUI laid out again, which only a restart does (result 2: nothing changed, the notice shows)
+  // with a new size (result 2) the engine has laid the GUI out again, and main.script loads the open menu again and
+  // comes back to this page (HUD panels whose layout follows the size in other ways re-place themselves: the
+  // levelbar, moneybar, petitionbar and linepanel extensions)
   if ($regsNewScale || $regsOldDisplay[0] != $fullscreen || $regsOldDisplay[1] != $screenwidth || $regsOldDisplay[2] != $screenheight) {
-    if (MAIN.$window.regsApplyDisplay($fullscreen, $screenwidth, $screenheight) == 2) $requireRestart = true;
+    if (MAIN.$window.regsApplyDisplay($fullscreen, $screenwidth, $screenheight, true) == 2) MAIN.$main.regsRelayoutMenus();
   }
 }

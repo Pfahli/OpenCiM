@@ -200,6 +200,7 @@ int Display::applyDisplay(VM& vm, bool fullscreen, int w, int h, bool relayout) 
   if (sw == oldSW && sh == oldSH) return 1;
   win->fieldValues[u"width"] = Value::integer(sw);
   win->fieldValues[u"height"] = Value::integer(sh);
+  relayoutGui(vm, field(vm, win, u"video").object(), oldSW, oldSH, sw, sh);
   return 2;
 }
 
@@ -628,7 +629,16 @@ void registerDisplayNatives(VM& vm) {
   if (ClassInfo* c = vm.findClass("gsWindow_OGL")) {
     addMethod(c, u"regsApplyDisplay", 3, 4);
     addMethod(c, u"regsUiScale", 0, 0);
+    addMethod(c, u"regsSetRect", 5, 5);
   }
+  // window.regsSetRect(control, left, top, width, height): placeControl, for HUD scripts that place a control again
+  // when the desktop changes size (their extensions' onChangeRect handlers)
+  implement(vm, "gsWindow_OGL", u"regsSetRect", [](VM& v, Object*, int, const Value* a) {
+    Value cv = a[0].ref() ? a[0].ref()->get() : a[0];
+    auto* c = dynamic_cast<ControlObj*>(cv.object());
+    if (c && !c->destroyed) placeControl(v, c, v.toFloat(a[1]), v.toFloat(a[2]), v.toFloat(a[3]), v.toFloat(a[4]));
+    return Value();
+  });
   // window.regsUiScale(): the UI scale in use (the automatic choice when the setting is unset)
   implement(vm, "gsWindow_OGL", u"regsUiScale", [](VM&, Object*, int, const Value*) {
     Display* d = display();

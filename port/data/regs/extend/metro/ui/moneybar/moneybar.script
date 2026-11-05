@@ -1,0 +1,9 @@
+// ReGS extension of metro/ui/moneybar/moneybar.script (used as installed; see VM::extendSource). The graphics page
+// can change the window size while the game runs (docs/ui/scaling.md §6): the bar's left edge follows the window
+// width below 1069 pixels, so it is placed again with the script's formula when the desktop changes size.
+
+//@base
+
+event $desktop.onChangeRect::() {
+  $bg.left = min(59, $desktop.width - 1010);
+}

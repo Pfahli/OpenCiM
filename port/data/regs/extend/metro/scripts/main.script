@@ -11,3 +11,21 @@ function loadSandboxScenario($mapName = "") {
   }
   regsBaseLoadSandboxScenario($mapName);
 }
+
+// Graphics page (port, its save() calls this): the scripts' window got a new size (resolution, fullscreen or UI
+// scale) and the engine has laid the GUI out again, every control kept at its edge, centre or span
+// (engine/gui_relayout.cpp, docs/ui/scaling.md §6). The main and pause menus place their buttons from the height in
+// ways that anchoring cannot follow, so the open one is loaded again for the new size, and the player lands on the
+// graphics page again: after this OK the machine is in SettingsMenu, then back (main or pause menu, its buttons),
+// settings, graphics.
+function regsRelayoutMenus() {
+  if (!$menu) return;
+  $regsWasMain = $menu.$mainMenu : false;
+  delete $menu;
+  if ($regsWasMain) $menu = load "/metro/ui/menus/mainmenu.script";
+  else $menu = load "/metro/ui/menus/pausemenu.script";
+  $menu.$menuArea.visible = false;   // the graphics page is still open; unloadSubMenu shows the area again
+  this.perform("back");
+  this.perform("settings");
+  this.perform("graphics");
+}

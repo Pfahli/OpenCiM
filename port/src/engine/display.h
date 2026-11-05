@@ -100,6 +100,16 @@ class Display {
   bool mouseKnown_ = false;
 };
 
+// The GUI laid out again for a new size of the scripts' window, ow × oh → nw × nh (engine/gui_relayout.cpp): the
+// root viewports filling the window and every control in them keep their edge, centre or span relation. Returns the
+// number of controls moved or resized.
+int relayoutGui(script::VM& vm, script::Object* video, int ow, int oh, int nw, int nh);
+// One control to a new rect: a move alone is set quietly; a new size lays its children out again (the same
+// anchoring) and then fires its onChangeRect. window.regsSetRect(control, l, t, w, h) for scripts. Returns the
+// number of controls changed.
+class ControlObj;
+int placeControl(script::VM& vm, ControlObj* c, float l, float t, float w, float h);
+
 // The display of the running game, or null when headless.
 Display* display();
 
