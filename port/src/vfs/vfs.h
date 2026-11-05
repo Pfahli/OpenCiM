@@ -40,6 +40,12 @@ class Vfs {
   void rescan();
   // init_userdata(root): set the userdata disk folder (created if missing, one level) and scan it.
   void initUserdata(const std::filesystem::path& root);
+  // The port's read-only view of another user folder (the original game's Documents\Cities In Motion; port/README
+  // "Where data lives"): its saves\*.gs mount below "<prefix>saves/<name>/" and the loose files directly in maps\ as
+  // "<prefix>maps/<file>", so the load lists can read a save's game.campaign or a map's preview. Nothing in that
+  // folder is ever created, written, renamed or deleted: write() and writableDiskPath() refuse every path outside
+  // "userdata/", and the prefix is not "userdata/". Rescans include it.
+  void setOriginalRoot(const std::filesystem::path& root, const std::string& prefix);
 
   bool exists(const std::string& path) const { return records_.count(path) != 0; }
   const Record* find(const std::string& path) const;
@@ -55,6 +61,9 @@ class Vfs {
   std::vector<std::string> listDirs(const std::string& dir) const;
 
   std::filesystem::path diskPathFor(const std::string& path) const;
+  // The disk path for a native that changes the disk outside write() (delete_file, mkdir, fappend, freset): only
+  // below the userdata folder (or anywhere with allowInstallWrites, as write()); false and a warning otherwise.
+  bool writableDiskPath(const std::string& path, std::filesystem::path& out) const;
 
   // The original writes paths outside userdata/ relative to the install folder. Off by default in the port.
   bool allowInstallWrites = false;
@@ -64,10 +73,13 @@ class Vfs {
 
  private:
   void scanTree(const std::filesystem::path& root, const std::string& keyPrefix, bool skipUserdata);
-  void mountArchive(const std::filesystem::path& file, const std::string& relNoExt, const std::string& keyPrefix);
+  void mountArchive(const std::filesystem::path& file, const std::string& relNoExt, const std::string& keyPrefix,
+                    bool plainOnly = false);
+  void scanOriginal();
 
   std::filesystem::path installRoot_;
-  std::optional<std::filesystem::path> userdataRoot_, overlayRoot_;
+  std::optional<std::filesystem::path> userdataRoot_, overlayRoot_, originalRoot_;
+  std::string originalPrefix_;
   bool communityContent_ = false;
   std::vector<Archive> archives_;
   std::map<std::string, Record> records_;

@@ -26,6 +26,7 @@
 #include "engine/ui_graphs.h"
 #include "engine/grid.h"
 #include "engine/host.h"
+#include "engine/user_folders.h"
 
 namespace regs::engine {
 
@@ -67,6 +68,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerTimelineNatives(*vm_);
   registerGridEditNatives(*vm_);
   registerSimNatives(*vm_);
+  registerUserFolderNatives(*vm_);
   // MAIN: the root gsMain object, registered as a global when it is attached (gsMain setParent, 0x100a15c0)
   main_ = vm_->newObject(vm_->findClass("gsMain"), nullptr);
   vm_->setGlobal(u"MAIN", Value::heap(VT::Object, main_.get()));

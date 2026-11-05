@@ -79,6 +79,7 @@ add_library(regs_engine STATIC
   src/engine/sim_doors.cpp
   src/engine/sim_jams.cpp
   src/engine/particles.cpp
+  src/engine/user_folders.cpp
   src/platform/window_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp
@@ -113,6 +114,6 @@ add_custom_target(regs_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data)
 add_dependencies(regs_data regs)
 if(WIN32)
-  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32)
+  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32)
 endif()
 

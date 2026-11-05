@@ -1,6 +1,13 @@
-// ReGS extension of metro/scripts/main.script (used as installed; see VM::extendSource): starting a sandbox game also
-// copies the port's density choices of the setup page (sandbox.script extension) into the campaign.
+// ReGS extension of metro/scripts/main.script (used as installed; see VM::extendSource):
+// * starting a sandbox game also copies the port's density choices of the setup page (sandbox.script extension) into
+//   the campaign;
+// * the saves and maps of the original game's folder (Documents\Cities In Motion, read only; engine/user_folders.h)
+//   join the load lists with a note, as "regs-cim:<name>" values, and are copied into the OpenCiM folder when the
+//   player opens one (regsImportOriginal), then loaded from there under the name the copy got.
 //@rename loadSandboxScenario regsBaseLoadSandboxScenario
+//@rename getSaveGamesList regsBaseGetSaveGamesList
+//@rename loadSavedCampaign regsBaseLoadSavedCampaign
+//@rename startEditor regsBaseStartEditor
 
 //@base
 
@@ -8,8 +15,67 @@ function loadSandboxScenario($mapName = "") {
   if ($submenu) {
     MAIN.$campaign.$campaign.$regsTrafficDensity = $submenu.$regsTrafficDensity : 1.0;
     MAIN.$campaign.$campaign.$regsPopulationDensity = $submenu.$regsPopulationDensity : 1.0;
+    if (findstr($submenu.$selectedMap, "regs-cim/maps/") == 0) {
+      $regsImported = regsImportOriginal("map", extractFileName($submenu.$selectedMap));
+      if ($regsImported != "") $submenu.$selectedMap = "userdata/maps/"+$regsImported;
+    }
   }
   regsBaseLoadSandboxScenario($mapName);
+}
+
+// the note after an original's name, in the current language: "(from Cities in Motion)"
+function regsOriginalNote() {
+  $file = "regs/strings/"+MAIN.$language+".strings";
+  if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+  $s = load "/"+$file;
+  $note = $s.$regs_fromOriginal_note;
+  delete $s;
+  return $note;
+}
+
+// the load list (main menu and pause menu): the OpenCiM saves, then the original's saves that have no copy in OpenCiM,
+// all sorted by save date as the game does
+function getSaveGamesList() {
+  $items = regsBaseGetSaveGamesList();
+  $note = regsOriginalNote();
+  $clock = clock();
+  foreach (regsOriginalSaves()) {
+    $filename = "regs-cim/saves/"+current+"/game.campaign";
+    if (file_exists($filename)) {
+      $campaign = load "/"+$filename;
+      if (defined $campaign.$saveDate) {
+        $clock.date = $campaign.$saveDate;
+      } else {
+        $clock.date = 0;
+      }
+      if (defined $campaign.$saveTime) {
+        $clock.time = $campaign.$saveTime;
+      } else {
+        $clock.time = 0;
+      }
+      delete $campaign;
+      $items[expandPattern("%0%1|%2", 2147483647 - $clock.date, 2147483647 - $clock.time, "regs-cim:"+current)] = formatText(escapePattern(expandPattern($strings.$menu_loadGame_pattern, current+" "+$note, $clock.days, $clock.months, $clock.years, $clock.hours, $clock.minutes)), [0x80FFFFFF]);
+    }
+  }
+  delete $clock;
+  return $items;
+}
+
+function loadSavedCampaign($saveName) {
+  if (findstr($saveName, "regs-cim:") == 0) {
+    $regsImported = regsImportOriginal("save", substr($saveName, 9));
+    if ($regsImported != "") $saveName = $regsImported;
+  }
+  regsBaseLoadSavedCampaign($saveName);
+}
+
+// the editor's map list (main menu > map editor > load map; mainmenu.script extension adds the originals)
+function startEditor($level = "") {
+  if (findstr($level, "regs-cim:") == 0) {
+    $regsImported = regsImportOriginal("map", substr($level, 9));
+    if ($regsImported != "") $level = $regsImported;
+  }
+  regsBaseStartEditor($level);
 }
 
 // Graphics page (port, its save() calls this): the scripts' window got a new size (resolution, fullscreen or UI

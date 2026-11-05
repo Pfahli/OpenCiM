@@ -19,6 +19,8 @@
 #include "engine/engine.h"
 #include "engine/host.h"
 #include "engine/input.h"
+#include "engine/platform.h"
+#include "engine/user_folders.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -43,8 +45,10 @@ fs::path widen(const char* s) {
 int usage() {
   std::fprintf(stderr,
                "usage: regs <gameDir> [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]\n"
-               "  --documents   stand-in for the Documents folder: settings and saves go to <dir>\\Cities In Motion\n"
-               "                (default .\\documents, so the real game's saves and settings are never touched)\n"
+               "  --documents   stand-in for the Documents folder (tests): settings, saves and maps go to\n"
+               "                <dir>\\OpenCiM, the original's saves and maps are read from <dir>\\Cities In Motion\n"
+               "                (default: the real Documents folder, so Documents\\OpenCiM)\n"
+               "  --print-paths print the resolved folders and quit (creates and reads nothing)\n"
                "  --windowed    ignore the fullscreen setting\n"
                "  --community-addons  also load community addons and loose overrides in the install (off: game and\n"
                "                DLC archives only)\n"
@@ -61,7 +65,8 @@ int main(int argc, char** argv) {
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);  // real pixels, no OS scaling
 #endif
   if (argc < 2) return usage();
-  fs::path game = widen(argv[1]), documents = fs::current_path() / "documents", screenshot;
+  fs::path game = widen(argv[1]), documents, screenshot;
+  bool printPaths = false;
   // the port's own data (menu pages, strings) next to the executable; --data overrides
   fs::path data = fs::absolute(fs::path(widen(argv[0]))).parent_path() / "data";
   long long maxFrames = -1;
@@ -70,6 +75,7 @@ int main(int argc, char** argv) {
     std::string a = argv[i];
     if (a == "--documents" && i + 1 < argc) documents = widen(argv[++i]);
     else if (a == "--data" && i + 1 < argc) data = widen(argv[++i]);
+    else if (a == "--print-paths") printPaths = true;
     else if (a == "--windowed") engine::host().forceWindowed = true;
     else if (a == "--community-addons") engine::host().communityAddons = true;
     else if (a == "--frames" && i + 1 < argc) maxFrames = std::atoll(argv[++i]);
@@ -86,6 +92,23 @@ int main(int argc, char** argv) {
         scripted.push_back(sc);
       }
     } else return usage();
+  }
+  // the Documents folder: the real one (as the original resolves it), or the --documents stand-in; the port's user
+  // folder is <documents>\OpenCiM, the original's <documents>\Cities In Motion is only read (engine/user_folders.h)
+  bool standIn = !documents.empty();
+  if (!standIn) documents = engine::platformDocumentsFolder();
+  documents = fs::absolute(documents);
+  if (printPaths) {
+    std::error_code ec;
+    auto line = [&](const char* what, const fs::path& p) {
+      std::printf("%-28s %s%s\n", what, utf16ToUtf8(std::u16string(p.u16string())).c_str(),
+                  fs::exists(p, ec) ? "" : "  (does not exist yet)");
+    };
+    std::printf("documents root (%s)\n", standIn ? "--documents stand-in" : "real Documents folder");
+    line("  documents:", documents);
+    line("  OpenCiM user folder:", documents / engine::kPortFolderName);
+    line("  original folder (read):", documents / engine::kOriginalFolderName);
+    return 0;
   }
   fs::create_directories(documents);
   engine::host().headless = false;

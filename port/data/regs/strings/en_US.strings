@@ -36,3 +36,5 @@ $regs_menu_build = "Build %0 (%1), %2";
 $regs_menu_info = "Unofficial source port, requires Cities in Motion";
 // jam relief (engine/sim_jams.cpp): a bus or tram the port moved on, by line type (bus, tram, metro, water bus, helicopter)
 $regs_newsticker_jamMoved_text = ["A stuck bus on line %0 was moved on two stops.", "A stuck tram on line %0 was moved on two stops.", "A stuck metro train on line %0 was moved on two stops.", "A stuck waterbus on line %0 was moved on two stops.", "A stuck helicopter on line %0 was moved on two stops."];
+// saves and maps from the original game's folder (Documents\Cities In Motion), after the name in the load lists
+$regs_fromOriginal_note = "(from Cities in Motion)";

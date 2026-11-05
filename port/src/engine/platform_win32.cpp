@@ -1,7 +1,9 @@
 #include "engine/platform.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <windows.h>
+#include <shlobj.h>
 
 namespace regs::engine {
 
@@ -24,6 +26,15 @@ DisplayMode platformCurrentDisplayMode() {
   dm.dmSize = sizeof dm;
   if (!EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm)) return {};
   return {int(dm.dmPelsWidth), int(dm.dmPelsHeight), int(dm.dmBitsPerPel), int(dm.dmDisplayFrequency)};
+}
+
+std::filesystem::path platformDocumentsFolder() {
+  wchar_t buf[MAX_PATH] = {};
+  if (SHGetSpecialFolderPathW(nullptr, buf, 0x0c /* CSIDL_MYDOCUMENTS */, FALSE) ||
+      SHGetSpecialFolderPathW(nullptr, buf, CSIDL_PERSONAL, FALSE))
+    return buf;
+  const wchar_t* profile = _wgetenv(L"USERPROFILE");
+  return profile ? std::filesystem::path(profile) : std::filesystem::path();
 }
 
 }  // namespace regs::engine
