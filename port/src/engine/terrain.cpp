@@ -1,8 +1,8 @@
 // Terrain of a loaded map, after gsGridDivision::update (L:0x08166080 = W:0x100d6ab0), docs/renderer/terrain.md.
 // The grid is cut into n×n-cell divisions (n = 1 << bucketShift); each is one mesh centred on the division, built in
 // two LODs (lod 0: a 4-triangle fan per cell, lod 1: 2 triangles per cell) with one part per material group. Water
-// quads and the map-edge walls are LAYER groups, so both LODs carry them. Not yet: cover quadrants and normal
-// overrides from items, the water-edge curtain, highlights, the data overlay and the underground view.
+// quads and the map-edge walls are LAYER groups, so both LODs carry them. The underground view (docs/renderer/underground.md)
+// builds tunnel divisions as an earth plane with inward walls. Not yet: the water-edge curtain and the data overlay.
 #include "engine/terrain.h"
 
 #include <algorithm>
@@ -26,9 +26,9 @@ using namespace regs::render;
 
 namespace {
 
-// material groups, in submesh order
-constexpr int kTerrain = 0, kYard = 1, kField = 9, kWater = 17, kEdge = 18, kGroupCount = 19;
-constexpr int kWaterLevel = -0x140, kEdgeBottom = -0x2000;
+// material groups, in submesh order (kEarth: earthMaterial, the terrain without bit 0x20 and the underground plane)
+constexpr int kTerrain = 0, kYard = 1, kField = 9, kWater = 17, kEdge = 18, kEarth = 19, kGroupCount = 20;
+constexpr int kWaterLevel = -0x140, kEdgeBottom = -0x2000, kEarthLevel = -0x800;
 // mesh LOD bands for D = 800 (interfaces-3d §1.3); meshes are freed beyond kFreeDistance
 constexpr float kLod0Distance = 266.4f, kCullDistance = 880.0f, kFreeDistance = 1000.0f;
 // division meshes are built on demand (the port's streaming; the original keeps divisions around each camera): those
@@ -51,6 +51,10 @@ struct Builder {
   float cs;
   std::vector<Corner> corners;  // (n+1)², row-major in z
   MeshData out;
+  // the division's view mode (divisionViewMode) and, for a tunnel division of the underground view, the sides that
+  // face a division without tunnels (north z−, south z+, west x−, east x+): they get inward walls (§8.1 of terrain.md)
+  uint32_t view = 0xFE;
+  bool inner[4] = {false, false, false, false};
 
   int W() const { return g.width; }
   int L() const { return g.length; }
@@ -180,6 +184,7 @@ struct Builder {
   }
 
   int groupOf(uint16_t fc, int group) const {
+    if (group == kEarth) return 1;  // without bit 0x20 every cell is terrain, drawn in earthMaterial (§6, :1232)
     if (group == kTerrain) return (fc & 0x40) || !(fc & 0x28);
     if (group < kField) return (fc & 0x48) == 8 && (fc & 7) == group - kYard;
     return (fc & 0x60) == 0x20 && (fc & 7) == group - kField;
@@ -188,9 +193,16 @@ struct Builder {
   void surfaceGroup(int group, int lod) {
     size_t firstIndex = out.indices.size();
     std::vector<int32_t> map(size_t((n + 1) * (n + 1)), -1);
+    // the earth terrain takes uv0 · 0.5 (L:0x08166080.c:2360-2370)
+    const float uvScale = group == kEarth ? 0.5f : 1.0f;
+    auto scaled = [&](Corner c) {
+      c.u *= uvScale;
+      c.v *= uvScale;
+      return c;
+    };
     auto at = [&](int lx, int lz) {
       int32_t& m = map[size_t(lz * (n + 1) + lx)];
-      if (m < 0) m = int32_t(push(corner(lx, lz)));
+      if (m < 0) m = int32_t(push(scaled(corner(lx, lz))));
       return uint32_t(m);
     };
     for (int lz = 0; lz < n && dz + lz < L(); ++lz)
@@ -209,7 +221,7 @@ struct Builder {
         uint32_t k[4];
         static const int ox[4] = {0, 1, 0, 1}, oz[4] = {0, 0, 1, 1};
         for (int i = 0; i < 4; ++i) k[i] = absent[i] ? 0 : at(lx + ox[i], lz + oz[i]);
-        uint32_t c = push(centre(lx, lz));
+        uint32_t c = push(scaled(centre(lx, lz)));
         const uint32_t tl = k[0], tr = k[1], bl = k[2], br = k[3];
         if (!(cover & 0x100)) out.indices.insert(out.indices.end(), {tl, c, tr});
         if (!(cover & 0x800)) out.indices.insert(out.indices.end(), {bl, c, tl});
@@ -256,7 +268,35 @@ struct Builder {
     finishGroup(kWater, firstIndex);
   }
 
-  // outward-facing walls from the terrain down to −96 m on the map's border sides (§8.1)
+  // the underground earth plane (createEarthVertex, L:0x08166080.c:2375-2470, W: y −0x800): a flat square per cell at
+  // y = −0x800 (−8 cells) over the whole division, normal +y, uv (gx, gz)·cs/64, colour 0xff808080, earthMaterial
+  void earthPlane() {
+    size_t firstIndex = out.indices.size();
+    std::vector<int32_t> map(size_t((n + 1) * (n + 1)), -1);
+    auto at = [&](int lx, int lz) {
+      int32_t& m = map[size_t(lz * (n + 1) + lx)];
+      if (m < 0) {
+        Corner c;
+        c.pos = {lx * cs - n * cs * 0.5f, kEarthLevel * cs / 256.0f, lz * cs - n * cs * 0.5f};
+        c.normal = {0, 1, 0};
+        c.u = float(dx + lx) * cs * 0.015625f;
+        c.v = float(dz + lz) * cs * 0.015625f;
+        c.color = 0xFF808080u;
+        m = int32_t(push(c));
+      }
+      return uint32_t(m);
+    };
+    for (int lz = 0; lz < n && dz + lz < L(); ++lz)
+      for (int lx = 0; lx < n && dx + lx < W(); ++lx) {
+        uint32_t tl = at(lx, lz), tr = at(lx + 1, lz), bl = at(lx, lz + 1), br = at(lx + 1, lz + 1);
+        out.indices.insert(out.indices.end(), {tl, bl, tr, tr, bl, br});
+      }
+    finishGroup(kEarth, firstIndex);
+  }
+
+  // outward-facing walls from the terrain down to −96 m on the map's border sides (§8.1). A tunnel division of the
+  // underground view clamps their top to −0x800 and adds inward-facing walls from the terrain down on its sides
+  // towards divisions without tunnels (L:0x08166080.c:309-345, 4250-4537)
   void edges() {
     size_t firstIndex = out.indices.size();
     struct Side { bool on; Vec3 normal; bool alongX; int fixed; };
@@ -264,20 +304,23 @@ struct Builder {
                      {dz + n >= L(), {0, 0, 1}, true, std::min(n, L() - dz)},
                      {dx == 0, {-1, 0, 0}, false, 0},
                      {dx + n >= W(), {1, 0, 0}, false, std::min(n, W() - dx)}};
-    for (const Side& sd : sides) {
-      if (!sd.on) continue;
+    for (int si = 0; si < 4; ++si) {
+      const Side& sd = sides[si];
+      bool border = sd.on, wall = !border && inner[si];
+      if (!border && !wall) continue;
+      Vec3 normal = wall ? sd.normal * -1.0f : sd.normal;
       int count = sd.alongX ? std::min(n, W() - dx) : std::min(n, L() - dz);
       uint32_t base = uint32_t(out.vertexCount());
       for (int i = 0; i <= count; ++i) {
         int lx = sd.alongX ? i : sd.fixed, lz = sd.alongX ? sd.fixed : i;
-        int top = h(dx + lx, dz + lz);
+        int hgt = h(dx + lx, dz + lz), top = border && view == 0x180 ? std::min(hgt, kEarthLevel) : hgt;
         for (int bottom = 0; bottom < 2; ++bottom) {
           Corner c;
           int y = bottom ? kEdgeBottom : top;
           c.pos = {lx * cs - n * cs * 0.5f, y * cs / 256.0f, lz * cs - n * cs * 0.5f};
-          c.normal = sd.normal;
+          c.normal = normal;
           c.u = (lx + lz) * 0.0625f;
-          c.v = 1.0f - float(y - kEdgeBottom) / float(std::max(top - kEdgeBottom, 1));
+          c.v = 1.0f - float(y - kEdgeBottom) / float(std::max(hgt - kEdgeBottom, 1));
           c.color = 0xFF808080u;
           push(c);
         }
@@ -287,7 +330,7 @@ struct Builder {
         // wind each triangle so that it faces outward
         auto tri = [&](uint32_t a, uint32_t b, uint32_t c) {
           auto P = [&](uint32_t k) { return Vec3{out.positions[k * 3], out.positions[k * 3 + 1], out.positions[k * 3 + 2]}; };
-          if (dot(cross(P(b) - P(a), P(c) - P(a)), sd.normal) < 0) std::swap(b, c);
+          if (dot(cross(P(b) - P(a), P(c) - P(a)), normal) < 0) std::swap(b, c);
           out.indices.insert(out.indices.end(), {a, b, c});
         };
         tri(t0, b0, t1);
@@ -301,8 +344,17 @@ struct Builder {
     corners.resize(size_t((n + 1) * (n + 1)));
     for (int lz = 0; lz <= n; ++lz)
       for (int lx = 0; lx <= n; ++lx) corners[size_t(lz * (n + 1) + lx)] = makeCorner(dx + lx, dz + lz);
-    for (int group = kTerrain; group < kWater; ++group) surfaceGroup(group, lod);
-    water();
+    // view bits (§6): 2 = the terrain surface (yards and fields only with 0x20, else all earth), else the
+    // underground earth plane; 4 = water. Port: the plane in both LODs (the original builds it in lod 0 only).
+    if (view & 2) {
+      if (view & 0x20)
+        for (int group = kTerrain; group < kWater; ++group) surfaceGroup(group, lod);
+      else
+        surfaceGroup(kEarth, lod);
+    } else {
+      earthPlane();
+    }
+    if (view & 4) water();
     edges();
     computeTangents(out);  // the terrain and yards 4-7 are normal-mapped
     float r2 = 0;
@@ -326,6 +378,7 @@ Object* gridMaterialObject(VM& vm, GridObj* grid, int group) {
   else if (group < kField) key = u"<getYardMaterial>" + utf8ToUtf16(std::to_string(group - kYard));
   else if (group < kWater) key = u"<getFieldMaterial>" + utf8ToUtf16(std::to_string(group - kField));
   else if (group == kWater) key = u"waterMaterial";
+  else if (group == kEarth) key = u"earthMaterial";
   else key = u"edgeMaterial";
   if (key[0] != u'<') {  // a sub-object field: the getter creates it on first access
     try {
@@ -336,6 +389,40 @@ Object* gridMaterialObject(VM& vm, GridObj* grid, int group) {
   }
   auto it = grid->fieldValues.find(key);
   return it == grid->fieldValues.end() ? nullptr : it->second.object();
+}
+
+// a division's terrain mesh in its view mode; a tunnel division of the underground view walls off the sides towards
+// divisions without tunnels
+void buildTerrain(const GridData& g, const TerrainCache& tc, int index, int lod, MeshData& out) {
+  Builder b{g, tc.n, (index % tc.cols) * tc.n, (index / tc.cols) * tc.n, g.cellSize, {}, {}};
+  b.view = divisionViewMode(tc, index);
+  if (b.view == 0x180) {
+    int c = index % tc.cols, r = index / tc.cols;
+    int nb[4] = {r > 0 ? index - tc.cols : -1, r + 1 < tc.rows ? index + tc.cols : -1, c > 0 ? index - 1 : -1,
+                 c + 1 < tc.cols ? index + 1 : -1};
+    for (int k = 0; k < 4; ++k) b.inner[k] = nb[k] >= 0 && !tc.tunnelDivision[size_t(nb[k])];
+  }
+  b.build(lod);
+  out = std::move(b.out);
+}
+
+// gsGridDivision +0x30 (addObject L:0x08163f80.c:41-75, removeObject L:0x081643b0.c:190-215): the divisions a TUNNEL
+// item's footprint grown by one cell overlaps, for every item in the map (hidden ones and tool previews too)
+std::vector<uint8_t> tunnelDivisions(const GridData& g, const TerrainCache& tc) {
+  std::vector<uint8_t> out(tc.divisions.size(), 0);
+  const int shift = int(std::min(g.bucketShift, 8u));
+  for (const GridData::Item& it : g.items) {
+    int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
+    if (it.removed || ti < 0) continue;
+    const GridTemplate& tp = tc.templates[size_t(ti)];
+    if (!((it.flags | tp.flags) & 0x8000)) continue;
+    int sx = (it.orient & 1) ? tp.length : tp.width, sz = (it.orient & 1) ? tp.width : tp.length;
+    int c0 = std::max(0, (it.x - 1) >> shift), c1 = std::min(tc.cols - 1, (it.x + 1 + sx) >> shift);
+    int r0 = std::max(0, (it.z - 1) >> shift), r1 = std::min(tc.rows - 1, (it.z + 1 + sz) >> shift);
+    for (int r = r0; r <= r1; ++r)
+      for (int c = c0; c <= c1; ++c) out[size_t(r * tc.cols + c)] = 1;
+  }
+  return out;
 }
 
 }  // namespace
@@ -392,11 +479,45 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       tc.materials.push_back(scriptMaterial(d, vm, m));
     }
     initGridItems(d, vm, grid, tc);
-    fixGridCover(vm, *grid->data, tc);
+    fixGridCover(vm, *grid->data, tc, grid->viewMode);
     LOG_INFO("terrain: %dx%d divisions of %d cells", tc.cols, tc.rows, tc.n);
   }
   // live map edits (engine/grid_edit.h): new types and items, then the touched divisions rebuilt at once where built
   syncGridItems(d, vm, grid, tc);
+  // the view mode (docs/renderer/underground.md): a change in bits 0xfe rebuilds every division (write_viewMode); the
+  // data-view bits do not change the division meshes in the port
+  if (tc.viewVersion != grid->viewVersion) {
+    tc.viewVersion = grid->viewVersion;
+    tc.viewMode = grid->viewMode & ~0xF7000u;
+    for (GridDivision& dv : tc.divisions)
+      for (int k = 0; k < 2; ++k) {
+        if (dv.terrainBuilt[k]) d.r3d().destroy(dv.terrain[k]);
+        if (dv.itemsBuilt[k]) d.r3d().destroy(dv.items[k]);
+        dv.terrainBuilt[k] = dv.itemsBuilt[k] = false;
+      }
+    tc.dirtyTerrain.clear();
+    tc.dirtyItems.clear();
+    tc.tunnelDivision.clear();
+    tc.tunnelItemsVersion = ~0ull;
+  }
+  // underground: the tunnel divisions, recounted after edits (tool previews included, as addObject/removeObject do);
+  // a division that gains or loses tunnels is rebuilt with its items, its neighbours for their inward walls
+  if (tc.viewMode == 0x180 && tc.tunnelItemsVersion != grid->itemsVersion) {
+    std::vector<uint8_t> now = tunnelDivisions(g, tc);
+    if (tc.tunnelDivision.size() == now.size())
+      for (int index = 0; index < int(now.size()); ++index) {
+        if (now[size_t(index)] == tc.tunnelDivision[size_t(index)]) continue;
+        tc.dirtyTerrain.insert(index);
+        tc.dirtyItems.insert(index);
+        int c = index % tc.cols, r = index / tc.cols;
+        if (r > 0) tc.dirtyTerrain.insert(index - tc.cols);
+        if (r + 1 < tc.rows) tc.dirtyTerrain.insert(index + tc.cols);
+        if (c > 0) tc.dirtyTerrain.insert(index - 1);
+        if (c + 1 < tc.cols) tc.dirtyTerrain.insert(index + 1);
+      }
+    tc.tunnelDivision = std::move(now);
+    tc.tunnelItemsVersion = grid->itemsVersion;
+  }
   if (!tc.dirtyTerrain.empty() || !tc.dirtyItems.empty()) {
     for (int index : tc.dirtyTerrain) {
       if (index < 0 || size_t(index) >= tc.divisions.size()) continue;
@@ -404,9 +525,9 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       for (int lod = 0; lod < 2; ++lod) {
         if (!dv.terrainBuilt[lod]) continue;
         d.r3d().destroy(dv.terrain[lod]);
-        Builder b{g, tc.n, (index % tc.cols) * tc.n, (index / tc.cols) * tc.n, cs, {}, {}};
-        b.build(lod);
-        dv.terrain[lod] = d.r3d().upload(b.out);
+        MeshData out;
+        buildTerrain(g, tc, index, lod, out);
+        dv.terrain[lod] = d.r3d().upload(out);
       }
     }
     for (int index : tc.dirtyItems) {
@@ -442,9 +563,9 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   // has holes where the items cover it (fixGrid), which showed as glitches at the screen edges while panning
   auto build = [&](GridDivision& dv, int index, int lod) {
     if (!dv.terrainBuilt[lod]) {
-      Builder b{g, tc.n, (index % tc.cols) * tc.n, (index / tc.cols) * tc.n, cs, {}, {}};
-      b.build(lod);
-      dv.terrain[lod] = d.r3d().upload(b.out);
+      MeshData out;
+      buildTerrain(g, tc, index, lod, out);
+      dv.terrain[lod] = d.r3d().upload(out);
       dv.terrainBuilt[lod] = true;
     }
     if (!dv.itemsBuilt[lod]) {

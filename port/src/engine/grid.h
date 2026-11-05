@@ -70,6 +70,11 @@ class GridObj : public script::Object {
   uint64_t highlightVersion = 0;
   // gsGrid::mountObject: preview item → its mounted copy while a tool commits (children follow their parent's copy)
   std::map<uint32_t, uint32_t> mountedCopies;
+  // gsGrid.viewMode (+0x1fc, GRID_VIEW_*; docs/renderer/underground.md): 0xfe (GRID_VIEW_DEFAULT) from the constructor,
+  // 0x180 the underground view. viewVersion moves when a change in bits 0xfe rebuilt the cover (write_viewMode).
+  uint32_t viewMode = 0xFE;
+  uint64_t viewVersion = 0;
+  bool underground() const { return viewMode == 0x180; }
 
   // gsGrid.tick (0x100c48c0): the simulation in sub-steps, then the modules
   void tick(script::VM& vm, float dt) override;

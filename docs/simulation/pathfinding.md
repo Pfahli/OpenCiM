@@ -99,7 +99,11 @@ pavement flag [obs `0x100e9730.c:329-345`].
 
 Where the walk codes come from [obs]: a template's `<stem>.bmp` (`gsGridObject::loadFromFile` `L:0x0817f650.c:65-260`)
 has 4×4 pixels per cell; a pixel with R = 255 gives code 2 (pavement), else G = 255 code 3 (open ground), else B = 255
-code 1 (road crossing), else 0. The loader stores the cell words in all four orientations (`+0x274`), and item placement
+code 1 (road crossing), else 0. The loader stores the cell words in all four orientations (`+0x274`, the `-y.bmp`
+heights likewise in `+0x278`), and the item uses copy `[orientation]` (`item+0x44`). Copy 0 is the bitmap as stored,
+copy 1 maps world cell (x', z') to bitmap cell (W−1−z', x'), copy 2 to (W−1−x', L−1−z'), copy 3 to (z', L−1−x') (W, L:
+the template's width and length; `gsGridObject::loadSlotData` `L:0x081865b0`, `loadYData` `L:0x08186c20`), with the
+q-cells turned along. The maps are thus half a turn off the mesh, which is turned by `(orientation + 2)·90°`. Item placement
 merges the word of each covered cell into the ground layer (`0x100e9730.c:329-345`, `FUN_100e7d10`); a template without
 a `.bmp` writes 0 (not walkable) under its cover. Items with BRIDGE, TUNNEL or ENABLE_BASE (`& 0xc001`) write extra layers
 instead.
@@ -507,13 +511,17 @@ between pedestrians. A reimplementation needs some per-agent seed; exact replay 
 
 Port (`engine/sim_citizens.cpp` `doorOf`, `walkPath`): both ends of a walk snap to the nearest walkable q-cell within
 10 cells when they lie on a blocked one (a car parked inside a multi-storey garage, the middle of a station's tracks).
-Metro stations (type 0x10) and the platform stop pieces on elevated or underground track (0xe/0xf with STOP) take their
-door at street level outside the footprint directly: their platforms do not lead out at ±0xa0, so the original ends
-in the re-snap too. The search runs in the ends' box plus 16 cells first and, without a way there, again in the
-original's phase-1 range of ±100 cells around the goal. Failed walks (Cim2, ~270 s at speed 10): 3.4 % → 1.7 %;
-Vienna 9.3 % → 6.2 %. Left: Cim2's sunken park (its stairs prop has no walk map and blocks its cell, so the original
-cannot reach it either) and a hotel enclosed by bush props; Vienna's goals in pockets between elevated station
-pillars, which the original's door lead-out search would avoid.
+Metro stations (type 0x10) and the platform stop pieces on elevated or underground track (0xe/0xf with STOP) take
+their door on the platform like every item: the platform leads out onto the rest of the station's platform, and the
+station's stairs items (`stairs_metrou0a05` rising 0x80 per cell, the hall `service_metrou0`, the entrance
+`stairs_metrou0b`; elevated: `stairs_metroe0*`) connect it to the street within ±0xa0 per step. Waiters stand and
+board there; alighting passengers walk up or down. (Until 2026-11-05 the port read the walk and height maps half a
+turn off (§1.4), which put the platforms on the track side and cut the stairs; it then took the stations' doors at
+street level.) The search runs in the ends' box plus 16 cells first and, without a way there, again in the
+original's phase-1 range of ±100 cells around the goal. Failed walks (Vienna, ~7000 frames at speed 3 with
+`REGS_DEBUG_SIM=1`): 408 of 3807 paths with the maps half a turn off, 22 of 4555 with the maps as the engine turns
+them. Earlier notes: Cim2's sunken park (its stairs prop has no walk map and blocks its cell, so the original cannot
+reach it either) and a hotel enclosed by bush props.
 
 ---
 

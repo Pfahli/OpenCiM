@@ -12,6 +12,7 @@ whose only implementations are OpenGL classes (`*_OGL`). A replacement backend i
 | [scene-basics.md](scene-basics.md) | worked example (main-menu trams): quaternions, fixed camera, object transforms, sun/light/material values, fog, the expanded default-shader GLSL, texture-target rendering and GUI composite |
 | [grid-items.md](grid-items.md) | map items (roads, tracks, buildings, props, trees): `loadGridObject` templates, item transform, variations and tints, merged division meshes vs. per-item instances, LOD, foliage, what is skipped, port checklist |
 | [terrain.md](terrain.md) | map terrain: divisions, LODs, per-vertex attributes, material groups (terrain/yard/field/water/edges), terrain/field/water shaders, port checklist |
+| [underground.md](underground.md) | the underground view (`viewMode` 0x180): how the scripts switch it, `write_viewMode`, tunnel divisions cut open to the earth plane with inward walls, item/vehicle/character visibility, picking, sounds, port status |
 | [shadows.md](shadows.md) | sun shadow map (`gsShadowEffect_OGL`): script fields, light-camera fit to the view footprint, trapezoid warp (TSM), `shadowTransform`/`shadowWarp`/`shadowParams`, depth pass and receiver shader math, worked example, port checklist |
 | [bloom.md](bloom.md) | bloom / "HDR lighting" post effect: script fields and defaults, per-tick exposure adaptation, render targets, the scene pass and the 10 bloom passes with exact `custom0` and uv mapping, luminance readback, final composite and tone map, bloom on vs off, quirks, port checklist |
 

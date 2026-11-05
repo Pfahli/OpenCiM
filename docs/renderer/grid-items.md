@@ -381,7 +381,7 @@ pos.xyz += o·y            (matrix[3] = world translation; timer = effect timer,
 |---|---|---|
 | hidden items | item flag `0x400000` (persisted): no instance, not merged. Cim2: 82 (pillars, parking spaces, trees, fences) | L:0x081820f0.c:66-67; L:0x08166080.c:1014 |
 | markers, spawn points | type 0x15/0x16: no instance unless `grid.showMarkers` (`editor.script:298` sets it). Includes the London `basketball-anim` template (type MARKER) | L:0x081820f0.c:66 |
-| view mode (`isVisible`, L:0x08185c50.c:19-31) | TEMP (0x100000) items always visible; TREE needs `viewMode & 8`; otherwise use the **root** parent: underground view (`& 0x100`) + root TUNNEL → visible; root type 2..0x12 (roads … heliport) needs `& 0x10`; everything else (NONE, ALLEY, BUILDING, markers, timers) needs `& 0x20`, except root ALIGN_4 → `& 0x10`. `GRID_VIEW_DEFAULT` = 0xfe shows all; `GRID_VIEW_UNDERGROUND` = 0x180 shows tunnel-rooted items only | obs |
+| view mode (`isVisible`, L:0x08185c50.c:19-31) | TEMP (0x100000) items always visible; TREE needs `viewMode & 8`; otherwise use the **root** parent: underground view (`& 0x100`) + root TUNNEL → visible; root type 2..0x12 (roads … heliport) needs `& 0x10`; everything else (NONE, ALLEY, BUILDING, markers, timers) needs `& 0x20`, except root ALIGN_4 → `& 0x10`. `GRID_VIEW_DEFAULT` = 0xfe shows all; `GRID_VIEW_UNDERGROUND` = 0x180 shows tunnel-rooted items only, and only in divisions with tunnel items ([underground.md](underground.md) §3-4) | obs |
 | outside the map | instance `setVisible(false)` if x<0, z<0, x+sizeX>W or z+sizeZ>L | L:0x081820f0.c:241-246 |
 | HIDE_LOD | not in LOD1 band / far division build | §3.4 |
 | locators | path/lane markers (`s-a0`, `e-b1`, `t-…`, `c-…`) become graph lines; never meshes | L:0x081808b0.c |

@@ -248,7 +248,10 @@ tool's `newItems` (variation: the player's `toolType`). Deviations:
 * As in the engine, checking a preview hides the optional items (trees) it conflicts with, also when the preview is
   then moved away or cancelled; the port does not draw the highlight of hidden items (the engine took them out of
   their division).
-* The subway level is picked as in the engine, but the port has no underground view yet to see the tracks.
+* The subway level is picked as in the engine; the underground view ([../renderer/underground.md](../renderer/underground.md))
+  shows the level's tracks. Checked in game on Vienna: the build menu's "uground" entry switches the view on (and
+  selecting another tool switches it off again), a dragged tunnel preview digs its pit as it grows (green on the
+  level plane, the cell highlight at the surface as in the engine), and the committed tunnel stays visible.
 
 Framework changes made with the track tools: `gridSelectArea`/`gridUnselectArea` take the items overlapping the area
 (engine getObjects) instead of those with their corner in it; new `gridGetObjects`, `gridItemsOverlap`,
@@ -382,5 +385,6 @@ Deviations:
 * The bulldozer also clears the highlight of the previously replaced items explicitly (the engine relies on the 10×10
   unselect around the cursor).
 * Placed objects' road parts go through `toolBlocks().road`, a plain stand-in (no game object has road parts).
-* Not checked on screen: heliport (needs 1957), elevated and underground stations (no underground view), the metro
-  transition.
+* Not checked on screen: heliport (needs 1957), elevated stations, the metro transition. An underground station was
+  placed in the underground view on Vienna (level −3, under an existing line at −2; the preview green, then the station
+  with its stairs, hall and entrance and its two stop labels).

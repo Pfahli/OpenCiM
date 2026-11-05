@@ -11,6 +11,7 @@
 
 #include "core/log.h"
 #include "engine/api.h"
+#include "engine/grid_render.h"
 #include "engine/sim.h"
 #include "engine/sim_state.h"
 #include "engine/sim_sounds.h"
@@ -162,7 +163,7 @@ void playAtMover(SimState& s, SimSounds& ss, int id, const SoundTemplate& t, flo
 
 void tickMovers(VM& vm, SimState& s, SimSounds& ss, const Vec3& eye, float dt) {
   if (ss.movers.size() < s.movers.size()) ss.movers.resize(s.movers.size());
-  const bool underground = fieldInt(vm, s.grid, u"viewMode", 0xfe) == 0x180;
+  const bool underground = s.grid && s.grid->underground();
   for (size_t id = 0; id < s.movers.size(); ++id) {
     Mover& m = s.movers[id];
     MoverSound& ms = ss.movers[id];
@@ -227,6 +228,8 @@ void tickMovers(VM& vm, SimState& s, SimSounds& ss, const Vec3& eye, float dt) {
       want = wantTunnel ? &M.tunnelT : M.move ? &M.moveT : nullptr;
       volM = std::min(m.speed * 0.2f, 1.0f);
       pitM = std::min(m.speed * 0.1f + 0.5f, 1.0f);
+      // the move loops are hidden the same way (:487-494)
+      if (underground && !tunnelNode && !forced) want = nullptr;
     }
     if (want && !forced && d >= want->maxDistance) want = nullptr;
     if (ms.loop && (!want || !worldSoundAlive(ms.loop) || wantTunnel != ms.loopTunnel)) {
@@ -296,11 +299,15 @@ void tickItems(VM& vm, GridObj* grid, SimSounds& ss, const Vec3& eye, float dt) 
     }
     if (soundDebug()) LOG_INFO("audio: %zu items with an ambient loop", ss.items.size());
   }
+  // gsGridItem::move returns early for items the view hides (:53-70): in the underground view only tunnel items start
+  // their loop; one already playing keeps its own out-of-range stop
+  const TerrainCache* tc = grid->viewMode != 0xFE ? grid->terrain.get() : nullptr;
   for (ItemSound& it : ss.items) {
     Vec3 q = it.centre - eye;
     float d = std::sqrt(dot(q, q));
     if (it.voice && !worldSoundAlive(it.voice)) it.voice = 0;
     if (!it.voice) {
+      if (tc && !tc->typeTemplate.empty() && !gridItemVisible(*grid->data, *tc, it.item, grid->viewMode)) continue;
       if (d < it.t.maxDistance) {
         it.voice = worldSoundPlay(grid, it.t, it.centre, Vec3{}, false, true, 1.0f, 1.0f, "item loop");
         it.outOfRange = 0;
@@ -344,6 +351,10 @@ void tickDoors(GridObj* grid, SimState& s, SimSounds& ss, const Vec3& eye, float
     float dist = std::sqrt(dot(q, q));
     if (ds.voice && !worldSoundAlive(ds.voice)) ds.voice = 0;
     if (!ds.voice) {
+      // as the item loops: a door the view hides starts no loop (gsGridItem::move :53-70)
+      if (const TerrainCache* tc = grid->viewMode != 0xFE ? grid->terrain.get() : nullptr;
+          tc && !tc->typeTemplate.empty() && !gridItemVisible(*grid->data, *tc, uint32_t(d.item), grid->viewMode))
+        continue;
       if (dist < ds.t.maxDistance) {
         ds.voice = worldSoundPlay(grid, ds.t, d.centre, Vec3{}, false, true, 1.0f, 1.0f, "door bell");
         ds.outOfRange = 0;

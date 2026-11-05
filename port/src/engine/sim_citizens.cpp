@@ -480,13 +480,16 @@ bool stampWalkItem(SimState& s, size_t i, int rx0, int rz0, int rx1, int rz1, bo
       uint32_t cover = diagonals ? itemCellCover(fp, info.flags, cx, cz) : 0xF00;
       if (!cover) continue;
       uint32_t mask = coverMask(cover);
-      // world q-cell (qx, qz) of grid cell (cx, cz) → template q-cell under the item's quarter turns
+      // world q-cell (qx, qz) of grid cell (cx, cz) → template q-cell under the item's quarter turns. The engine keeps
+      // four turned copies of the walk and height maps and picks the one of the item's orientation (+0x44); copy 0
+      // is the bitmap as stored (gsGridObject::loadSlotData L:0x081865b0, loadYData L:0x08186c20), so the maps are
+      // half a turn off the mesh, which the renderer turns by (orient + 2)·90°. W, L: the world footprint
       auto toTemplate = [&](int wx, int wz, int W, int L, int& tx, int& tz) {
         switch (it.orient & 3) {
-          case 0: tx = W - 1 - wx, tz = L - 1 - wz; break;  // the renderer's (orient + 2)·90°
-          case 1: tx = wz, tz = W - 1 - wx; break;
-          case 2: tx = wx, tz = wz; break;
-          default: tx = L - 1 - wz, tz = wx; break;
+          case 0: tx = wx, tz = wz; break;
+          case 1: tx = L - 1 - wz, tz = wx; break;
+          case 2: tx = W - 1 - wx, tz = L - 1 - wz; break;
+          default: tx = wz, tz = W - 1 - wx; break;
         }
       };
       uint32_t out = 0;
@@ -664,12 +667,12 @@ bool doorLeadsOut(SimState& s, const ItemInfo& info, uint32_t door) {
 // a pavement q-cell just outside it, found on an outward square spiral (on the ground or a deck)
 bool doorOf(SimState& s, int item, int& qx, int& qz) {
   ItemInfo info = itemInfo(s, item);
-  // metro stations: their platforms (elevated decks, or underground) do not lead out to the street at ±0xa0, so the
-  // original's door search re-snaps outside the footprint (FUN_100e6610 with insideItem = 0): the entrance at street
-  // level. Port: taken directly, on the ground layer
-  // (the station body 0x10, and the platform stop pieces on elevated 0xf or underground 0xe metro track)
+  // metro stations (the station body 0x10, and the platform stop pieces on elevated 0xf or underground 0xe metro
+  // track): their platform cells lead out onto the rest of the platform, so the door is on the platform at the
+  // station's depth or height (waiters stand there; the stairs items connect it to the street). Only without such a
+  // door the spiral below takes one at street level
   const bool station = info.type == 0x10 || ((info.type == 0xe || info.type == 0xf) && (info.flags & 0x2000));
-  if (auto d = s.walk.doors.find(item); !station && d != s.walk.doors.end()) {
+  if (auto d = s.walk.doors.find(item); d != s.walk.doors.end()) {
     WalkDoors& doors = d->second;
     if (!doors.checked) {
       std::vector<uint32_t> good;
@@ -2257,10 +2260,20 @@ void collectCharacters(Display& d, VM& vm, SimState& s, const Vec3& eye, const M
   static int drawCalls = 0;
   ++drawCalls;
   float reach = std::min(farZ, 350.0f);
+  // gsGridCharacter::updateVisibility (L:0x08153ae0, docs/renderer/underground.md §5): in the underground view only
+  // characters more than half a cell below the terrain of their cell show (y + 0x80 < cell height, 1/256 cells)
+  const bool underground = s.grid && s.grid->underground() && s.grid->data;
   for (const Character& ch : s.characters) {
     if (!ch.alive || ch.model < 0 || ch.virtualLeft > 0) continue;
     Vec3 e = ch.pos - eye;
     if (dot(e, e) > reach * reach) continue;
+    if (underground) {
+      const GridData& g = *s.grid->data;
+      float cs = g.cellSize;
+      int cx = int(std::floor(ch.pos.x / cs + float(g.width) * 0.5f)), cz = int(std::floor(ch.pos.z / cs + float(g.length) * 0.5f));
+      if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length) continue;
+      if (!(ch.pos.y * 256.0f / cs + 128.0f < float(g.height[size_t(cz) * size_t(g.width) + size_t(cx)]))) continue;
+    }
     float clip[4];
     for (int r = 0; r < 4; ++r) clip[r] = viewProj.at(r, 0) * ch.pos.x + viewProj.at(r, 1) * ch.pos.y + viewProj.at(r, 2) * ch.pos.z + viewProj.at(r, 3);
     float margin = std::fabs(clip[3]) * 0.1f + 5.0f;

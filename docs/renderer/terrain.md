@@ -359,11 +359,13 @@ Not separate geometry: the terrain group blends `cliff.dds` (+ `cliff_n.dds` nor
 vertex normal, §3) and `seafloor.dds` by uv2.x (corner touches a water cell). Both transitions are dithered by
 `cliff.a`. Cells under item normal overrides get neither.
 
-### 8.3 Underground view and item foundations (only for completeness)
+### 8.3 Underground view and item foundations (the view in full: [underground.md](underground.md))
 
-* Underground (`viewMode` 0x180, no bit 2): the terrain surface is replaced by a flat **earth plane** at
+* Underground (`viewMode` 0x180, no bit 2), only in divisions with tunnel items (the others are built as 0xc6: the
+  terrain in earthMaterial, water, no items): the terrain surface is replaced by a flat **earth plane** at
   y = −0x800·cs/256 = −24 m (every cell, `createEarthVertex` clone, normal +y, uv `(gx,gz)·cs/64`, earthMaterial);
-  water surfaces are not drawn (no bit 4); cover-quadrant edges get short base walls (`h` to `h − 0xc0`) with
+  water surfaces are not drawn (no bit 4); walls face inward towards divisions without tunnels; cover-quadrant
+  edges would get short base walls (none: the view clears the cover) (`h` to `h − 0xc0`) with
   `baseMaterial` (`createBaseVertex`: `u = (x+z)·0.25` or `z·0.354` for diagonals, `v = −h/1024`)
   (`L:0x08166080.c:2375-2470, 3292-3736`, `L:0x08165a90.c`, `L:0x08163810.c`, `L:0x08165b90.c`).
 * Items with runtime flag `0x800` at `item+0x48` ("needs base", set by `gsGridItem::fixY` when the ground under a
@@ -410,7 +412,7 @@ vertex normal, §3) and `seafloor.dds` by uv2.x (corner touches a water cell). B
 1. Exact metric for the near flag (`div+0x28`, `+0x2c`) and the in-range radius R (`gsGrid::move`): which camera
    points are used and what video vtable `+0x120` (Linux) returns. Only affects which LOD exists, not the look (inf).
 2. `reservedMaterial`: no reader found in the renderer, in the item code or in the scripts (inf: unused leftover).
-3. `div+0x30/+0x34` (used by the underground-view interior walls) were not traced.
+3. `div+0x30/+0x34`: the tunnel-item counter of a division and its copy at build time, see [underground.md](underground.md) §3.
 4. The centre vertex of a partly covered cell takes the **missing** corner's height (§3.1). That is what both
    builds do (`L:0x08165160.c:95,137,146,155`); it was not checked in game whether this produces visible kinks.
 5. Vertex-colour byte order is inferred from the writers and the shader reads (consistent for both terrain `.r` and

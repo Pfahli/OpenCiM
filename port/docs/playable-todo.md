@@ -20,10 +20,16 @@ modes (the editor's roads, terrain and paint tools come later):
   slopes, conflicts and prices (`engine/tool_tracks.cpp`, `docs/ui/construction.md` §6-§9); station track parts
   through `toolBlocks().track`.
 - [ ] Lay roads, alleys, bridges and tunnels (editor only; `createRoadBlock` is a plain stand-in), the double track's
-  road crossings, the underground view (`GRID_VIEW_UNDERGROUND`) to see subway tracks.
+  road crossings.
+- [x] The underground view (`GRID_VIEW_UNDERGROUND`, `docs/renderer/underground.md`): the minimap's layer button, the
+  "U" key and the subway tool switch it as in the original; the map turns into bare earth with pits 24 m deep around
+  the tunnel items, in which the subway tracks, underground stations with their stairs and halls, metro trains on
+  tunnel nodes and the people on the platforms show; previews dig their own pits while dragging; picking, sounds and
+  the camera follow. Checked on Vienna and Berlin (laying a tunnel and placing an underground station with the view
+  on). Not modelled: the one-second fade of vehicles and pedestrians.
 - [x] Place stops and stations: bus and tram stops, metro stations and transitions, docks, heliports
-  (`GRIDMODE_CREATE_STOP`, `selectStation`; `engine/tool_objects.cpp`, construction.md §11-12). Still to see on
-  screen: heliport, elevated and underground stations, the metro transition. Port QoL: a stop upgrade costs the new
+  (`GRIDMODE_CREATE_STOP`, `selectStation`; `engine/tool_objects.cpp`, construction.md §11-12). Underground stations
+  placed in the underground view (Vienna). Still to see on screen: heliport, elevated stations, the metro transition. Port QoL: a stop upgrade costs the new
   price minus the old stop's demolition refund (`data/regs/extend/metro/ui/hoverinfo/hoverinfo.script`); the stop
   keeps its name and lines. The whole loop (lay track, place stops, new line, buy trams, run, save, reload) checked on
   Cim2.
@@ -85,10 +91,14 @@ modes (the editor's roads, terrain and paint tools come later):
   open doors and no higher mood tier waits; the doors stay open while they walk (`port/run/door-strip.png`). Far
   from the camera, or more than 40 units from the doors, they board at once.
 - [x] Crashes seen on screen (`REGS_TEST_CRASH=<n>`, `port/run/crash-strip.png`); the 30 s clear-up not filmed yet.
-- [ ] Pedestrian walks without a path: Cim2 1.7 %, Vienna 6.2 % (was 3.4 % and 9.3 %); all remaining failures are
-  real disconnections. Left: the sunken park's stairs prop (no walk map, blocks its cell), a hotel enclosed by
-  bushes, goals between Vienna's elevated station pillars (needs the original's door check: a door must have a way
-  out).
+- [ ] Pedestrian walks without a path: Vienna 0.5 % (22 of 4555 paths) since the walk and height maps are turned as
+  the engine turns them (half a turn off the mesh, `docs/simulation/pathfinding.md` §1.4; it was 10.7 % with the
+  turn of the mesh). That also puts the waiters of underground and elevated metro stations on their platforms (they
+  stood at street level), reached by the stations' stairs. Cim2 not re-measured since (was 1.7 %). Left from before:
+  the sunken park's stairs prop (no walk map, blocks its cell), a hotel enclosed by bushes.
+- [ ] Metro trains at the turn of a line (end stations) stop with their front at the platform instead of their
+  middle (`docs/simulation/transport.md` §4.4, port note); all other halts are centred since the leg after a turn
+  pulls its half length too.
 - [ ] Deviations to revisit: water cells are never walkable (the original treats them as open ground); boats keep
   running across a save (the original removes them).
 - [x] Saves keep the live simulation, including boats, aircraft, animals and the rest of each pedestrian's walk (the

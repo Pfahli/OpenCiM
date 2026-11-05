@@ -589,9 +589,28 @@ void registerInteractionNatives(VM& vm) {
     };
   }
 
-  // gsGrid.viewMode: the constructor's GRID_VIEW_DEFAULT 0xfe (L:0x0813d6a0.c:56) until a script sets it
+  // gsGrid.viewMode: the constructor's GRID_VIEW_DEFAULT 0xfe (L:0x0813d6a0.c:56) until a script sets it.
+  // write_viewMode (L:0x0813ef00, docs/renderer/underground.md §2): a change in bits 0xfe clears every cell's cover
+  // quadrants and runs fixGrid for all items again (cover only in views with 0x20), then rebuilds every division and
+  // updates the vehicles' and characters' visibility (the renderer reads GridObj::viewMode each frame). A change in
+  // the data bits 0xf7000 only refreshes the selection/data layers (not ported).
   if (ClassInfo* c = vm.findClass("gsGrid"); c && c->fields.count(u"viewMode")) {
-    c->fields[u"viewMode"].get = [](VM& v, Object* o) { return Value::integer(intField(v, o, u"viewMode", 0xFE)); };
+    c->fields[u"viewMode"].get = [](VM&, Object* o) {
+      auto* g = dynamic_cast<GridObj*>(o);
+      return Value::integer(int32_t(g ? g->viewMode : 0xFEu));
+    };
+    c->fields[u"viewMode"].set = [](VM& v, Object* o, const Value& val) {
+      auto* g = dynamic_cast<GridObj*>(o);
+      if (!g) return;
+      uint32_t mode = uint32_t(v.toInt(val)), changed = g->viewMode ^ mode;
+      if (!changed) return;
+      g->viewMode = mode;
+      o->fieldValues[u"viewMode"] = Value::integer(int32_t(mode));
+      if (!(changed & 0xFE)) return;
+      if (g->data && !g->data->flags.empty()) fixGridCoverArea(v, g, 0, 0, g->data->width - 1, g->data->length - 1);
+      ++g->viewVersion;
+      LOG_INFO("grid: viewMode 0x%x", mode);
+    };
   }
 
   // ---- controllers ----

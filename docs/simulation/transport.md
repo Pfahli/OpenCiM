@@ -403,6 +403,19 @@ car becomes the head and returns the new head [inf from structure: it re-parents
 reversed, re-seats each car on `FUN_100e2630(curNode)` — the opposite-direction node — and moves the cursor to the
 new head]. Boats teleport to the outbound start node (`FUN_10107f20`: release all queued nodes, `curNode = start`).
 
+Port (`engine/sim.cpp` `appendHalfLength`; `REGS_DEBUG_HALT=1` logs where each line vehicle stands at a halt, front,
+rear and middle along the platform node, and how many nodes it pulled past the platform): the half length
+(`lengthNodes >> 1` nodes) is pulled from the next leg when that leg starts on the platform the vehicle arrives on,
+after every leg including the first leg after a turn (`reverseConsist`). Until 2026-11-05 the leg after a turn went
+without it, so on lines that turn at both ends (Vienna's and Berlin's metro lines) the train stood with its front at
+the platform at the turn **and at the stop after it**, half of its stops. Measured with `REGS_DEBUG_HALT` (6000 frames
+at speed 3): every metro halt that is not a turn now has its middle within 1 unit of the platform node's centre
+(Vienna lines 3 and 5, Berlin lines 0 and 4); trams, buses, boats and the helicopter unchanged. Still open: at the
+turn itself the front stops at the platform node, because the half length would have to come from the turned leg
+(question 2 in §9). Pulling it straight on along the arrival track instead centred those halts too, but two trains
+shuttling between two such stations (`REGS_TEST_TERMINUS`) then met head-on on the track both legs share there and
+the lane claims locked both, so the port keeps the old turn.
+
 ### 4.5 Condition, breakdowns, repair [obs]
 
 Roll (`0x101152a0.c:435-451`, constants `@0x101160d0` = 0.99999, `@0x10116130` = 0.001):

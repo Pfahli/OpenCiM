@@ -63,7 +63,24 @@ struct TerrainCache {
   uint64_t highlightVersion = ~0ull;
   render::GpuMesh highlight;
   bool highlightBuilt = false;
+  // the view mode the division meshes were built for (GridObj::viewMode / viewVersion), and in the underground view
+  // the divisions that hold tunnel items (gsGridDivision +0x30 > 0: a TUNNEL item's footprint grown by one cell
+  // overlaps them), recounted after live edits (GridObj::itemsVersion)
+  uint32_t viewMode = 0xFE;
+  uint64_t viewVersion = ~0ull, tunnelItemsVersion = ~0ull;
+  std::vector<uint8_t> tunnelDivision;
 };
+
+// The view mode a division is built with (gsGridDivision::update, L:0x08166080.c:309-345): in the underground view
+// (0x180) divisions without tunnel items are drawn as 0xc6 (bare terrain in earthMaterial and water, no items).
+inline uint32_t divisionViewMode(const TerrainCache& tc, int division) {
+  if (tc.viewMode != 0x180) return tc.viewMode;
+  return size_t(division) < tc.tunnelDivision.size() && tc.tunnelDivision[size_t(division)] ? 0x180u : 0xC6u;
+}
+
+// gsGridItem::isVisible(viewMode) (L:0x08185c50): TEMP items always; trees with bit 8; otherwise by the root parent:
+// TUNNEL with bit 0x100, roads … heliport (types 2..0x12) and ALIGN_4 with 0x10, everything else with 0x20.
+bool gridItemVisible(const GridData& g, const TerrainCache& tc, uint32_t item, uint32_t viewMode);
 
 // The tool highlight overlay of the map (cells and items flagged by gsGrid::selectArea / gsGridItem::setSelected).
 void buildHighlightOverlay(const GridData& g, const GridObj& grid, const TerrainCache& tc, render::MeshData& out);
@@ -88,8 +105,8 @@ ItemFootprint itemFootprint(int width, int length, uint32_t diagonals, int orien
 uint32_t itemCellCover(const ItemFootprint& f, uint32_t flags, int x, int z);
 
 // gsGridItem::fixGrid over all items: cover quadrants in the cell flags and the normal override map (GridData::normals),
-// before any terrain is built.
-void fixGridCover(script::VM& vm, GridData& g, const TerrainCache& tc);
+// before any terrain is built. Cover quadrants only in views with bit 0x20 (not underground).
+void fixGridCover(script::VM& vm, GridData& g, const TerrainCache& tc, uint32_t viewMode);
 
 // The merged item mesh of one division and LOD in division space, one submesh per (material, tint).
 void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int lod, render::MeshData& out);

@@ -264,10 +264,12 @@ int itemDivision(const GridData& g, const TerrainCache& tc, uint32_t item) {
   return std::min((it.z + sz / 2) >> shift, tc.rows - 1) * tc.cols + std::min((it.x + sx / 2) >> shift, tc.cols - 1);
 }
 
-void fixGridCover(VM& vm, GridData& g, const TerrainCache& tc) {
-  // gsGridItem::fixGrid (L:0x08184890.c:330-420) for every item, in file order, normal view (viewMode 0xfe has 0x20):
-  // COVER items set the covered quadrants of their footprint cells, which the terrain builder then leaves out, and
-  // cover/base/road-type items without -y.bmp data write a packed normal into the cells' override map
+void fixGridCover(VM& vm, GridData& g, const TerrainCache& tc, uint32_t viewMode) {
+  // gsGridItem::fixGrid (L:0x08184890.c:330-420) for every item, in file order: COVER items set the covered quadrants
+  // of their footprint cells, which the terrain builder then leaves out (only in views with 0x20: the underground view
+  // has no cover, :413-417), and cover/base/road-type items without -y.bmp data write a packed normal into the cells'
+  // override map
+  const bool cover = (viewMode & 0x20) != 0;
   g.normals.assign(g.flags.size(), 0);
   std::vector<int8_t> hasYData(tc.templates.size(), -1);
   size_t covered = 0;
@@ -296,7 +298,7 @@ void fixGridCover(VM& vm, GridData& g, const TerrainCache& tc) {
         uint32_t q = f.diag ? cellCover(f, flags, x, z) : 0xF00;
         if (!q) continue;
         size_t cell = size_t(it.z + z) * size_t(g.width) + size_t(it.x + x);
-        if (cc & kFlagCover) {
+        if ((cc & kFlagCover) && cover) {
           g.flags[cell] |= uint16_t(q);
           ++covered;
         }
@@ -311,6 +313,7 @@ void fixGridCoverArea(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
   x0 = std::max(x0, 0), z0 = std::max(z0, 0), x1 = std::min(x1, g.width - 1), z1 = std::min(z1, g.length - 1);
   if (x1 < x0 || z1 < z0) return;
   if (g.normals.size() != g.flags.size()) g.normals.assign(g.flags.size(), 0);  // before the first full pass (load)
+  const bool cover = (grid->viewMode & 0x20) != 0;  // as fixGridCover: no cover quadrants in the underground view
   for (int z = z0; z <= z1; ++z)
     for (int x = x0; x <= x1; ++x) {
       size_t cell = size_t(z) * size_t(g.width) + size_t(x);
@@ -360,10 +363,30 @@ void fixGridCoverArea(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
         uint32_t q = f.diag ? cellCover(f, flags, x, z) : 0xF00;
         if (!q) continue;
         size_t cell = size_t(it.z + z) * size_t(g.width) + size_t(it.x + x);
-        if (cc & kFlagCover) g.flags[cell] |= uint16_t(q);
+        if ((cc & kFlagCover) && cover) g.flags[cell] |= uint16_t(q);
         if (writeNormal) g.normals[cell] = normal;
       }
   }
+}
+
+bool gridItemVisible(const GridData& g, const TerrainCache& tc, uint32_t item, uint32_t viewMode) {
+  auto info = [&](uint32_t i, uint32_t& flags, int& type) {
+    const GridData::Item& it = g.items[i];
+    int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
+    flags = it.flags | (ti >= 0 ? tc.templates[size_t(ti)].flags : 0u);
+    type = ti >= 0 ? tc.templates[size_t(ti)].type : 0;
+  };
+  uint32_t flags;
+  int type;
+  info(item, flags, type);
+  if (flags & 0x100000) return true;  // TEMP (tool previews)
+  if (type == kTypeTree) return (viewMode & 0x08) != 0;
+  uint32_t r = item;
+  for (int guard = 0; guard < 16 && g.items[r].parent && g.items[r].parent <= g.items.size(); ++guard) r = g.items[r].parent - 1;
+  if (r != item) info(r, flags, type);
+  if ((viewMode & 0x100) && (flags & kFlagTunnel)) return true;
+  if ((type >= 2 && type <= 0x12) || (flags & kFlagAlign4)) return (viewMode & 0x10) != 0;
+  return (viewMode & 0x20) != 0;
 }
 
 void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int lod, MeshData& out) {
@@ -371,10 +394,13 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
   const float cs = g.cellSize;
   const int x0 = (division % tc.cols) * n, z0 = (division / tc.cols) * n;
   const int heightShift = 0x200 - int(g.heightBase);
+  // the division's view mode (gsGridDivision::update :1023): the default view shows every item, so it skips the test
+  const uint32_t view = divisionViewMode(tc, division);
   std::map<std::pair<int, uint32_t>, Group> groups;
   for (uint32_t i : tc.divisionItems[size_t(division)]) {
     const GridData::Item& it = g.items[i];
     if (it.removed) continue;
+    if (view != 0xFE && !gridItemVisible(g, tc, i, view)) continue;
     const GridTemplate& tp = tc.templates[size_t(tc.typeTemplate[it.type])];
     if (tp.skinned) continue;  // drawn per item (collectSkinnedItems)
     const ObjectData& od = *tp.object->data;
@@ -516,10 +542,12 @@ void collectSkinnedItems(Display& d, VM& vm, const GridData& g, const TerrainCac
                          const std::unordered_map<uint32_t, float>* doorTimes,
                          std::map<const ObjectObj*, std::shared_ptr<const std::vector<Mat4>>>& poses,
                          std::vector<DrawItem>& out) {
+  const uint32_t view = divisionViewMode(tc, division);
   for (uint32_t i : tc.divisionItems[size_t(division)]) {
     const GridData::Item& it = g.items[i];
     int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
     if (ti < 0 || it.removed || !tc.templates[size_t(ti)].skinned) continue;
+    if (view != 0xFE && !gridItemVisible(g, tc, i, view)) continue;
     const GridTemplate& tp = tc.templates[size_t(ti)];
     uint32_t flags = it.flags | tp.flags;
     if (lod > 0 && !tp.object->data->hasLod1 && (flags & kFlagHideLod)) continue;

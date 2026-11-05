@@ -735,6 +735,33 @@ void stepTraffic(VM& vm, SimState& s, float dt) {
 
 // ---- line vehicles ----
 
+// The half train length past the platform the track (ending on stop k's leg end) halts at, so that the middle stands
+// at the stop (transport.md §4.3): lengthNodes >> 1 nodes of the next leg when it goes on from that platform (counted
+// in v.extraNodes, which the next appendLeg skips). Called after every leg, also the first leg after a turn
+// (reverseConsist), which used to go without it. Where the next leg turns round (it starts on the opposite lane: the
+// metro's end stations) nothing is added and the front stops at the platform node: the original pulls the nodes from
+// the pre-loaded next leg there, and how its movement code treats nodes that do not join was not traced (transport.md
+// §9 question 2). Pulling them straight on along the own track instead centred the train, but two trains shuttling
+// between two such stations (REGS_TEST_TERMINUS) then met head-on on the shared track and locked each other.
+void appendHalfLength(SimState& s, VehicleState& v, const LineState& line, int k) {
+  const LaneGraph& G = s.graph;
+  Mover& m = s.movers[size_t(v.mover)];
+  const LineStopState& st = line.stops[size_t(k)];
+  const LineStopState& nx = line.stops[size_t((k + 1) % int(line.stops.size()))];
+  v.extraNodes = 0;
+  if (v.units.empty() || st.legEnd < 0 || m.track.nodes.empty() || m.track.nodes.back() != st.legEnd) return;
+  int extra = lengthNodesOf(s, v.units, true) >> 1, before = int(m.track.nodes.size()) - 1;
+  if (nx.legStart == st.legEnd) {
+    for (int i = 0; i < extra && size_t(i) < nx.path.size(); ++i) m.track.push(G, nx.path[size_t(i)]);
+    v.extraNodes = std::min(extra, int(nx.path.size()));
+    m.limit += v.extraNodes;
+  }
+  if (static const bool dbg = std::getenv("REGS_DEBUG_HALT") != nullptr; dbg)
+    LOG_INFO("sim: halt length: line type %d, stop %d: %d of %d nodes past the platform (%s)", line.type,
+             (k + 1) % int(line.stops.size()), int(m.track.nodes.size()) - 1 - before, extra,
+             nx.legStart == st.legEnd ? "next leg" : "none: the next leg starts on another lane");
+}
+
 // the leg from stop k's platform to the next stop's, plus `extra` nodes of the leg after: every line vehicle but the
 // helicopter halts half its length past the platform node, its middle at the stop (transport.md §4.3;
 // 0x101152a0.c:173-174 sets pathStepsLeft = (lengthNodes >> 1) + steps for buses and trams too, lengthNodes from the
@@ -754,13 +781,7 @@ void appendLeg(SimState& s, VehicleState& v, const LineState& line, int k) {
   for (size_t i = size_t(v.extraNodes); i < st.path.size(); ++i) m.track.push(G, st.path[i]);
   m.limit = int(m.track.nodes.size()) - 1;
   v.extraNodes = 0;
-  const LineStopState& nx = line.stops[size_t((k + 1) % int(line.stops.size()))];
-  if (!v.units.empty() && nx.legStart == st.legEnd) {
-    int extra = lengthNodesOf(s, v.units, true) >> 1;
-    for (int i = 0; i < extra && size_t(i) < nx.path.size(); ++i) m.track.push(G, nx.path[size_t(i)]);
-    v.extraNodes = std::min(extra, int(nx.path.size()));
-    m.limit += v.extraNodes;
-  }
+  appendHalfLength(s, v, line, k);
 }
 
 // FUN_100e2630: the node of the same track the other way round
@@ -818,7 +839,7 @@ bool reverseConsist(SimState& s, VehicleState& v, LineState& line, int k, int ar
   m.dist = std::max(0.0f, dist);
   m.speed = 0;
   m.limit = int(m.track.nodes.size()) - 1;
-  v.extraNodes = 0;
+  appendHalfLength(s, v, line, k);  // the half length past the next stop, as appendLeg
   claimBody(s, v.mover);
   if (debugSim()) LOG_INFO("sim: vehicle %d turns round at stop %d", int(&v - s.vehicles.data()), k);
   if (s.followed == int(&v - s.vehicles.data())) s.followShots = 16, s.followShotName = "follow-turn-";  // films the turn
@@ -954,6 +975,27 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
         s.followShots = 16, s.followShotName = "follow-bustram-";
       else if (camItem >= 0 && b.item == camItem)
         s.followShots = 16, s.followShotName = "halt-" + std::to_string(line.type) + "-" + std::to_string(++bursts) + "-";
+    }
+    if (static const bool dbgHalt = std::getenv("REGS_DEBUG_HALT") != nullptr; dbgHalt && !v.halted && !v.units.empty()) {
+      const LineStopState& arr = line.stops[size_t(v.stopA)];
+      int plat = arr.legEnd;
+      if (plat >= 0) {
+        const LaneNode& pn = s.graph.nodes[size_t(plat)];
+        Vec3 P = (pn.p0 + pn.p1) * 0.5f, f = normalize(pn.p1 - pn.p0);
+        float r = m.dist, front = 0, rear = 0;
+        for (size_t k = 0; k < m.units.size(); ++k) {
+          const Unit& u = m.units[k];
+          if (k > 0) r -= unitLength(s, u);
+          if (u.model < 0) continue;
+          const UnitModel& um = s.models[size_t(u.model)];
+          PlacedPose p = unitPose(s, m, u, r);
+          float a = dot(p.position - P, f);
+          if (k == 0) front = a + um.frontOffset;
+          rear = a - um.rearOffset;
+        }
+        LOG_INFO("sim: halt at: line %d type %d stop %d platform %d: front %+.1f rear %+.1f middle %+.1f (units along the platform node from its centre)",
+                 v.line, line.type, v.stopB, plat, front, rear, (front + rear) * 0.5f);
+      }
     }
     v.halted = true;
     if (v.stopTime == 0) simSoundVehicleEvent(vm, s, vi, SimSoundEvent::DoorOpen);  // :311-314
@@ -2158,6 +2200,16 @@ void simTerrainChanged(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
   restampWalk(*grid->sim, x0, z0, x1, z1);
 }
 
+// gsGridVehicle::updateVisibility (L:0x081ad310, docs/renderer/underground.md §5): in the underground view a car of a
+// consist shows only while its node belongs to a TUNNEL item (lane-node flag 0x800000). The unit's node is the one
+// at its rear distance (forEachUnit's r).
+bool unitOnTunnel(const SimState& s, const Mover& m, int k) {
+  float r = m.dist;
+  for (int j = 1; j <= k && size_t(j) < m.units.size(); ++j) r -= unitLength(s, m.units[size_t(j)]);
+  size_t at = m.track.at(r);
+  return at < m.track.nodes.size() && (s.graph.nodes[size_t(m.track.nodes[at])].flags & 0x800000) != 0;
+}
+
 void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ,
                         std::vector<DrawItem>& items) {
   SimState* s = simOf(grid);
@@ -2167,9 +2219,11 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
   // the followed vehicle turned round or halts: a screenshot burst (every 12 frames; every 4 for the short halts)
   if (s->followShots > 0 && ++s->followFrame % (s->followShotName.rfind("halt-", 0) == 0 ? 4 : 12) == 0)
     d.requestScreenshot(s->followShotName + std::to_string(16 - s->followShots--) + ".png");
-  forEachUnit(*s, [&](const Mover& m, int, const Unit& u, const PlacedPose& p) {
+  const bool underground = grid->underground();
+  forEachUnit(*s, [&](const Mover& m, int unit, const Unit& u, const PlacedPose& p) {
     Vec3 e = p.position - eye;
     if (dot(e, e) > farZ * farZ) return;
+    if (underground && !unitOnTunnel(*s, m, unit)) return;
     // in front of the camera and roughly inside the view, with a margin of the unit's size
     float clip[4];
     for (int r = 0; r < 4; ++r)
