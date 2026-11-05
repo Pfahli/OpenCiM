@@ -608,7 +608,10 @@ releaseNode(a, nd):                                   FUN_10107560
   marker is cleared when the node's occupant leaves it (for junction nodes or player vehicles).
 * **Following:** when the node ahead is held by a vehicle that is physically on it, the follower registers as
   `reserver` along the leader's claimed chain. On release the reserver is promoted to occupant immediately, so a queue
-  advances first-in first-out and cross traffic cannot slip into it.
+  advances first-in first-out and cross traffic cannot slip into it. Port note: the promoted node can lie past the
+  reserver's held range (it queued for a node behind junction nodes it could enter but had not committed yet), so the
+  port's `releaseAll` also releases every later node of the track the mover occupies or reserves; without that,
+  despawned cars kept such nodes for good (transport.md §10.5).
 * **Lane changes:** there is no lateral manoeuvre. An agent only ever moves to `ring[head]`, which is a node chosen by
   the path (step codes index `node.out`). Lane changes exist only as graph links chosen by the path finder.
 * **Same-line passing (0x1000):** for transport type 3 the controller variant `FUN_100e1530` treats nodes held by

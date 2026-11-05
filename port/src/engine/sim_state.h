@@ -88,6 +88,8 @@ struct Mover {
   // parameter custom4 of the model's materials, x = the accumulated angle, y = the spin-up r (0..12; −1 = the
   // template's initial value, read as full speed when moving); stepAnimatedParts
   float rotorAngle = 0, rotorSpin = -1;
+  float travelled = 0;   // port: distance the head advanced since the mover was placed (jam relief, sim_jams.cpp)
+  bool testPin = false;  // port test switch REGS_TEST_JAM=<type>:hard: a blocker the jam relief must not clear
 };
 
 // a pending aircraft spawn: entry/exit, the runway nodes 15 and 30 steps on (back), the gate and its taxi path
@@ -99,6 +101,7 @@ struct AirPending {
 struct NodeRt {
   int occupant = -1, reserver = -1;  // node +0x18 / +0x1c
   bool marker = false;               // flag 0x1000000: someone waits to enter
+  int keep = -1;                     // port jam relief: kept for this line vehicle's mover (sim_jams.cpp keptFor)
 };
 
 // A door item (item flag 0x1000 GRID_ITEM_CROSS_TRACK with a doorOpenLen; vanilla: the level crossing
@@ -155,6 +158,18 @@ struct VehicleState {
   bool spinUp = false;          // port: a helicopter done at its pad spins the rotor up before it takes off
   bool bellRung = false, announced = false;  // +0x184 / +0x185: the vehicle bell (< 8 nodes left) and the stop's
                                              // announcement (< 32) played on this leg
+  // port QoL, jam relief of buses and trams (engine/sim_jams.cpp, docs/simulation/transport.md §10); not saved
+  float jamClock = 0;           // seconds standing (head < 1 unit on) outside dwell, breakdown and crash
+  float jamMark = 0;            // the mover's travelled distance when the head last advanced a unit
+  bool relief = false;          // step 2 runs: the cars around turn round
+  float reliefStill = 0;        // seconds without a unit of progress since step 2 began
+  float reliefNext = 0;         // seconds to the next car turned
+  float reliefFrom = 0;         // travelled distance when step 2 began
+  int reliefCleared = 0;        // cars turned or sent off in this relief
+  bool jammedFired = false;     // onJammed fired since the head last advanced a unit
+  std::vector<int> kept;        // nodes kept for it in step 2 (NodeRt::keep): the node it waits for and its crossings
+  int respawnAt = -1;           // step 3: the stop to spawn at again (−1 = none)
+  float respawnWait = 0;        // seconds waited for that platform
 };
 
 struct LineState {
@@ -303,6 +318,25 @@ int spawnTraffic(script::VM& vm, SimState& s, const std::vector<Unit>& units, in
 // a parked car on a lane node (agent flag 0x2000): it holds the node; -1 when the node is taken
 int parkCar(script::VM& vm, SimState& s, const std::vector<Unit>& units, int node);
 void claimBody(SimState& s, int id);
+void releaseAll(SimState& s, int id);
+int lastUsable(const Mover& m);
+float trailLength(const SimState& s, const Mover& m);
+// FUN_100e2630: the node of the same track the other way round (−1 = none)
+int oppositeNode(const LaneGraph& G, int n);
+// ---- jam relief of buses and trams (engine/sim_jams.cpp, port QoL; transport.md §10) ----
+// one tick of a spawned line vehicle: detection, turning the cars round, the respawn; true when it left the map
+bool stepJamRelief(script::VM& vm, SimState& s, LineState& line, int vi, float dt);
+// an unspawned vehicle after a relief respawn: the stop it must spawn at (−1 = the usual search from the first stop)
+int jamRespawnStop(SimState& s, VehicleState& v, LineState& line, float dt);
+// it spawned: the port's onRegsJamMoved ticker event if the relief moved it
+void jamRespawned(script::VM& vm, SimState& s, VehicleState& v, int vi);
+// the node is kept by a line vehicle in jam relief other than mover `id` (canEnter refuses it then)
+bool keptFor(const SimState& s, const NodeRt& r, int id);
+// the test switch REGS_TEST_JAM=<line type>[:hard]: a car parked across the way of a bus or tram
+void stepJamTest(script::VM& vm, SimState& s, float dt);
+// the riders of a vehicle the relief takes off the map get off at `at` and plan again from the nearer of its two
+// stops (engine/sim_citizens.cpp); the number of riders
+int evacuateRiders(SimState& s, int vi, const render::Vec3& at);
 // ---- aircraft and helicopters (engine/sim_air.cpp) ----
 // inline flight nodes (0x2000000): appended to the graph's node vector without buckets or links, one owner each,
 // recycled once released

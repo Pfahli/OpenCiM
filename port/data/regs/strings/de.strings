@@ -31,3 +31,5 @@ $regs_menuMusicFollows_item = "Menümusik folgt den Musikeinstellungen";
 $regs_menu_version = "OpenCiM %0";
 $regs_menu_build = "Build %0 (%1), %2";
 $regs_menu_info = "Inoffizielle Portierung, benötigt Cities in Motion";
+// Stauauflösung (engine/sim_jams.cpp): ein Bus oder eine Straßenbahn, die der Port weitergesetzt hat, nach Linientyp
+$regs_newsticker_jamMoved_text = ["Ein festsitzender Bus der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Eine festsitzende Straßenbahn der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Ein festsitzender U-Bahnzug der Linie %0 wurde zwei Stationen weiter gesetzt.", "Ein festsitzendes Wassertaxi der Linie %0 wurde zwei Anlegestellen weiter gesetzt.", "Ein festsitzender Hubschrauber der Linie %0 wurde zwei Landeplätze weiter gesetzt."];

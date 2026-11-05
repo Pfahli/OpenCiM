@@ -91,6 +91,15 @@ modes (the editor's roads, terrain and paint tools come later):
   open doors and no higher mood tier waits; the doors stay open while they walk (`port/run/door-strip.png`). Far
   from the camera, or more than 40 units from the doors, they board at once.
 - [x] Crashes seen on screen (`REGS_TEST_CRASH=<n>`, `port/run/crash-strip.png`); the 30 s clear-up not filmed yet.
+- [x] Jam relief for buses and trams (port QoL, `docs/simulation/transport.md` §10): stuck 2 minutes, the cars around
+  turn round or leave one every 3 s; stuck 30 s more, the vehicle moves on two stops and its riders plan again; the
+  port's ticker message follows the original's. `REGS_NO_JAM_RELIEF=1` off, `REGS_TEST_JAM=<type>[:hard]` test.
+  Found on the way: despawned cars left lane claims behind (a node handed to them as the queued reserver past their
+  held range), which locked Berlin's and Vienna's tram and bus lines within minutes; fixed in `releaseAll`.
+- [ ] Jams the relief does not cover: metro trains of Berlin's lines 0 and 4 wait for each other for 2 to 10 minutes
+  where the lines share track (they always got going again, §10.4); trams wait 2 to 10 minutes at busy junctions
+  while one car after another holds the crossing nodes (why the cars do not give way to the tram's waiting marker is
+  not traced); the relief's kept node only helps once the tram is detected.
 - [ ] Pedestrian walks without a path: Vienna 0.5 % (22 of 4555 paths) since the walk and height maps are turned as
   the engine turns them (half a turn off the mesh, `docs/simulation/pathfinding.md` §1.4; it was 10.7 % with the
   turn of the mesh). That also puts the waiters of underground and elevated metro stations on their platforms (they

@@ -1,0 +1,21 @@
+// ReGS extension of metro/ui/linepanel/linepanel.script (used as installed; see VM::extendSource). Jam relief (port
+// QoL, engine/sim_jams.cpp, docs/simulation/transport.md §10): when the port takes a stuck bus or tram off the map and
+// spawns it two stops on, the vehicle fires onRegsJamMoved(position) and the ticker says so, next to the original's
+// "seems to be jammed" message (onJammed, unchanged). Each vehicle of the panel gets the handler in addBus.
+//@rename addBus regsBaseAddBus
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regsStrings = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regsStrings = load "/regs/strings/en_US.strings";
+}
+
+//@base
+
+function addBus($bus) {
+  regsBaseAddBus($bus);
+  event $bus.onRegsJamMoved::($pos) {
+    MAIN.$petitionbar.addTickerText(0, expandPattern($regsStrings.$regs_newsticker_jamMoved_text[.$type], .line.$index), $pos, .$id + ":regsJamMoved");
+  }
+  return $bus;
+}

@@ -357,6 +357,9 @@ void registerLineNatives(VM& vm) {
   registerLinePanelNatives(vm);
   ClassInfo* lineClass = vm.findClass("gsTransportLine");
   ClassInfo* vehicleClass = vm.findClass("gsTransportVehicle");
+  // port: onRegsJamMoved(pos), the jam relief moved the vehicle on (engine/sim_jams.cpp; the ticker message is the
+  // port's extension of metro/ui/linepanel/linepanel.script)
+  if (vehicleClass) addEvent(vehicleClass, u"onRegsJamMoved", 14, false);
 
   // gsTransportLines.createLine() (0x10118940): a new line under the manager, empty, open, type 0
   implement(vm, "gsTransportLines", u"createLine", [lineClass](VM& v, Object* self, int, const Value*) {
