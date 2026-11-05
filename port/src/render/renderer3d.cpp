@@ -612,7 +612,8 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
   float d[4] = {m.diffuse[0], m.diffuse[1], m.diffuse[2], m.diffuse[3] * it.alpha};
   gl::Uniform4fv(u_.matDiffuse, 1, d);
   gl::Uniform4fv(u_.matSpecular, 1, m.specular);
-  gl::Uniform4fv(u_.matEmission, 1, m.emission);
+  float em[4] = {m.emission[0] * v.emissionScale, m.emission[1] * v.emissionScale, m.emission[2] * v.emissionScale, m.emission[3]};
+  gl::Uniform4fv(u_.matEmission, 1, em);
   gl::Uniform1f(u_.shininess, m.shininess);
   if (m.flags & kMatTwoSided) gl::Disable(gl::CULL_FACE);
   else gl::Enable(gl::CULL_FACE);
@@ -741,7 +742,8 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
                               uint32_t prog, float alphaRef) {
   const ProgramLocs& l = locs(prog);
   gl::Uniform1f(l.alphaRef, alphaRef);  // glAlphaFunc(GREATER, ref) of the queue
-  gl::Uniform4f(l.matEmission, m.emission[0], m.emission[1], m.emission[2], m.emission[3]);
+  const float es = v.emissionScale;
+  gl::Uniform4f(l.matEmission, m.emission[0] * es, m.emission[1] * es, m.emission[2] * es, m.emission[3]);
   float amb[4] = {m.ambient[0], m.ambient[1], m.ambient[2], m.ambient[3] * it.alpha};  // ambient alpha = object fade
   gl::Uniform4fv(l.matAmbient, 1, amb);
   gl::Uniform4fv(l.matDiffuse, 1, m.diffuse);
@@ -874,6 +876,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   }
   uint32_t current = 0;
   const DrawItem* bound = nullptr;
+  gl::GLenum blendSrc = gl::SRC_ALPHA, blendDst = gl::ONE_MINUS_SRC_ALPHA;
   // opaque: no alpha test; alpha-tested: GREATER 0.2 with depth writes; blended and decals: GREATER 0.001 without
   auto run = [&](const std::vector<Q>& q, float ref, bool depthWrite) {
     gl::DepthMask(depthWrite);
@@ -889,6 +892,15 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         } else {
           gl::Disable(gl::POLYGON_OFFSET_FILL);
         }
+        // blend function (interfaces-3d.md §2.10): MODULATE (DST_COLOR, ZERO), MODULATE_2 (DST_COLOR, SRC_COLOR),
+        // ADDITIVE (ONE, ONE), ADDITIVE_A (SRC_ALPHA, ONE: the street-light glows of the night maps), else alpha
+        constexpr gl::GLenum kSrcColor = 0x0300, kDstColor = 0x0306;
+        gl::GLenum src = gl::SRC_ALPHA, dst = gl::ONE_MINUS_SRC_ALPHA;
+        if (m.flags & 0x40000u) src = kDstColor, dst = gl::ZERO;
+        else if (m.flags & 0x80000u) src = kDstColor, dst = kSrcColor;
+        else if (m.flags & 0x80u) src = gl::ONE, dst = gl::ONE;
+        else if (m.flags & 0x100u) dst = gl::ONE;
+        if (src != blendSrc || dst != blendDst) gl::BlendFunc(blendSrc = src, blendDst = dst);
       }
       uint32_t prog = e.program ? e.program : program_;
       if (prog != current) {
@@ -923,11 +935,12 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   run(opaque, -1.0f, true);
   if (!shadowPass) {
     gl::Enable(gl::BLEND);  // the alpha-test queue blends too: cut-out edges are smoothed (§1.2)
-    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    gl::BlendFunc(blendSrc = gl::SRC_ALPHA, blendDst = gl::ONE_MINUS_SRC_ALPHA);
   }
   run(tested, 0.2f, true);
   run(blended, 0.001f, shadowPass);
   gl::Disable(gl::BLEND);
+  if (blendSrc != gl::SRC_ALPHA || blendDst != gl::ONE_MINUS_SRC_ALPHA) gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
   gl::DepthMask(1);
   gl::CullFace(gl::BACK);
   gl::BindVertexArray(0);

@@ -16,6 +16,7 @@
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "engine/sim.h"
+#include "engine/sky.h"
 #include "engine/tools.h"
 #include "render/math3d.h"
 
@@ -537,6 +538,7 @@ void placeTracer(VM& vm, ControlObj* c) {
     if (ControlObj* parent = c->parentControl()) px = parent->desktopLeft(), py = parent->desktopTop();
     c->left = sx - c->width * numberOf(vm, c, u"anchorX", 0.5f) - px;
     c->top = sy - c->height * numberOf(vm, c, u"anchorY", 0.5f) - py;
+    tracerFade(vm, c, eye, p);  // enableFade: visibility by distance (engine/sky.cpp)
   });
 }
 

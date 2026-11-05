@@ -94,6 +94,7 @@ struct SceneView {
   bool fog = false;  // linear, radial in eye space
   float fogStart = 0, fogEnd = 1, fogColor[4] = {0, 0, 0, 1};
   float timer = 0;  // the effect timer (uniform timer)
+  float emissionScale = 1;  // material emission × this (port day/night cycle: brighter illumination maps at night)
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms

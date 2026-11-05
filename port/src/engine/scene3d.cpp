@@ -18,6 +18,7 @@
 #include "engine/shaders.h"
 #include "engine/sim.h"
 #include "engine/skinning.h"
+#include "engine/sky.h"
 #include "engine/terrain.h"
 #include "vfs/vfs.h"
 
@@ -415,6 +416,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   v.proj = perspective(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f), float(w) / float(h), nearZ, farZ * viewScale);
   for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items);
   for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items);
+  addSkyItems(d, vm, sky, suns, eye, farZ * viewScale, items);  // sky dome and sun disc (engine/sky.cpp)
   for (Object* s : suns) {
     Light l;
     if (sunLight(vm, s, l)) v.lights.push_back(l);
@@ -428,6 +430,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       v.fogStart = floatOr(vm, fieldOf(vm, sky, u"fogOffset"), 0.0f);
       v.fogEnd = dist;
     }
+    v.emissionScale = skyEmissionScale(sky);  // port day/night cycle (engine/sky.cpp)
   }
   // environment flags: light count << 12 outside shadow passes (FUN_10051120)
   v.env = uint32_t(std::min<size_t>(v.lights.size(), 15)) << 12;
