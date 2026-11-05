@@ -20,6 +20,7 @@
 #include "engine/minimap.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
+#include "engine/ui_graphs.h"
 #include "render/gl.h"
 #include "render/glsl.h"
 #include "render/image.h"
@@ -289,6 +290,38 @@ struct GuiPass {
     d.r2d().draw(0, render::Prim::Quads, q, 4);
   }
 
+  // gsGraphCtrl items (docs/ui/graphs.md §4): in the owner's client area like image and border, layered after them
+  // (z·256+10.. series strips, +0x1e grid, +0x1f labels) and before the control's own client area (+0x80)
+  void graph(GraphObj* g) {
+    Font* f = controlFont(vm, g);
+    bool font = f && !f->glyphs.empty();
+    TextParams p;
+    p.sizeX = g->sizeX;
+    p.sizeY = g->sizeY;
+    p.spacingX = g->spacingX;
+    p.spacingY = g->spacingY;
+    p.boxX = std::max(0.0f, g->width - g->marginL - g->marginR);  // the items are sized to the client area
+    GraphGeometry geo;
+    graphGeometry(vm, g, [&](const std::u16string& s) { return font ? measureWidth(*f, s, p) : 0.0f; }, geo);
+    std::vector<GuiVertex> v;
+    for (const auto& strip : geo.strips) {
+      v.clear();
+      for (const auto& q : strip) v.push_back({q.x, q.y, 0, 0, render::argbToRgba(q.argb)});
+      d.r2d().draw(0, render::Prim::LineStrip, v.data(), v.size());
+    }
+    v.clear();
+    for (const auto& q : geo.grid) v.push_back({q.x, q.y, 0, 0, render::argbToRgba(q.argb)});
+    if (!v.empty()) d.r2d().draw(0, render::Prim::Lines, v.data(), v.size());
+    if (!font) return;
+    // the labels take the control's font, colour and shadow (gsGraphCtrl setFont / setTextShadow)
+    uint32_t colour = mulA(g->textColor, g->visibility);
+    uint32_t shadow = g->shadowPushed ? mulA(g->shadowColor, g->visibility) : 0;
+    for (const auto& l : geo.labels) {
+      if (shadow >> 24) drawText(vm, d, *f, l.text, p, l.x + g->shadowDX, l.y + g->shadowDY, shadow, false);
+      drawText(vm, d, *f, l.text, p, l.x, l.y, colour, true);
+    }
+  }
+
   void control(ControlObj* c) {
     if (!c->visible()) return;
     if (drawMapFootprint(d, vm, c)) return;  // a line primitive, no rect of its own
@@ -298,6 +331,7 @@ struct GuiPass {
     if (c->cls->name == "gsViewPort") renderViewportScene(d, vm, c);  // fills its render target first
     if (c->hasImage) image(c);
     if (c->hasBorder) border(c);
+    if (auto* g = dynamic_cast<GraphObj*>(c)) graph(g);
     // own client area: rect = client rect (no translation), intersected with the owner's scissor
     int px = sx, py = sy, pw = sw, ph = sh;
     float cx = vpX + (c->desktopLeft() + c->marginL) * unit, cy = vpY + (c->desktopTop() + c->marginT) * unit;

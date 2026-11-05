@@ -21,6 +21,7 @@
 #include "engine/tool_objects.h"
 #include "engine/tool_addstop.h"
 #include "engine/tool_tracks.h"
+#include "engine/ui_graphs.h"
 #include "engine/grid.h"
 #include "engine/host.h"
 
@@ -45,6 +46,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerObjectNatives(*vm_);
   registerSoundNatives(*vm_);
   registerUiNatives(*vm_);
+  registerGraphNatives(*vm_);
   registerDisplayNatives(*vm_);
   registerInputNatives(*vm_);
   registerSceneNatives(*vm_);

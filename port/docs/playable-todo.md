@@ -112,7 +112,13 @@ modes (the editor's roads, terrain and paint tools come later):
 - [ ] Run each campaign scenario and the sandbox for a few game years and compare with the original: monthly costs,
   maintenance, loans, ticket prices, company value, reputation, the objectives and their completion, trophies
   (`docs/ui/game-load.md`, the scenario scripts' `checkAchievements` threads).
-- [ ] Statistics and graphs (`gsGraphCtrl.update`, `reset`, `setColor` are missing) and the news ticker.
+- [x] Statistics and graphs: `gsGraphCtrl` (`setArg`, `update`, `reset`, `setColor`, `getColor`, its fields and the
+  automatic update) draws series strips, the grid and the value labels as the original computes them
+  (`engine/ui_graphs.cpp`, spec `docs/ui/graphs.md`). The graphs panel (12 company and economy graphs, the 12–60 month
+  slider, monthly updates while open) and the annual report's passenger graph work on Vienna and Berlin
+  (`port/run/graphs/v-*.png`, `b-*.png`). The coverage, usage and car-usage statistics now get real data:
+  `gsGridCitizens.get…Count(-1)` sums all classes, as the original does. The news ticker is script-only and already
+  ran (scrolling, colours, sounds, camera jump; `docs/ui/graphs.md` §6).
 
 ## 6. Sound and music (milestone 7)
 
