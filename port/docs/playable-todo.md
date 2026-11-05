@@ -119,12 +119,29 @@ modes (the editor's roads, terrain and paint tools come later):
 - [x] Saves are one-way by decision: the port loads the original's saves, but port saves never have to load in the
   original game (so port-only features may change the save content). Seated state and the vehicles' transient fields
   are written as 0 (the original's reset value) because the port doesn't model them.
+- [x] The `$portraitNames` script error after loading a port-written Berlin save (`level.scenario:2167`) was not a save
+  problem: `gsGridCitizens.getCharacter(class)` was an unported stub that returned *unset*, which passes the scripts'
+  `$character == null` test (unset ≠ null), so `$character.$portraitNames` failed. 18 random tasks of every
+  scenario level (`start_sandbox_task76`…`93`) call it, so the error hit original and port saves alike, just rarely
+  (a 93/10 000 draw every 9.51 s). Ported from `0x100ce7f0` (a uniform pick among the class's character records of
+  the era and gender; returns the character model object, null if none). Checked with
+  `REGS_TEST_SCENARIO_CALL` starting all 18 tasks on the original `berlin.gs` and on port saves of Berlin, Vienna
+  and Cim2: 0 script errors; port saves of all three reload with the month's books closing exactly.
 
 ## 5. Economy, scenarios and campaign
 
-- [ ] Run each campaign scenario and the sandbox for a few game years and compare with the original: monthly costs,
-  maintenance, loans, ticket prices, company value, reputation, the objectives and their completion, trophies
-  (`docs/ui/game-load.md`, the scenario scripts' `checkAchievements` threads).
+- [x] Economy check (`docs/simulation/economy.md`, `REGS_DEBUG_ECONOMY=1`): the scripts' formulas written down
+  and recomputed against the port's numbers; every month of every run closes exactly (money moved = fares +
+  penalties + sales + purchases + running costs). Berlin save 38 months (maintenance, wages identical to the
+  original's last month in the save; energy consistent; coverage and passengers in the save's range; board and
+  customer ratings recomputed), campaign scenario 1 from the menu for 19 months (a task accepted and completed
+  with its cash and reputation reward, two achievements, the annual report), a new Wien sandbox with a loan
+  (annuity 223,70 and the monthly balance to the cent), Vienna and Cim2 sandbox saves. Fixed on the way:
+  `gsGridCitizens.getCharacter` and `clearGameData` (were stubs). Script quirk kept as in the original:
+  `monthlyProfit` uses the previous month's fares (§2 of the spec).
+- [ ] Still to run: the tutorial past its first task, scenario 2 and later scenarios, a whole campaign; the
+  demonstrations and parades (`gsGridItemController.activate`/`deactivate` are stubs, the ticker shows but the
+  crowd items do not appear); `setClusterData` (scenario 4).
 - [x] Statistics and graphs: `gsGraphCtrl` (`setArg`, `update`, `reset`, `setColor`, `getColor`, its fields and the
   automatic update) draws series strips, the grid and the value labels as the original computes them
   (`engine/ui_graphs.cpp`, spec `docs/ui/graphs.md`). The graphs panel (12 company and economy graphs, the 12–60 month

@@ -2513,6 +2513,15 @@ void registerCitizenNatives(VM& vm) {
       return Value();
     });
   }
+  // clearGameData (0x100cfdc0 → 0x100cfce0, L:0x0815e390): empties the 7 character pools and the 13×7 car and fleet
+  // pools, i.e. resetCharacters + resetCars. game.script calls it before its addCharacter / addCar lists, so a
+  // second game in the same session does not get every record twice.
+  implement(vm, "gsGridCitizens", u"clearGameData", [bump](VM& v, Object* s, int, const Value*) {
+    s->fieldValues.erase(u"<charPools>");
+    s->fieldValues.erase(u"<carPools>");
+    bump(v, s);
+    return Value();
+  });
   auto setTable = [](VM& v, Object* m, const char16_t* key, size_t i, const Value& val) {
     Value& slot = m->fieldValues[key];
     if (!slot.array()) slot = Value::heap(VT::Array, make<ArrayObj>().get());
@@ -2636,6 +2645,22 @@ void registerCitizenNatives(VM& vm) {
     if (it == s->citizenById.end()) it = s->citizenById.begin();
     Object* c = citizenController(*s, it->second);
     return c ? Value::heap(VT::Object, c) : Value::null();
+  });
+
+  // getCharacter(class[, gender]) (0x100ce7f0, L:0x08157710): a uniform pick among the class's addCharacter records
+  // of the era (modelMask) and gender (−1 or absent: any); returns the record's character model object (the one
+  // whose script set $portraitNames, $portraits, $gender), null if none. The scenarios' random tasks take a
+  // petitioner's portrait from it. Unported, the stub returned unset, which passes the scripts' `== null` test and
+  // then failed with 'Undefined member name "$portraitNames"' (sandbox tasks 75-93 of every scenario level).
+  implement(vm, "gsGridCitizens", u"getCharacter", [stateFor](VM& v, Object* o, int argc, const Value* a) {
+    SimState* s = stateFor(o);
+    int cls = v.toInt(a[0]);
+    if (!s || cls < 0 || cls > 6) return Value::null();
+    int k = pickCharacter(*s, cls, argc > 1 ? v.toInt(a[1]) : -1);
+    if (k < 0) return Value::null();
+    const CharacterModel& cm = s->charPools[cls][size_t(k)];
+    Object* m = cm.model >= 0 ? s->models[size_t(cm.model)].object : nullptr;
+    return m ? Value::heap(VT::Object, m) : Value::null();
   });
 
   // ---- gsGridCitizenController ----

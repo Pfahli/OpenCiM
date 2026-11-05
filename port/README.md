@@ -51,6 +51,10 @@ shipped maps with the loaded templates and compares them with the editor's saved
 `REGS_DEBUG_PICK=1` (logs each newly hovered item or vehicle), `REGS_DEBUG_TOOLS=1` (pieces and time of each rebuilt track preview; `=2` lists the pieces), `REGS_DEBUG_HALT=1` (where each line vehicle stands at a halt: front, rear and middle along the platform node; how many nodes it pulled past the platform), `REGS_REPORT_MISSING=1` (lists the unimplemented natives
 the scripts called, at exit), `REGS_DEBUG_GROUPS=1` (the script thread groups' pause count, speed and time every 300
 frames), `REGS_DEBUG_SAVE_AT=<ticks>:<name>` (saves the game after that many simulation ticks, for round trips),
+`REGS_DEBUG_ECONOMY=1` (after every month and year: the money, each book entry, loans, reputation, company value,
+the annual report's inputs and the objectives, and whether the money moved exactly by the month's books;
+`docs/simulation/economy.md`), `REGS_TEST_SCENARIO_CALL=<ticks>:<function>[,…]` (calls those scenario functions,
+e.g. `start_sandbox_task90`, through `MAIN.$scenario.callFunction` after that many simulation ticks),
 `REGS_DEBUG_FOLLOW=<line type>[:n]` (the main camera follows the n-th line vehicle of that transport type, given as
 a number: 0 bus, 1 tram, 2 metro, 3 boat, 4 helicopter; a screenshot burst `follow-turn-<n>.png` when it turns round,
 `follow-bustram-<n>.png` when a followed bus halts at a tram stop), `REGS_DEBUG_CAMERA=<item>` (puts the camera on that
