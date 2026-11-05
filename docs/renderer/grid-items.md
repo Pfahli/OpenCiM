@@ -221,6 +221,18 @@ parented items, e.g. `parking-space`/`street-tree`/fences on roads and platforms
 | default | instance | colour still 0 → own submesh-0 material `colorize` | :217-221 |
 | apply | instance | `setColor` → `setColorize(colour)` on every submesh material of LOD 0 and 1 (L:0x08181de0.c); visible only on `MATERIAL_COLORIZE` materials: `diffuse.rgb *= mix(1, colorize.rgb, mask)` with mask = normal-map alpha if a normal map exists, else diffuse alpha (`shaders/default/colorize.fragment`) | obs |
 
+**Script colour** (`gsGridItemController.setColor(colour)`, `method_setColor` `L:0x08181f90` = `W:0x100e9430`, obs H):
+`gsGridItem::setColor(gsColor(colour), true)` (`L:0x08181de0` = `W:0x100e8db0`) sets the colorize colour of every
+submesh of the item's own mesh (`item+0xc`, LOD 0 and 1); with the second argument it then walks the divisions from one
+before to one after the **root** item's footprint (follow `+0x1c` parents to the top) and calls `setColor(colour,
+false)` on every other item whose root is that root, or which is the root itself, and whose template has no colour map
+(`template+0x314 == 0`) (`:51-97`). The game scripts call it for every stop controller in `transportStopCreated`
+(`ui.script:323-327`): the scenario's `$companyColor`, else 0xFFFF0000; the shipped sandbox campaign uses 0xFF000000.
+**Port** (`engine/interaction.cpp` setColor → `GridObj::itemColorRequests`, applied in `engine/terrain.cpp`
+`applyItemColors` after the item sync): the colour becomes the item's tint in the merged division mesh
+(`TerrainCache::itemColor`) and the division rebuilds; the port paints merged items too (only COLORIZE parts change).
+Berlin's metro entrance in its company blue: `port/run/gaps/stopcolor-compare.png` (left with, right without).
+
 Foliage: `palette.bmp` 256×128 24-bit, used by 13 trees/bushes; `foliage-final.material` has diffuse (1-bit alpha →
 ALPHATEST) and a normal map whose alpha is a colour mask (→ COLORIZE), so the tint is masked by the normal-map alpha.
 
@@ -294,13 +306,40 @@ first tree, normal +Y, never indexed (bound padding, inf) (:2015-2031, :1089-109
 `growRadius(B·c·0.707)` (≈ 33.9 m); `setPosition(((x0 − (W−B)/2)·c, 0, (z0 − (L−B)/2)·c), relative = 0)`. After
 each build `updateMesh` runs on every item of the division (instances, highlights).
 
-#### 3.2.5 Base walls (ENABLE_BASE items on uneven ground) — obs M
+#### 3.2.5 Base walls (ENABLE_BASE items on uneven ground) — obs H
 
 Items with flag 0x800 (set by `fixY`, §2.3) get vertical strips along their footprint perimeter (straight edges and
 the diagonal cuts from `diagonals` nibbles) from the terrain height at each perimeter grid point up to the item y,
 material `grid.baseMaterial` (`metro/graphics/base.dds`, `engine.script:143-146`), vertex colour 0xFF808080,
 normals ±X/±Z or (±√½, 0, ±√½), uv = ((x+z)/4 or z·0.3536, −y/1024) (`createBaseVertex` L:0x08165b90.c; loop
-L:0x08166080.c:3737-4100; group :1840-1858). The exact edge enumeration was not traced line by line.
+L:0x08166080.c:3737-4249; group :1840-1858).
+
+Enumeration (obs H, `L:0x08166080.c:3737-4249`; the matching Windows body is inside `gsGridDivision::update`
+`W:0x100d6ab0`). The loop runs over the division's items with `(flags & 0x400000) == 0`, `isVisible(viewMode)` and
+flag 0x800. Item fields: x `+0x2c`, y `+0x30`, z `+0x34`, size `+0x38`/`+0x40` (after the orientation swap), rotated
+diagonals `+0x54` (nibbles d0..d3 of the low half). Each strip is `count + 1` perimeter points `P_k`, two vertices per
+point (ground `h(P_k)` = the clamped cell height, then the item's y) and two triangles per step
+`(b, b+1, b+2, b+2, b+1, b+3)`; the normal is chosen per point by `y < h(P_k)` (sunk) or not (raised):
+
+| Strip | count | P_k | normal sunk / raised | uv |
+|---|---|---|---|---|
+| diagonal 0 (corner x+sx, z) | d0 | (x+sx−d0+k, z+k) | (−√½,0,√½) / (√½,0,−√½) | z·0.3536 |
+| diagonal 1 (x+sx, z+sz) | d1 | (x+sx−k, z+sz−d1+k) | (−√½,0,−√½) / (√½,0,√½) | |
+| diagonal 2 (x, z+sz) | d2 | (x+d2−k, z+sz−k) | (√½,0,−√½) / (−√½,0,√½) | |
+| diagonal 3 (x, z) | d3 | (x+k, z+d3−k) | (√½,0,√½) / (−√½,0,−√½) | |
+| north side | sx−d3−d0 | (x+d3+k, z) | +Z / −Z | (x+z)/4 |
+| east side | sz−d1−d0 | (x+sx, z+d0+k) | −X / +X | |
+| south side | sx−d2−d1 | (x+sx−d1−k, z+sz) | −Z / +Z | |
+| west side | sz−d3−d2 | (x, z+sz−d2−k) | +X / −X | |
+
+Strips with count ≤ 0 are skipped. The winding needs no flip for sunk items: the ground vertex is then above the top
+one, which turns the triangles round together with the normal. `fixY` (`L:0x08187760.c:37-109` = `W:0x100ed530`)
+clears 0x800 for items not fully inside the map and sets it when the min or max of the clamped (sx+1)·(sz+1) footprint
+heights differs from y. **Port** (`engine/terrain.cpp` `baseWalls`, `kBase` group of the terrain mesh, both LODs since
+baseMaterial is LAYER): the flag is recomputed at build time by the same rule; `REGS_DEBUG_BASE=1` lists the walled
+items. Vienna has 530, mostly houses with walls of a few decimetres and the river quays (`platform*`, 6 m above an
+8-cell-deep bed); `port/run/gaps/base-platform.png` (the bridge stairs' foundation over the Danube) and
+`base-farm.png`.
 
 ### 3.3 Instance items — obs H
 
@@ -413,8 +452,8 @@ pos.xyz += o·y            (matrix[3] = world translation; timer = effect timer,
    0x2000000 children copy the parent's colour.
 9. **Shaders**: `default.shader` combiner already ported; add `trees.shader` alter (wind), `wave.shader` (vertex-colour
    sway) and the other `metro/shaders/effects/*` alters used by props; supply `timer` and `matrix` uniforms.
-10. **Later**: base walls (ENABLE_BASE on slopes), skeletal item animation near the camera, emitters,
-    selection/data layers.
+10. **Later**: skeletal item animation near the camera, emitters, selection/data layers (all done since; base walls
+    in §3.2.5).
 
 ---
 
@@ -422,8 +461,8 @@ pos.xyz += o·y            (matrix[3] = world translation; timer = effect timer,
 
 * Exact semantics of `gsCreateTempFileReference` for diagonal templates that ship their own `<id>b.script` (step 3 of
   §1.1): inferred that the b-script runs with the base mesh.
-* Full enumeration of base-wall quads (perimeter/diagonal cases) and the terrain-cell edge walls built when
-  `viewMode & 2` is clear (L:0x08166080.c:3292-3736): not traced.
+* The terrain-cell edge walls built when `viewMode & 2` is clear (L:0x08166080.c:3292-3736): not traced (the
+  underground view clears the cover, so none are built there; underground.md).
 * Where the packed terrain normals (`grid+0x19c`) and elevated cell-plane normals are computed (terrain/graph code).
 * Whether the template's own render mesh is ever visible (its visible bit `+0x4c & 2` was not traced for templates).
 * `distanceFactor` default (assumed 1.0).

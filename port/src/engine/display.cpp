@@ -322,11 +322,15 @@ struct GuiPass {
     }
   }
 
-  void control(ControlObj* c) {
+  // placed: the control is a child of a gsTracerOrganizer, which placed and laid it out already this frame
+  void control(ControlObj* c, bool placed = false) {
     if (!c->visible()) return;
     if (drawMapFootprint(d, vm, c)) return;  // a line primitive, no rect of its own
     placeMapPin(vm, c);
-    placeTracer(vm, c);
+    if (!placed) placeTracer(vm, c);
+    static const ClassInfo* organizerClass = vm.findClass("gsTracerOrganizer");
+    const bool organizer = organizerClass && c->cls->isA(organizerClass);
+    if (organizer) organizeTracers(vm, c);
     if (c->clipped()) return;
     if (c->cls->name == "gsViewPort") renderViewportScene(d, vm, c);  // fills its render target first
     if (c->hasImage) image(c);
@@ -343,7 +347,7 @@ struct GuiPass {
     if (c->hasText) text(c);
     if (c->active && c->isEdit()) caret(c);
     for (auto& k : c->children)
-      if (auto* kc = dynamic_cast<ControlObj*>(k.get())) control(kc);
+      if (auto* kc = dynamic_cast<ControlObj*>(k.get())) control(kc, organizer);
     scissor(px, py, pw, ph);
   }
 };

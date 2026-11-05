@@ -766,7 +766,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   for (int k = 0; k < 4; ++k) tint[k] = it.colorize[k] * float(p.colorize >> (k == 3 ? 24 : 16 - 8 * k) & 0xFF) / 255.0f;
   gl::Uniform4fv(l.colorize, 1, tint);
   gl::Uniform1f(l.reflection, m.reflection);
-  for (int i = 0; i < 8; ++i) gl::Uniform4fv(l.custom[i], 1, m.custom[i]);
+  for (int i = 0; i < 8; ++i) gl::Uniform4fv(l.custom[i], 1, it.layerCustom ? it.layerCustom[i] : m.custom[i]);
   if (it.hasCustom4) gl::Uniform4f(l.custom[4], it.custom4[0], it.custom4[1], m.custom[4][2], m.custom[4][3]);
   gl::UniformMatrix4fv(l.matrix, 1, 0, it.world.m);
   for (size_t i = 0; i < m.textures.size() && i < 7; ++i) {
@@ -834,7 +834,8 @@ void Renderer3D::setupFallback(const SceneView& v) {
 void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   static const GpuMaterial fallbackMaterial;
   auto materialOf = [&](const DrawItem& it, const GpuMesh::Part& p) -> const GpuMaterial& {
-    return it.materials && size_t(p.material) < it.materials->size() ? (*it.materials)[size_t(p.material)] : fallbackMaterial;
+    size_t m = it.layerMaterial >= 0 ? size_t(it.layerMaterial) : size_t(p.material);
+    return it.materials && m < it.materials->size() ? (*it.materials)[m] : fallbackMaterial;
   };
   // shadow passes (interfaces-3d.md §1.3-1.4): no decals or MATERIAL_NO_SHADOW, only valid variants, alpha cut-outs
   // in the alpha-test queue without blending
@@ -852,6 +853,10 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   for (const DrawItem& it : items) {
     if (!it.mesh || (it.shadowOnly && !shadowPass)) continue;
     for (const auto& p : it.mesh->parts) {
+      if (it.layerMaterial >= 0) {  // a layer: only over the parts with a layerable material of their own
+        if (!it.materials || size_t(p.material) >= it.materials->size()) continue;
+        if (!((*it.materials)[size_t(p.material)].flags & 0x400000u)) continue;
+      }
       const GpuMaterial& m = materialOf(it, p);
       uint32_t prog = m.programFor(v.env);
       if (shadowPass && (!prog || (m.flags & (kMatNoShadow | kMatDecal)))) continue;

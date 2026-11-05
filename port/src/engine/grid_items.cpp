@@ -154,6 +154,7 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
     tp.length = std::max(1, fieldInt(vm, o, u"length", 1));
     tp.type = fieldInt(vm, o, u"type", 0);
     tp.flags = uint32_t(fieldInt(vm, o, u"flags", 0));
+    tp.diagonals = uint32_t(fieldInt(vm, o, u"diagonals", 0));
     tp.storeMesh = fieldInt(vm, o, u"storeMesh", 0) != 0;
     tp.vertexGeneration = fieldInt(vm, o, u"vertexGeneration", 0) != 0;
     tp.bake = o->loadYaw != 0;

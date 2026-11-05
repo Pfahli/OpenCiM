@@ -139,6 +139,11 @@ struct DrawItem {
   float custom4[2] = {0, 0};
   // skin matrices per skeleton bone for skinned meshes (docs/renderer/skinning.md); null = bind pose
   std::shared_ptr<const std::vector<Mat4>> bones;
+  // a layer over the mesh (gsIMesh::addLayer(material, layerableOnly = true), terrain.md §5 data layer): only the parts
+  // whose own material is MATERIAL_LAYERABLE (0x400000), drawn with (*materials)[layerMaterial] and, when set, these
+  // custom0..7 instead of the material's
+  int layerMaterial = -1;
+  const float (*layerCustom)[4] = nullptr;
 };
 
 // how skinned meshes are laid out for the combiner's skinning variant (default.shader: $indexingInShaders)

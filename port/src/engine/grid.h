@@ -74,6 +74,13 @@ class GridObj : public script::Object {
   // 0x180 the underground view. viewVersion moves when a change in bits 0xfe rebuilt the cover (write_viewMode).
   uint32_t viewMode = 0xFE;
   uint64_t viewVersion = 0;
+  // gsGridItemController.setColor (gsGridItem::setColor L:0x08181de0): colourise requests the renderer applies to the
+  // item tints after its next item sync (engine/terrain.cpp); recurse = also the items of the same root around it
+  struct ItemColorRequest {
+    uint32_t item = 0, argb = 0;
+    bool recurse = true;
+  };
+  std::vector<ItemColorRequest> itemColorRequests;
   bool underground() const { return viewMode == 0x180; }
 
   // gsGrid.tick (0x100c48c0): the simulation in sub-steps, then the modules

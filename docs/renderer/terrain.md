@@ -157,7 +157,7 @@ Material pointers are `gsMaterialVariant` (`+0x18` = `gsIMaterial`). Offsets Lin
 | base walls | underground cover edges; item foundations, §8.3 | 0 | `baseMaterial` `0x148/0x180` | `:1840-1862` |
 | earth plane | underground only (`¬(viewMode & 2)`), §8.3 | 0 | `earthMaterial` | `:567-590, 1247-1266` |
 | highlight + / − | `f & 0x4000`, `0x8000` selects negative; same fan, `createVertex` | 0 | `positiveMaterial` `0x150/0x188`, `negativeMaterial` `0x154/0x18c` | `:658-800, 1788-1839` |
-| data layer | clone of every `MATERIAL_LAYERABLE` submesh (`gsIMesh::addLayer`) with `custom0..7` = 8 data points | 0 or 1 | `dataMaterial` `0x180/0x1b8` | `L:0x081635d0.c` |
+| data layer | clone of every `MATERIAL_LAYERABLE` submesh (`gsIMesh::addLayer`) with `custom0..7` = 8 area highlights (the stops' catchment circles), §5.2 | 0 or 1 | `dataMaterial` `0x180/0x1b8` | `L:0x081635d0.c` |
 | — | `reservedMaterial` `0x184/0x1bc` is created and scripted but **no renderer reader was found** | | | `L:0x0813af10.c`, grep |
 
 Pavement and field cells therefore never appear in the terrain group in the normal view; the yard/field triangles
@@ -188,6 +188,39 @@ styles 0..3 only. Texture paths are `metro/graphics/*.dds` in `metro.gs` except 
 `cliff.dds` (DXT5, 1024²). The `showGrid` key toggle swaps `material` to `terrain/grid.shader` + `terrain2.dds`
 (`metro/scripts/controls.script:292-301`); it is a debug view (height-band colours from `alter-color.*`), not needed
 for normal rendering.
+
+### 5.2 Data layer: area highlights (the stops' catchment circles)
+
+The only producer of the division data layer is the area-highlight list (obs H):
+
+| Step | Behaviour | Evidence |
+|---|---|---|
+| add | `gsGrid::addAreaHighlight(x, z, r, colour)`: for every division whose cells overlap `round((x ± r + W·cs/2)/cs) ∓ 4` (and the same in z), shifted by `bucketShift`, push a node `{x, z, r, colour, next}` to the division's list `+0x1c` and run `updateDataLayer` | `L:0x08142940` = `W:0x100b6e20` |
+| remove | `removeAreaHighlight`: the same divisions, the node with equal x/z/r unlinked | `L:0x08142ae0` = `W:0x100b6fd0` |
+| layer | `updateDataLayer` (`L:0x08165f60`): items `updateMesh`, then with a list, a mesh and the division in range the layer part (`L:0x081635d0`): `addLayer(dataMaterial, layerableOnly = true, lod)` once, the list bubble-sorted by distance to the division centre, `custom0..7` = `(x, 0, z, r)` of the first 8, the rest `(0, 0, 0, −1000)`; without a list the layer is removed | `L:0x081635d0.c:57-150` |
+| shader | `selection/data.shader`: POSITION only, MATRIX, CUSTOM0..7. Vertex: `v_offset_i = (matrix·pos).xz − custom_i.xz`. Fragment: `d = min_i(|v_offset_i| − custom_i.w)`, colour `rgb·max(inArea, 1 − smoothstep(0.3, 0.8, |d|))`, alpha `a·(1 − smoothstep(0.5, 1, |d|))`: a white ring about 1 unit wide at the radius (alpha 0.75 from diffuse 0xC0FFFFFF), nothing inside | `S:selection/data.*` |
+
+Callers: `gsTransportStopController::statusUpdated` (`L:0x081b6e70` = `W:0x10110f80`) adds the stop's circle when its
+visible status bit 2 is set and removes it when cleared; `destroy` (`L:0x081b9790.c:57-62`) removes it. Centre =
+the item's footprint centre `((x + sx/2) − W/2)·cs`, `((z + sz/2) − L/2)·cs` (integer halves), radius `+0x124` from
+`gsTransportStopController::create` (`L:0x081c2120.c:44-83` = `W:0x10119070`): 100 for bus and tram stops (item types
+2, 5, 6, 10-12), 150 for metro stations, docks and heliports. `gsGridItem::setSelected` (`L:0x08185a70`) adds
+`size·cs·1.667` circles for MARKER items (type 0x15, only with `grid+0x22c`, the editor).
+
+The scripts make stops visible (so circled) in two places: while a stop tool is active, every stop of the tool's type
+(`ui.script:612-628`; previews and stops created meanwhile in `transportStopCreated`, `ui.script:318-322`), and the
+stop shown in the corner view (`secondaryview.script:688-691, 759-761`). Hovering alone shows no circle.
+
+Only `MATERIAL_LAYERABLE` parts carry the layer, and only the terrain materials of `engine.script` set that flag (no
+object material or script does), so the ring shows on terrain, yards, fields, base and edge walls and is hidden where
+roads and buildings cover the ground.
+
+**Port** (`engine/terrain.cpp` `collectGrid`, `engine/interaction.cpp` `visibleStopCircles`, `render/renderer3d`
+`DrawItem::layerMaterial`): the circles are recollected every frame from the live stop controllers with bit 2 (the
+simulation's stops, the picking and preview controllers) instead of an add/remove list; each drawn division with a
+circle in range draws its terrain and item meshes a second time with `dataMaterial` over their layerable parts and its
+own `custom0..7`. Screenshots: `port/run/gaps/place-circles.png` (placing a bus stop, Berlin),
+`port/run/gaps/sel-stop-circle.png` (a selected tram stop, Vienna).
 
 ---
 
@@ -326,6 +359,14 @@ Only on **map-border** sides of border divisions (in the normal view). For each 
 water cell along the side (`b_i, b_i+1, t_i · t_i, b_i+1, t_i+1`). `waterEdge.shader`: per-pixel lit, colour =
 `(ambient + diffuse)·0.5 + specular`, alpha = 0.75 (material diffuse alpha 0xC0); two-sided.
 
+Details (`L:0x08166080.c:296-345, 555-563, 4684-4979`; `createWaterVertex` `L:0x08165e10` = `W:0x100d6810`): the side
+flags are `param_2 == 0` (x−), `param_2 == W − n` (x+), likewise z; a side counts its water cells (`f & 0x2000` of the
+cell column `dx` resp. `dx + n − 1`, row `dz` resp. `dz + n − 1`) while the cells are classified; the corner heights
+come from those same cells (the last corner from the next row or column when inside the map, else repeated). In the
+underground view a side flag of −1 (an inner side towards a division without tunnels) clamps the top to −0x800, but the
+underground view has no water bit, so the curtain only exists in the normal view. **Port** (`engine/terrain.cpp`
+`waterEdges`): as described, normal view only; `port/run/gaps/water-s1.png` (Vienna, the Danube at the south edge).
+
 ### 7.4 What does not exist
 
 There is **no separate sea plane** and no water outside the map: all water is the per-cell surface above. The
@@ -370,7 +411,10 @@ vertex normal, §3) and `seafloor.dds` by uv2.x (corner touches a water cell). B
   (`L:0x08166080.c:2375-2470, 3292-3736`, `L:0x08165a90.c`, `L:0x08163810.c`, `L:0x08165b90.c`).
 * Items with runtime flag `0x800` at `item+0x48` ("needs base", set by `gsGridItem::fixY` when the ground under a
   `GRID_ITEM_ENABLE_BASE` footprint is uneven, `L:0x08187760.c:106-108`) get foundation walls between the item's y
-  and the terrain along the footprint, in every view (`L:0x08166080.c:3737-4249`). This belongs to item rendering.
+  and the terrain along the footprint, in every view (`L:0x08166080.c:3737-4249`). The full enumeration is in
+  [grid-items.md](grid-items.md) §3.2.5.
+
+The map-edge walls (§8.1) were already ported; checked on screen: `port/run/gaps/edge-s.png` (Vienna, south edge).
 
 ---
 

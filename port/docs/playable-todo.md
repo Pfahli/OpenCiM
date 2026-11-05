@@ -48,9 +48,12 @@ modes (the editor's roads, terrain and paint tools come later):
 - [x] Create, edit and delete lines (`docs/ui/lines.md`, `engine/sim_lines.cpp`): new lines, the add-stop tool
   (`GRIDMODE_ADD_STOP`, `engine/tool_addstop.cpp`: hover over a stop or its bubble, click, close the ring), moving
   and deleting stops, pausing (vehicles leave the map), deleting lines; new lines route, run and survive a save and
-  reload (Vienna, Berlin bus and tram lines checked). Route strips on the map (`engine/sim_paths.cpp`), stop bubbles
-  (`transportStopCreated`). Still open: boat strips smoothed as the original, the strips' coverage counters,
-  `gsGridItemController.setColor` (stops in the company colour), the bubbles' overlap layout.
+  reload (Vienna, Berlin bus and tram lines checked). Route strips on the map (`engine/sim_paths.cpp`; water bus legs
+  smoothed as the original, a C1 Bézier chain through every (nodes/8)-th node, `docs/ui/lines.md` §3,
+  `port/run/gaps/boat-compare.png`), stop bubbles (`transportStopCreated`), stops in the company colour
+  (`gsGridItemController.setColor`, `docs/renderer/grid-items.md` §2.5; Berlin's blue,
+  `port/run/gaps/stopcolor-compare.png`), the bubbles' overlap layout (`gsTracerOrganizer`, `docs/ui/lines.md` §4.1,
+  `port/run/gaps/busy-compare.png`). Still open: the strips' coverage counters.
 - [x] Buy, sell and assign vehicles: shop with the turning 3D previews (`renderViewport`), depot, to/from the line,
   selling; usage and condition gauges (`gsGaugeCtrl`); condition and repairs are script-side and run.
 - [x] `routeExists`, `countStops`, `countLines`, `calculateCoverage`, `countConnectedStops`.
@@ -151,8 +154,15 @@ modes (the editor's roads, terrain and paint tools come later):
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
   cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;
   `port/run/barriers/sheet-f-rise.png`, `sheet-f-wait.png`).
-- [ ] Map-edge base walls and the water-edge curtain, scene nodes attached to bones, the stop catchment
-  circle, the tracer organizer layout for overlapping pins.
+- [x] Map-edge walls (were already drawn; `port/run/gaps/edge-s.png`), the foundation walls under `ENABLE_BASE` items
+  on uneven ground (`docs/renderer/grid-items.md` §3.2.5: the four diagonal cuts and the straight sides, 530 items in
+  Vienna, mostly houses and the river quays; `port/run/gaps/base-platform.png`), the water-edge curtain where the map's
+  border meets water (`docs/renderer/terrain.md` §7.3; `port/run/gaps/water-s1.png`), the stop catchment circle (the
+  grid's data layer with `dataMaterial`, `terrain.md` §5.2: every stop of a stop tool's kind and the preview while
+  placing, the stop in the corner view when selected; `port/run/gaps/place-circles.png`, `sel-stop-circle.png`), the
+  tracer organizer (`docs/ui/lines.md` §4.1; `port/run/gaps/busy-compare.png`). All in `engine/terrain.cpp`,
+  `engine/interaction.cpp`, `engine/display.cpp`, `engine/sim_paths.cpp`.
+- [ ] Scene nodes attached to bones.
 
 ## 8. Map editor
 
