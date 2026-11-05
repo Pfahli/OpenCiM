@@ -152,17 +152,63 @@ bool Display::open(const platform::WindowDesc& desc, std::string* error) {
   return true;
 }
 
-float Display::chooseUiScale(VM& vm, int w, int h) {
+float Display::pickUiScale(VM& vm, int w, int h) const {
   // the graphics page's choices 1×, 1.5×, 2×; no setting: 2× on windows taller than 1800 px (4K-class screens)
   float want = settingNumber(vm, u"regsUiScale", h > 1800 ? 2.0f : 1.0f);
   float s = want >= 1.75f ? 2.0f : want >= 1.25f ? 1.5f : 1.0f;
   // the scripts' window stays at least 1024 × 720: the main menu's buttons run into its bottom links below about
   // 660 script pixels, and the graphics page is 1000 wide. Smaller scaled windows step down to the next scale
   while (s > 1.0f && (float(w) / s < 1024.0f || float(h) / s < 720.0f)) s -= 0.5f;
-  if (s != want && settingNumber(vm, u"regsUiScale", 0) != 0)
-    LOG_WARN("ui scale %.1f does not fit a %dx%d window, using %.1f", double(want), w, h, double(s));
+  return s;
+}
+
+float Display::chooseUiScale(VM& vm, int w, int h) {
+  float s = pickUiScale(vm, w, h);
+  float want = settingNumber(vm, u"regsUiScale", 0);
+  if (want != 0 && s != want) LOG_WARN("ui scale %.1f does not fit a %dx%d window, using %.1f", double(want), w, h, double(s));
   if (const char* f = std::getenv("REGS_UI_FILTER")) uiFilterSharp_ = std::string(f) != "linear";
   return uiScale = s;
+}
+
+int Display::applyDisplay(VM& vm, bool fullscreen, int w, int h, bool relayout) {
+  // the graphics page's fullscreen, resolution and UI scale while the game runs (docs/ui/scaling.md §6): the same
+  // window gets a new style and size, the GL context stays. Fullscreen is borderless over the monitor (the desktop's
+  // resolution and refresh rate), so the resolution sizes the window when it is not fullscreen
+  w = std::max(320, w);
+  h = std::max(240, h);
+  int rw = w, rh = h;
+  if (fullscreen) window_->monitorSize(rw, rh);
+  bool sameWindow = fullscreen == window_->fullscreen() && rw == window_->width() && rh == window_->height();
+  float scale = pickUiScale(vm, rw, rh);
+  if (sameWindow && scale == uiScale) return 0;
+  Object* win = windowObj_.get();
+  int oldSW = vm.toInt(field(vm, win, u"width")), oldSH = vm.toInt(field(vm, win, u"height"));
+  int sw = int(std::lround(float(rw) / scale)), sh = int(std::lround(float(rh) / scale));
+  if ((sw != oldSW || sh != oldSH) && !relayout) return 2;
+  int oldW = window_->width(), oldH = window_->height();
+  float oldScale = uiScale;
+  if (!sameWindow) window_->setMode(fullscreen, w, h);
+  rw = window_->width();  // a window larger than the screen may come out smaller than asked
+  rh = window_->height();
+  chooseUiScale(vm, rw, rh);
+  if (uiScale != oldScale) dropGuiTargets();  // they are sized texture × scale
+  if (rw != oldW || rh != oldH) resetSizedEffects(*this);
+  sw = int(std::lround(float(rw) / uiScale));
+  sh = int(std::lround(float(rh) / uiScale));
+  LOG_INFO("display: %s %dx%d, ui scale %.1f (scripts' window %dx%d)", window_->fullscreen() ? "fullscreen" : "window", rw,
+           rh, double(uiScale), sw, sh);
+  if (sw == oldSW && sh == oldSH) return 1;
+  win->fieldValues[u"width"] = Value::integer(sw);
+  win->fieldValues[u"height"] = Value::integer(sh);
+  return 2;
+}
+
+void Display::dropGuiTargets() {
+  for (auto& [t, rt] : targets_) {
+    if (t->gl == rt.color) t->gl = 0;
+    r3d_.destroyTarget(rt);
+  }
+  targets_.clear();
 }
 
 uint32_t Display::texture(VM& vm, TextureObj* t) {
@@ -577,6 +623,22 @@ void registerDisplayNatives(VM& vm) {
   implement(vm, "gsVideo_OGL", u"getEffectTimer", [](VM&, Object*, int, const Value*) {
     Display* d = display();
     return Value::real(d ? d->effectTimer : 0.0f);
+  });
+  // port: window.regsApplyDisplay(fullscreen, width, height [, relayout]) for the graphics page (Display::applyDisplay)
+  if (ClassInfo* c = vm.findClass("gsWindow_OGL")) {
+    addMethod(c, u"regsApplyDisplay", 3, 4);
+    addMethod(c, u"regsUiScale", 0, 0);
+  }
+  // window.regsUiScale(): the UI scale in use (the automatic choice when the setting is unset)
+  implement(vm, "gsWindow_OGL", u"regsUiScale", [](VM&, Object*, int, const Value*) {
+    Display* d = display();
+    return Value::real(d ? d->uiScale : 1.0f);
+  });
+  implement(vm, "gsWindow_OGL", u"regsApplyDisplay", [](VM& v, Object* s, int argc, const Value* a) {
+    Display* d = display();
+    if (!d || d->windowObject() != s) return Value::integer(0);
+    bool relayout = argc > 3 && v.truthy(a[3]);
+    return Value::integer(d->applyDisplay(v, v.truthy(a[0]), v.toInt(a[1]), v.toInt(a[2]), relayout));
   });
   // window.init(): gsWindow_OGL::start (0x10059200) creates the OS window and context from the fields
   implement(vm, "gsWindow_OGL", u"init", [](VM& v, Object* s, int, const Value*) {

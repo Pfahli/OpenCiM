@@ -180,10 +180,10 @@ for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
 MAIN.$ui.setTooltip($regsRendererButtons[1], $regs.$regs_renderer_planned, 0, -1);
 
 // ---- UI scale (left column, under the graphics engine): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
-// window opens (Display::chooseUiScale, docs/ui/scaling.md). Unset: 2x on windows taller
-// than 1800 px, else 1x; the setting is written only when the player picks another value.
+// window opens or changes (Display::chooseUiScale, docs/ui/scaling.md). Unset: 2x on windows taller than 1800 px,
+// else 1x (the page shows the scale in use); the setting is written only when the player picks another value.
 $uiScaleValues = [1.0, 1.5, 2.0];
-$regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : ($screenheight > 1800 ? 2.0 : 1.0));
+$regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : MAIN.$window.regsUiScale());
 $uiScale = $regsUiScaleShown;
 regsLabel(60, 474, $regs.$regs_uiScale_item);
 $regsUiScaleButtons = [];
@@ -269,7 +269,6 @@ function save() {
   regsBaseSave();
   $requireRestart = false;
   if (MAIN.$scene : false) if (defined MAIN.$regsEngine) MAIN.$regsEngine.regsApplyEffects();
-  if ($regsOldDisplay[0] != $fullscreen || $regsOldDisplay[1] != $screenwidth || $regsOldDisplay[2] != $screenheight || $regsOldDisplay[3] != $screencolors || $regsOldDisplay[4] != $frequency) $requireRestart = true;
   $settings.$regsViewDistance = $viewDistance;
   $settings.$regsDetailDistance = $detailDistance;
   $settings.$fpsLimit = $fpsValues[$fpsLimit];
@@ -280,9 +279,15 @@ function save() {
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
   $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
   $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps", "regsDayNight");
-  if ($uiScale != $regsUiScaleShown) {   // the GUI is laid out once from the window size: the game's restart notice
+  $regsNewScale = $uiScale != $regsUiScaleShown;
+  if ($regsNewScale) {
     $settings.$regsUiScale = $uiScaleValues[$uiScale];
     $settings.exportVariables("regsUiScale");
-    $requireRestart = true;
+  }
+  // fullscreen, resolution and UI scale: the engine resizes the window (fullscreen is borderless over the monitor, so
+  // frequency and colour depth change nothing). While the scripts' window size stays the same the GUI stays as it is;
+  // a new size needs the GUI laid out again, which only a restart does (result 2: nothing changed, the notice shows)
+  if ($regsNewScale || $regsOldDisplay[0] != $fullscreen || $regsOldDisplay[1] != $screenwidth || $regsOldDisplay[2] != $screenheight) {
+    if (MAIN.$window.regsApplyDisplay($fullscreen, $screenwidth, $screenheight) == 2) $requireRestart = true;
   }
 }

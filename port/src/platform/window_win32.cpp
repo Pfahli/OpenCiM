@@ -158,6 +158,42 @@ class Win32Window final : public Window {
   void showCursor(bool on) override { cursor_ = on; }
   int width() const override { return width_; }
   int height() const override { return height_; }
+  bool fullscreen() const override { return fullscreen_; }
+  void monitorSize(int& w, int& h) const override {
+    MONITORINFO mi{sizeof mi};
+    GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY), &mi);
+    w = mi.rcMonitor.right - mi.rcMonitor.left;
+    h = mi.rcMonitor.bottom - mi.rcMonitor.top;
+  }
+  // the graphics page while the game runs: a new style and size on the same window, so the pixel format and the GL
+  // context (every texture, buffer and program) stay
+  void setMode(bool fullscreen, int w, int h) override {
+    MONITORINFO mi{sizeof mi};
+    GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY), &mi);
+    DWORD visible = DWORD(GetWindowLongPtrW(hwnd_, GWL_STYLE)) & WS_VISIBLE;
+    DWORD style = (fullscreen ? WS_POPUP : WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX) | visible;
+    RECT r = mi.rcMonitor;
+    if (!fullscreen) {
+      RECT frame{0, 0, w, h};
+      AdjustWindowRectEx(&frame, style, FALSE, 0);
+      int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
+      RECT cur;
+      GetWindowRect(hwnd_, &cur);
+      int x = cur.left, y = cur.top;
+      if (fullscreen_) {  // from fullscreen: centred in the work area
+        x = mi.rcWork.left + std::max(0, int(mi.rcWork.right - mi.rcWork.left - fw) / 2);
+        y = mi.rcWork.top + std::max(0, int(mi.rcWork.bottom - mi.rcWork.top - fh) / 2);
+      }
+      r = RECT{x, y, x + fw, y + fh};
+    }
+    SetWindowLongPtrW(hwnd_, GWL_STYLE, LONG_PTR(style));
+    SetWindowPos(hwnd_, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    fullscreen_ = fullscreen;
+    RECT cr;
+    GetClientRect(hwnd_, &cr);
+    width_ = cr.right;
+    height_ = cr.bottom;
+  }
   int dpi() const override {
     DPI_AWARENESS a = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hwnd_));
     return a == DPI_AWARENESS_PER_MONITOR_AWARE ? int(GetDpiForWindow(hwnd_)) : 0;

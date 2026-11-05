@@ -12,7 +12,9 @@ namespace regs::platform {
 struct WindowDesc {
   int width = 1024, height = 768;
   std::u16string title = u"Cities in Motion";
-  bool fullscreen = false;  // borderless at desktop size; the game's exclusive mode change is not reproduced
+  // borderless at desktop size; the game's exclusive mode change is not reproduced (the desktop's resolution and
+  // refresh rate stay; the resolution setting sizes the window when not fullscreen)
+  bool fullscreen = false;
   bool vsync = true;
   bool visible = true;  // false: a hidden window that only provides a context (tools)
   int samples = 0;      // MSAA samples of the window surface (window.antialiasing without postProcess)
@@ -43,6 +45,12 @@ class Window {
   virtual void showCursor(bool on) = 0;
   virtual int width() const = 0;   // client size in pixels
   virtual int height() const = 0;
+  // Switches between a captioned window with a w × h client area and fullscreen (borderless over the monitor the
+  // window is on), keeping the OpenGL context; afterwards width()/height() give the new client size.
+  virtual void setMode(bool fullscreen, int w, int h) = 0;
+  virtual bool fullscreen() const = 0;
+  // the size of the monitor the window is on (the client size fullscreen would give)
+  virtual void monitorSize(int& w, int& h) const = 0;
   // The monitor's DPI as the window sees it (96 = 100 %); 0 when the process is not DPI aware (the OS would then
   // stretch the window's pixels). The game sizes its interface itself (UI scale), never through the OS.
   virtual int dpi() const { return 96; }
