@@ -106,9 +106,8 @@ it is, what already exists, and the open decisions. Order is not priority.
     animation of buses and trams are mirrored (model mirrored or its door paths swapped), so passengers board on
     the kerb side.
   * Road markings and stop props that show a side (arrows, shelters) would need mirrored placement or meshes.
-  * Open: which pieces carry side-specific geometry (stop bays, tram platforms on one side, motorway ramps), whether
-    the lane flags allow a pure mirror without per-piece data, and saves exchanged with the original game (only
-    right-hand ones load there).
+  * Open: which pieces carry side-specific geometry (stop bays, tram platforms on one side, motorway ramps), and
+    whether the lane flags allow a pure mirror without per-piece data. (Saves need not load in the original game.)
 * **Jam relief for line vehicles.** In the original, trams (and buses) can deadlock each other and the traffic behind
   them backs up for good; the engine only fires `onJammed` after 180 s of waiting (`0x101152a0.c`, transport.md
   §4.3), which `linepanel.script` turns into a ticker message. The port could resolve it:
@@ -175,8 +174,7 @@ it is, what already exists, and the open decisions. Order is not priority.
   `docs/simulation/README.md` "For a reimplementation") or a server-authoritative model; open.
 * **Cloud saves.** Keep save games in sync between computers.
   * What there is: saves are single GS10 packages (`userdata/saves/<name>.gs`, zlib-compressed, about 3 MB for a large
-    city), written in one go by `writePackage`, so a save is one file to upload or download, and the original game can
-    read them.
+    city), written in one go by `writePackage`, so a save is one file to upload or download.
   * Options, from simplest to most work:
     1. **Synced folder:** let the player pick a saves folder inside OneDrive, Dropbox, Google Drive or similar; the
        service does the sync. Almost no code: a setting next to `--documents`.

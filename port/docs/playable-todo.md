@@ -104,8 +104,9 @@ modes (the editor's roads, terrain and paint tools come later):
 - [x] Saves keep the live simulation, including boats, aircraft, animals and the rest of each pedestrian's walk (the
   original's direction codes, also read from the original's saves: 99 % of Cim2's walks continue after loading).
   Round trips on Cim2, Vienna and Berlin reload matching counts.
-- [ ] Saves: try loading a port save in the original game. Seated state and the vehicles' transient fields are written
-  as 0 (the original's reset value) because the port doesn't model them.
+- [x] Saves are one-way by decision: the port loads the original's saves, but port saves never have to load in the
+  original game (so port-only features may change the save content). Seated state and the vehicles' transient fields
+  are written as 0 (the original's reset value) because the port doesn't model them.
 
 ## 5. Economy, scenarios and campaign
 
@@ -171,5 +172,5 @@ modes (the editor's roads, terrain and paint tools come later):
 
 ## 10. Parity pass (milestone 8)
 
-- [ ] Campaigns from start to finish, saves exchanged between both engines, a regression set of scripted runs
+- [ ] Campaigns from start to finish, the original's saves loading in the port, a regression set of scripted runs
   (`--at`) with reference screenshots.

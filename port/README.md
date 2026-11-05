@@ -124,8 +124,7 @@ background traffic.
 also takes a tram stop that sits in a street (small and large roads, where the tram runs in the curb lane), and its
 buses halt there in the tram's lane and serve passengers like at a bus stop; tram lines keep the stop. Tram stops in an
 avenue's middle strip or on their own track stay refused. Settings key `$regsBusAtTramStops` in `settings.script`
-(`false` turns it off for the tool; saves with such lines keep running either way, but the original game would not
-handle them). Rules and data: `docs/ui/lines.md` §6.
+(`false` turns it off for the tool; saves with such lines keep running either way). Rules and data: `docs/ui/lines.md` §6.
 
 ## Tools
 
@@ -289,7 +288,8 @@ is already specified in `docs/`.
    [layout=<name>] [at=x,y,z] [capture=<file.wav>]` plays one file (as a 3D voice with `at=`) for layout checks.
    *Mods:* a mod manager for ReGS mods (manifests, load order, script extensions, options API) is designed in
    `docs/mod-manager.md`; its base, the script-extension mechanism, already exists.
-8. **Parity pass.** Saves load in both engines, campaigns run start to finish, and mods load.
+8. **Parity pass.** The original's saves load in the port (one-way: port saves need not load in the original),
+   campaigns run start to finish, and mods load.
 
 The concrete todo list to a playable game, by priority, is `docs/playable-todo.md`.
 
