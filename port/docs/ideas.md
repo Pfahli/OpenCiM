@@ -10,6 +10,20 @@ it is, what already exists, and the open decisions. Order is not priority.
 * **High-resolution textures.** Replacement texture packs, loaded like ReGS mods (`docs/mod-manager.md`) without
   touching the game files.
 * **Style options.** Colour styles, distance lens blur and tilt-shift exist (graphics page). More can follow.
+* **Wider zoom, clouds and a sky.** The original has no clouds (a `cloudmap.dds` line in `engine.script` is commented
+  out and the texture was never shipped) and hides its sky dome, since the camera never reaches the horizon
+  (`docs/renderer/sky-and-night.md`).
+  * Zoom further out than the original's limit, so a whole city fits on screen (needs the view distance and the
+    item/terrain LOD bands to follow, and a far-zoom fallback for the item meshes).
+  * Clouds appear above a zoom level: a cloud layer between the camera and the city that fades in as the camera
+    rises, drifting with the wind, with matching cloud shadows moving over the map (also visible at normal zoom, as
+    an extra). Procedural (noise in a shader), so no art has to ship; an option on the graphics page ("Wolken": off /
+    shadows only / clouds and shadows).
+  * A proper sky: a procedural atmosphere (sky colour from the sun's height, haze at the horizon, sun glow) instead
+    of the plain dome, shown when the camera looks towards the horizon (a wider tilt range as an option) and at far
+    zoom; it follows the day/night option (stars and moon at night).
+  * Open: the far-zoom limit on the largest maps (performance), how the fog and the sky blend at the horizon, and
+    whether the minimap view and the far zoom meet.
 * **Stereoscopic 3D mode.** Play in 3D on 3D TVs, monitors, projectors and headsets; a "3D mode" option on the
   graphics page with the output format, a depth strength slider and "swap eyes".
   * Formats: side-by-side (half and full width), top-and-bottom, row-interlaced (passive 3D monitors), anaglyph
