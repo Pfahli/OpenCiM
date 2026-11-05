@@ -27,6 +27,9 @@ struct GridDivision {
   render::Mat4 world;   // translation to the division centre
   render::Vec3 center;  // world, y = 0
   float radius = 0;
+  // the data layer's custom0..7 (gsGridDivision::updateDataLayer L:0x081635d0): the 8 area highlights nearest to the
+  // division centre as (x, 0, z, radius), unused ones (0, 0, 0, −1000); refreshed while circles are shown
+  float layerCustom[8][4] = {};
 };
 
 // An item template as the item builder needs it (gsGridObject fields, grid-items.md §1.3).
@@ -34,6 +37,7 @@ struct GridTemplate {
   ObjectObj* object = nullptr;
   int width = 1, length = 1, type = 0;
   uint32_t flags = 0;
+  uint32_t diagonals = 0;  // gsGridObject.diagonals (4 nibbles per half), before the item's rotation
   bool storeMesh = false, vertexGeneration = false, bake = false;
   bool skinned = false;  // skeleton + skinned mesh: drawn per item and animated (collectSkinnedItems), not merged
   float animStart = 0, animLength = 0;  // doorOpenStart / doorOpenLen: the loop of gsGridItem::move
@@ -60,6 +64,7 @@ struct TerrainCache {
   // the tool highlight overlay (engine/tools.h): highlighted cells and copies of highlighted items in world space,
   // with positiveMaterial / negativeMaterial (indices into materials), rebuilt when GridObj::highlightVersion moves
   int positiveMaterial = -1, negativeMaterial = -1;
+  int dataMaterial = -1;  // grid.dataMaterial (selection/data.shader): the catchment circles' layer
   uint64_t highlightVersion = ~0ull;
   render::GpuMesh highlight;
   bool highlightBuilt = false;

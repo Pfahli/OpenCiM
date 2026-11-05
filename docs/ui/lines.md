@@ -110,11 +110,23 @@ it to 1 on the selected line: it pulses).
 * General lanes (`:767-860`): per path node after the start platform, the Bézier `p0, p0 + q0·(0,0,−L/3), p1 −
   q1·(0,0,−L/3), p1` at t = 0, ¼, ½, ¾, 1; two vertices one unit either side (u = 0 / 1), v += L/16 per step.
 * Helicopters (class 0x4000): one arc between the pads, round(0.6·cost) + 20 steps, control points lifted 100.
-* Boats (0x8000): a smoothed curve through every eighth node.
+* Boats (0x8000, `L:0x081ba9f0.c:466-663` = `W:0x101119d0.c:320-509`, obs H): `N = nodes >> 3` cubic Bézier pieces
+  (16 steps each, 17 vertex pairs and 96 indices per piece, no join between pieces), `v += 2` per step:
+  * start `A = first node's start`, `B = A + (0, 8, 0)`; the walk first advances `nodes / N` nodes;
+  * piece k < N: anchor node = the current one, `D = its start + (0, 6, 0)`; the walk advances to node
+    `(k+1)·nodes / N` (kept at the last node at the path's end) and `C = D − (that node's start − A)·0.167`
+    (`0x3e2b020c`);
+  * piece N: `D = the current (last) node's end`, `C = D + (0, 8, 0)`;
+  * after each piece `A = D`, `B = 2D − C` (C1 joins). Each step: point `bezier(A, B, C, D, t)`, side
+    `normalize(cross(tangent, +Y))`, vertices `p ± side` with u 0 / 1; the tangent is taken at `t = 1/16` for the
+    first point and `15/16` for the last.
+  * Legs under 16 nodes (N clamps to 1) advance past the path's end in the first walk (`gsGridPath::getNext`
+    `L:0x08175d40` returns null) and get no strip (inf).
 * Each strip also counts its cells into the coverage map `grid+0x1e8` (transport.md §3.5).
 
-Port: general and helicopter strips (helicopters with 24 steps and only the lift); boats use the general strip; the
-coverage counters are not written.
+Port: general, helicopter and boat strips (helicopters with 24 steps and only the lift; boat legs under 16 nodes keep
+the general strip instead of none, `engine/sim_paths.cpp`); the coverage counters are not written. Vienna's water bus
+before/after: `port/run/gaps/boat-compare.png`.
 
 ## 4. GUI pieces the panels need
 
@@ -129,6 +141,36 @@ coverage counters are not written.
 * **Stop bubbles**: the grid fires event 6 `transportStopCreated(controller)` when a STOP item's controller is made
   (`gsGridItem::gsGridItem`, `L:0x08187fc0.c:152-161`; markers get event 7); `ui.script:317-470` makes the bubble
   (passenger count, mood), sets the stop's `attractiveness` from maintenance, and binds `onMoodChange`.
+
+### 4.1 The tracer organizer (`gsTracerOrganizer`) — obs H
+
+`MAIN.$frontHud = new_tracerOrganizer($hud)` (`player.script:51-57`, full-viewport, `clickThroughSelf`); every tracer
+created as its child (stop bubbles and direction arrows `ui.script:333, 358`, the line panel's bus tracer and stop
+pins `linepanel.script:240, 916`, track end markers) is laid out by it. There is no add method and no state: the
+object is a plain gsControl (0x19c bytes, `gsNewModule<gsTracerOrganizer>` `L:0x081d4440`), its ctor
+`L:0x081d39f0` only sets the vtables and it registers no fields.
+
+`gsTracerOrganizer::move(dt)` (`L:0x081d14c0` = `W:0x100af3d0`):
+1. `gsControl::move` first (it returns 0 → stop), which moves the children: each `gsTracerCtrl::move`
+   (`L:0x081cfc00`) projects its target, `setPosition(proj − size·anchor − parent.desktop)`, or `(−2w, −2h)` when the
+   point is behind the camera or out of the frustum.
+2. Collect (`:47-103`) the children that `dynamic_cast` to gsTracerCtrl (gsPinCtrl too) with `organize` (`+0x1cb`,
+   ctor default 1, `L:0x081d38a0.c:29`) and `left > −width`, in a stack-local `multimap<float, gsTracerCtrl*>` keyed by
+   `left` (equal keys after earlier ones). Visibility, fade and the screen's other edges are not checked.
+3. Three passes (`:104-160`): for each entry A in key order and each later B while `A.left + A.width > B.key` (the key
+   is B's left at collection time):
+   * `d7 = (B.bottom − A.top)·0.33 + 0.001`, `d6 = (A.bottom − B.top)·0.33 − 0.001`; only when both are > 0:
+   * `d5 = (A.right − B.left)·0.33 − 0.002`;
+   * `d7 < d6 && d7 < d5`: A down by d7, B up by d7; else `d5 ≤ d6`: A left by d5, B right by d5; else A up by d6,
+     B down by d6 (each through the virtual `setPosition`, A's values re-read after every pair).
+   Constants as floats: 0.33 (`0x082a916c`), 0.001 (`0x0829df84`), 0.002 (`0x082a54c4`).
+4. Nothing is clamped or smoothed over time: the next frame re-projects every tracer and lays them out again.
+
+The scripts switch a bubble out of the layout while the mouse is over it (`ui.script:395-397`: `organize = false`,
+`anchorY = 0.5`, `bringToFront`) and back on leaving (`:425-426`). **Port** (`engine/interaction.cpp`
+`organizeTracers`, called from the GUI pass in `engine/display.cpp` when it reaches the organizer; its children are
+then drawn without being placed again): as above; an unset `organize` counts as true. Before/after on a Berlin
+corner: `port/run/gaps/busy-compare.png` (left without, right with).
 
 ## 5. Port notes
 
@@ -146,8 +188,9 @@ coverage counters are not written.
   only with `--community-addons`; the vehicle panel stopped with "Undefined member $type", as the original does
   without those mods. A port extension (`data/regs/extend/metro/ui/vehiclepanel/vehiclepanel.script`) now leaves
   vehicles without a template out of the shop (the save keeps them), so such saves can buy vehicles without the mods.
-* Not ported: `gsGridItemController.setColor` (the stops' company colour on their own mesh), the stop bubbles'
-  overlap layout (`gsTracerOrganizer`).
+* Stops take the company colour through `gsGridItemController.setColor` (renderer/grid-items.md §2.5, "Script
+  colour") and show their catchment circle while visible (renderer/terrain.md §5.2); the bubbles are laid out by the
+  organizer (§4.1).
 
 ## 6. Port QoL: bus lines at tram stops in a street (deviation from the original)
 

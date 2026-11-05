@@ -7,8 +7,9 @@
 // 1, two vertices a unit to either side (u = 0 / 1), v growing by L/16 per step (L/4 per node), normal +Y.
 // Helicopter legs (class 0x4000) are one arc between the pads with the inner control points 100 units up (port: the
 // original also pushes them along the pad directions and samples round(0.6·cost) + 20 steps; here 24 steps).
-// Not ported: the coverage counters the strips add to grid+0x1e8 (minimap data, transport.md §3.5) and the boat
-// branch's smoothing over every eighth node (boats use the general strip).
+// Water bus legs (class 0x8000) are smoothed: a C1 Bézier chain through every (nodes / 8)-th node (see buildStrip).
+// Not ported: the coverage counters the strips add to grid+0x1e8 (minimap data, transport.md §3.5).
+#include <algorithm>
 #include <cmath>
 
 #include "engine/display.h"
@@ -79,6 +80,37 @@ std::shared_ptr<render::GpuMesh> buildStrip(Display& d, const SimState& s, const
         strip.v += std::sqrt(render::dot(e, e)) * 0.25f;
       }
       strip.pair(p, bezierTangent(a, b, c, dd, t), i > 0);
+    }
+  } else if (line.type == 3 && st.path.size() >= 16) {
+    // a water bus (class 0x8000, L:0x081bab6f-0x081bb70d = W:0x101119d0.c:320-509): N = nodes / 8 Bézier pieces
+    // through every (nodes / N)-th node, 16 steps each, v += 2 per step. The first piece starts at the first node's
+    // start with its control 8 units up; inner anchors are their node's start 6 units up, with the incoming control
+    // D − (next anchor node's start − A) · 0.167; the last piece ends at the last node's end, control 8 units up; each
+    // piece starts with B = 2D − C of the one before (C1 joins). Tangents at t = 1/16 for the first and 15/16 for the
+    // last step. Port: legs under 16 nodes keep the general strip (the original walks past the path's end there and
+    // draws none, inf).
+    const int count = int(st.path.size()), pieces = count >> 3;
+    auto node = [&](int i) -> const LaneNode& { return G.nodes[size_t(st.path[size_t(std::clamp(i, 0, count - 1))])]; };
+    Vec3 a = node(0).p0, b = a + Vec3{0, 8, 0};
+    int current = count / pieces;
+    for (int k = 1; k <= pieces; ++k) {
+      Vec3 c, dd;
+      if (k == pieces) {
+        dd = node(current).p1;
+        c = dd + Vec3{0, 8, 0};
+      } else {
+        int next = std::min((k + 1) * count / pieces, count - 1);
+        dd = node(current).p0 + Vec3{0, 6, 0};
+        c = dd - (node(next).p0 - a) * 0.167f;
+        current = next;
+      }
+      for (int i = 0; i <= 16; ++i) {
+        float t = float(i) * 0.0625f, tt = i == 0 ? 0.0625f : i == 16 ? 0.9375f : t;
+        if (i > 0) strip.v += 2.0f;
+        strip.pair(bezier(a, b, c, dd, t), bezierTangent(a, b, c, dd, tt), i > 0);
+      }
+      a = dd;
+      b = dd * 2.0f - c;
     }
   } else {
     for (int nd : st.path) {

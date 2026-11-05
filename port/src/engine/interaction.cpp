@@ -16,6 +16,7 @@
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "engine/sim.h"
+#include "engine/sim_state.h"
 #include "engine/sky.h"
 #include "engine/tools.h"
 #include "render/math3d.h"
@@ -369,6 +370,44 @@ Object* itemController(VM& vm, GridObj* grid, uint32_t i) {
   return o.get();
 }
 
+}  // namespace
+
+// The catchment circles (gsTransportStopController::statusUpdated L:0x081b6e70 = gsGrid::addAreaHighlight /
+// removeAreaHighlight while the controller's visible bit 2 is set; radius +0x124 from create L:0x081c2120: 100 for bus
+// and tram stops, 150 for metro stations, docks and heliports). Collected each frame from the live controllers: the
+// simulation's stops and the controllers made for picking and tool previews. Centre = the item's footprint centre.
+void visibleStopCircles(VM& vm, GridObj* grid, std::vector<StopCircle>& out) {
+  out.clear();
+  if (!grid || !grid->data) return;
+  static const ClassInfo* cls = nullptr;
+  if (!cls) cls = vm.findClass("gsTransportStopController");
+  if (!cls) return;
+  const GridData& g = *grid->data;
+  PickState& st = pickState(vm, grid);
+  std::vector<Object*> seen;
+  auto consider = [&](Object* c) {
+    if (!c || !(c->flags & 2) || !c->cls->isA(cls)) return;
+    if (std::find(seen.begin(), seen.end(), c) != seen.end()) return;
+    seen.push_back(c);
+    auto f = c->fieldValues.find(u"<item>");
+    if (f == c->fieldValues.end()) return;
+    uint32_t i = uint32_t(vm.toInt(f->second));
+    if (i >= g.items.size() || g.items[i].removed || g.items[i].type >= st.templates.size()) return;
+    const GridData::Item& it = g.items[i];
+    const PickTemplate& tp = st.templates[it.type];
+    ItemFootprint fp = itemFootprint(tp.width, tp.length, tp.diagonals, it.orient);
+    int type = intField(vm, c, u"type", 0);
+    float cs = g.cellSize;
+    out.push_back({float((fp.sx >> 1) + it.x - (g.width >> 1)) * cs, float((fp.sz >> 1) + it.z - (g.length >> 1)) * cs,
+                   type > 1 ? 150.0f : 100.0f});
+  };
+  if (grid->sim)
+    for (const Ref<Object>& o : grid->sim->stops) consider(o.get());
+  for (auto& [item, c] : st.controllers) consider(c.get());
+}
+
+namespace {
+
 // the map item behind an item controller, or null
 const GridData::Item* controllerItem(VM& vm, Object* c, GridObj** gridOut = nullptr, uint32_t* indexOut = nullptr) {
   auto* grid = dynamic_cast<GridObj*>(c->parent);
@@ -542,6 +581,56 @@ void placeTracer(VM& vm, ControlObj* c) {
   });
 }
 
+// gsTracerOrganizer::move (L:0x081d14c0 = W:0x100af3d0, docs/ui/lines.md §4.1). The organizer keeps no state: each
+// frame its children move first (gsControl::move → each child's gsTracerCtrl::move), then the tracer children with
+// organize set (+0x1cb, default true) and left > −width (on screen; off-view tracers are parked at −2·size) are taken
+// in ascending left order (a multimap keyed by left, equal keys after earlier ones) and relaxed in 3 passes: for each
+// A and each later B whose key is below A's right edge, if the two overlap vertically both move apart by a third of the
+// smallest of the three overlaps (B's bottom − A's top: A down / B up; A's right − B's left: A left / B right; A's
+// bottom − B's top: A up / B down), with the epsilons 0.001 / 0.002 of the original. No clamping, no smoothing.
+void organizeTracers(VM& vm, ControlObj* organizer) {
+  static const ClassInfo* tracer = vm.findClass("gsTracerCtrl");
+  if (!tracer) return;
+  struct Entry {
+    float key;
+    ControlObj* c;
+  };
+  std::vector<Entry> list;
+  for (auto& k : organizer->children) {
+    auto* t = dynamic_cast<ControlObj*>(k.get());
+    if (!t || t->destroyed || !t->cls->isA(tracer)) continue;
+    placeTracer(vm, t);
+    // organize: a plain field the scripts write; unset = the constructor's true (L:0x081d38a0.c:29)
+    if (auto o = t->fieldValues.find(u"organize"); o != t->fieldValues.end() && !o->second.isNone() && !vm.toInt(o->second)) continue;
+    if (!(t->left > -t->width)) continue;
+    list.push_back({t->left, t});
+  }
+  std::stable_sort(list.begin(), list.end(), [](const Entry& a, const Entry& b) { return a.key < b.key; });
+  for (int pass = 0; pass < 3; ++pass)
+    for (size_t i = 0; i < list.size(); ++i) {
+      ControlObj* a = list[i].c;
+      for (size_t j = i + 1; j < list.size(); ++j) {
+        if (a->left + a->width <= list[j].key) break;
+        ControlObj* b = list[j].c;
+        float ay = a->top;
+        float d7 = ((b->top + b->height) - ay) * 0.33f + 0.001f;
+        float d6 = ((ay + a->height) - b->top) * 0.33f - 0.001f;
+        if (!(d7 > 0 && d6 > 0)) continue;
+        float d5 = ((a->left + a->width) - b->left) * 0.33f - 0.002f;
+        if (d7 < d6 && d7 < d5) {
+          a->top = ay + d7;
+          b->top -= d7;
+        } else if (d5 <= d6) {
+          a->left -= d5;
+          b->left += d5;
+        } else {
+          a->top = ay - d6;
+          b->top += d6;
+        }
+      }
+    }
+}
+
 Object* gridItemController(VM& vm, GridObj* grid, uint32_t item) {
   return grid && grid->data && item < grid->data->items.size() && !grid->data->items[item].removed
              ? itemController(vm, grid, item)
@@ -640,6 +729,15 @@ void registerInteractionNatives(VM& vm) {
       grid->data->names[i] = utf16ToUtf8(v.toStr(val));
     };
   }
+  // setColor(colour) (method_setColor L:0x08181f90 = W:0x100e9430): gsGridItem::setColor(colour, true) (L:0x08181de0):
+  // setColorize on every submesh of the item's own mesh, then the same for every item of the same root (or the root
+  // itself) in the divisions around the root's footprint whose template has no colour map. The scripts paint the stops
+  // in the company colour with it (ui.script transportStopCreated). The renderer applies the request (terrain.cpp).
+  implement(vm, "gsGridItemController", u"setColor", [](VM& v, Object* s, int, const Value* a) {
+    GridObj* grid = nullptr;
+    uint32_t i = 0;
+    if (controllerItem(v, s, &grid, &i)) grid->itemColorRequests.push_back({i, uint32_t(v.toInt(a[0])), true});    return Value();
+  });
   implement(vm, "gsGridItemController", u"getPos", [](VM& v, Object* s, int, const Value*) {
     const GridData::Item* it = controllerItem(v, s);
     return Value::integer(it ? int32_t(uint32_t(uint16_t(it->z)) << 16 | uint16_t(it->x)) : 0);

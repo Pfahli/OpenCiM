@@ -1,13 +1,15 @@
 // Terrain of a loaded map, after gsGridDivision::update (L:0x08166080 = W:0x100d6ab0), docs/renderer/terrain.md.
 // The grid is cut into n×n-cell divisions (n = 1 << bucketShift); each is one mesh centred on the division, built in
 // two LODs (lod 0: a 4-triangle fan per cell, lod 1: 2 triangles per cell) with one part per material group. Water
-// quads and the map-edge walls are LAYER groups, so both LODs carry them. The underground view (docs/renderer/underground.md)
-// builds tunnel divisions as an earth plane with inward walls. Not yet: the water-edge curtain and the data overlay.
+// quads, the map-edge walls, the water-edge curtain and the items' foundation walls are LAYER groups, so both LODs carry
+// them. The underground view (docs/renderer/underground.md) builds tunnel divisions as an earth plane with inward walls.
+// The data layer draws the stops' catchment circles over the layerable parts (dataMaterial, terrain.md §5.2).
 #include "engine/terrain.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <memory>
 
@@ -16,6 +18,7 @@
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
+#include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
 
@@ -27,7 +30,10 @@ using namespace regs::render;
 namespace {
 
 // material groups, in submesh order (kEarth: earthMaterial, the terrain without bit 0x20 and the underground plane)
-constexpr int kTerrain = 0, kYard = 1, kField = 9, kWater = 17, kEdge = 18, kEarth = 19, kGroupCount = 20;
+// kBase: baseMaterial, the foundation walls of items on uneven ground; kWaterEdge: waterEdgeMaterial, the curtain where
+// the map's border meets water
+constexpr int kTerrain = 0, kYard = 1, kField = 9, kWater = 17, kEdge = 18, kEarth = 19, kBase = 20, kWaterEdge = 21,
+              kGroupCount = 22;
 constexpr int kWaterLevel = -0x140, kEdgeBottom = -0x2000, kEarthLevel = -0x800;
 // mesh LOD bands for D = 800 (interfaces-3d §1.3); meshes are freed beyond kFreeDistance
 constexpr float kLod0Distance = 266.4f, kCullDistance = 880.0f, kFreeDistance = 1000.0f;
@@ -55,6 +61,9 @@ struct Builder {
   // face a division without tunnels (north z−, south z+, west x−, east x+): they get inward walls (§8.1 of terrain.md)
   uint32_t view = 0xFE;
   bool inner[4] = {false, false, false, false};
+  // the division's items (TerrainCache::divisionItems) for the foundation walls
+  const TerrainCache* tc = nullptr;
+  int index = -1;
 
   int W() const { return g.width; }
   int L() const { return g.length; }
@@ -340,6 +349,132 @@ struct Builder {
     finishGroup(kEdge, firstIndex);
   }
 
+  // the water-edge curtain (§7.3, L:0x08166080.c:4684-4979): on the map's border sides, a vertical face per water cell
+  // along the side from the sea floor (min(h, −0x140) at each corner) up to the water level, normal outward, colour
+  // 0xff808080, uv0.x = 1 on the top row only (waterEdge.vertex waves it); waterEdgeMaterial is blended and two-sided.
+  // Normal view only (the underground view has no water bit).
+  void waterEdges() {
+    if (!(view & 4)) return;
+    size_t firstIndex = out.indices.size();
+    struct Side { bool on; Vec3 normal; bool alongX; int fixed, cell; };
+    int cx = std::min(n, W() - dx), cz = std::min(n, L() - dz);
+    Side sides[4] = {{dz == 0, {0, 0, -1}, true, 0, dz},
+                     {dz + n >= L(), {0, 0, 1}, true, cz, dz + cz - 1},
+                     {dx == 0, {-1, 0, 0}, false, 0, dx},
+                     {dx + n >= W(), {1, 0, 0}, false, cx, dx + cx - 1}};
+    for (const Side& sd : sides) {
+      if (!sd.on) continue;
+      int count = sd.alongX ? cx : cz;
+      auto cellAt = [&](int i, int& x, int& z) {
+        x = sd.alongX ? dx + i : sd.cell;
+        z = sd.alongX ? sd.cell : dz + i;
+      };
+      bool any = false;
+      for (int i = 0; i < count && !any; ++i) {
+        int x, z;
+        cellAt(i, x, z);
+        any = (f(x, z) & 0x2000) != 0;
+      }
+      if (!any) continue;
+      uint32_t base = uint32_t(out.vertexCount());
+      for (int i = 0; i <= count; ++i) {
+        int x, z;
+        cellAt(i, x, z);  // the corner's height from the side's cells (clamped at the map's end)
+        int lx = sd.alongX ? i : sd.fixed, lz = sd.alongX ? sd.fixed : i;
+        int ys[2] = {std::min(h(x, z), kWaterLevel), kWaterLevel};
+        for (int y : ys) {
+          Corner c;
+          c.pos = {lx * cs - n * cs * 0.5f, y * cs / 256.0f, lz * cs - n * cs * 0.5f};
+          c.normal = sd.normal;
+          c.u = y < kWaterLevel ? 0.0f : 1.0f;
+          c.v = 0;
+          c.color = 0xFF808080u;
+          push(c);
+        }
+      }
+      for (int i = 0; i < count; ++i) {
+        int x, z;
+        cellAt(i, x, z);
+        if (!(f(x, z) & 0x2000)) continue;
+        uint32_t b0 = base + uint32_t(i) * 2, t0 = b0 + 1, b1 = b0 + 2, t1 = b0 + 3;
+        out.indices.insert(out.indices.end(), {b0, b1, t0, t0, b1, t1});
+      }
+    }
+    finishGroup(kWaterEdge, firstIndex);
+  }
+
+  // foundation walls (§8.3, L:0x08166080.c:3737-4249; createBaseVertex L:0x08165b90): every visible ENABLE_BASE item of
+  // the division whose ground is not flat at its height (gsGridItem::fixY's flag 0x800, L:0x08187760.c:37-109) gets
+  // strips along its footprint, at each perimeter grid point from the ground (clamped cell height) up to the item's y:
+  // the four diagonal cuts (item diagonals nibbles 0..3), then the straight sides between them. Normals face away from
+  // the item when it stands above the ground and towards it when it is sunk; uv (u along the side, v = −y/1024)
+  void baseWalls() {
+    if (!tc || index < 0 || size_t(index) >= tc->divisionItems.size()) return;
+    size_t firstIndex = out.indices.size();
+    const int heightShift = 0x200 - int(g.heightBase);
+    const float r = 0.70710677f;
+    for (uint32_t i : tc->divisionItems[size_t(index)]) {
+      const GridData::Item& it = g.items[i];
+      int ti = it.type < tc->typeTemplate.size() ? tc->typeTemplate[it.type] : -1;
+      if (it.removed || ti < 0) continue;
+      const GridTemplate& tp = tc->templates[size_t(ti)];
+      uint32_t flags = it.flags | tp.flags;
+      if (!(flags & 1) || (flags & 0x400000)) continue;  // ENABLE_BASE, not hidden
+      if (!gridItemVisible(g, *tc, i, view)) continue;
+      ItemFootprint fp = itemFootprint(tp.width, tp.length, tp.diagonals, it.orient);
+      const int x0 = it.x, z0 = it.z, sx = fp.sx, sz = fp.sz, y = it.y + heightShift;
+      // fixY: inside the map, the min and max of the footprint's (sx+1)·(sz+1) points against y
+      if (x0 < 0 || z0 < 0 || x0 + sx > W() || z0 + sz > L()) continue;
+      int mx = std::min(sx, W() - x0 - 1), mz = std::min(sz, L() - z0 - 1), lo = 0x7fff, hi = -0x8000;
+      for (int z = 0; z <= mz; ++z)
+        for (int x = 0; x <= mx; ++x) {
+          int hv = g.height[size_t((z0 + z) * W() + x0 + x)];
+          lo = std::min(lo, hv), hi = std::max(hi, hv);
+        }
+      if (lo == hi && lo == y) continue;
+      // debugging: REGS_DEBUG_BASE=1 lists the walled items (world x/z of the footprint centre for the cam:x,z test action)
+      if (static const bool debug = std::getenv("REGS_DEBUG_BASE") != nullptr; debug)
+        LOG_INFO("base walls: item %u %s at %d,%d size %dx%d y %d ground %d..%d world %.0f,%.0f", i, g.types[it.type].c_str(),
+                 x0, z0, sx, sz, y, lo, hi, (x0 + sx * 0.5f - W() * 0.5f) * cs, (z0 + sz * 0.5f - L() * 0.5f) * cs);
+      auto vertex = [&](int gx, int gz, int hy, const Vec3& normal, bool diagonal) {
+        Corner c;
+        int lx = gx - dx, lz = gz - dz;
+        c.pos = {lx * cs - n * cs * 0.5f, hy * cs / 256.0f, lz * cs - n * cs * 0.5f};
+        c.normal = normal;
+        c.u = diagonal ? float(lz) * 0.35355338f : float(lx + lz) * 0.25f;
+        c.v = float(hy) * -0.0009765625f;
+        c.color = 0xFF808080u;
+        push(c);
+      };
+      auto strip = [&](int count, auto point, Vec3 sunk, Vec3 raised, bool diagonal) {
+        if (count <= 0) return;
+        uint32_t base = uint32_t(out.vertexCount());
+        for (int k = 0; k <= count; ++k) {
+          int gx = 0, gz = 0;
+          point(k, gx, gz);
+          int ground = h(gx, gz);
+          const Vec3& normal = y < ground ? sunk : raised;
+          vertex(gx, gz, ground, normal, diagonal);
+          vertex(gx, gz, y, normal, diagonal);
+        }
+        for (int k = 0; k < count; ++k) {
+          uint32_t b = base + uint32_t(k) * 2;
+          out.indices.insert(out.indices.end(), {b, b + 1, b + 2, b + 2, b + 1, b + 3});
+        }
+      };
+      const int d0 = int(fp.diag & 0xF), d1 = int(fp.diag >> 4 & 0xF), d2 = int(fp.diag >> 8 & 0xF), d3 = int(fp.diag >> 12 & 0xF);
+      strip(d0, [&](int k, int& x, int& z) { x = x0 + sx - d0 + k, z = z0 + k; }, {-r, 0, r}, {r, 0, -r}, true);
+      strip(d1, [&](int k, int& x, int& z) { x = x0 + sx - k, z = z0 + sz - d1 + k; }, {-r, 0, -r}, {r, 0, r}, true);
+      strip(d2, [&](int k, int& x, int& z) { x = x0 + d2 - k, z = z0 + sz - k; }, {r, 0, -r}, {-r, 0, r}, true);
+      strip(d3, [&](int k, int& x, int& z) { x = x0 + k, z = z0 + d3 - k; }, {r, 0, r}, {-r, 0, -r}, true);
+      strip(sx - d3 - d0, [&](int k, int& x, int& z) { x = x0 + d3 + k, z = z0; }, {0, 0, 1}, {0, 0, -1}, false);
+      strip(sz - d1 - d0, [&](int k, int& x, int& z) { x = x0 + sx, z = z0 + d0 + k; }, {-1, 0, 0}, {1, 0, 0}, false);
+      strip(sx - d2 - d1, [&](int k, int& x, int& z) { x = x0 + sx - d1 - k, z = z0 + sz; }, {0, 0, -1}, {0, 0, 1}, false);
+      strip(sz - d3 - d2, [&](int k, int& x, int& z) { x = x0, z = z0 + sz - d2 - k; }, {1, 0, 0}, {-1, 0, 0}, false);
+    }
+    finishGroup(kBase, firstIndex);
+  }
+
   void build(int lod) {
     corners.resize(size_t((n + 1) * (n + 1)));
     for (int lz = 0; lz <= n; ++lz)
@@ -356,6 +491,8 @@ struct Builder {
     }
     if (view & 4) water();
     edges();
+    waterEdges();
+    baseWalls();
     computeTangents(out);  // the terrain and yards 4-7 are normal-mapped
     float r2 = 0;
     out.boundsMin = {1e30f, 1e30f, 1e30f};
@@ -379,6 +516,8 @@ Object* gridMaterialObject(VM& vm, GridObj* grid, int group) {
   else if (group < kWater) key = u"<getFieldMaterial>" + utf8ToUtf16(std::to_string(group - kField));
   else if (group == kWater) key = u"waterMaterial";
   else if (group == kEarth) key = u"earthMaterial";
+  else if (group == kBase) key = u"baseMaterial";
+  else if (group == kWaterEdge) key = u"waterEdgeMaterial";
   else key = u"edgeMaterial";
   if (key[0] != u'<') {  // a sub-object field: the getter creates it on first access
     try {
@@ -396,6 +535,8 @@ Object* gridMaterialObject(VM& vm, GridObj* grid, int group) {
 void buildTerrain(const GridData& g, const TerrainCache& tc, int index, int lod, MeshData& out) {
   Builder b{g, tc.n, (index % tc.cols) * tc.n, (index / tc.cols) * tc.n, g.cellSize, {}, {}};
   b.view = divisionViewMode(tc, index);
+  b.tc = &tc;
+  b.index = index;
   if (b.view == 0x180) {
     int c = index % tc.cols, r = index / tc.cols;
     int nb[4] = {r > 0 ? index - tc.cols : -1, r + 1 < tc.rows ? index + tc.cols : -1, c > 0 ? index - 1 : -1,
@@ -423,6 +564,50 @@ std::vector<uint8_t> tunnelDivisions(const GridData& g, const TerrainCache& tc) 
       for (int c = c0; c <= c1; ++c) out[size_t(r * tc.cols + c)] = 1;
   }
   return out;
+}
+
+// gsGridItem::setColor(colour, recurse) (L:0x08181de0.c:29-97) for the requests of gsGridItemController.setColor: the
+// item's tint, then with recurse every other item in the divisions from one before to one after the root's footprint
+// whose root is the same root (or which is the root itself) and whose template has no colour map (template +0x314).
+// The tint is the colorize colour of the item's COLORIZE parts in the merged division mesh, so the division rebuilds.
+void applyItemColors(GridObj& grid, TerrainCache& tc) {
+  if (grid.itemColorRequests.empty()) return;
+  const GridData& g = *grid.data;
+  tc.itemColor.resize(g.items.size(), 0);
+  auto paint = [&](uint32_t i, uint32_t argb) {
+    if (i >= g.items.size() || g.items[i].removed || tc.itemColor[i] == argb) return;
+    tc.itemColor[i] = argb;
+    if (int d = itemDivision(g, tc, i); d >= 0) tc.dirtyItems.insert(d);
+  };
+  auto rootOf = [&](uint32_t i) {
+    for (int guard = 0; guard < 64 && g.items[i].parent && g.items[i].parent <= g.items.size(); ++guard) i = g.items[i].parent - 1;
+    return i;
+  };
+  const int shift = int(std::min(g.bucketShift, 8u));
+  for (const GridObj::ItemColorRequest& r : grid.itemColorRequests) {
+    if (r.item >= g.items.size()) continue;
+    paint(r.item, r.argb);
+    if (!r.recurse) continue;
+    uint32_t root = rootOf(r.item);
+    const GridData::Item& ri = g.items[root];
+    int ti = ri.type < tc.typeTemplate.size() ? tc.typeTemplate[ri.type] : -1;
+    int sx = 1, sz = 1;
+    if (ti >= 0) {
+      const GridTemplate& tp = tc.templates[size_t(ti)];
+      sx = (ri.orient & 1) ? tp.length : tp.width, sz = (ri.orient & 1) ? tp.width : tp.length;
+    }
+    int c0 = std::max(0, (ri.x >> shift) - 1), c1 = std::min(tc.cols - 1, ((ri.x + sx - 1) >> shift) + 1);
+    int r0 = std::max(0, (ri.z >> shift) - 1), r1 = std::min(tc.rows - 1, ((ri.z + sz - 1) >> shift) + 1);
+    for (int dz = r0; dz <= r1; ++dz)
+      for (int dx = c0; dx <= c1; ++dx)
+        for (uint32_t i : tc.divisionItems[size_t(dz * tc.cols + dx)]) {
+          if (i == r.item || g.items[i].removed || (i != root && rootOf(i) != root)) continue;
+          int t = g.items[i].type < tc.typeTemplate.size() ? tc.typeTemplate[g.items[i].type] : -1;
+          if (t < 0 || tc.templates[size_t(t)].colorMap) continue;
+          paint(i, r.argb);
+        }
+  }
+  grid.itemColorRequests.clear();
 }
 
 }  // namespace
@@ -469,21 +654,29 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
     for (int group = 0; group < kGroupCount; ++group) tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
     // the tool highlights (terrain.md §5: positiveMaterial / negativeMaterial, selection.shader decals)
-    for (const char16_t* key : {u"positiveMaterial", u"negativeMaterial"}) {
+    // and the data layer of the catchment circles (dataMaterial, selection/data.shader decal)
+    for (const char16_t* key : {u"positiveMaterial", u"negativeMaterial", u"dataMaterial"}) {
       Object* m = nullptr;
       try {
         m = vm.resolve(vm.getMember(Value::heap(VT::Object, grid), key)).object();
       } catch (const ScriptError&) {
       }
-      (key[0] == u'p' ? tc.positiveMaterial : tc.negativeMaterial) = int(tc.materials.size());
+      (key[0] == u'p' ? tc.positiveMaterial : key[0] == u'n' ? tc.negativeMaterial : tc.dataMaterial) = int(tc.materials.size());
       tc.materials.push_back(scriptMaterial(d, vm, m));
     }
     initGridItems(d, vm, grid, tc);
     fixGridCover(vm, *grid->data, tc, grid->viewMode);
     LOG_INFO("terrain: %dx%d divisions of %d cells", tc.cols, tc.rows, tc.n);
+    if (std::getenv("REGS_DEBUG_BASE")) {  // every division once, for the walled items' list
+      for (int index = 0; index < int(tc.divisions.size()); ++index) {
+        MeshData scratch;
+        buildTerrain(g, tc, index, 1, scratch);
+      }
+    }
   }
   // live map edits (engine/grid_edit.h): new types and items, then the touched divisions rebuilt at once where built
   syncGridItems(d, vm, grid, tc);
+  applyItemColors(*grid, tc);
   // the view mode (docs/renderer/underground.md): a change in bits 0xfe rebuilds every division (write_viewMode); the
   // data-view bits do not change the division meshes in the port
   if (tc.viewVersion != grid->viewVersion) {
@@ -593,6 +786,33 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     clock.second += dt * ts;
     clock.first = now;
   }
+  // the catchment circles of the visible stop controllers (gsGrid::addAreaHighlight L:0x08142940): a circle belongs to
+  // the divisions its square grown by 4 cells overlaps; each such division draws a data layer over its layerable parts
+  // with the 8 circles nearest to its centre (gsGridDivision::updateDataLayer L:0x081635d0)
+  std::vector<StopCircle> circles;
+  visibleStopCircles(vm, grid, circles);
+  auto layerFor = [&](int index, GridDivision& dv) {
+    if (circles.empty() || tc.dataMaterial < 0) return false;
+    const int shift = int(std::min(g.bucketShift, 8u));
+    const int c = index % tc.cols, r = index / tc.cols;
+    std::vector<std::pair<float, const StopCircle*>> near;
+    for (const StopCircle& k : circles) {
+      float hx = g.width * cs * 0.5f, hz = g.length * cs * 0.5f;
+      int c0 = (int(std::lround((k.x - k.radius + hx) / cs)) - 4) >> shift, c1 = (int(std::lround((k.x + k.radius + hx) / cs)) + 4) >> shift;
+      int r0 = (int(std::lround((k.z - k.radius + hz) / cs)) - 4) >> shift, r1 = (int(std::lround((k.z + k.radius + hz) / cs)) + 4) >> shift;
+      if (c < c0 || c > c1 || r < r0 || r > r1) continue;
+      float ex = k.x - dv.center.x, ez = k.z - dv.center.z;
+      near.push_back({ex * ex + ez * ez, &k});
+    }
+    if (near.empty()) return false;
+    std::stable_sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (int i = 0; i < 8; ++i) {
+      float* p = dv.layerCustom[i];
+      if (size_t(i) < near.size()) p[0] = near[size_t(i)].second->x, p[1] = 0, p[2] = near[size_t(i)].second->z, p[3] = near[size_t(i)].second->radius;
+      else p[0] = p[1] = p[2] = 0, p[3] = -1000.0f;
+    }
+    return true;
+  };
   std::map<const ObjectObj*, std::shared_ptr<const std::vector<Mat4>>> poses;  // one pose per template per frame
   const std::unordered_map<uint32_t, float>* doorTimes = simDoorTimes(grid);   // door items: their own clip time
   for (int r = 0; r < tc.rows; ++r)
@@ -628,6 +848,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
       int show = complete(lod) ? lod : complete(1 - lod) ? 1 - lod : -1;  // during a LOD switch: the other one
       if (show < 0) continue;
+      const bool layer = layerFor(index, dv);
       for (GpuMesh* m : {&dv.terrain[show], &dv.items[show]}) {
         if (m->parts.empty()) continue;
         // the built mesh's own bounds: bucketed items reach beyond the division square
@@ -639,6 +860,11 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         it.world = dv.world;
         it.shadowOnly = !visible(mc, m->radius);
         items.push_back(it);
+        if (layer && !it.shadowOnly) {
+          it.layerMaterial = tc.dataMaterial;
+          it.layerCustom = dv.layerCustom;
+          items.push_back(it);
+        }
       }
       collectSkinnedItems(d, vm, g, tc, index, dv.world, dist, show, clock.second, !visible(gc, gr), doorTimes, poses, items);
     }
