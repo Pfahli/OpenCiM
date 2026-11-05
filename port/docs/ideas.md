@@ -10,6 +10,21 @@ it is, what already exists, and the open decisions. Order is not priority.
 * **High-resolution textures.** Replacement texture packs, loaded like ReGS mods (`docs/mod-manager.md`) without
   touching the game files.
 * **Style options.** Colour styles, distance lens blur and tilt-shift exist (graphics page). More can follow.
+* **Night lights for the day/night option.** The base game's buildings, lamps and vehicles have no lights (only the
+  New York and Tokyo DLC assets carry illumination maps, `docs/renderer/sky-and-night.md`), so the port's night is
+  dark. Port-made lights:
+  * Street lamps: a light cone or pool on the ground and a glow on the lamp head, placed from the lamp props' meshes
+    (the head's position from the model's bounds or a known bone or material).
+  * Vehicles: headlights and tail lights (glow sprites at the front and rear of the body from the model's bounds,
+    a short light pool ahead), tram and metro interior light.
+  * Windows: found from the building textures, by finding the window areas in each facade's diffuse map (dark,
+    rectangular, repeated cells; a one-time analysis step that writes a generated illumination mask per texture into
+    the port's cache, never shipped as game data). At night the masked windows glow, each window lit or dark by a
+    random seed per building and window.
+  * Timing: random buildings light up through the evening, most go dark late at night with only a few windows left
+    lit, and some light up again in the morning before sunrise.
+  * Open: how well the window detection works on the various facades (a manual mask per texture as a fallback for
+    the landmarks), the cost of many light pools (a deferred or clustered light pass in the planned new renderer).
 * **Wider zoom, clouds and a sky.** The original has no clouds (a `cloudmap.dds` line in `engine.script` is commented
   out and the texture was never shipped) and hides its sky dome, since the camera never reaches the horizon
   (`docs/renderer/sky-and-night.md`).
