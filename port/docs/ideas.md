@@ -25,6 +25,21 @@ it is, what already exists, and the open decisions. Order is not priority.
     lit, and some light up again in the morning before sunrise.
   * Open: how well the window detection works on the various facades (a manual mask per texture as a fallback for
     the landmarks), the cost of many light pools (a deferred or clustered light pass in the planned new renderer).
+* **Seasons and weather.** The original's look never changes over the year. The port could follow the game's date:
+  * Spring and summer as today; autumn turns grass, fields and tree foliage yellow, orange and brown (a colour shift
+    in the terrain and tree shaders by season, per tree species where the textures allow it); in winter deciduous
+    trees lose their leaves (foliage hidden or thinned, bare branches from the trunk meshes; conifers keep theirs) and
+    snow covers the ground, roofs and trees (a white blend on upward-facing surfaces, cleared on roads and tracks
+    where traffic runs).
+  * Weather: rain (falling streaks as particles, wet darker ground with reflections, puddles), snowfall, fog days;
+    random weather by season and map climate.
+  * Gameplay touches as an option: fewer cyclists and walkers in bad weather, more transit riders, slower road
+    traffic in snow.
+  * Sound: rain and wind ambience from the new mixer; no game data needed.
+  * An option on the graphics page (seasons off / seasons / seasons and weather); the shaders are adjusted in memory
+    only (`portShaderPatch`), never shipped as copies.
+  * Open: bare trees need branch meshes (the game's trees are trunk plus foliage cards; leafless trees could be the
+    trunk alone, a generated branch mesh, or thinned foliage), and the maps' climates (Tokyo and New York winters).
 * **Wider zoom, clouds and a sky.** The original has no clouds (a `cloudmap.dds` line in `engine.script` is commented
   out and the texture was never shipped) and hides its sky dome, since the camera never reaches the horizon
   (`docs/renderer/sky-and-night.md`).
