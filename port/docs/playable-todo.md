@@ -122,7 +122,11 @@ modes (the editor's roads, terrain and paint tools come later):
 
 - [ ] Particles (`gsParticleEmitter`: smoke, fires, fountains, sparks; `addColorRange`, `setTexture`,
   `setParticleScale`).
-- [ ] Sky mesh (`gsSky.generateMesh`), night lighting with the illumination maps, `gsTracerCtrl.enableFade`.
+- [x] Sky mesh (`gsSky.generateMesh`), sun disc, night lighting with the illumination maps, `gsTracerCtrl.enableFade`
+  (`engine/sky.cpp`, `docs/renderer/sky-and-night.md`). The original has no day/night cycle (fixed time per location;
+  New York and Tokyo are the night maps, lit by their DLC illumination maps and additive street-light glows, which
+  now blend additively). Port option "Tag und Nacht" adds a cycle; `REGS_DEBUG_TIME=<hour>` for tests
+  (`port/run/sky/*.png`). Open: the sun's glow sprite (occlusion-query halo).
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
   cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;
   `port/run/barriers/sheet-f-rise.png`, `sheet-f-wait.png`).

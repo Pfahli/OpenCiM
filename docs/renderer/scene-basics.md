@@ -163,7 +163,7 @@ a   = (lat − π/2) + 2·(π/2 − lat)·(1 − 2·|0.5 − d|) + 0.40142575   
 Q   = q2 ⊗ q1,  q2 = quat(a, +X)                                       :41
 dir = rot(Q, sunVec);  sunVec = (0,0,1) once generateMesh ran, else (0,0,0)   :50, L:0x08125fc0.c:57
 light.setGlobalPos(dir · 20000); light.setGlobalOrient(Q)              :48-53
-sun disc mesh: setOrientation(Q, 0), setAlpha(0.94)                    :56
+sun disc mesh: setOrientation(Q, 0), setScale(0.94) (gsIMesh slot 9)   :56   (sky-and-night.md §2.1)
 ```
 
 Menu (`clock(mktime(6,0,0), …)`, timeMs = 21 600 000, `L:0x080eb900`): d = 0.25, a = 0.401426, q1 = (0, 0.707107, 0,

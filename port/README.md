@@ -53,7 +53,10 @@ a number: 0 bus, 1 tram, 2 metro, 3 boat, 4 helicopter; a screenshot burst `foll
 `follow-bustram-<n>.png` when a followed bus halts at a tram stop), `REGS_DEBUG_CAMERA=<item>` (puts the camera on that
 map item once, 30 ticks into the game; every line vehicle halting at that stop item films a burst
 `halt-<line type>-<k>-<n>.png`), `$regsBusAtTramStops = false;` in `settings.script` (bus lines take no tram stops),
-`REGS_TEST_CRASH=<n>` (drivers near the camera turn reckless until n crashes happened), `REGS_DEBUG_AUDIO=1` (logs every
+`REGS_TEST_CRASH=<n>` (drivers near the camera turn reckless until n crashes happened), `REGS_DEBUG_TIME=<hour>`
+(starts the game at that time of day, e.g. `20.5`, with the day/night light model; it stays there unless the
+day/night option is on, then it runs from there), `REGS_DEBUG_SKY=1` (logs the day/night time, sun elevation and
+weights every quarter hour of the cycle), `REGS_DEBUG_AUDIO=1` (logs every
 sound load, play, stop, pause and resume with path, mode, volume, pitch, position, distance and range, the world
 sounds of vehicles and items, `getAreaType` votes, each play's volume group, and once per second the voice count, the
 RMS per output channel and per volume group, and the four loudest 3D voices with their listener-space position and
@@ -91,6 +94,7 @@ The game's graphics page is extended this way (`data/regs/extend/metro/ui/menus/
 | Lens blur | `$regsLensBlur` | off; light / strong by distance from the camera target (thin lens on the depth buffer, `dof.fragment`: zoomed in, the distance blurs); tilt-shift (`tiltshift.fragment`) | at once |
 | Graphics engine | `$regsRenderer` | OpenGL 3.3; Vulkan listed as planned (raytracing, DLSS) | — |
 | Performance readout | `$regsShowFps` | off (default) / on: FPS and frame time averaged over 0.5 s, min/max FPS over the last second, drawn by the engine over the GUI at the top edge right of the toolbar (`Display::drawFpsReadout`); never in headless runs, nothing measured while off. The game's own "show frame rate" (`$fps`, a script overlay in the top right corner) stays as it was | at once |
+| Day and night | `$regsDayNight`, `$regsDayLength` | off (default: the location's fixed time of day, as in the original) / on: the time of day runs with the game, `$regsDayLength` real minutes per day at normal speed (default 12, settings.script only), with dusk, a moonlit night and brighter self-illumination at night (`docs/renderer/sky-and-night.md` §6.2) | at once |
 
 The audio page (`data/regs/extend/metro/ui/menus/audio.script`) gets the port's volume groups under the original's
 audio (master) and music volumes; the master volume stays on top of all of them (`docs/audio/README.md` §18.7):
@@ -246,8 +250,17 @@ is already specified in `docs/`.
    radius instead of the doubled per-mesh radius); trees in the light pass use the same merged LOD as the main pass;
    the unused `clipYPlane = false` fit (`gsFitTrapezoid`) and `screenSpaceBlur` are not ported.
 
+   **Sky and night** follow `docs/renderer/sky-and-night.md` (`engine/sky.cpp`): the sky dome of
+   `gsSky.generateMesh` (environment cube, `effects/sky/sky.shader`, camera-attached at 0.99 × far; the game hides it,
+   the debug screenshot mode F5 shows it), the sun disc of `gsSun.generateMesh`, `gsTracerCtrl.enableFade` (the mood
+   icons fade out at 300-320 units), and the material blend functions (additive street-light glows of the New York
+   and Tokyo night maps). The original has no day/night cycle: each location has a fixed time and light, New York and
+   Tokyo are night scenes lit by their illumination maps. The port's optional day/night cycle (graphics page) blends
+   between the location's light and the shipped night or day preset, with a moon after sunset and stronger
+   self-illumination at night. Not drawn: the sun's glow sprite (occlusion-query halo, the only `MATERIAL_GLOW` item).
+
    Still open: skinning and skeletal item animation, base walls under items on slopes, the water-edge curtain,
-   particles, glow sprites.
+   particles.
 5. **Simulation.**
    * Grid load and save (`docs/save-format/`).
    * Lane, pedestrian and transit graphs and searches; citizens, vehicles, lines and stops; the city timeline

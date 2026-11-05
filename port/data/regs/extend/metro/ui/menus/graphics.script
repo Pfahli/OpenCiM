@@ -189,6 +189,18 @@ function regsSetShowFps($value) {
   MAIN.$ui.selectChoiceButton($showFps ? $regsShowFpsButton : null, $regsShowFpsButton);
 }
 regsSetShowFps($showFps);
+
+// day and night (port option; the original keeps each location's fixed time of day): the cycle length in minutes
+// of normal game speed is $regsDayLength (settings.script only, default 12)
+$dayNight = $settings.$regsDayNight : false;
+$regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", int($box.$content.width * 0.5) + 40, 473, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel(int($box.$content.width * 0.5) + 60, 472, $regs.$regs_dayNight_item);
+function regsSetDayNight($value) {
+  $dayNight = $value;
+  MAIN.$ui.selectChoiceButton($dayNight ? $regsDayNightButton : null, $regsDayNightButton);
+}
+regsSetDayNight($dayNight);
+
 function regsSetRenderer($index) {
   if ($index > 0) return;
   $renderer = $index;
@@ -241,5 +253,6 @@ function save() {
   $settings.$regsLensBlur = $lensBlur;
   $settings.$regsRenderer = $renderer;
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
-  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps");
+  $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps", "regsDayNight");
 }
