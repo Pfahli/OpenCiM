@@ -9,7 +9,11 @@ namespace regs::engine {
 
 // Process-wide settings the natives need from the host application.
 struct Host {
-  std::filesystem::path documents;  // returned by getMyDocumentsFolder(); a sandbox folder in test runs
+  // returned by getMyDocumentsFolder(): the real Documents folder, or the --documents stand-in in test runs
+  std::filesystem::path documents;
+  // set by init_userdata when the scripts ask for the original's <documents>\Cities In Motion (engine/user_folders.h):
+  // the port's own user folder <documents>\OpenCiM, and the original's folder, which is only read (empty otherwise)
+  std::filesystem::path userFolder, originalFolder;
   bool quit = false;                // set by quit()
   bool headless = true;             // no window or rendering (tools, tests)
   bool forceWindowed = false;       // ignore the settings' fullscreen flag

@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <vector>
 
 namespace regs::engine {
@@ -11,5 +12,10 @@ struct DisplayMode {
 
 std::vector<DisplayMode> platformDisplayModes();
 DisplayMode platformCurrentDisplayMode();
+
+// The user's Documents folder as the original resolves it for getMyDocumentsFolder (gsFunction_getMyDocumentsFolder
+// W:0x10095240 → W:0x100a4ee0): SHGetSpecialFolderPathW with CSIDL_MYDOCUMENTS (0x0c), then CSIDL_PERSONAL (5), then
+// %USERPROFILE%. Only resolves the path; creates nothing.
+std::filesystem::path platformDocumentsFolder();
 
 }  // namespace regs::engine

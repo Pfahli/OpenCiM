@@ -183,8 +183,12 @@ modes (the editor's roads, terrain and paint tools come later):
 
 - [ ] Find the Steam install by itself (registry, `libraryfolders.vdf`) and check for the needed archives; a clear
   message if the game is missing.
-- [ ] Decide where saves and settings live for players (the real `Documents\Cities In Motion`, shared with the
-  original, or a ReGS folder) — today a stand-in folder is used on purpose.
+- [x] Where saves and settings live (user decision 2026-11-06): in OpenCiM's own folder `Documents\OpenCiM`
+  (settings, controls, `state.gs`, saves, maps, log); the first start uses the game's defaults. The original's
+  `Documents\Cities In Motion` is only read: its saves and maps are listed with "(aus Cities in Motion)" and copied
+  into OpenCiM when opened (name clash: an identical copy is reused, otherwise `<name> (CiM)`). `--documents` is the
+  stand-in root for tests. README "Where data lives", `engine/user_folders.cpp`. Open: copying the original's
+  settings on the first start (an option, not done), Steam Cloud saves (set aside).
 - [x] Display settings at run time: every option of the graphics page applies on OK without a restart (shadows,
   HDR rendering, saturation, antialiasing, anisotropy, vsync, fullscreen, resolution, UI scale; frequency and colour
   depth change nothing with borderless fullscreen). New window sizes lay the GUI out again and reopen the page

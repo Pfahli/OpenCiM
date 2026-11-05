@@ -13,6 +13,7 @@
 #include "engine/gui.h"
 #include "engine/host.h"
 #include "engine/platform.h"
+#include "engine/user_folders.h"
 #include "vfs/vfs.h"
 
 namespace regs::engine {
@@ -374,9 +375,11 @@ void registerCoreNatives(VM& vm) {
     for (auto& c : s) if (c == '\\') c = '/';
     return str(s);
   });
+  // init_userdata(root): the port puts the original's <documents>/Cities In Motion at <documents>/OpenCiM and reads
+  // the original folder only (engine/user_folders.h)
   implementGlobal(vm, u"init_userdata", [](VM& v, Object*, int, const Value* a) {
     std::u16string root = deref(a[0]).toString();
-    v.vfs().initUserdata(fs::path(std::wstring(root.begin(), root.end())));
+    v.vfs().initUserdata(redirectUserdata(v.vfs(), fs::path(std::wstring(root.begin(), root.end()))));
     return Value();
   });
   implementGlobal(vm, u"updateFileSystem", [](VM& v, Object*, int, const Value*) {
@@ -395,14 +398,17 @@ void registerCoreNatives(VM& vm) {
     v.vfs().write(u8(deref(a[1]).toString()), data);
     return Value();
   });
+  // disk changes outside Vfs::write go through writableDiskPath too: only below userdata/ (the port's user folder)
   implementGlobal(vm, u"delete_file", [](VM& v, Object*, int, const Value* a) {
     std::error_code ec;
-    fs::remove(v.vfs().diskPathFor(u8(deref(a[0]).toString())), ec);
+    fs::path p;
+    if (v.vfs().writableDiskPath(u8(deref(a[0]).toString()), p)) fs::remove(p, ec);
     return Value();
   });
   implementGlobal(vm, u"mkdir", [](VM& v, Object*, int, const Value* a) {
     std::error_code ec;
-    fs::create_directory(v.vfs().diskPathFor(u8(deref(a[0]).toString())), ec);
+    fs::path p;
+    if (v.vfs().writableDiskPath(u8(deref(a[0]).toString()), p)) fs::create_directory(p, ec);
     return Value();
   });
   // writePackage(path, files) (L:0x081058b0): the files (usually memory/…) bundled under their names into a GS10
@@ -456,7 +462,8 @@ void registerCoreNatives(VM& vm) {
     return str(p + ext);
   });
   implementGlobal(vm, u"fappend", [](VM& v, Object*, int, const Value* a) {
-    fs::path p = v.vfs().diskPathFor(u8(deref(a[0]).toString()));
+    fs::path p;
+    if (!v.vfs().writableDiskPath(u8(deref(a[0]).toString()), p)) return Value();
     FILE* f = _wfopen(p.wstring().c_str(), L"a");
     if (!f) v.error("Cannot open file \"" + u8(deref(a[0]).toString()) + "\"");
     std::u16string s = deref(a[1]).toString();
@@ -465,7 +472,8 @@ void registerCoreNatives(VM& vm) {
     return Value();
   });
   implementGlobal(vm, u"freset", [](VM& v, Object*, int, const Value* a) {
-    fs::path p = v.vfs().diskPathFor(u8(deref(a[0]).toString()));
+    fs::path p;
+    if (!v.vfs().writableDiskPath(u8(deref(a[0]).toString()), p)) return Value();
     if (FILE* f = _wfopen(p.wstring().c_str(), L"w")) std::fclose(f);
     return Value();
   });

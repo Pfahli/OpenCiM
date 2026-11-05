@@ -3,6 +3,9 @@
 // port's traffic and population density for the new game: main.script's loadSandboxScenario (extension) copies them
 // into the campaign, campaign.script's saveCampaign (extension) keeps them in the save, and environment.script
 // (extension) hands them to the simulation before the map loads.
+// It also lists the original game's maps (Documents\Cities In Motion\maps, read only; engine/user_folders.h) that
+// have no copy in the OpenCiM folder, after the OpenCiM maps and with a note; main.script's loadSandboxScenario copies
+// the chosen one into OpenCiM before the game starts.
 
 if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
   $regs = load "/regs/strings/"+MAIN.$language+".strings";
@@ -12,7 +15,19 @@ if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
 
 //@base
 
-// ---- after the original page: two rows in the middle column, below the map size ----
+// ---- after the original page: the original game's maps at the end of the map list (as addMap, with the note) ----
+
+foreach (regsOriginalMaps()) {
+  regsAddOriginalMap("regs-cim/maps/"+current);
+}
+
+function regsAddOriginalMap($filename) {
+  $text = changeFileExt(extractFileName($filename), "")+" "+$regs.$regs_fromOriginal_note;
+  $button = MAIN.$ui.createChoiceButton($itemsBox.$content, $itemsArea, 0, $y, $itemsBox.$content.width, 18, $text, macro($filename) :: selectMap($0));
+  $y += 18;
+}
+
+// ---- two rows in the middle column, below the map size ----
 
 $regsDensityValues = [0.5, 1.0, 2.0, 4.0];      // × the original game
 $regsTrafficStep = 1;

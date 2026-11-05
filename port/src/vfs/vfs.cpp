@@ -54,6 +54,7 @@ void Vfs::rescan() {
   scanTree(installRoot_, "", true);
   if (overlayRoot_) scanTree(*overlayRoot_, "", true);
   if (userdataRoot_) scanTree(*userdataRoot_, "userdata/", false);
+  scanOriginal();
   LOG_INFO("vfs: %zu archives, %zu records", archives_.size(), records_.size());
 }
 
@@ -62,6 +63,30 @@ void Vfs::initUserdata(const fs::path& root) {
   std::error_code ec;
   fs::create_directory(root, ec);
   scanTree(root, "userdata/", false);
+}
+
+void Vfs::setOriginalRoot(const fs::path& root, const std::string& prefix) {
+  originalRoot_ = root;
+  originalPrefix_ = prefix;
+  scanOriginal();
+}
+
+void Vfs::scanOriginal() {
+  if (!originalRoot_) return;
+  std::error_code ec;
+  // saves: only plain packages (no parent prefix, no absolute mount: what writePackage makes), so nothing in that
+  // folder can stand in for game files
+  for (auto& e : sortedEntries(*originalRoot_ / "saves")) {
+    if (!e.is_regular_file(ec) || !hasGsExtension(e.path())) continue;
+    mountArchive(e.path(), "saves/" + pathToUtf8(e.path().stem()), originalPrefix_, true);
+  }
+  for (auto& e : sortedEntries(*originalRoot_ / "maps")) {
+    if (!e.is_regular_file(ec)) continue;
+    Record r;
+    r.kind = Kind::Loose;
+    r.disk = e.path();
+    records_[originalPrefix_ + "maps/" + pathToUtf8(e.path().filename())] = std::move(r);
+  }
 }
 
 void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skipUserdata) {
@@ -92,11 +117,15 @@ void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skip
   walk(root, "");
 }
 
-void Vfs::mountArchive(const fs::path& file, const std::string& relNoExt, const std::string& keyPrefix) {
+void Vfs::mountArchive(const fs::path& file, const std::string& relNoExt, const std::string& keyPrefix, bool plainOnly) {
   Archive a;
   std::string err;
   if (!a.open(file, &err)) {
     LOG_WARN("vfs: skipping archive '%s': %s", pathToUtf8(file).c_str(), err.c_str());
+    return;
+  }
+  if (plainOnly && (a.mountPath || a.parentPrefix)) {
+    LOG_WARN("vfs: skipping archive '%s': not a save", pathToUtf8(file).c_str());
     return;
   }
   // archives under userdata mount below "userdata/"; a 0x01140000 absolute mount ignores the location
@@ -154,6 +183,15 @@ fs::path Vfs::diskPathFor(const std::string& path) const {
     return *userdataRoot_ / fs::path(std::wstring(sub.begin(), sub.end()));
   }
   return installRoot_ / rel;
+}
+
+bool Vfs::writableDiskPath(const std::string& path, fs::path& out) const {
+  if (!allowInstallWrites && !(path.rfind("userdata/", 0) == 0 && userdataRoot_)) {
+    LOG_WARN("vfs: refused disk change outside userdata/: %s", path.c_str());
+    return false;
+  }
+  out = diskPathFor(path);
+  return true;
 }
 
 bool Vfs::write(const std::string& path, const std::vector<uint8_t>& data) {

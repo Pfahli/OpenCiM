@@ -25,9 +25,31 @@ $game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
 .\build\x64-Release\regs.exe $game --windowed
 ```
 
-`--documents <dir>` stands in for your Documents folder (default `.\documents`): the game keeps its settings, log and
-saves in `<dir>\Cities In Motion`, so your real saves and settings are never touched. Copy your `settings.script`
-there to start with your language and resolution. The port loads the game and its DLC from the install's own
+### Where data lives
+
+OpenCiM keeps all player data in its own folder, `Documents\OpenCiM`: `settings.script`, `controls.keys`, the game
+state `state.gs` (trophies, unlocked scenarios), `saves\*.gs`, user maps `maps\<name>.{grid,timeline,dds,scenario}`
+and the game's log `log_metro.txt`. The Documents folder is found as the original finds it (`SHGetSpecialFolderPathW`,
+`engine/platform_win32.cpp`). The game's `metro/config.script` asks for `<documents>\Cities In Motion`; the port's
+`init_userdata` answers with `<documents>\OpenCiM` instead (`engine/user_folders.cpp`), so the scripts are used as
+installed. On the first start the folder is created and filled with the game's defaults (`metro/defaults`, as the
+original does for an empty folder: language choice, desktop resolution); the original's settings are not copied.
+
+The original game's folder `Documents\Cities In Motion` is only read, never written, renamed or deleted. Its saves
+(`saves\*.gs`) and maps (`maps\*.grid` and their files) appear in the load lists (Spiel laden in the main and pause
+menu, the sandbox map list, the map editor's load list) with the note "(aus Cities in Motion)" / "(from Cities in
+Motion)". Opening one copies it into the OpenCiM folder and loads the copy. If the name is taken there by different
+content, the copy is named `<name> (CiM)` (then `<name> (CiM 2)`, …; a renamed save's own paths in its
+`level.scenario` are rewritten to the new name); nothing in OpenCiM is overwritten. Originals that already have a copy
+in OpenCiM (same size and content hash, or an unchanged copy recorded in `OpenCiM\regs-imports.txt`) are listed only
+once, as the OpenCiM file. Disk changes by scripts (`write`, `delete_file`, `mkdir`, `fappend`, `freset`) are refused
+outside the OpenCiM folder.
+
+`--documents <dir>` stands in for the Documents folder (tests): the same layout lives under it, `<dir>\OpenCiM` and
+`<dir>\Cities In Motion`, so test runs never touch the real folders. Without it the real Documents folder is used.
+`--print-paths` prints the resolved folders and quits without creating or reading anything. Stand-in folders made
+before this change keep their settings in `<dir>\Cities In Motion`; copy `settings.script` (and `controls.keys`) into
+`<dir>\OpenCiM` to keep using them, or the first start shows the language choice. The port loads the game and its DLC from the install's own
 archives only: community addons and loose override folders in the install (`addons\`, `metro\`) and in
 `userdata\addons` stay off, so mods for the original game cannot change it; `--community-addons` mounts them as the
 original does (for comparisons). `--frames <n>` quits after n frames and `--screenshot <file.png>`
@@ -71,7 +93,7 @@ RMS per output channel and per volume group, and the four loudest 3D voices with
 channel gains), `REGS_AUDIO_CAPTURE=<file.wav>`
 (also writes the final mix to a 16-bit WAV with the output's channel count), `REGS_AUDIO_ONLY=<text>` (only sounds
 whose file name contains the text are heard, e.g. `ngine` or `Church bells`, so a capture measures them alone). Test
-saves with every transport type: `node tools/gstool.mjs pack samples/saves/vienna "<documents>/Cities In Motion/saves/vienna.gs"`
+saves with every transport type: `node tools/gstool.mjs pack samples/saves/vienna "<documents>/OpenCiM/saves/vienna.gs"`
 (keep the folder name: the save's `level.scenario` points at it), `REGS_DEBUG_SIM=1` (logs the stop cycle, which tram
 stops bus lines may take, replays the saved traffic routes, and logs each level crossing near the camera as its
 barriers go down or up, with the trains holding it and the cars waiting), `REGS_NO_SIM=1` (simulation off).
@@ -168,7 +190,7 @@ $game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
 .\build\x64-Release\regs-tool.exe shadowtest        # the shadow light-camera fit vs. docs/renderer/shadows.md §3.7
 ```
 
-`run` points `userdata/` at the sandbox folder instead of `Documents\Cities In Motion`. The file system also refuses
+`run` points `userdata/` at `<sandbox>\OpenCiM` instead of `Documents\OpenCiM`. The file system also refuses
 writes outside `userdata/`, so test runs never touch your saves, your settings or the install.
 
 Generated sources (re-run when the docs change):
