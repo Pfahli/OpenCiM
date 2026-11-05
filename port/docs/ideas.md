@@ -108,23 +108,13 @@ it is, what already exists, and the open decisions. Order is not priority.
   * Road markings and stop props that show a side (arrows, shelters) would need mirrored placement or meshes.
   * Open: which pieces carry side-specific geometry (stop bays, tram platforms on one side, motorway ramps), and
     whether the lane flags allow a pure mirror without per-piece data. (Saves need not load in the original game.)
-* **Jam relief for line vehicles.** In the original, trams (and buses) can deadlock each other and the traffic behind
-  them backs up for good; the engine only fires `onJammed` after 180 s of waiting (`0x101152a0.c`, transport.md
-  §4.3), which `linepanel.script` turns into a ticker message. The port could resolve it:
-  1. **Detect:** a bus or tram whose head has not advanced (less than about one unit) for 2 minutes of game time,
-     not counting its dwell at a stop, a breakdown or a crash.
-  2. **Clear the cars:** the road vehicles that block it, or that wait in the jam around it, turn round one by one
-     (one every few seconds): onto the opposite lane of their node (`oppositeNode`) with a new route, or, where no
-     turn is possible, they leave the map (fade out like a finished trip).
-  3. **Respawn:** if the bus or tram has still not moved 30 s later, it leaves the map (`onUnspawn`, as when a line
-     is paused) and spawns again two stops further on, as soon as that platform is free. Its passengers get off at
-     the vehicle's last position and plan their trip again from there.
-  * The original's ticker message stays; a second message could say that the vehicle was moved.
-  * Always on (the owner's decision): no player option; the times are fixed (2 minutes, then 30 s). Only an internal
-    switch turns it off, for tests and comparisons with the original (a debug variable such as
-    `REGS_NO_JAM_RELIEF=1`, listed with the other debug switches in the README).
-  * Open: which cars count as "surrounding" (the cars on the nodes the vehicle waits for and their queues, up to a
-    radius), and whether trains and metro need the same (they deadlock less, since they claim whole blocks).
+* **Jam relief for line vehicles:** **done** (`docs/simulation/transport.md` §10, `engine/sim_jams.cpp`). A bus or
+  tram that has stood 2 minutes (dwell, breakdown and crash not counted) gets the road vehicles of the jam around it
+  (within 60 units) turned round onto the opposite lane, one every 3 s, or sent off the map where no turn is possible,
+  and the node it waits for kept for it; still standing 30 s later, it leaves the map and spawns two stops on, its
+  riders getting off and planning again. The original's ticker message stays, a second one says the vehicle was moved.
+  Always on; `REGS_NO_JAM_RELIEF=1` turns it off (README). Metro trains are only watched: their jams ended by themselves
+  in every measured case (§10.4); background trains already give up after 60 s.
 * **Sandbox densities.** Traffic and population density (0.5×-4×) for new sandbox games: **done** (README, "Port files
   and graphics options").
 

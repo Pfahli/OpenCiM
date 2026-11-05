@@ -1925,6 +1925,43 @@ void linkTransfers(SimState& s) {
 
 }  // namespace
 
+// port jam relief (engine/sim_jams.cpp): the riders of a vehicle taken off the map get off where it stood and plan
+// again (REPLAN) from the nearer of its last and next stop, as the evacuation of a broken-down or crashed vehicle does
+// (stepTravel), without that one's mood 3: the jam was not the vehicle's fault
+int evacuateRiders(SimState& s, int vi, const Vec3& at) {
+  VehicleState& v = s.vehicles[size_t(vi)];
+  if (v.line < 0 || !s.grid || !s.grid->data) return 0;
+  const LineState& line = s.lines[size_t(v.line)];
+  int item = -1;
+  float best = 1e30f;
+  for (int k : {v.stopA, v.stopB}) {
+    if (k < 0 || k >= int(line.stops.size()) || line.stops[size_t(k)].item < 0) continue;
+    Vec3 d = itemCentre(*s.vm, s.grid, line.stops[size_t(k)].item) - at;
+    if (d.x * d.x + d.z * d.z < best) best = d.x * d.x + d.z * d.z, item = line.stops[size_t(k)].item;
+  }
+  const GridData& g = *s.grid->data;
+  int qx = int(std::lround((at.x / g.cellSize + float(g.width) * 0.5f) * 4));
+  int qz = int(std::lround((at.z / g.cellSize + float(g.length) * 0.5f) * 4));
+  int n = 0;
+  for (size_t ci = 0; ci < s.citizens.size(); ++ci) {
+    Citizen& c = s.citizens[ci];
+    if (!c.alive || c.vehicle != vi) continue;
+    c.vehicle = -1;
+    c.flags |= 0x200;
+    int i = spawnCharacter(s, c, int(ci), qx, qz);
+    if (i >= 0)
+      if (Object* ctrl = characterController(s, i)) fireCitizen(s, int(ci), u"onSpawnCharacter", {Value::heap(VT::Object, ctrl)});
+    c.hasRoute = false;
+    c.route = Route();
+    c.replanFrom = item;
+    c.flags = (c.flags & ~kStateMask) | kReplan;
+    ++n;
+  }
+  v.passengerCount = std::max(0, v.passengerCount - n);
+  s.evacuated += n;
+  return n;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // interface to engine/sim.cpp
 

@@ -743,3 +743,119 @@ fires when a crashing agent is destroyed [`0x10107dd0.c:18-20`]. Transport vehic
    the travel cost is assumed to be seconds; the 6-unit path node length is inferred from the `/6`, `×6` constants.
 8. **Door markers.** The enter/exit marker flags (0x20000 / 0x10000 on model sub-objects at `model+0x2a0`) were read
    from `FUN_10108350`/`FUN_101084f0`; how they are authored in `.object` files was not checked.
+
+---
+
+## 10. Port: jam relief for buses and trams
+
+Not in the original: a quality-of-life change of the port (`port/src/engine/sim_jams.cpp`, design in
+`port/docs/ideas.md`). The original only fires `onJammed` after 180 s of standing (§4.3, `0x101152a0.c:192-197`) and
+leaves the jam as it is; a bus or tram behind a car that cannot go on, or two line vehicles locking each other at a
+junction, stand for good and the traffic behind them backs up. The port resolves it in three steps. It is always on,
+with fixed times; `REGS_NO_JAM_RELIEF=1` turns it off for tests and comparisons (the detections are still logged then,
+with how each jam ended by itself). Nothing of it is saved.
+
+### 10.1 Detection
+
+A bus or tram (line types 0 and 1) is **jammed** when its head has not advanced 1 unit for **120 s of game time**. The
+clock runs only while the vehicle waits for nodes ahead (`freeAhead > 1.5`, the condition of `onJammed`); it starts
+anew after the dwell at a stop, the stand of a breakdown at its stop and a crash (a broken-down vehicle that is still
+on its way to that stop counts: it is held up like any other). Progress is the head's distance driven
+(`Mover::travelled`, added up in `moveMover`), so a respawn or a platform change starts it anew. A vehicle directly
+behind a line vehicle whose relief already runs is not detected until that one is dealt with (a queue of trams
+behind a blocked one is relieved from its head).
+
+### 10.2 Clearing the cars (step 2)
+
+From the detection on, every **3 s** one road vehicle of the jam is cleared:
+
+* **The jam** is found on a "waits for" relation over the stationary movers (`speed < 0.1`) whose head node lies
+  within **60 units** of the bus or tram. A mover waits for the occupants of the first node ahead it cannot enter (the
+  node and its crossings, `canEnter` of grid-traffic.md §6.3 without the waiting markers, which name nobody) and for
+  the leader it queues behind (`reserved`). The jam is everything linked to the bus or tram either way: what is in its
+  way and what is in the way of those (first, by hops), then the queues behind them and the vehicles waiting for the
+  nodes the bus or tram holds (nearest first).
+* **Clearable** are road vehicles (no line vehicles, trains, boats, aircraft), not crashed (they go after 30 s anyway,
+  grid-traffic.md §6.5), parked ones included: a parked car on a lane the bus or tram needs blocks it for as long as its
+  owner stays.
+* **Turning round:** a single car moves onto the opposite lane of the node under its middle, at the mirrored place,
+  with a route to where it was going (a parked car, or without a route there: to one of up to eight random road END
+  nodes). The opposite lane is `oppositeNode` (`FUN_100e2630`, the coincident twin of a track) or, for roads whose two
+  directions lie side by side, the nearest node of the same class within 8 units sideways running the other way along
+  the same stretch (directions within 25°, same height ±2). Junction nodes have none.
+* **Leaving:** without a free opposite lane, without a route, for a consist of several cars and for a citizen's parked
+  car, the vehicle leaves the map like a finished trip: a citizen's car through `carArrived(stuck)` (the citizen
+  arrives), a parked car of a citizen as when its owner gives it up (`c.car = −1`, flag 0x100000 cleared; the next drive
+  takes a new car), others by `despawn`.
+* Other line vehicles are never turned or removed by step 2.
+* **Kept node:** during step 2 the node the vehicle waits for and that node's crossings are kept for it
+  (`NodeRt::keep`, checked in `canEnter`): nobody else claims them, so a stream of cars through a junction, where each
+  car moves and none is in a jam, lets the bus or tram in once the cars inside have left. A kept node of a vehicle
+  whose relief has ended counts as free (`keptFor`), so a vehicle leaving by other ways (a paused line) leaves no
+  lock behind.
+
+The relief ends when the vehicle has advanced **20 units** since it began, reaches its stop, stands broken down at
+its stop or crashes.
+
+### 10.3 Respawn (step 3)
+
+When the vehicle has not advanced a unit for **30 s** of step 2 (the 30 s restart whenever it does):
+
+1. A line vehicle in its way that is itself in relief, and has stood longer (ties: the lower vehicle index), goes
+   first: this one waits. Of two line vehicles locking each other only the older one leaves.
+2. If `onJammed` has not fired since the vehicle last advanced, it fires now (the original's ticker message comes
+   first).
+3. Its riders get off where it stands (`evacuateRiders`, `sim_citizens.cpp`): a pedestrian at the vehicle's position
+   and the REPLAN state (`replanFrom` = the nearer of its last and next stop), as after a breakdown, without the mood
+   penalty.
+4. It leaves the map as when its line is paused (undocked, agent freed, `onUnspawn`).
+5. It spawns again at the stop **two on from the one it last left** (`stopA + 2`, the first reachable from there) as
+   soon as that platform is free (the usual spawn of §4.2 restricted to that stop); after 120 s of waiting for it, the
+   usual search from the first stop. After the spawn it fires the port's event **`onRegsJamMoved(position)`**
+   (`gsTransportVehicle`, event id 14); the port's extension of `metro/ui/linepanel/linepanel.script` turns it into a
+   ticker message (`$regs_newsticker_jamMoved_text` in `port/data/regs/strings/`).
+
+Saves: the relief state is not saved. A vehicle saved while waiting for its respawn platform has no agent in the save
+and spawns at the first free platform of its line after loading (§4.2); turned cars are ordinary traffic with their
+new route; a vehicle saved in step 2 loads standing where it was and is detected again 120 s later.
+
+### 10.4 Metro and trains
+
+Metro trains (type 2) are only watched: the detection runs and is logged, nothing is done. In Berlin, trains of
+lines 0 and 4 wait for each other where the lines share track; all 43 such waits in 6000 s of game time (and 56 in
+4800 s with the relief on) ended by themselves, 125 to 600 s after the train stopped (most within 150 to 300 s). They
+claim whole blocks and have no cars to clear, so only step 3 could apply; it is not needed so far. Water buses and
+helicopters are not watched. Background trains are not line vehicles: they give up after 60 s standing anyway
+(grid-traffic.md §6.5).
+
+### 10.5 Measurements
+
+Runs at speed 10 (`port/run/jam-run.ps1`, logs in `port/run/jam-out/`), the relief on and off
+(`REGS_NO_JAM_RELIEF=1`, which still logs each detection and how it ended):
+
+* **Leaked lane claims.** The first runs showed every tram and bus line of Berlin and Vienna standing for good within
+  10 minutes, with "nobody" in the way: the nodes were held by despawned cars. A node handed to a car as the queued
+  reserver (`releaseNode`) can lie past its held range when it queued for a node behind junction nodes it could enter
+  but had not committed yet (`claimAhead`); `releaseAll` only released the held range, so the node stayed taken for
+  good. Fixed in `releaseAll` (it also releases every later node of the track the mover occupies or reserves). The
+  numbers below are with the fix.
+* **Berlin, relief off, 6000 s:** 97 tram detections (19 ended within 30 s of the detection, 41 within 3 minutes,
+  21 within 8 minutes, 8 later, 8 not at all), 15 bus detections that never ended: at t ≈ 240 s a bus of line 6 and
+  one of line 7 waited for each other at a junction and line 7 queued behind them for the rest of the run; 43 metro
+  waits (§10.4). Passengers boarded by t = 4800 s: 32 915.
+* **Berlin, relief on, 4800 s:** 39 tram and 10 bus detections; 46 got going after cars were turned round or sent off
+  (44 turned, 69 sent off in all), 3 were respawned (the line 6/7 lock among them). Boarded by t = 4800 s: 42 799
+  (+30 %).
+* **Vienna:** relief off, 3000 s: 4 tram detections, all ended by themselves after 204 to 483 s; relief on, 3800 s:
+  1 detection, going again after one car was sent off.
+* **Cim2 (light traffic), relief on, 3000 s:** no detection.
+* Early detections (a jam that would have ended within 30 s anyway) were 19 of 112 tram and bus detections in Berlin;
+  for them the relief clears a few cars and never respawns.
+* `REGS_TEST_JAM=1` (Cim2): the car parked at t = 43 s stops tram 0; detected at t = 169 s (120 s standing after
+  its dwell), the car is sent off (no opposite lane on a junction node) and the tram goes on at t = 172 s.
+  `REGS_TEST_JAM=1:hard`: 10 cars sent off one every 3 s, then at t = 199 s the tram leaves with 50 riders, spawns at
+  stop 9 at once, the 50 riders all plan again (20 ride it again 30 s later), and the ticker shows the original's
+  "Eine Straßenbahn der Linie 1 scheint festzusitzen!" followed by the port's "… wurde zwei Haltestellen weiter
+  gesetzt." With `REGS_NO_JAM_RELIEF=1` the same tram and the one behind it stand to the end of the run.
+  `REGS_TEST_JAM=1:hard:save` saved in the middle of step 2; the reloaded game had the tram standing at the (now
+  ordinary) parked car, detected it again 120 s after loading, sent the car off, and the tram went on.

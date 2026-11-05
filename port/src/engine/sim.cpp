@@ -272,6 +272,7 @@ bool canEnter(const SimState& s, int n, int id, bool ignoreMarks) {
   const NodeRt& r = s.rt[size_t(n)];
   const LaneNode& nd = s.graph.nodes[size_t(n)];
   if (r.occupant >= 0 && r.occupant != id) return false;
+  if (r.keep >= 0 && keptFor(s, r, id)) return false;  // port: kept for a line vehicle in jam relief (sim_jams.cpp)
   if (r.marker && !(nd.flags & kPathLaneChange) && !ignoreMarks) return false;
   if (nd.flags & kPathBlocker) return false;
   for (int c : nd.crossings) {
@@ -344,6 +345,14 @@ void releaseAll(SimState& s, int id) {
   Mover& m = s.movers[size_t(id)];
   for (int j = m.holdBegin; j < m.holdEnd && size_t(j) < m.track.nodes.size(); ++j) releaseNode(s, id, m.track.nodes[size_t(j)]);
   if (m.reserved >= 0) releaseNode(s, id, m.reserved);
+  // port fix: a node handed to it as the queued reserver (releaseNode) can lie past the held range, when it queued for
+  // a node behind junction nodes it could enter but had not committed yet (claimAhead); such a node was never released
+  // and stayed taken by a despawned mover for good, the cause of most lasting tram and bus jams (transport.md §10.5)
+  for (size_t j = size_t(std::max(m.holdEnd, 0)); j < m.track.nodes.size(); ++j) {
+    int n = m.track.nodes[j];
+    if (!(s.graph.nodes[size_t(n)].flags & 0x2000000u) && (s.rt[size_t(n)].occupant == id || s.rt[size_t(n)].reserver == id))
+      releaseNode(s, id, n);
+  }
   for (size_t j = size_t(std::max(m.holdBegin, m.holdEnd)); j < m.track.nodes.size(); ++j)  // flight nodes not reached
     if (s.graph.nodes[size_t(m.track.nodes[j])].flags & 0x2000000u) freeInlineNode(s, m.track.nodes[j]);
   m.reserved = -1;
@@ -471,6 +480,7 @@ void moveMover(SimState& s, int id, float dt) {
   float limitDist = m.track.start[size_t(end)] + s.graph.nodes[size_t(m.track.nodes[size_t(end)])].length - hm.rearOffset - hm.frontOffset;
   float before = m.dist;
   m.dist = std::min(m.dist + 3.0f * m.speed * dt, std::max(m.dist, limitDist));
+  m.travelled += m.dist - before;
   if (m.dist <= before + 1e-5f) {
     m.waitTime += dt;
     // a reckless head at the end of what it holds, the next node taken: a crash (0x1010de50.c:314-326)
@@ -881,11 +891,15 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
       return;
     }
     // spawning (transport.md §4.2): at the first stop of the ring whose platform is free and whose leg has a path
+    // (port: after a jam relief respawn only the stop two on, as soon as its platform is free; engine/sim_jams.cpp)
     bool placed = false;
-    for (int k = 0; k < int(line.stops.size()) && !placed; ++k) {
+    int only = jamRespawnStop(s, v, line, dt);
+    for (int j = 0; j < int(line.stops.size()) && !placed; ++j) {
+      int k = only >= 0 ? only : j;
       if (!line.stops[size_t(k)].reachable || line.stops[size_t(k)].legStart < 0) continue;
       placed = spawnLineVehicle(s, v, line, k) && canEnter(s, s.movers[size_t(v.mover)].track.nodes[0], v.mover, true);
       if (!placed) s.movers[size_t(v.mover)].live = false;
+      if (only >= 0) break;
     }
     if (!placed) {
       if (debugSim()) {
@@ -903,7 +917,9 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
     }
     claimBody(s, v.mover);
     vm.fireEvent(v.object.get(), u"onSpawn", {});
+    jamRespawned(vm, s, v, vi);
   }
+  if (stepJamRelief(vm, s, line, vi, dt)) return;  // port: jam relief (engine/sim_jams.cpp)
   Mover& m = s.movers[size_t(v.mover)];
   int n = int(line.stops.size());
   LineStopState& b = line.stops[size_t(v.stopB)];
@@ -1097,6 +1113,7 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
   if (m.waitTime > 180 && freeAhead(s, m) > 1.5f) {  // onJammed (0x101152a0.c:192-197)
     vm.fireEvent(v.object.get(), u"onJammed", {});
     m.waitTime = 0;
+    v.jammedFired = true;
   }
 }
 
@@ -1915,6 +1932,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
       if (Value* main = vm.findGlobal(u"MAIN"))
         vm.call(vm.getMember(vm.getMember(*main, u"$main"), u"saveGameData"), {Value::string(utf8ToUtf16(colon + 1))});
   }
+  stepJamTest(vm, *s, x);
   for (int i = 0; i < n; ++i) {
     stepDoors(*s, step);  // the active buckets' item updates come before the children (grid tick :231-276)
     stepCitizens(vm, *s, step);

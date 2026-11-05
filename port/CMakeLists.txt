@@ -77,6 +77,7 @@ add_library(regs_engine STATIC
   src/engine/sound.cpp
   src/engine/sim_sounds.cpp
   src/engine/sim_doors.cpp
+  src/engine/sim_jams.cpp
   src/engine/particles.cpp
   src/platform/window_win32.cpp
   src/audio/audio.cpp

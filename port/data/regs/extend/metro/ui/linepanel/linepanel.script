@@ -1,10 +1,29 @@
-// ReGS extension of metro/ui/linepanel/linepanel.script (used as installed; see VM::extendSource). The graphics page
-// can change the window size while the game runs (docs/ui/scaling.md §6). The panel's height is min(900, window
-// height) − 228 and its line and stop lists share it half and half, so when the desktop changes size below 900
-// pixels the panel and both lists are placed again with the script's own formulas (and its one-pixel tweaks of the
-// lists' frames, which createHudElement's resize handler puts back).
+// ReGS extension of metro/ui/linepanel/linepanel.script (used as installed; see VM::extendSource).
+// * Jam relief (port QoL, engine/sim_jams.cpp, docs/simulation/transport.md §10): when the port takes a stuck bus or
+//   tram off the map and spawns it two stops on, the vehicle fires onRegsJamMoved(position) and the ticker says so,
+//   next to the original's "seems to be jammed" message (onJammed, unchanged). Each vehicle of the panel gets the
+//   handler in addBus.
+// * Live window size (docs/ui/scaling.md §6): the graphics page can change the window size while the game runs. The
+//   panel's height is min(900, window height) − 228 and its line and stop lists share it half and half, so when the
+//   desktop changes size below 900 pixels the panel and both lists are placed again with the script's own formulas
+//   (and its one-pixel tweaks of the lists' frames, which createHudElement's resize handler puts back).
+//@rename addBus regsBaseAddBus
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regsStrings = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regsStrings = load "/regs/strings/en_US.strings";
+}
 
 //@base
+
+function addBus($bus) {
+  regsBaseAddBus($bus);
+  event $bus.onRegsJamMoved::($pos) {
+    MAIN.$petitionbar.addTickerText(0, expandPattern($regsStrings.$regs_newsticker_jamMoved_text[.$type], .line.$index), $pos, .$id + ":regsJamMoved");
+  }
+  return $bus;
+}
 
 $regsPanelH = 0;
 $regsHalf = 0;
