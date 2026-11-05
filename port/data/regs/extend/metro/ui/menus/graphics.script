@@ -179,6 +179,24 @@ for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
 }
 MAIN.$ui.setTooltip($regsRendererButtons[1], $regs.$regs_renderer_planned, 0, -1);
 
+// ---- UI scale (left column, under the graphics engine): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
+// window opens (Display::chooseUiScale, docs/ui/scaling.md), so a change needs a restart. Unset: 2x on windows taller
+// than 1800 px, else 1x; the setting is written only when the player picks another value.
+$uiScaleValues = [1.0, 1.5, 2.0];
+$regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : ($screenheight > 1800 ? 2.0 : 1.0));
+$uiScale = $regsUiScaleShown;
+regsLabel(60, 474, $regs.$regs_uiScale_item);
+$regsUiScaleButtons = [];
+for ($i = 0; $i < #$uiScaleValues; ++$i) {
+  $regsUiScaleButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsUiScale", 170 + $i * 78, 474, 76, 18, $regs.$regs_uiScale_values[$i], macro($i) :: regsSetUiScale($0));
+  MAIN.$ui.setTooltip($regsUiScaleButtons[$i], $regs.$regs_uiScale_hint, 0, -1);
+}
+function regsSetUiScale($index) {
+  $uiScale = $index;
+  MAIN.$ui.selectChoiceButton($regsUiScaleButtons[$uiScale], "regsUiScale");
+}
+regsSetUiScale($uiScale);
+
 // ---- right column, under the refresh rates: the port's frame-rate readout (drawn by the engine, display.cpp) ----
 
 $showFps = $settings.$regsShowFps : false;
@@ -255,4 +273,9 @@ function save() {
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
   $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
   $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps", "regsDayNight");
+  if ($uiScale != $regsUiScaleShown) {   // the GUI is laid out once from the window size: the game's restart notice
+    $settings.$regsUiScale = $uiScaleValues[$uiScale];
+    $settings.exportVariables("regsUiScale");
+    $requireRestart = true;
+  }
 }

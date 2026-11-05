@@ -1,6 +1,7 @@
 #include "render/renderer2d.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 #include "render/gl.h"
@@ -28,9 +29,27 @@ in vec2 vUv;
 in vec4 vColor;
 uniform sampler2D uTex;
 uniform int uTextured;
+uniform float uSharp;
 out vec4 oColor;
+// UI scale > 1 (uSharp = the scale): "sharp bilinear" for texels the scale magnified. Each texel keeps a flat core
+// and blends with its neighbour over about one window pixel, so at 2x an image drawn 1:1 by the scripts becomes an
+// exact 2x2 copy of each texel (no blur), and at 1.5x only the texel seams are blended. Texels magnified far more
+// than the scale (stretched backgrounds, gradients) and minified ones (mipmapped fonts) keep plain bilinear.
+vec4 sampleGui() {
+  if (uSharp <= 0.0) return texture(uTex, vUv);
+  vec2 size = vec2(textureSize(uTex, 0));
+  vec2 t = vUv * size;
+  vec2 dx = dFdx(t), dy = dFdy(t);
+  vec2 mag = 1.0 / max(vec2(length(vec2(dx.x, dy.x)), length(vec2(dx.y, dy.y))), vec2(1e-6));  // pixels per texel
+  vec2 k = mix(max(mag, vec2(1.0)), vec2(1.0), step(vec2(uSharp * 1.25), mag));
+  vec2 region = 0.5 - 0.5 / k;
+  vec2 cell = floor(t);
+  vec2 off = fract(t) - 0.5;
+  vec2 f = (off - clamp(off, -region, region)) * k + 0.5;
+  return textureGrad(uTex, (cell + f) / size, dFdx(vUv), dFdy(vUv));
+}
 void main() {
-  oColor = uTextured != 0 ? texture(uTex, vUv) * vColor : vColor;
+  oColor = uTextured != 0 ? sampleGui() * vColor : vColor;
 }
 )";
 
@@ -73,6 +92,7 @@ bool Renderer2D::init(std::string* error) {
   uMatrix_ = gl::GetUniformLocation(program_, "uMatrix");
   uTextured_ = gl::GetUniformLocation(program_, "uTextured");
   uTex_ = gl::GetUniformLocation(program_, "uTex");
+  uSharp_ = gl::GetUniformLocation(program_, "uSharp");
   gl::GenVertexArrays(1, &vao_);
   gl::BindVertexArray(vao_);
   gl::GenBuffers(1, &vbo_);
@@ -174,6 +194,7 @@ void Renderer2D::beginFrame(int width, int height, uint32_t clearArgb) {
   gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
   gl::UseProgram(program_);
   gl::Uniform1i(uTex_, 0);
+  gl::Uniform1f(uSharp_, sharpScale > 1 ? sharpScale : 0.0f);
   gl::ActiveTexture(gl::TEXTURE0);
   gl::BindVertexArray(vao_);
   gl::BindBuffer(gl::ARRAY_BUFFER, vbo_);
@@ -283,8 +304,35 @@ void Renderer2D::setScissor(int x, int y, int w, int h) {
   gl::Scissor(x, fh_ - y - h, std::max(0, w), std::max(0, h));
 }
 
+void Renderer2D::wideLine(const GuiVertex& a, const GuiVertex& b) {
+  // a lineWidth-pixel band around the segment, in the current units (pixels per unit from the projection)
+  float kx = proj_[2] / proj_[4], ky = proj_[3] / proj_[5];  // window pixels per unit
+  float dx = (b.x - a.x) * kx, dy = (b.y - a.y) * ky, len = std::sqrt(dx * dx + dy * dy);
+  if (len <= 0) return;
+  float h = lineWidth * 0.5f, nx = -dy / len * h / kx, ny = dx / len * h / ky;
+  GuiVertex q[4] = {a, b, b, a};
+  q[0].x += nx; q[0].y += ny;
+  q[1].x += nx; q[1].y += ny;
+  q[2].x -= nx; q[2].y -= ny;
+  q[3].x -= nx; q[3].y -= ny;
+  const GuiVertex t[6] = {q[0], q[1], q[2], q[0], q[2], q[3]};
+  batch_.insert(batch_.end(), t, t + 6);
+}
+
 void Renderer2D::draw(uint32_t tex, Prim prim, const GuiVertex* v, size_t n) {
   bool lines = prim == Prim::Lines || prim == Prim::LineStrip;
+  if (lines && lineWidth > 1) {  // core profiles only guarantee 1-pixel lines
+    if (tex != batchTex_ || lines_) {
+      flush();
+      batchTex_ = tex;
+      lines_ = false;
+    }
+    if (prim == Prim::Lines)
+      for (size_t i = 0; i + 1 < n; i += 2) wideLine(v[i], v[i + 1]);
+    else
+      for (size_t i = 1; i < n; ++i) wideLine(v[i - 1], v[i]);
+    return;
+  }
   if (tex != batchTex_ || lines != lines_) {
     flush();
     batchTex_ = tex;

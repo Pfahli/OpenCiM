@@ -146,7 +146,22 @@ bool Display::open(const platform::WindowDesc& desc, std::string* error) {
   }
   if (!r2d_.init(error) || !r3d_.init(error)) return false;
   LOG_INFO("display: %dx%d, %s", window_->width(), window_->height(), r2d_.info.c_str());
+  if (int dpi = window_->dpi()) LOG_INFO("display: %d dpi (%d %%), per-monitor DPI aware", dpi, dpi * 100 / 96);
+  else LOG_WARN("display: not DPI aware, Windows may stretch the window");
   return true;
+}
+
+float Display::chooseUiScale(VM& vm, int w, int h) {
+  // the graphics page's choices 1×, 1.5×, 2×; no setting: 2× on windows taller than 1800 px (4K-class screens)
+  float want = settingNumber(vm, u"regsUiScale", h > 1800 ? 2.0f : 1.0f);
+  float s = want >= 1.75f ? 2.0f : want >= 1.25f ? 1.5f : 1.0f;
+  // the scripts' window stays at least 1024 × 720: the main menu's buttons run into its bottom links below about
+  // 660 script pixels, and the graphics page is 1000 wide. Smaller scaled windows step down to the next scale
+  while (s > 1.0f && (float(w) / s < 1024.0f || float(h) / s < 720.0f)) s -= 0.5f;
+  if (s != want && settingNumber(vm, u"regsUiScale", 0) != 0)
+    LOG_WARN("ui scale %.1f does not fit a %dx%d window, using %.1f", double(want), w, h, double(s));
+  if (const char* f = std::getenv("REGS_UI_FILTER")) uiFilterSharp_ = std::string(f) != "linear";
+  return uiScale = s;
 }
 
 uint32_t Display::texture(VM& vm, TextureObj* t) {
@@ -354,19 +369,24 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
   int w = window_->width(), h = window_->height();
   uint32_t background = uint32_t(vm.toInt(field(vm, win, u"background")));
   r2d_.timer = effectTimer;
+  r2d_.sharpScale = uiFilterSharp_ && uiScale > 1.0f ? uiScale : 0.0f;
+  r2d_.lineWidth = uiScale;
   r2d_.beginFrame(w, h, background);
   if (video) {
     for (auto& k : video->children) {
       auto* vp = dynamic_cast<ControlObj*>(k.get());
       if (!vp || !vp->visible()) continue;
+      // pixel mode: script pixels, uiScale window pixels each (the scripts' window is the real one / uiScale);
+      // otherwise one unit = the window height
       bool pixels = vm.truthy(field(vm, vp, u"pixelCoordinates"));
-      float scale = pixels ? 1.0f : float(h);
+      float scale = pixels ? uiScale : float(h);
       float px = vp->left * scale, py = vp->top * scale, pw = vp->width * scale, ph = vp->height * scale;
       if (pw <= 0 || ph <= 0) continue;
-      r2d_.setProjection(px, py, pw, ph, pixels ? pw : pw / ph, pixels ? ph : 1.0f);
+      float uw = pixels ? vp->width : pw / ph, uh = pixels ? vp->height : 1.0f;
+      r2d_.setProjection(px, py, pw, ph, uw, uh);
       renderViewportScene(*this, vm, vp);  // a root viewport with a scene draws it first, its GUI children on top
-      r2d_.setProjection(px, py, pw, ph, pixels ? pw : pw / ph, pixels ? ph : 1.0f);
-      GuiPass pass{vm, *this, px, py, pixels ? 1.0f : ph};
+      r2d_.setProjection(px, py, pw, ph, uw, uh);
+      GuiPass pass{vm, *this, px, py, pixels ? uiScale : ph};
       pass.scissor(int(px), int(py), int(pw), int(ph));
       // the viewport is its own client area: its children are drawn in it
       for (auto& c : vp->children)
@@ -419,8 +439,10 @@ void Display::drawFpsReadout(VM& vm) {
   // the GUI's text font (ui.script setTextFont) in window pixels, at the top edge right of the centred toolbar
   // (query / build / bulldoze, ±105 px): the reputation bar and money are top left, the line and vehicle panel and
   // the menus' close buttons top right, the minimap and date bottom left, the info panel bottom right
-  int w = r2d_.frameWidth(), h = r2d_.frameHeight();
-  r2d_.setProjection(0, 0, float(w), float(h), float(w), float(h));
+  // in script pixels, scaled with the GUI (UI scale)
+  int fw = r2d_.frameWidth(), fh = r2d_.frameHeight();
+  float w = float(fw) / uiScale, h = float(fh) / uiScale;
+  r2d_.setProjection(0, 0, float(fw), float(fh), w, h);
   r2d_.setScissor(0, 0, -1, -1);
   TextParams p;
   p.sizeX = p.sizeY = 15;
@@ -476,8 +498,11 @@ uint32_t Display::guiProgram(VM& vm, const std::u16string& path) {
 }
 
 render::RenderTarget* Display::renderTarget(TextureObj* t, int minW, int minH) {
-  // sizes only grow: max(requested, texture size) (gsPostEffect_OGL::initFrameBuffer, scene-basics.md §7.1)
-  int w = std::max({1, t->width, minW}), h = std::max({1, t->height, minH});
+  // sizes only grow: max(requested, texture size) (gsPostEffect_OGL::initFrameBuffer, scene-basics.md §7.1). Port:
+  // the texture size times the UI scale, so a view shown in the GUI keeps one texel per window pixel; the scripts'
+  // crop and tiling rects are fractions of the texture and stay right (docs/ui/scaling.md §3)
+  int sw = int(std::ceil(float(t->width) * uiScale)), sh = int(std::ceil(float(t->height) * uiScale));
+  int w = std::min(8192, std::max({1, sw, minW})), h = std::min(8192, std::max({1, sh, minH}));
   auto it = targets_.find(t);
   if (it != targets_.end()) {
     if (!it->second.fbo) return nullptr;
@@ -547,9 +572,15 @@ void registerDisplayNatives(VM& vm) {
       return Value();
     }
     d->window().showCursor(v.truthy(field(v, s, u"systemCursor")));
-    // the client area is the real size (fullscreen takes the monitor's)
-    s->fieldValues[u"width"] = Value::integer(d->window().width());
-    s->fieldValues[u"height"] = Value::integer(d->window().height());
+    // the client area is the real size (fullscreen takes the monitor's); with a UI scale the scripts see it divided
+    // by the scale and lay the GUI out in that space (docs/ui/scaling.md)
+    int rw = d->window().width(), rh = d->window().height();
+    float ui = d->chooseUiScale(v, rw, rh);
+    s->fieldValues[u"width"] = Value::integer(int(std::lround(float(rw) / ui)));
+    s->fieldValues[u"height"] = Value::integer(int(std::lround(float(rh) / ui)));
+    if (ui != 1.0f)
+      LOG_INFO("ui scale %.1f: the scripts' window is %dx%d", double(ui), v.toInt(s->fieldValues[u"width"]),
+               v.toInt(s->fieldValues[u"height"]));
     s->fieldValues[u"mode"] = Value::string(utf8ToUtf16("Video: " + d->r2d().info));
     d->setWindowObject(s);
     g_display = std::move(d);

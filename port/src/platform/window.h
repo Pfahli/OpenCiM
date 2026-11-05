@@ -43,6 +43,9 @@ class Window {
   virtual void showCursor(bool on) = 0;
   virtual int width() const = 0;   // client size in pixels
   virtual int height() const = 0;
+  // The monitor's DPI as the window sees it (96 = 100 %); 0 when the process is not DPI aware (the OS would then
+  // stretch the window's pixels). The game sizes its interface itself (UI scale), never through the OS.
+  virtual int dpi() const { return 96; }
   // OpenGL entry point lookup for the current context.
   virtual void* glProc(const char* name) const = 0;
 };

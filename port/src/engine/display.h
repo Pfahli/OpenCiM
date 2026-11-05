@@ -25,6 +25,13 @@ class Display {
   render::Renderer2D& r2d() { return r2d_; }
   render::Renderer3D& r3d() { return r3d_; }
   int antialiasing = 0;  // window.antialiasing: MSAA samples for post-effect scene targets
+  // UI scale (setting regsUiScale, docs/ui/scaling.md): window pixels per script pixel. The scripts see a window of
+  // (window size / uiScale); the GUI pass, pixel-mode viewports and render targets are drawn at uiScale × their
+  // script size, so the interface grows while the 3D views keep the window's full resolution.
+  float uiScale = 1.0f;
+  // Picks uiScale for a window of w × h pixels from the setting (unset: 2 on windows taller than 1800 px), steps it
+  // down while the scripts' window would be smaller than 1024 × 720, and returns it.
+  float chooseUiScale(script::VM& vm, int w, int h);
   // the effect timer (gsShaders_OGL +0xdc, L:0x081ea990): real seconds, wrapped at 1024; the `timer` uniform of 3D and
   // GUI shaders and video.getEffectTimer()
   float effectTimer = 0;
@@ -69,6 +76,7 @@ class Display {
   };
   void drawFpsReadout(script::VM& vm);
   FpsReadout fps_;
+  bool uiFilterSharp_ = true;  // scaled GUI textures: sharp bilinear (default) or plain bilinear (REGS_UI_FILTER=linear)
   bool saveScreenshot(const std::filesystem::path& file);
   std::unique_ptr<platform::Window> window_;
   render::Renderer2D r2d_;
