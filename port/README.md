@@ -32,7 +32,7 @@ archives only: community addons and loose override folders in the install (`addo
 `userdata\addons` stay off, so mods for the original game cannot change it; `--community-addons` mounts them as the
 original does (for comparisons). `--frames <n>` quits after n frames and `--screenshot <file.png>`
 saves the last one (used for checks). `--at <frame>:<action>` injects input for screenshot checks: `move:x,y`,
-`click:left|right|middle`, `down:…`/`up:…`, `key:<VK>` (press and release), `keydown:<VK>`/`keyup:<VK>` (hold), `text:<chars>` (typed into edit controls),
+`click:left|right|middle`, `down:…`/`up:…`, `key:<VK>` (press and release), `keydown:<VK>`/`keyup:<VK>` (hold), `text:<chars>` (typed into edit controls), `wheel:<notches>` (mouse wheel at the pointer),
 `shot:<file.png>`, `vsync:on|off` (e.g. off after a frame-timed load, for frame-time measurements). Loading the save
 `Cim2` and entering the game, for example:
 
@@ -89,18 +89,36 @@ The game's graphics page is extended this way (`data/regs/extend/metro/ui/menus/
 | Option | Setting | Values | Applies |
 |---|---|---|---|
 | Graphics preset | (derived) | Low, Medium, Original (the game's defaults), High, Ultra; "Custom" otherwise | sets the options below |
-| Shadows | `$shadows` | off, 1024², 2048² (the game's maximum), 4096², 8192² | after a restart in game |
-| Antialiasing | `$antialiasing` | off, 2×, 4×, 8× MSAA | after a restart |
-| Anisotropic filtering | `$anisotropy` | off … 16× (now applied; the port ignored it before) | after a restart |
+| Shadows | `$shadows` | off, 1024², 2048² (the game's maximum), 4096², 8192² | on OK (the game's engine.script makes a new shadow effect; the original asked for a restart in game) |
+| Antialiasing | `$antialiasing` | off, 2×, 4×, 8× MSAA (the window has no samples itself: views draw into multisampled targets) | on OK (the original: after a restart) |
+| Anisotropic filtering | `$anisotropy` | off … 16× | on OK, every loaded texture (the original: after a restart) |
 | View distance | `$regsViewDistance` | 100–300 % of the far plane and the map's cull distance (shadows keep the game's range) | at once |
 | Detail distance | `$regsDetailDistance` | 100–300 % of the near-LOD band | at once |
 | Frame rate limit | `$fpsLimit` | off, 30–144 (the game read it but never offered it) | at once |
 | Colour style | `$regsColorStyle` | Original, Vibrant, Warm, Cool, Cinematic, Monochrome (`grade.fragment`) | at once |
 | Lens blur | `$regsLensBlur` | off; light / strong by distance from the camera target (thin lens on the depth buffer, `dof.fragment`: zoomed in, the distance blurs); tilt-shift (`tiltshift.fragment`) | at once |
-| UI scale | `$regsUiScale` | 1× (default), 1.5×, 2×: menus, HUD, panels, text, tooltips, pins and the cursor grow; the map, the corner preview, the shop's 3D previews and the minimap's map keep the window's full resolution. Text and images drawn 1:1 by the scripts stay sharp (exact 2×2 texels at 2×, near-sharp at 1.5×). Unset: 2× on windows taller than 1800 px. A scale needs a window of at least 1024 × 720 × the scale, else the next smaller one is used. How it works: [docs/ui/scaling.md](../docs/ui/scaling.md); `REGS_UI_FILTER=linear` compares with plain bilinear | after a restart (the game's notice) |
+| UI scale | `$regsUiScale` | 1× (default), 1.5×, 2×: menus, HUD, panels, text, tooltips, pins and the cursor grow; the map, the corner preview, the shop's 3D previews and the minimap's map keep the window's full resolution. Text and images drawn 1:1 by the scripts stay sharp (exact 2×2 texels at 2×, near-sharp at 1.5×). Unset: 2× on windows taller than 1800 px. A scale needs a window of at least 1024 × 720 × the scale, else the next smaller one is used. How it works: [docs/ui/scaling.md](../docs/ui/scaling.md); `REGS_UI_FILTER=linear` compares with plain bilinear | on OK: the GUI is laid out again for the new size and the page opens again (scaling.md §6) |
 | Graphics engine | `$regsRenderer` | OpenGL 3.3; Vulkan listed as planned (raytracing, DLSS) | — |
 | Performance readout | `$regsShowFps` | off (default) / on: FPS and frame time averaged over 0.5 s, min/max FPS over the last second, drawn by the engine over the GUI at the top edge right of the toolbar (`Display::drawFpsReadout`); never in headless runs, nothing measured while off. The game's own "show frame rate" (`$fps`, a script overlay in the top right corner) stays as it was | at once |
 | Day and night | `$regsDayNight`, `$regsDayLength` | off (default: the location's fixed time of day, as in the original) / on: the time of day runs with the game, `$regsDayLength` real minutes per day at normal speed (default 12, settings.script only), with dusk, a moonlit night and brighter self-illumination at night (`docs/renderer/sky-and-night.md` §6.2) | at once |
+
+The game's own options on that page all apply on OK too; the original showed its "restart needed" notice for every
+one of them except the cursor, vsync and the frame-rate display, and the port no longer does:
+
+| Option | Setting | Applies in the port |
+|---|---|---|
+| HDR rendering (bloom) | `$bloom` | on OK: engine.script's extension makes or removes the bloom effect (`regsApplyEffects`) |
+| Saturation | `$saturation` | on OK (bloom's saturation; only with HDR rendering, as in the original) |
+| Vsync | `$vsync` | on OK (the original set `window.vsync`; the port now applies the field every frame) |
+| Fullscreen | `$fullscreen` | on OK: the same window becomes borderless over the monitor or a captioned window again (`--windowed` only holds at start) |
+| Resolution | `$screenwidth`, `$screenheight` | on OK: the window's size when not fullscreen |
+| Colour depth, frequency | `$screencolors`, `$frequency` | stored; nothing to change (fullscreen keeps the desktop's display mode) |
+
+When fullscreen, resolution or UI scale give the scripts another window size, the engine lays the GUI out again
+(each control keeps its edge, centre or span; the line panel, level bar, money bar and petition bar re-place
+themselves with their own formulas), the open main or pause menu is loaded again and the graphics page opens again;
+the game, its camera and open panels stay (`docs/ui/scaling.md` §6). The GL context is never recreated, so textures,
+fonts, meshes, the minimap and the 3D previews stay; the effect and preview targets are made again at the new size.
 
 The audio page (`data/regs/extend/metro/ui/menus/audio.script`) gets the port's volume groups under the original's
 audio (master) and music volumes; the master volume stays on top of all of them (`docs/audio/README.md` §18.7):
@@ -225,7 +243,8 @@ is already specified in `docs/`.
    screenshot checks. Specs: `docs/ui/controls.md`, `docs/ui/input.md`, `docs/ui/fonts.md`. Deliberate differences:
    * The mouse is fed in absolute mode, as in the official Linux build. Windows warped the OS cursor to the window
      centre and sent relative motion.
-   * Fullscreen is a borderless window over the monitor instead of a display-mode change.
+   * Fullscreen is a borderless window over the monitor instead of a display-mode change (so the frequency and colour
+     depth settings change nothing, and the resolution sizes the window when it is not fullscreen).
    * The back buffer is cleared every frame (the engine cleared it only on demand).
 
    Still open: render targets and material shaders (they need the 3D renderer, for example the main menu's
@@ -253,8 +272,9 @@ is already specified in `docs/`.
    the trapezoid-warped sun shadow map (`$shadows` × 1024, light pass with the `SHADOWMAP_RENDER` variants, receivers
    with `SHADOWMAP`), and the bloom chain (RGBA16F scene with MSAA, squared downsample, 4-level blur, red-channel RMS
    exposure with a 1 s half-life, tone-mapping composite). `regs-tool shadowtest` checks the light-camera fit
-   against the worked example of `shadows.md` §3.7. Without bloom the window itself gets `$antialiasing` samples, as
-   in the engine. Deviations: the shadow pass reuses the main pass's draw list (division culling with a generous
+   against the worked example of `shadows.md` §3.7. Without bloom the view gets `$antialiasing` samples (the engine put
+   them into the window's pixel format, which cannot change, so the port resolves a multisampled target into the
+   window and the setting applies live). Deviations: the shadow pass reuses the main pass's draw list (division culling with a generous
    radius instead of the doubled per-mesh radius); trees in the light pass use the same merged LOD as the main pass;
    the unused `clipYPlane = false` fit (`gsFitTrapezoid`) and `screenSpaceBlur` are not ported.
 
