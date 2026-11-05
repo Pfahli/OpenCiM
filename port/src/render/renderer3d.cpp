@@ -424,8 +424,8 @@ bool Renderer3D::makeDepthTarget(RenderTarget& t, int w, int h) {
   return ok;
 }
 
-bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture) {
-  if (!makeTarget(t, w, h, TargetFormat::Rgba16f, samples <= 0 && !depthTexture, true)) return false;
+bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture, TargetFormat format) {
+  if (!makeTarget(t, w, h, format, samples <= 0 && !depthTexture, true)) return false;
   if (depthTexture) {  // a sampleable depth on the (resolve) framebuffer
     gl::GenTextures(1, &t.depthTex);
     gl::BindTexture(gl::TEXTURE_2D, t.depthTex);
@@ -445,7 +445,7 @@ bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, boo
   t.samples = samples;
   gl::GenRenderbuffers(1, &t.msColor);
   gl::BindRenderbuffer(gl::RENDERBUFFER, t.msColor);
-  gl::RenderbufferStorageMultisample(gl::RENDERBUFFER, samples, gl::RGBA16F, w, h);
+  gl::RenderbufferStorageMultisample(gl::RENDERBUFFER, samples, format == TargetFormat::Rgba16f ? gl::RGBA16F : gl::RGBA8, w, h);
   gl::GenRenderbuffers(1, &t.msDepth);
   gl::BindRenderbuffer(gl::RENDERBUFFER, t.msDepth);
   gl::RenderbufferStorageMultisample(gl::RENDERBUFFER, samples, gl::DEPTH_COMPONENT24, w, h);
@@ -465,6 +465,16 @@ void Renderer3D::resolve(const RenderTarget& t) {
   gl::Disable(gl::SCISSOR_TEST);
   gl::BlitFramebuffer(0, 0, t.width, t.height, 0, 0, t.width, t.height,
                       gl::COLOR_BUFFER_BIT | (t.depthTex ? gl::DEPTH_BUFFER_BIT : 0), gl::NEAREST);
+  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+}
+
+void Renderer3D::blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH) {
+  if (!t.fbo) return;
+  resolve(t);  // a multisample source must be resolved at its own size before a blit to another position
+  gl::BindFramebuffer(gl::READ_FRAMEBUFFER, t.fbo);
+  gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+  gl::Disable(gl::SCISSOR_TEST);
+  gl::BlitFramebuffer(0, 0, w, h, x, backH - y - h, x + w, backH - y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
   gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
 }
 

@@ -180,7 +180,7 @@ for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
 MAIN.$ui.setTooltip($regsRendererButtons[1], $regs.$regs_renderer_planned, 0, -1);
 
 // ---- UI scale (left column, under the graphics engine): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
-// window opens (Display::chooseUiScale, docs/ui/scaling.md), so a change needs a restart. Unset: 2x on windows taller
+// window opens (Display::chooseUiScale, docs/ui/scaling.md). Unset: 2x on windows taller
 // than 1800 px, else 1x; the setting is written only when the player picks another value.
 $uiScaleValues = [1.0, 1.5, 2.0];
 $regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : ($screenheight > 1800 ? 2.0 : 1.0));
@@ -260,9 +260,16 @@ function regsApplyPreset($index) {
 }
 regsUpdatePreset();
 
-// the original save() (renamed regsBaseSave) stores its options, then the port's
+// the original save() (renamed regsBaseSave) stores its options, then the port's. The original asks for a restart
+// ($requireRestart: the "restart needed" notice) for every rendering and display option; the port applies them at
+// once: antialiasing and anisotropic filtering follow the settings in the engine (Display::syncRenderSettings),
+// shadows, HDR lighting and saturation are made again by the game's engine.script (regsApplyEffects, its extension)
 function save() {
+  $regsOldDisplay = [$settings.$fullscreen : true, $settings.$screenwidth : 1024, $settings.$screenheight : 768, $settings.$screencolors : 32, $settings.$frequency : 60];
   regsBaseSave();
+  $requireRestart = false;
+  if (MAIN.$scene : false) if (defined MAIN.$regsEngine) MAIN.$regsEngine.regsApplyEffects();
+  if ($regsOldDisplay[0] != $fullscreen || $regsOldDisplay[1] != $screenwidth || $regsOldDisplay[2] != $screenheight || $regsOldDisplay[3] != $screencolors || $regsOldDisplay[4] != $frequency) $requireRestart = true;
   $settings.$regsViewDistance = $viewDistance;
   $settings.$regsDetailDistance = $detailDistance;
   $settings.$fpsLimit = $fpsValues[$fpsLimit];

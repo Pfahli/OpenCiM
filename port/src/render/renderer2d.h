@@ -38,7 +38,10 @@ class Renderer2D {
   // bilinear, as at 1x); lines are lineWidth window pixels wide (drawn as quads when > 1)
   float sharpScale = 0;
   float lineWidth = 1;
-  float anisotropy = 0;  // max anisotropy for mipmapped 2D textures (video.anisotropy), clamped to the driver's
+  // max anisotropy for mipmapped 2D textures (video.anisotropy), clamped to the driver's; read when a texture is
+  // made. setAnisotropy changes it and updates every mipmapped 2D texture made so far (the graphics page, live)
+  float anisotropy = 0;
+  void setAnisotropy(float a);
   uint32_t createTextureBGRA(const uint8_t* bgra, int w, int h);
   void destroyTexture(uint32_t tex);
 
@@ -84,6 +87,9 @@ class Renderer2D {
   float proj_[6] = {};
   float mvp_[16] = {};
   int scissor_[4] = {-1, -1, -1, -1};
+  std::vector<uint32_t> mipTextures_;  // mipmapped 2D textures from createTexture (anisotropic filtering applies)
+  int maxAnisotropy_ = 0;              // GL_MAX_TEXTURE_MAX_ANISOTROPY, queried once
+  void applyAnisotropy(uint32_t tex);  // binds tex to TEXTURE_2D
 };
 
 }  // namespace regs::render

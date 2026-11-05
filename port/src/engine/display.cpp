@@ -12,6 +12,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/effects.h"
 #include "engine/font.h"
 #include "engine/gui.h"
 #include "engine/host.h"
@@ -186,7 +187,7 @@ uint32_t Display::texture(VM& vm, TextureObj* t) {
     auto* def = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/default.dds").get());
     return def && def != t && !def->loadFailed ? texture(vm, def) : 0;
   }
-  r2d_.anisotropy = settingNumber(vm, u"anisotropy", 0);  // window.script: video.anisotropy = $settings.$anisotropy
+  r2d_.setAnisotropy(settingNumber(vm, u"anisotropy", 0));  // window.script: video.anisotropy = $settings.$anisotropy
   t->gl = r2d_.createTexture(img);
   t->cube = img.cube;
   return t->gl;
@@ -366,6 +367,8 @@ struct GuiPass {
 }  // namespace
 
 void Display::renderFrame(VM& vm, Object* win, Object* video) {
+  syncRenderSettings(vm);
+  sweepEffects(*this);
   int w = window_->width(), h = window_->height();
   uint32_t background = uint32_t(vm.toInt(field(vm, win, u"background")));
   r2d_.timer = effectTimer;
@@ -401,6 +404,32 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     shot_.clear();
   }
   window_->swap();
+}
+
+void Display::syncRenderSettings(VM& vm) {
+  // graphics page, applied live (the page writes the settings when the player presses OK): MSAA samples of the view
+  // targets and anisotropic filtering of every loaded texture. window.script copies the same settings into
+  // window.antialiasing and video.anisotropy at start
+  int aa = std::clamp(int(settingNumber(vm, u"antialiasing", float(antialiasing))), 0, 16);
+  if (aa != antialiasing) {
+    LOG_INFO("antialiasing: %d -> %d samples", antialiasing, aa);
+    antialiasing = aa;
+  }
+  // window.vsync: the page sets it on OK (the original applied it at once too)
+  if (windowObj_) {
+    bool vs = vm.truthy(field(vm, windowObj_.get(), u"vsync"));
+    if (vs != vsync_) {
+      if (vsyncKnown_) LOG_INFO("vsync: %s", vs ? "on" : "off");
+      window_->setVsync(vs);
+      vsync_ = vs;
+      vsyncKnown_ = true;
+    }
+  }
+  float aniso = settingNumber(vm, u"anisotropy", r2d_.anisotropy);
+  if (aniso != r2d_.anisotropy) {
+    LOG_INFO("anisotropic filtering: %.0f -> %.0f", double(r2d_.anisotropy), double(aniso));
+    r2d_.setAnisotropy(aniso);
+  }
 }
 
 void Display::drawFpsReadout(VM& vm) {
@@ -561,8 +590,10 @@ void registerDisplayNatives(VM& vm) {
     // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, the only one so far; others are planned
     if (int engine = int(settingNumber(v, u"regsRenderer", 0)); engine != 0)
       LOG_WARN("graphics engine %d is not available yet, using OpenGL 3.3", engine);
-    // MSAA on the window only without post-processing; with it the effect buffers are multisampled instead
-    if (!v.truthy(field(v, s, u"postProcess"))) desc.samples = std::max(0, v.toInt(field(v, s, u"antialiasing")));
+    // the engine put MSAA into the window's pixel format without post-processing (and into the effect buffers with
+    // it). Port: never into the pixel format, which cannot change once set; views without effects draw into a
+    // multisampled target (msaaTarget), so the antialiasing setting applies while the game runs
+    desc.samples = 0;
     auto d = std::make_unique<Display>();
     d->antialiasing = std::max(0, v.toInt(field(v, s, u"antialiasing")));
     std::string err;

@@ -75,6 +75,8 @@ class Display {
     std::u16string text;
   };
   void drawFpsReadout(script::VM& vm);
+  void syncRenderSettings(script::VM& vm);  // antialiasing, anisotropy and vsync follow the settings (live)
+  bool vsync_ = false, vsyncKnown_ = false;
   FpsReadout fps_;
   bool uiFilterSharp_ = true;  // scaled GUI textures: sharp bilinear (default) or plain bilinear (REGS_UI_FILTER=linear)
   bool saveScreenshot(const std::filesystem::path& file);

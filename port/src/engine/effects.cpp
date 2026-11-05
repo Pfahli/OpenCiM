@@ -28,9 +28,11 @@ struct BloomState {
   bool failed = false, ready = false;
   RenderTarget scene;
   int samples = 0;
+  int requested = 0;  // window.antialiasing the scene target was made for (it steps down when a count fails)
   RenderTarget a[4], b[4];  // A0..A3, B0..B3: 512×256 … 64×32
   uint32_t scale = 0, blur = 0, add = 0, final = 0;
   float measured = 0;  // m of the last frame (bloom.md §3.4)
+  Ref<Object> owner;   // kept until the scripts drop or delete the effect (sweepEffects frees the targets)
 };
 
 std::map<Object*, BloomState>& states() {
@@ -285,6 +287,7 @@ Mat4 trapezoidToSquare(V2 t0, V2 t1, V2 t2, V2 t3) {
 struct ShadowState {
   bool failed = false;
   RenderTarget map;
+  Ref<Object> owner;  // as BloomState::owner
 };
 
 std::map<Object*, ShadowState>& shadowStates() {
@@ -398,6 +401,7 @@ bool fitShadow(const ShadowFitIn& in, ShadowFitOut& o) {
 
 const RenderTarget* shadowTarget(Display& d, Object* shadow) {
   ShadowState& s = shadowStates()[shadow];
+  if (!s.owner) s.owner = Ref<Object>(shadow);
   if (s.failed) return nullptr;
   if (!s.map.fbo) {
     auto size = [&](const char16_t* n) {
@@ -428,11 +432,15 @@ void bloomTick(VM& vm, Object* bloom, float dt) {
 
 const RenderTarget* bloomSceneTarget(Display& d, VM& vm, Object* bloom, int w, int h) {
   BloomState& s = states()[bloom];
+  if (!s.owner) s.owner = Ref<Object>(bloom);
   if (!setup(d, vm, s)) return nullptr;
-  // grow-only, exactly the viewport size when (re)allocated; MSAA with window.antialiasing, −2 per failure
-  if (!s.scene.fbo || w > s.scene.width || h > s.scene.height) {
+  // grow-only, exactly the viewport size when (re)allocated; MSAA with window.antialiasing, −2 per failure. Port: a
+  // new antialiasing setting (graphics page, live) or a new window size (resetSizedEffects) makes it again
+  if (!s.scene.fbo || w > s.scene.width || h > s.scene.height || s.requested != d.antialiasing) {
+    int nw = s.requested == d.antialiasing ? std::max(w, s.scene.width) : w;
+    int nh = s.requested == d.antialiasing ? std::max(h, s.scene.height) : h;
     d.r3d().destroyTarget(s.scene);
-    int nw = std::max(w, s.scene.width), nh = std::max(h, s.scene.height);
+    s.requested = d.antialiasing;
     bool ok = false;
     for (int samples = d.antialiasing; samples >= 0 && !ok; samples -= 2) {
       ok = d.r3d().makeSceneTarget(s.scene, nw, nh, samples);
@@ -515,6 +523,67 @@ void bloomFinish(Display& d, VM& vm, Object* bloom, int x, int y, int w, int h, 
   const uint32_t inputs[2] = {s.scene.color, s.b[0].color};
   r.drawQuad(s.final, inputs, 2, c11, composite);
   gl::Viewport(0, 0, backW, backH);
+}
+
+// ---- live graphics settings (port) ----
+
+namespace {
+
+RenderTarget& msaaScene() {
+  static RenderTarget t;
+  return t;
+}
+
+}  // namespace
+
+const RenderTarget* msaaTarget(Display& d, int w, int h, int samples) {
+  RenderTarget& t = msaaScene();
+  if (t.fbo && t.width == w && t.height == h && t.samples == samples) return &t;
+  for (int n = samples; n > 0; n -= 2) {  // MSAA steps down by 2 like the engine's targets
+    d.r3d().destroyTarget(t);
+    if (d.r3d().makeSceneTarget(t, w, h, n, false, TargetFormat::Rgba8)) {
+      if (n != samples) LOG_WARN("antialiasing: %d samples unavailable, using %d", samples, n);
+      t.samples = samples;  // the requested count, so a failed step is not retried every frame
+      return &t;
+    }
+  }
+  d.r3d().destroyTarget(t);
+  return nullptr;
+}
+
+void msaaFinish(Display& d, int x, int y, int w, int h, int backH) { d.r3d().blitToBack(msaaScene(), x, y, w, h, backH); }
+
+void sweepEffects(Display& d) {
+  auto dropped = [](const Ref<Object>& o) { return o && (o->destroyed || o->refs() == 1); };
+  for (auto it = states().begin(); it != states().end();) {
+    if (!dropped(it->second.owner)) { ++it; continue; }
+    BloomState& s = it->second;
+    d.r3d().destroyTarget(s.scene);
+    for (int i = 0; i < 4; ++i) {
+      d.r3d().destroyTarget(s.a[i]);
+      d.r3d().destroyTarget(s.b[i]);
+    }
+    it = states().erase(it);
+  }
+  for (auto it = shadowStates().begin(); it != shadowStates().end();) {
+    if (!dropped(it->second.owner)) { ++it; continue; }
+    d.r3d().destroyTarget(it->second.map);
+    it = shadowStates().erase(it);
+  }
+}
+
+void resetSizedEffects(Display& d) {
+  // the grow-only bloom scene targets start again at the new window size; the style and MSAA targets follow the view
+  // size by themselves
+  for (auto& [o, s] : states()) {
+    d.r3d().destroyTarget(s.scene);
+    s.requested = -1;
+  }
+  StyleState& st = styleState();
+  d.r3d().destroyTarget(st.input);
+  d.r3d().destroyTarget(st.blurA);
+  d.r3d().destroyTarget(st.blurB);
+  d.r3d().destroyTarget(msaaScene());
 }
 
 }  // namespace regs::engine
