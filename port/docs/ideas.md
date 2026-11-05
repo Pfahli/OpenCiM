@@ -97,6 +97,18 @@ it is, what already exists, and the open decisions. Order is not priority.
     names), and remappable bindings next to the game's `controls.keys`.
 
 * **Quality-of-life improvements.** To be collected as they come up.
+* **Traffic side (left- or right-hand traffic), chosen before a game starts.** The original drives on the right
+  everywhere, also on the London and Tokyo maps. A setting in the new-game screen (sandbox and scenario start, stored
+  in the save so a game keeps its side) mirrors the traffic:
+  * The lanes of every road and tram piece are mirrored at load (lane graph and stop lanes), so cars, buses and
+    trams keep to the other side, turn the other way at junctions and give way by the mirrored rule.
+  * Bus and tram stops serve the mirrored side; the vehicles' door sides follow: the door paths and the door
+    animation of buses and trams are mirrored (model mirrored or its door paths swapped), so passengers board on
+    the kerb side.
+  * Road markings and stop props that show a side (arrows, shelters) would need mirrored placement or meshes.
+  * Open: which pieces carry side-specific geometry (stop bays, tram platforms on one side, motorway ramps), whether
+    the lane flags allow a pure mirror without per-piece data, and saves exchanged with the original game (only
+    right-hand ones load there).
 * **Jam relief for line vehicles.** In the original, trams (and buses) can deadlock each other and the traffic behind
   them backs up for good; the engine only fires `onJammed` after 180 s of waiting (`0x101152a0.c`, transport.md
   §4.3), which `linepanel.script` turns into a ticker message. The port could resolve it:
