@@ -98,34 +98,34 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
   // 0 buildings and props (the scene's regsSurfaceDiffuse darkens them), 6 water
   if (cls == 0 || cls == 6 || weather_wet.x + weather_wet.y <= 0.001) return;
   float keep = 1.0 - s.fog;  // the game's shader fogged the colour already: the effect fades with the fog
-  // the water film darkens the ground unevenly at first: spots (noise below the film level) turn wet before the rest
-  float spots = weather_fbm(s.pos.xz * 0.9 + vec2(31.7, 12.9));
-  float wet = smoothstep(spots - 0.12, spots + 0.12, weather_wet.x * 1.25 - 0.05) * min(1.0, weather_wet.x * 3.0);
-  if (cls == 1 || cls == 2) {  // grass, earth, fields: darker only, no puddles
-    c.rgb *= 1.0 - 0.15 * wet * keep;
+  // Wetting and drying are uniform: the film darkens a whole surface by one value, no pattern. Wet ground is the dry
+  // colour a little darker and a little more saturated, the same hue (with the scene's regsSurfaceDiffuse 0.88 at
+  // full wetness: hard surfaces about 0.8 of dry, grass and earth about 0.9). Pavements and squares drain and dry
+  // sooner than the roads (their wetness is the film's to the power 1.5).
+  float wet = clamp(weather_wet.x, 0.0, 1.0);
+  if (cls == 1 || cls == 2) {  // grass, earth, fields: a little darker, no puddles
+    c.rgb *= 1.0 - 0.03 * wet * keep;
     return;
   }
-  float sheen = smoothstep(0.5, 1.0, weather_wet.x);  // the sheen comes once the film covers the ground
-  // roads (4), pavement and squares (3), platforms (5); green texels (verges, sidewalk grass) stay as grass
+  // roads (4), pavement and squares (3), platforms (5); green texels (verges, sidewalk grass) darken like grass
   float green = smoothstep(0.015, 0.06, c.g - max(c.r, c.b));
   float hard = 1.0 - green;
   float up = smoothstep(0.85, 0.97, s.normal.y);
   bool road = cls == 4;
   float dEdge = 9.0, dLow = 9.0, dHigh = 9.0;
   if (s.dist < 450.0) weather_edges(s.pos.xz, cls, dEdge, dLow, dHigh);
-  // the gutter: the road's strip along a higher surface; a pavement's edge by the road drains and stays drier
-  float gutter = road ? 1.0 - smoothstep(0.5, 1.6, dHigh) : 0.0;
-  float drain = road ? 0.0 : 1.0 - smoothstep(0.3, 0.8, dLow);
-  float wetHere = wet * (1.0 - 0.45 * drain);
-  c.rgb *= 1.0 - (0.15 * green + 0.3 * hard) * wetHere * keep;     // wet asphalt is darker
-  c.rgb *= 1.0 - 0.12 * gutter * hard * wetHere * keep;            // a wet gutter darker still
+  float gutter = road ? 1.0 - smoothstep(0.5, 1.6, dHigh) : 0.0;  // the road's strip along the kerb (puddles)
+  float wetHere = road ? wet : pow(wet, 1.5);
+  float k = wetHere * keep;
+  float lum = dot(c.rgb, vec3(0.3, 0.59, 0.11));
+  c.rgb = mix(vec3(lum), c.rgb, 1.0 + 0.15 * k * hard);           // a little more saturated, same hue
+  c.rgb *= 1.0 - (0.03 * green + 0.09 * hard) * k;                // and darker
+  // the sheen: subtle, slow (with the standing water, not the film), the surface's own colour, never a tint
+  float sheen = smoothstep(0.2, 1.0, weather_wet.y);
+  float f0 = 0.04 + 0.96 * pow(1.0 - max(dot(-s.view, s.normal), 0.0), 5.0);
+  c.rgb *= 1.0 + 0.8 * f0 * sheen * up * hard * k;
   float light = 1.0 + 2.5 * weather_misc.x;                         // a lightning flash shows in the reflections
   vec3 overcast = regs_Fog.color.rgb;
-  // a faint sheen on the wet surface
-  vec3 r0 = reflect(s.view, s.normal);
-  float f0 = 0.04 + 0.96 * pow(1.0 - max(dot(-s.view, s.normal), 0.0), 5.0);
-  vec3 sky0 = mix(texture(regs_EnvMap, r0).rgb, overcast, 0.6) * light;
-  c.rgb += sky0 * f0 * (0.3 + 0.3 * gutter) * wetHere * sheen * up * hard * keep;
   // puddles. The amount falls linearly while drying; the lanes and pavements follow its square (they dry first), the
   // gutter its square root (it dries last). Heavy rain lets them grow a little.
   float pud = weather_wet.y;

@@ -123,11 +123,12 @@ An enabled mod's folder is mounted as `regs/mods/<id>/`, its `files\` over the g
 mods folder (with its own `mods.json`; tests), `--no-mods` mounts none (safe mode); `--print-paths` shows both mods
 folders. The log lists the mods found and enabled (`mods: …`) and the files a mod overrides.
 
-Built-in mods: **Weather** (`data/mods/weather`, id `opencim.weather`): rain spells by game date with streaks
-around the camera, wet surfaces, grey light and fog, rain and distant thunder sounds (made at build time by
-`regs-tool synth`, no recorded audio). Its README is in the mod folder. Switches: `REGS_TEST_WEATHER=rain` (always
-rain, with thunder), `=dry` (never), `=cycle` (12 game hours of rain from 06:00 every second day), and
-`REGS_DEBUG_WEATHER=1` (the schedule every game hour, thunder claps).
+Built-in mods: **Weather** (`data/mods/weather`, id `opencim.weather`): rain, heavy rain and thunderstorms by game
+date, fine streaks around the camera, wet streets with puddles that dry after the rain, spray behind vehicles,
+lightning and thunder, CC0 rain and thunder recordings (`sounds/LICENSES.txt`). Its README is in the mod folder.
+Switches: `REGS_TEST_WEATHER=rain|heavy|storm|dry|cycle` (always normal rain, heavy rain, thunderstorm, never, or
+12 game hours from 06:00 every second day alternating rain and storm) and `REGS_DEBUG_WEATHER=1` (the state every
+game hour), `=2` (the surface map on the ground), `=flash` (flashes held for screenshots).
 
 ### Port files and graphics options
 

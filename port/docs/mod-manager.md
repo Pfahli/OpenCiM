@@ -102,7 +102,7 @@ classes; unset means the original behaviour, so nothing changes without a mod.
 | Class | Field | Meaning |
 |---|---|---|
 | `gsParticleEmitter` | `regsEmitBox` (vector) | half extents of a box around the emit point; each particle starts at a random point in it (rain or snow over an area from one emitter) |
-| `gsParticleEmitter` | `regsStretch` (float, s) | streaks: the particle is drawn along its velocity, half length = speed × this, `particleSize` wide, turned towards the camera about the motion (0: the original's billboard). With `lightsmoke.dds` and `particleBlend = 4` this gives fine rain streaks |
+| `gsParticleEmitter` | `regsStretch` (float, s) | streaks: the particle is drawn along its velocity, half length = speed × this, `particleSize` wide, turned towards the camera about the motion (0: the original's billboard). With a soft sprite and `particleBlend = 4` this gives fine rain streaks |
 | `gs3DCamera` | `regsEyePosition`, `regsLookPosition` (vector, read-only) | the camera's eye and look-at point as the 3D pass draws them (the floating camera's eye is otherwise not visible to scripts) |
 | `gsScene` | `regsLightScale` (1) | × the lights' diffuse and specular (direct sun) |
 | `gsScene` | `regsAmbientScale` (1) | × the lights' ambient and the light-model ambient |
@@ -111,11 +111,44 @@ classes; unset means the original behaviour, so nothing changes without a mod.
 | `gsScene` | `regsFogScale` (1) | × the fog start and end distance |
 | `gsScene` | `regsSurfaceDiffuse` (1) | × every material's ambient and diffuse colour (wet, darker surfaces) |
 | `gsScene` | `regsSurfaceSpecular` (1) | × every material's specular colour (glossier; only materials with `MATERIAL_SPECULAR` show highlights) |
+| `gsGrid` | `regsVehicleEmitters` (array of emitters) | each emits behind the rear of every moving road and rail vehicle near the camera (at most 24, within the emitter's `maxDistance`, not boats, aircraft or tunnels): `position` is an offset in the vehicle's frame (x right, y up, z back from the rear end), `direction` turns with the vehicle, the owner velocity is the vehicle's, `density` is particles per second at 10 m/s, scaled with the square of the speed. Listed emitters stop emitting at their own place (`engine/particles.cpp`) |
+| `gsGrid` | `regsVehicleSound` (a loaded 3D `gsSound`), `regsVehicleSoundGain` (0) | the sound plays as a one-shot following moving vehicles near the listener (at most 5 at a time, each vehicle again after the sound's length plus 2-8 s, faster than 3 m/s, inside the sound's `maxDistance`), volume × gain × speed / 15 (0.3-1), Effects group (`engine/sim_sounds.cpp`) |
 
 The scene fields apply when the scene is drawn (`engine/scene3d.cpp` `applyAtmosphere`), after the location's light
 and fog and the port's day/night cycle, so a mod and the cycle do not fight over the light fields. Particle physics
 run with the scene's `particleEngine.timeSpeed` (max(1, game speed)); a mod that wants real-time motion divides its
 speeds and multiplies its lives by it.
+
+Script natives: `regsMods()` (§4.1) and `regsShaderUniform(name, value)`: sets a `vec4` uniform of the shader hooks
+(float → (v, 0, 0, 0), vector → (x, y, z, 0), quat → (x, y, z, w)), applied to every hooked program from the next frame.
+
+### 4.3 Shader hooks
+
+A mod declares GLSL hooks in its manifest: `"shaderHooks": [{"file": "shaders/wet.glsl", "function": "weather_wet_surface"}]`.
+Each file is GLSL 3.30 core (no `gl_` built-ins) defining `void <function>(inout vec4 color, RegsSurface s)`; the
+engine appends every enabled mod's hooks to all combiner programs (the game's own shaders, translated by
+`render/glsl.cpp`) and calls them, in load order, on the final colour (after the game's fog, before the alpha test) in
+the colour passes of map views; never in shadow passes, never in menus. Without a registered hook the programs are
+exactly the plain translation. Hooks are fixed at start-up, before any program is built.
+
+* `RegsSurface`: `pos` (world, from the interpolated clip position: correct for terrain, merged items and skinned
+  meshes alike), `normal` (world, from screen derivatives, facing the eye), `view` (unit, eye → point), `dist`,
+  `fog` (0..1 at this distance: a hook fades its change by `1 - fog`, since the colour is already fogged),
+  `surfaceClass`, `time` (the effect timer, s).
+* `surfaceClass` (`GpuMaterial::surfaceClass`, `render/renderer3d.h`): 0 other (buildings, props, vehicles, people),
+  1 terrain (grass, earth, sea floor, cliffs), 2 field, 3 pavement (yard cells, and the walkways of road items: the
+  materials a texture variation replaces), 4 road (the carriageway materials of road, alley and street-tram items,
+  types 1-7 and 10-12, those with the keep-on-variation flag), 5 platform (stations, docks, heliports, PAVEMENT items),
+  6 water.
+* `int regs_surfaceAt(vec2 xz)`: the class of the walkable surface seen from above at a world point, from the map's
+  surface map (`engine/surface_map.cpp`: 0.5 m texels painted from the division meshes as they are built, items over
+  terrain; -1 outside the map), so a hook can measure the distance to its surface's edge (a kerb, a square's
+  border) by sampling around the point. The weather mod's `weather_edges` searches 8 rays out to 2.2 m.
+* `samplerCube regs_EnvMap` (the game's `textures/envmap.dds`, unit 8) and the hook's own uniforms
+  (`regsShaderUniform`). `REGS_DEBUG_WEATHER=2` shows the surface map in the weather mod.
+
+Cost (RTX 3080, 1600×900, the weather mod in rain): within the frame-time noise of the other test windows; the hook
+returns at once for class 0 and when the mod's wetness is 0.
 
 ## 5. Manager UI
 
@@ -214,7 +247,9 @@ itself with a pull-request workflow (CI validates `mod.json`, checksums and the 
 * **Script extensions** chain (§3.3): `VM::extensionRoots` = `regs/extend/` (the port) then
   `regs/mods/<id>/extend/` per mod; each is applied to the result of the previous one with the same `//@base` and
   `//@rename` rules, so a mod can wrap a function the port already wraps.
-* **Script API**: `regsMods()` and the port fields of §4.2.
+* **Script API**: `regsMods()`, `regsShaderUniform()`, the port fields of §4.2 and the shader hooks of §4.3.
+* **Build-time assets** for the built-in mods: `regs-tool cut` (seamless WAV loops from a mod's own recordings) and
+  `regs-tool softdot` (a soft particle sprite), run by `CMakeLists.txt` `regs_data`.
 * **Example**: the weather mod (`data/mods/weather`, README there) extends `metro/scripts/game.script` with one line
   that loads its script into the game's `$gameScripts`, so the game unloads it with the others.
 
