@@ -23,6 +23,7 @@ class Display;
 struct SimState;
 struct SimSounds;
 struct SimParticles;
+struct TrafficMaps;
 class TransportObj;
 
 namespace sim {
@@ -473,6 +474,7 @@ struct SimState {
   bool tearingDown = false;  // a new map replaces this state: its script objects go without touching it
   std::shared_ptr<SimSounds> sounds;  // world sound slots (engine/sim_sounds.cpp), made on first use
   std::shared_ptr<SimParticles> particles;  // emitter instances of vehicles and items (engine/particles.cpp)
+  std::shared_ptr<TrafficMaps> trafficMaps;  // recent traffic for the mods' shader hooks (engine/traffic_maps.h)
 };
 
 // script objects of the transport classes, pointing back into the state

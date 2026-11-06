@@ -104,33 +104,72 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   float up = smoothstep(0.55, 0.85, s.normal.y);
   if (up <= 0.0) return;
   float amount;
-  float slush = 0.0;
-  if (cls == 4) {  // roads: slush in the lanes, white along the kerb
+  float slush = 0.0, bank = 0.0;
+  if (cls == 4) {
+    // roads: the more traffic a lane had lately (the engine's lane traffic), the less snow stays on it: busy lanes
+    // turn to bare, wet slush, quiet ones keep a nearly full cover; where some cars run, two dark tyre tracks per lane
+    // at the wheels (±0.8 m from the lane's centre line, along the lane, so they follow the curves); along the kerb a
+    // bank of pushed-aside snow, whiter, which melts last
     float dEdge, dLow, dHigh;
     weather_edges(s.pos.xz, cls, dEdge, dLow, dHigh);
-    float edge = 1.0 - smoothstep(0.6, 1.8, dHigh);
-    float lane = smoothstep(0.5, 1.0, cover);
-    amount = mix(0.35 * lane, smoothstep(0.35, 0.9, cover), edge);
-    slush = (1.0 - edge) * lane;
+    float traffic, lateral;
+    vec2 dir;
+    bool lane = regs_laneAt(s.pos.xz, traffic, lateral, dir);
+    float smoothTraffic = regs_laneTrafficSmooth(s.pos.xz);  // smooth across lanes, no steps
+    float busy = smoothstep(0.05, 0.85, smoothTraffic);
+    traffic = smoothTraffic;
+    float laneCover = smoothstep(0.45, 1.0, cover) * (1.0 - 0.85 * busy);
+    float tracks = 0.0;
+    if (lane) {
+      float w = abs(abs(lateral) - 0.8);
+      tracks = exp(-w * w / 0.04) * smoothstep(0.02, 0.3, traffic);  // about 0.4 m wide
+    }
+    amount = laneCover * (1.0 - 0.85 * tracks);
+    slush = clamp(busy + tracks, 0.0, 1.0) * smoothstep(0.3, 0.8, cover);
+    bank = (1.0 - smoothstep(0.25, 1.1, dHigh)) * smoothstep(0.08, 0.4, cover);
+    amount = max(amount, bank);
+    slush *= 1.0 - bank;
   } else if (cls == 3 || cls == 5) {
-    amount = smoothstep(0.25, 0.8, cover);
+    // pavements, squares, platforms: the bank on their edge by the road; where people walk lately (the engine's
+    // trodden map) the snow is trodden grey and partly bare; single walkers leave faint lines, filled in by new snow
+    float dEdge, dLow, dHigh;
+    weather_edges(s.pos.xz, cls, dEdge, dLow, dHigh);
+    bank = (1.0 - smoothstep(0.2, 0.9, dLow)) * smoothstep(0.08, 0.4, cover);
+    float trod = regs_troddenAt(s.pos.xz) * (1.0 - 0.6 * weather_snow.y);
+    amount = smoothstep(0.25, 0.8, cover) * (1.0 - 0.7 * trod);
+    slush = 0.8 * trod * smoothstep(0.25, 0.8, cover);
+    amount = max(amount, bank);
   } else {  // terrain, fields, roofs, foliage, props, parked vehicles
     amount = smoothstep(0.03, 0.55, cover);
+    if (cls == 1 || cls == 2) {  // parks and grass: trails where people walk
+      float trod = regs_troddenAt(s.pos.xz) * (1.0 - 0.6 * weather_snow.y);
+      slush = 0.5 * trod * amount;
+      amount *= 1.0 - 0.5 * trod;
+    }
   }
   // the fine grain of a light cover: 0.6-1.5 m, subtle, gone at full cover and with distance
   float grain = weather_noise(s.pos.xz * 1.3 + vec2(7.1, 3.3)) * 0.6 + weather_noise(s.pos.xz * 3.1 + vec2(1.9, 8.2)) * 0.4;
   float fine = clamp(1.0 - s.dist / 160.0, 0.0, 1.0);
   amount = clamp(amount * (1.0 + 0.35 * fine) - 0.35 * fine * grain * (1.0 - amount), 0.0, 1.0) * up;
-  if (amount <= 0.001) return;
+  slush *= up;
+  if (amount <= 0.001 && slush <= 0.001) return;
   // lit like the dry surface under it
   float albedo = cls == 4 ? 0.22 : (cls == 3 || cls == 5) ? 0.33 : cls == 7 ? 0.35 : 0.28;
-  // the estimate keeps the shadows but only a trace of the texture below (a checkered square stays an even white)
-  float light = pow(clamp(dot(dry, vec3(0.3, 0.59, 0.11)) / albedo, 0.08, 1.0), 0.45) * 1.02;
+  // two levels, sun and shade, with a soft step: the shadows stay, the texture below does not show through (a
+  // checkered square is an even white); dark objects (black cars, dark roofs) still carry white snow
+  float est = dot(dry, vec3(0.3, 0.59, 0.11)) / albedo;
+  float light = mix(0.62, 1.0, smoothstep(0.3, 0.7, est));
+  if (cls == 7) light = max(light, 0.85);
+  if (cls == 0) light = max(light, 0.72);
   vec3 tint = mix(vec3(0.86, 0.91, 1.0), vec3(1.0, 0.995, 0.985), smoothstep(0.35, 0.8, light));
   vec3 snow = vec3(0.93, 0.94, 0.95) * tint * light * (1.0 - 0.15 * weather_snow.z);  // a thaw: wetter, greyer
-  vec3 slushCol = mix(c.rgb, snow * 0.7, 0.55);
-  vec3 cover3 = mix(snow, slushCol, slush);
-  c.rgb = mix(c.rgb, cover3, amount * (1.0 - s.fog));
+  snow *= 1.0 + 0.05 * bank;  // the banks: a little brighter (thicker)
+  // slush (trodden snow, the busy lanes, the tyre tracks) is grey: the wet surface with a little snow in it; the clean
+  // snow lies over it
+  vec3 slushCol = mix(c.rgb, snow * 0.6, 0.45);
+  float keep = 1.0 - s.fog;
+  c.rgb = mix(c.rgb, slushCol, clamp(slush, 0.0, 1.0) * 0.8 * keep);
+  c.rgb = mix(c.rgb, snow, amount * keep);
 }
 
 void weather_wet_apply(inout vec4 c, RegsSurface s) {
@@ -142,6 +181,8 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
     float e0, e1, e2;
     weather_edges(s.pos.xz, cls, e0, e1, e2);
     c.rgb = mix(col, vec3(1.0, 0.0, 0.0), 1.0 - smoothstep(0.2, 1.0, e0));
+    c.rgb = mix(c.rgb, vec3(1.0, 0.0, 1.0), regs_troddenAt(s.pos.xz));        // trodden: magenta
+    c.rgb = mix(c.rgb, vec3(0.0, 1.0, 1.0), regs_laneTrafficSmooth(s.pos.xz));  // lane traffic: cyan
     return;
   }
   // 0 buildings and props (the scene's regsSurfaceDiffuse darkens them), 6 water

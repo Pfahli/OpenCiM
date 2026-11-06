@@ -669,6 +669,10 @@ uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& f
     gl::UseProgram(prog);
     if (env >= 0) gl::Uniform1i(env, kHookEnvUnit);
     if (surf >= 0) gl::Uniform1i(surf, kHookSurfaceUnit);
+    const std::pair<const char*, int> traffic[] = {
+        {"regs_LaneMap", kHookLaneUnit}, {"regs_LaneTraffic", kHookLaneTrafficUnit}, {"regs_Trodden", kHookTroddenUnit}};
+    for (const auto& [name, unit] : traffic)
+      if (int loc = gl::GetUniformLocation(prog, name); loc >= 0) gl::Uniform1i(loc, unit);
     gl::UseProgram(gl::GLuint(current));
   }
   return prog;
@@ -729,6 +733,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.hookTime = at("regs_HookTime");
     l.hookSurfaceRect = at("regs_SurfaceMapRect");
     l.hookItem = at("regs_HookItem");
+    l.hookTrafficRect = at("regs_TrafficRect");
   }
   return l;
 }
@@ -787,6 +792,13 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
       gl::BindTexture(gl::TEXTURE_CUBE_MAP, v.hookEnvCube);
       gl::ActiveTexture(gl::TEXTURE0 + kHookSurfaceUnit);
       gl::BindTexture(gl::TEXTURE_2D, v.hookSurfaceMap);
+      gl::Uniform4fv(l.hookTrafficRect, 1, v.hookTrafficRect);
+      gl::ActiveTexture(gl::TEXTURE0 + kHookLaneUnit);
+      gl::BindTexture(gl::TEXTURE_2D, v.hookLaneMap);
+      gl::ActiveTexture(gl::TEXTURE0 + kHookLaneTrafficUnit);
+      gl::BindTexture(gl::TEXTURE_2D, v.hookLaneTraffic);
+      gl::ActiveTexture(gl::TEXTURE0 + kHookTroddenUnit);
+      gl::BindTexture(gl::TEXTURE_2D, v.hookTrodden);
       gl::ActiveTexture(gl::TEXTURE0);
     }
   }

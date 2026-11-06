@@ -21,6 +21,7 @@
 #include "engine/skinning.h"
 #include "engine/sky.h"
 #include "engine/terrain.h"
+#include "engine/traffic_maps.h"
 #include "render/glsl.h"
 #include "vfs/vfs.h"
 
@@ -497,6 +498,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     auto* env = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/envmap.dds").get());
     if (env && env->cube) v.hookEnvCube = d.texture(vm, env);
     gridSurfaceMap(grids[0], v.hookSurfaceMap, v.hookSurfaceRect);
+    gridTrafficMaps(grids[0], v.hookLaneMap, v.hookLaneTraffic, v.hookTrodden, v.hookTrafficRect);
   }
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
   ParticleDrawList particles;

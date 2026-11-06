@@ -468,6 +468,7 @@ function updateGround($dh, $dt, $w, $h) {
 function updateSnow($dh, $dt, $s, $hv) {
   if ($dh > 0.0 && $dh < 24.0) {
     if ($s > 0.01) $snow = min(2.0, $snow + $dh * $s * 0.15 * (1.0 + $hv));
+    if ($snow > 0.3) $film = max($film, 0.8);   // under snow and slush the asphalt is wet
     if ($temp > 0.0 && $snow > 0.0) {
       $melt = min($snow, $dh * (0.03 + 0.01 * $temp));
       $snow -= $melt;

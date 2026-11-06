@@ -27,6 +27,7 @@
 #include "engine/sim_state.h"
 #include "engine/sim_sounds.h"
 #include "engine/particles.h"
+#include "engine/traffic_maps.h"
 
 namespace regs::engine {
 
@@ -1970,6 +1971,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   syncCharacterFields(*s);
   simSoundsTick(vm, grid, *s, x);
   simParticlesTick(vm, grid, *s, x);
+  simTrafficMapsTick(vm, grid, *s, x);  // the mods' shader hooks: recent traffic (engine/traffic_maps.h)
   if (debugSim()) {
     static int frames = 0;
     if (++frames % 600 == 0) {

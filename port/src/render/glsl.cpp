@@ -59,6 +59,53 @@ int regs_surfaceAt(vec2 xz) {
   if (regs_SurfaceMapRect.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return -1;
   return int(texture(regs_SurfaceMap, uv).r * 255.0 + 0.5) & 127;
 }
+// the traffic maps (engine/traffic_maps.h)
+uniform sampler2D regs_LaneMap;
+uniform sampler2D regs_LaneTraffic;
+uniform sampler2D regs_Trodden;
+uniform vec4 regs_TrafficRect;
+// the road lane under a world point: false when none; else its recent traffic (0..1), the point's lateral offset
+// from the lane's centre line (m) and the lane's direction (unit, x/z, either way along)
+bool regs_laneAt(vec2 xz, out float traffic, out float lateral, out vec2 dir) {
+  traffic = 0.0; lateral = 0.0; dir = vec2(1.0, 0.0);
+  if (regs_TrafficRect.z <= 0.0) return false;
+  vec2 uv = (xz - regs_TrafficRect.xy) * regs_TrafficRect.zw;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) return false;
+  ivec2 size = textureSize(regs_LaneMap, 0);
+  ivec2 t = ivec2(uv * vec2(size));
+  vec4 v = texelFetch(regs_LaneMap, t, 0);
+  int idx = int(v.r * 255.0 + 0.5) + 256 * int(v.g * 255.0 + 0.5);
+  if (idx == 0) return false;
+  idx -= 1;
+  traffic = texelFetch(regs_LaneTraffic, ivec2(idx % 256, idx / 256), 0).r;
+  float a = floor(v.a * 255.0 + 0.5) / 256.0 * 3.14159265;
+  dir = vec2(cos(a), sin(a));
+  vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
+  lateral = (floor(v.b * 255.0 + 0.5) - 128.0) * 0.02 + dot(xz - centre, vec2(-dir.y, dir.x));
+  return true;
+}
+// the recent traffic around a world point, filtered between the lane texels (0 where there is no lane): smooth
+// across lane borders and the road's edge, where regs_laneAt's per-texel value steps
+float regs_laneTrafficSmooth(vec2 xz) {
+  if (regs_TrafficRect.z <= 0.0) return 0.0;
+  ivec2 size = textureSize(regs_LaneMap, 0);
+  vec2 p = (xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size) - 0.5;
+  ivec2 b = ivec2(floor(p));
+  vec2 f = p - vec2(b);
+  float v[4];
+  for (int k = 0; k < 4; ++k) {
+    ivec2 t = clamp(b + ivec2(k & 1, k >> 1), ivec2(0), size - 1);
+    vec4 l = texelFetch(regs_LaneMap, t, 0);
+    int idx = int(l.r * 255.0 + 0.5) + 256 * int(l.g * 255.0 + 0.5);
+    v[k] = idx == 0 ? 0.0 : texelFetch(regs_LaneTraffic, ivec2((idx - 1) % 256, (idx - 1) / 256), 0).r;
+  }
+  return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
+}
+// how trodden the ground is at a world point (0..1, recent pedestrians)
+float regs_troddenAt(vec2 xz) {
+  if (regs_TrafficRect.z <= 0.0) return 0.0;
+  return texture(regs_Trodden, (xz - regs_TrafficRect.xy) * regs_TrafficRect.zw).r;
+}
 )";
   for (const ShaderHook& h : hooks()) s += "// hook " + h.function + " (" + h.origin + ")\n" + h.code + "\n";
   s += R"(void regs_hooks(inout vec4 c) {
