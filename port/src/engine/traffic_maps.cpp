@@ -22,18 +22,17 @@ using render::Vec3;
 namespace {
 
 constexpr float kTexel = 1.0f;           // metres per texel (lane and trodden maps)
-constexpr float kLaneHalfWidth = 1.35f;  // the painted band of a lane
-constexpr float kPi = 3.14159265f;
+constexpr float kListCell = 2.0f;        // m, the lane lists' cells (the shader uses the same)
+constexpr float kListNear = 4.0f;        // m from a cell centre: lanes that can touch a point in the cell (regs_laneSoft)
+constexpr float kListFar = 6.0f;         // m: and their kerb heap (regs_lanePlowed)
+constexpr int kListMax = 40;             // lanes per cell at most
 constexpr uint32_t kTunnel = 0x800000;
 
 void paintLanes(TrafficMaps& t, const LaneGraph& g) {
   // not the lane-change pieces: they cross diagonally from one lane to the next, and as the nearest lane at a point
   // they bent the tyre tracks and the plowed strips into zig-zags
   const uint32_t want = kPathRoad | kPathTram, skip = kPathPark | kPathWalk | kPathDeleted | kTunnel | kPathLaneChange;
-  std::fill(t.lanes.begin(), t.lanes.end(), uint8_t(0));
-  std::vector<float> best(size_t(t.laneW) * size_t(t.laneH), 1e9f);
-  size_t painted = 0;
-  // the lanes get numbers of their own (18 bits in the map): large maps have more graph nodes than that in
+  // the lanes get numbers of their own (the lists and the lane texture use them): large maps have far more graph nodes in
   // all (Vienna about 125,000)
   t.laneId.assign(g.nodes.size(), -1);
   t.laneNodes.clear();
@@ -93,92 +92,61 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
     t.laneId[i] = int32_t(t.laneNodes.size());
     t.laneNodes.push_back(int(i));
   }
-  if (std::getenv("REGS_DEBUG_LANE_FLAGS")) {  // the flags of road nodes that run across their neighbours
-    std::unordered_map<uint32_t, int> diag, all;
-    for (size_t i = 0; i < g.nodes.size(); ++i) {
-      const LaneNode& n = g.nodes[i];
-      if (!(n.flags & (kPathRoad | kPathTram))) continue;
-      ++all[n.flags & 0xffff];
-      Vec3 d = n.p1 - n.p0;
-      float len = std::sqrt(d.x * d.x + d.z * d.z);
-      if (len < 0.1f) continue;
-      float pe = n.f0.x * n.f1.x + n.f0.z * n.f1.z, ce = (d.x * n.f0.x + d.z * n.f0.z) / len;
-      if (pe > 0.995f && ce < 0.996f) ++diag[n.flags & 0xffff];  // ends parallel, chord across: an S-curve
-    }
-    for (auto& [f, k] : all) LOG_INFO("lane flags %04x: %d nodes, %d bending away from their successor", f, k, diag[f]);
-  }
-  // lanes first, then the intersections' lanes only inside the junctions, a metre away from any straight lane (turning lanes
-  // painted into the gaps between straight lanes broke their tracks into chopped diagonal pieces)
-  std::vector<uint8_t> nearStraight;
-  auto throughLane = [&](size_t i) {
-    Vec3 d = dirOf(g.nodes[i]);
-    for (int p : preds[i]) {
-      Vec3 a = dirOf(g.nodes[size_t(p)]);
-      if (a.x * d.x + a.z * d.z <= 0.9945f) continue;
-      for (int q : g.nodes[i].next) {
-        Vec3 b = dirOf(g.nodes[size_t(q)]);
-        if (b.x * d.x + b.z * d.z > 0.9945f) return true;
-      }
-    }
-    return false;
+  // The lane lists (vector lanes, regs_lanesAround): per 2 m cell every lane piece whose chord comes near enough to
+  // matter anywhere in the cell, nearest first: first those within kListNear of the cell centre (a lane's band 1.35 m
+  // and 1.5 m past its ends
+  // with its soft edge, 1.7 m, plus the cell's half diagonal and the curve's bulge; tracks, slush, plowed strips), then
+  // those within kListFar (the kerb heap up to 2.5 m beyond a lane's band). A shader only reads its own cell's list,
+  // so no lane drops out at a cell edge while it still has an effect there (junctions: the turning lanes too).
+  t.listW = int(std::ceil(float(t.laneW) * kTexel / kListCell));
+  t.listH = int(std::ceil(float(t.laneH) * kTexel / kListCell));
+  struct Entry {
+    uint32_t cell;
+    float d;
+    int lane;
   };
-  for (int pass = 0; pass < 2; ++pass)
-    for (size_t i = 0; i < g.nodes.size(); ++i) {
-      const LaneNode& n = g.nodes[i];
-      if (t.laneId[i] < 0) continue;
-      // a junction's lanes that run straight through (predecessor, piece and successor within 6°) count as straight
-      bool cross = (n.flags & kPathIntersection) != 0 && !throughLane(i);
-      if ((pass == 0) == cross) continue;
-      if (pass == 1 && nearStraight.empty()) {  // the straight lanes' texels and 1 m around them
-        nearStraight.assign(best.size(), 0);
-        for (int z = 0; z < t.laneH; ++z)
-          for (int x = 0; x < t.laneW; ++x)
-            if (best[size_t(z) * size_t(t.laneW) + size_t(x)] < 1e9f)
-              for (int dz = -1; dz <= 1; ++dz)
-                for (int dx = -1; dx <= 1; ++dx) {
-                  int xx = x + dx, zz = z + dz;
-                  if (xx >= 0 && zz >= 0 && xx < t.laneW && zz < t.laneH) nearStraight[size_t(zz) * size_t(t.laneW) + size_t(xx)] = 1;
-                }
+  std::vector<Entry> entries;
+  for (size_t l = 0; l < t.laneNodes.size(); ++l) {
+    const LaneNode& n = g.nodes[size_t(t.laneNodes[l])];
+    float ax = n.p0.x, az = n.p0.z, ex = n.p1.x - ax, ez = n.p1.z - az, len2 = ex * ex + ez * ez;
+    int x0 = std::max(0, int((std::min(n.p0.x, n.p1.x) - kListFar - t.originX) / kListCell));
+    int x1 = std::min(t.listW - 1, int((std::max(n.p0.x, n.p1.x) + kListFar - t.originX) / kListCell));
+    int z0 = std::max(0, int((std::min(n.p0.z, n.p1.z) - kListFar - t.originZ) / kListCell));
+    int z1 = std::min(t.listH - 1, int((std::max(n.p0.z, n.p1.z) + kListFar - t.originZ) / kListCell));
+    for (int z = z0; z <= z1; ++z)
+      for (int x = x0; x <= x1; ++x) {
+        float cx = t.originX + (float(x) + 0.5f) * kListCell - ax, cz = t.originZ + (float(z) + 0.5f) * kListCell - az;
+        float s = len2 > 1e-6f ? std::clamp((cx * ex + cz * ez) / len2, 0.0f, 1.0f) : 0.0f;
+        float dx = cx - s * ex, dz = cz - s * ez, d = std::sqrt(dx * dx + dz * dz);
+        if (d <= kListFar) entries.push_back({uint32_t(z) * uint32_t(t.listW) + uint32_t(x), d, int(l)});
       }
-      float dx = n.p1.x - n.p0.x, dz = n.p1.z - n.p0.z, len = std::sqrt(dx * dx + dz * dz);
-      if (len < 0.05f) continue;
-      float a = std::atan2(dz, dx);
-      if (a < 0) a += kPi;
-      if (a >= kPi) a -= kPi;
-      uint8_t A = uint8_t(int(std::lround(a / kPi * 256.0f)) & 255);
-      float ca = std::cos(float(A) / 256.0f * kPi), sa = std::sin(float(A) / 256.0f * kPi);
-      float ux = dx / len, uz = dz / len;  // along the lane
-      float nx = -sa, nz = ca;            // the canonical normal (from the stored angle)
-      float minX = std::min(n.p0.x, n.p1.x) - 2, maxX = std::max(n.p0.x, n.p1.x) + 2;
-      float minZ = std::min(n.p0.z, n.p1.z) - 2, maxZ = std::max(n.p0.z, n.p1.z) + 2;
-      int x0 = std::max(0, int((minX - t.originX) / kTexel)), x1 = std::min(t.laneW - 1, int((maxX - t.originX) / kTexel));
-      int z0 = std::max(0, int((minZ - t.originZ) / kTexel)), z1 = std::min(t.laneH - 1, int((maxZ - t.originZ) / kTexel));
-      for (int z = z0; z <= z1; ++z)
-        for (int x = x0; x <= x1; ++x) {
-          float cx = t.originX + (float(x) + 0.5f) * kTexel - n.p0.x, cz = t.originZ + (float(z) + 0.5f) * kTexel - n.p0.z;
-          float along = cx * ux + cz * uz;
-          if (along < -0.2f || along > len + 0.2f) continue;
-          float lat = cx * nx + cz * nz;
-          float side = std::fabs(cx * -uz + cz * ux);
-          if (side > kLaneHalfWidth) continue;
-          size_t k = size_t(z) * size_t(t.laneW) + size_t(x);
-          if (pass == 1 && nearStraight[k]) continue;
-          if (side >= best[k]) continue;  // the nearest lane centre wins
-          best[k] = side;
-          uint32_t idx = uint32_t(t.laneId[i] + 1);
-          t.lanes[k * 4] = uint8_t(idx & 255);
-          t.lanes[k * 4 + 1] = uint8_t((idx >> 8) & 255);
-          t.lanes[k * 4 + 2] = uint8_t(std::clamp(int(std::lround(lat / 0.08f)) + 32, 0, 63) | int(idx >> 16) << 6);
-          t.lanes[k * 4 + 3] = A;
-          ++painted;
-        }
+  }
+  std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.cell != b.cell ? a.cell < b.cell : a.d < b.d; });
+  t.lanes.assign(size_t(t.listW) * size_t(t.listH) * 4, 0);
+  t.listIds.clear();
+  size_t cut = 0, maxCount = 0;
+  for (size_t a = 0; a < entries.size();) {
+    size_t b = a;
+    while (b < entries.size() && entries[b].cell == entries[a].cell) ++b;
+    size_t count = std::min(b - a, size_t(kListMax)), near = 0;
+    cut += (b - a) - count;
+    maxCount = std::max(maxCount, b - a);
+    uint32_t start = uint32_t(t.listIds.size());
+    for (size_t k = a; k < a + count; ++k) {
+      t.listIds.push_back(float(entries[k].lane));
+      if (entries[k].d <= kListNear) ++near;
     }
+    uint16_t* c = &t.lanes[size_t(entries[a].cell) * 4];
+    c[0] = uint16_t(start & 0xffff), c[1] = uint16_t(start >> 16), c[2] = uint16_t(near), c[3] = uint16_t(count);
+    a = b;
+  }
   t.graphNodes = g.nodes.size();
   t.lanesBuilt = true;
   t.lanesUploaded = false;
   t.laneCurvesDirty = true;
-  LOG_INFO("traffic maps: %dx%d texels, %zu lane texels painted from %zu lanes of %zu nodes (%zu unflagged lane changes left out)", t.laneW, t.laneH, painted,
-           t.laneNodes.size(), g.nodes.size(), unflagged);
+  LOG_INFO("traffic maps: %zu lanes of %zu nodes (%zu unflagged lane changes left out), lane lists %dx%d cells, %zu "
+           "entries (most in a cell %zu, %zu beyond %d left out)", t.laneNodes.size(), g.nodes.size(), unflagged,
+           t.listW, t.listH, t.listIds.size(), maxCount, cut, kListMax);
 }
 
 void upload(uint32_t& tex, int w, int h, uint32_t format, uint32_t layout, const uint8_t* data, bool linear) {
@@ -367,7 +335,6 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     t.originZ = -float(s.graph.length) * cs * 0.5f;
     t.laneW = std::max(1, int(std::ceil(float(s.graph.width) * cs / kTexel)));
     t.laneH = std::max(1, int(std::ceil(float(s.graph.length) * cs / kTexel)));
-    t.lanes.assign(size_t(t.laneW) * size_t(t.laneH) * 4, 0);
     t.troddenBytes.assign(size_t(t.laneW) * size_t(t.laneH), 0);
   }
   TrafficMaps& t = *s.trafficMaps;
@@ -474,15 +441,12 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
   if (!s || !s->trafficMaps || !s->trafficMaps->lanesBuilt) return false;
   TrafficMaps& t = *s->trafficMaps;
   double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-  if (!t.lanesUploaded) {
-    upload(t.laneTexture, t.laneW, t.laneH, 0x8058 /* GL_RGBA8 */, 0x1908 /* GL_RGBA */, t.lanes.data(), false);
-    t.lanesUploaded = true;
-  }
-  if (t.lastUpload < 0 || now - t.lastUpload >= 0.2) {  // at most 5 times a second
+  const bool full = t.laneCurvesDirty || !t.laneTrafficTexture;  // the lanes were (re)built: everything at once
+  if (full || t.lastUpload < 0 || now - t.lastUpload >= 0.2) {  // at most 5 times a second
     t.lastUpload = now;
-    if (t.laneTrafficDirty) {
+    if (t.laneTrafficDirty || full) {
       int rows = std::max(1, int((t.laneNodes.size() + 255) / 256));
-      // RGBA32F, 768 × rows: columns 0-255 the lanes' values (traffic, plowed, heap, 0), 256-511 and 512-767 their
+      // RGBA32F, 1024 wide: per row of 256 lanes columns 0-255 their values (traffic, plowed, heap, 0), 256-511 and 512-767 their
       // curves (p0.xz, b.xz) and (c.xz, p1.xz), the cubic Bézier control points (buildStrip's b = p0 + f0·L/3,
       // c = p1 − f1·L/3); the curves are uploaded with the lane map, the values every time
       std::vector<float> values(size_t(rows) * 256 * 4, 0.0f);
@@ -508,18 +472,43 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
         if (i < t.lanePlow.size()) values[l * 4 + 1] = t.lanePlow[i], values[l * 4 + 2] = t.laneHeap[i];
       }
       gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-      if (!t.laneTrafficTexture || t.laneCurvesDirty || t.laneTrafficRows != rows) {
-        std::vector<float> all(size_t(rows) * 768 * 4, 0.0f);
+      if (full) {
+        // the lists after the lanes' rows, 4 lane numbers per texel; the lane map's starts count from the texture's
+        // first float (start = rows · 1024 · 4 + the list's own start)
+        int listRows = std::max(1, int((t.listIds.size() + 4095) / 4096));
+        uint32_t base = uint32_t(rows) * 1024u * 4u;
+        std::vector<uint16_t> cells(t.lanes);
+        for (size_t k = 0; k < cells.size(); k += 4)
+          if (cells[k + 3]) {
+            uint32_t st = (uint32_t(cells[k]) | uint32_t(cells[k + 1]) << 16) + base;
+            cells[k] = uint16_t(st & 0xffff), cells[k + 1] = uint16_t(st >> 16);
+          }
+        if (!t.laneTexture) {
+          gl::GenTextures(1, &t.laneTexture);
+          gl::BindTexture(gl::TEXTURE_2D, t.laneTexture);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
+        } else {
+          gl::BindTexture(gl::TEXTURE_2D, t.laneTexture);
+        }
+        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
+        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8D76 /* GL_RGBA16UI */, t.listW, t.listH, 0, 0x8D99 /* GL_RGBA_INTEGER */, 0x1403 /* GL_UNSIGNED_SHORT */, cells.data());
+        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+        t.lanesUploaded = true;
+        std::vector<float> all(size_t(rows + listRows) * 1024 * 4, 0.0f);
+        std::copy(t.listIds.begin(), t.listIds.end(), all.begin() + base);
         for (size_t l = 0; l < t.laneNodes.size(); ++l) {
           const LaneNode& n = G.nodes[size_t(t.laneNodes[l])];
           float L = n.length / 3.0f;
           size_t r = l / 256, c = l % 256;
-          float* a = &all[(r * 768 + 256 + c) * 4];
-          float* b = &all[(r * 768 + 512 + c) * 4];
+          float* a = &all[(r * 1024 + 256 + c) * 4];
+          float* b = &all[(r * 1024 + 512 + c) * 4];
           a[0] = n.p0.x, a[1] = n.p0.z, a[2] = n.p0.x + n.f0.x * L, a[3] = n.p0.z + n.f0.z * L;
           b[0] = n.p1.x - n.f1.x * L, b[1] = n.p1.z - n.f1.z * L, b[2] = n.p1.x, b[3] = n.p1.z;
         }
-        for (int r = 0; r < rows; ++r) std::copy_n(&values[size_t(r) * 256 * 4], 256 * 4, &all[size_t(r) * 768 * 4]);
+        for (int r = 0; r < rows; ++r) std::copy_n(&values[size_t(r) * 256 * 4], 256 * 4, &all[size_t(r) * 1024 * 4]);
         if (!t.laneTrafficTexture) {
           gl::GenTextures(1, &t.laneTrafficTexture);
           gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
@@ -530,7 +519,7 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
         } else {
           gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
         }
-        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, 768, rows, 0, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, all.data());
+        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, 1024, rows + listRows, 0, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, all.data());
         t.laneTrafficRows = rows;
         t.laneCurvesDirty = false;
       } else {

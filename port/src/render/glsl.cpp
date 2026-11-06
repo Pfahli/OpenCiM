@@ -136,21 +136,30 @@ float regs_shelterDepth(vec3 p) {
   return clamp(1.5 * (share - 0.5) + 2.5 * max(share - 0.85, 0.0), 0.0, 1.5);
 }
 // the traffic maps (engine/traffic_maps.h)
-uniform sampler2D regs_LaneMap;
-uniform sampler2D regs_LaneTraffic;
+uniform usampler2D regs_LaneMap;    // the lane lists' cells (2 m): list start (low, high 16 bits), near count, all count
+uniform sampler2D regs_LaneTraffic; // the lanes (values, curves) and after them the lists
 uniform sampler2D regs_Trodden;
 uniform vec4 regs_TrafficRect;
-// a lane map texel: the lane number + 1 (18 bits: R, G and the top 2 bits of B; 0 = none) and the texel centre's
-// stored lateral offset from the lane's centre line (m, the low 6 bits of B in 0.08 m steps)
-int regs_laneIndex(vec4 l) {
-  return int(l.r * 255.0 + 0.5) + 256 * int(l.g * 255.0 + 0.5) + 65536 * (int(l.b * 255.0 + 0.5) >> 6);
-}
-float regs_laneStoredLat(vec4 l) { return float((int(l.b * 255.0 + 0.5) & 63) - 32) * 0.08; }
-// a lane's data in regs_LaneTraffic (RGBA32F, 768 × rows; engine/traffic_maps.h): k = 0 its values (traffic, plowed,
-// heap), 1 and 2 its curve's Bézier control points (p0.xz, b.xz), (c.xz, p1.xz)
+// a lane's data: k = 0 its values (traffic, plowed, heap), 1 and 2 its curve's Bézier control points (p0.xz, b.xz),
+// (c.xz, p1.xz)
 vec4 regs_laneData(int i, int k) { return texelFetch(regs_LaneTraffic, ivec2(i % 256 + 256 * k, i / 256), 0); }
-// vector lanes: a point's signed lateral offset (m) from lane i's own curve (the cubic Bézier of the lane piece, not
-// the lane map's 1 m texels), the curve's direction there and how far (m) the point lies beyond the piece's ends (0
+// the lane list of the 2 m cell around a world point: x = first entry, y = the near ones (that can touch a point in
+// the cell), z = all (with the kerb heaps' reach); entries nearest first
+ivec3 regs_laneCell(vec2 xz) {
+  if (regs_TrafficRect.z <= 0.0) return ivec3(0);
+  ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) / 2.0));
+  if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, textureSize(regs_LaneMap, 0)))) return ivec3(0);
+  uvec4 v = texelFetch(regs_LaneMap, c, 0);
+  return ivec3(int(v.x | (v.y << 16u)), int(v.z), int(v.w));
+}
+// entry e of the lists: a lane number
+int regs_laneListEntry(int e) {
+  int tx = e / 4, c = e - tx * 4;
+  vec4 v = texelFetch(regs_LaneTraffic, ivec2(tx % 1024, tx / 1024), 0);
+  return int((c == 0 ? v.x : c == 1 ? v.y : c == 2 ? v.z : v.w) + 0.5);
+}
+// vector lanes: a point's signed lateral offset (m) from lane i's own curve (the cubic Bézier of the lane piece, not a
+// grid), the curve's direction there and how far (m) the point lies beyond the piece's ends (0
 // alongside it); the next piece of the lane takes over there with the same line, so tracks run on without steps
 float regs_laneCurve(int i, vec2 q, out vec2 dir, out float beyond) {
   vec4 a = regs_laneData(i, 1), b = regs_laneData(i, 2);
@@ -174,55 +183,40 @@ float regs_laneCurve(int i, vec2 q, out vec2 dir, out float beyond) {
   beyond = abs(dot(q - B, dir));  // along the end tangent past an end; about 0 alongside the piece
   return dot(q - B, vec2(-dir.y, dir.x));
 }
-// the distinct lanes of the (2r+1)² lane map texels around a point (the lane map only says which lanes are near; the
-// lines come from the lanes' own curves): fills lanes[], returns how many (at most 25)
-int regs_lanesAround(vec2 xz, int r, out int lanes[25]) {
-  int n = 0;
-  for (int k = 0; k < 25; ++k) lanes[k] = -1;
-  ivec2 size = textureSize(regs_LaneMap, 0);
-  ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size)));
-  int w = 2 * r + 1;
-  for (int k = 0; k < w * w; ++k) {
-    ivec2 t = c + ivec2(k % w - r, k / w - r);
-    if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
-    int idx = regs_laneIndex(texelFetch(regs_LaneMap, t, 0)) - 1;
-    if (idx < 0) continue;
-    bool dup = false;
-    for (int j = 0; j < 25; ++j)
-      if (j < n && lanes[j] == idx) dup = true;
-    if (dup || n >= 25) continue;
-    lanes[n] = idx;
-    ++n;
-  }
-  return n;
-}
-// the road lanes around a world point, by their own curves: the distinct lanes of the 3×3 lane map texels around it,
-// each with the point's exact lateral offset from its curve, weighted by how far the point lies inside its band
-// (1.35 m half width, a soft edge 'edge' m wide) and alongside the piece. Returns their weighted recent traffic;
+// the road lanes around a world point, by their own curves: the lanes of the point's cell list (every lane that can
+// touch it), each with the point's exact lateral offset from its curve, weighted by how far the point lies inside its
+// band (1.35 m half width, a soft edge 'edge' m wide) and alongside the piece. Returns their weighted recent traffic;
 // onLane: how much the point is on a lane at all (0..1); lateral / dir: the nearest lane's offset (m) and direction
-float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, out vec2 dir) {
+// tracks: the strongest wheel line of all these lanes, two per lane at ±gauge m, exp(−d² / width2) across, scaled by
+// smoothstep(0.02, 0.3) of the lane's traffic (where lanes cross, their lines overlap instead of meeting in a corner)
+float regs_laneSoftTracks(vec2 xz, float edge, float gauge, float width2, out float onLane, out float tracks,
+                          out float lateral, out vec2 dir) {
+  tracks = 0.0;
   onLane = 0.0; lateral = 9.0; dir = vec2(1.0, 0.0);
-  if (regs_TrafficRect.z <= 0.0) return 0.0;
-  int lanes[25];
-  int n = regs_lanesAround(xz, 1, lanes);
+  ivec3 cell = regs_laneCell(xz);
   float sumW = 0.0, sumT = 0.0, best = 99.0;
-  for (int k = 0; k < 9; ++k) {
-    if (k >= n) break;
+  for (int k = 0; k < 24; ++k) {
+    if (k >= cell.y) break;
+    int lane = regs_laneListEntry(cell.x + k);
     vec2 d;
     float beyond;
-    float lat = regs_laneCurve(lanes[k], xz, d, beyond);
-    float along = 1.0 - smoothstep(0.0, 0.75, beyond);
+    float lat = regs_laneCurve(lane, xz, d, beyond);
+    float along = 1.0 - smoothstep(0.0, 1.5, beyond);
     float w = (1.0 - smoothstep(1.35 - 0.5 * edge, 1.35 + 0.5 * edge, abs(lat))) * along;
     float score = abs(lat) + 4.0 * beyond;  // the nearest lane alongside the point
+    float wl = abs(abs(lat) - gauge);
+    float tr = regs_laneData(lane, 0).r;
+    tracks = max(tracks, exp(-wl * wl / width2) * smoothstep(0.02, 0.3, tr) * along * step(abs(lat), 1.6));
     if (score < best) { best = score; lateral = lat; dir = d; }
     if (w > 0.0) {
-      sumT += w * regs_laneData(lanes[k], 0).r;
+      sumT += w * regs_laneData(lane, 0).r;
       sumW += w;
       onLane = max(onLane, w);
     }
   }
   return sumW > 0.0 ? sumT / sumW : 0.0;
 }
+float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, out vec2 dir) {  float tracks;  return regs_laneSoftTracks(xz, edge, 0.8, 0.04, onLane, tracks, lateral, dir);}
 // the road lane under a world point: false when none; else its recent traffic (0..1), the point's lateral offset
 // from the lane's centre line (m) and the lane's direction (unit, x/z)
 bool regs_laneAt(vec2 xz, out float traffic, out float lateral, out vec2 dir) {
@@ -239,20 +233,20 @@ float regs_laneTrafficSmooth(vec2 xz) {
 }
 // the snowplows (engine/snowplows.h) on the lanes around a point: returns how freshly the lane under it was cleared
 // (0..1, soft at the lane's edge; the most plowed of the lanes there) and gives the heap the plows pushed out of the
-// nearest lanes (0..1), reaching `reach` m beyond a lane's 1.35 m half width (onto the gutter and the kerb next to it)
+// nearest lanes (0..1), reaching `reach` m (at most 2.5) beyond a lane's 1.35 m half width (onto the gutter and the kerb)
 float regs_lanePlowed(vec2 xz, float reach, out float heap) {
   heap = 0.0;
-  if (regs_TrafficRect.z <= 0.0) return 0.0;
-  int lanes[25];
-  int n = regs_lanesAround(xz, 2, lanes);
+  ivec3 cell = regs_laneCell(xz);
   float plowed = 0.0;
-  for (int k = 0; k < 25; ++k) {
-    if (k >= n) break;
+  for (int k = 0; k < 40; ++k) {
+    if (k >= cell.z) break;
+    int lane = regs_laneListEntry(cell.x + k);
+    vec4 v = regs_laneData(lane, 0);
+    if (v.g <= 0.0 && v.b <= 0.0) continue;
     vec2 d;
     float beyond;
-    float lat = abs(regs_laneCurve(lanes[k], xz, d, beyond));
-    float along = 1.0 - smoothstep(0.0, 0.75, beyond);
-    vec4 v = regs_laneData(lanes[k], 0);
+    float lat = abs(regs_laneCurve(lane, xz, d, beyond));
+    float along = 1.0 - smoothstep(0.0, 1.5, beyond);
     plowed = max(plowed, (1.0 - smoothstep(1.05, 1.65, lat)) * along * v.g);
     heap = max(heap, v.b * (1.0 - smoothstep(1.35 + 0.6 * reach, 1.35 + reach, lat)) * along);
   }

@@ -2,14 +2,17 @@
 // Traffic maps for the mods' shader hooks (render/glsl.h, port/docs/mod-manager.md §4.3): where vehicles and people
 // went lately, for snow that stays on quiet streets, tyre tracks along the lanes and trodden paths.
 //
-// * Lane map: a top-down RGBA8 texture, 1 m per texel, of the road and street-tram lanes (lane graph nodes with
-//   kPathRoad or kPathTram, not in tunnels, not parking, not lane changes): per texel the lane's own number + 1 (18 bits, 0 = none; TrafficMaps::laneId), the signed
-//   lateral offset of the texel centre from the lane's centre line (B, low 6 bits: (offset + 2.56 m) / 0.08 m; its top 2 bits are the number's bits 16-17) and the lane's
-//   direction (A: angle mod π in 256 steps), so a hook can rebuild the exact lateral offset of any point inside the
-//   texel (regs_laneAt). Painted once from the lane graph (live edits: on the next graph change).
+// * Lanes: the road and street-tram lanes (lane graph nodes with kPathRoad or kPathTram, not in tunnels, not parking,
+//   not lane changes, flagged or not) get numbers of their own (TrafficMaps::laneId). They are vector lanes: the
+//   lane texture (regs_LaneTraffic, RGBA32F, 1024 wide) holds per lane its values and its curve's Bézier control
+//   points, and a hook measures a point's exact offset from the curves (regs_laneCurve); the lane map (regs_LaneMap,
+//   RGBA16UI, one texel per 2 m cell) only says which lanes are near: per cell (start, near count, all count) into a
+//   list of lane numbers stored after the lanes' rows in the lane texture, nearest first; complete for every lane
+//   that can matter anywhere in the cell, so nothing drops out at a cell edge (regs_lanesAround). Built once from the
+//   lane graph (live edits: on the next graph change).
 // * Lane traffic: per lane node a decaying count of the time vehicles spent on it (road and rail units on road and
-//   tram lanes, τ = 60 s of simulation, 10 s for the first 20 s so a loaded map is up to date at once), as
-//   1 − exp(−count / 4 s) in the R channel of an RGBA8 texture of 256 lanes per row (regs_laneTraffic). G: the
+//   tram lanes, τ = 60 s of simulation, 10 s for the first 20 s so a loaded map is up to date at once), blurred along
+//   the lanes, as 1 − exp(−count / 4 s) in the lane texture's values (R, regs_laneData(i, 0)). G: the
 //   snowplows (engine/snowplows.h), 1 where one drove just now, filling in again with new snow at the footprints'
 //   pace (gsGrid.regsFootprints); B: the heap its blade pushed to the kerb, growing with each pass over a lane that
 //   had snow on it again (regs_lanePlowed). Both are cleared once the footprints are off (no snow).
@@ -34,7 +37,9 @@ struct TrafficMaps {
   // lane map
   int laneW = 0, laneH = 0;
   float originX = 0, originZ = 0;  // world position of texel (0, 0)'s corner (also the trodden map's)
-  std::vector<uint8_t> lanes;      // RGBA per texel
+  int listW = 0, listH = 0;        // the lane lists' cells (2 m)
+  std::vector<uint16_t> lanes;     // per cell: list start (low, high 16 bits), near count, all count
+  std::vector<float> listIds;      // the lists: lane numbers, nearest first
   uint32_t laneTexture = 0;
   bool lanesBuilt = false, lanesUploaded = false;
   size_t graphNodes = 0;

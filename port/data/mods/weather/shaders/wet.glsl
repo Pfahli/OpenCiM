@@ -137,13 +137,11 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     // bank of pushed-aside snow, whiter, which melts last
     // (regs_laneSoft: the lanes' own lines with a soft 0.7 m edge, so the slush strip and the tracks follow the road,
     // not the lane map's 1 m cells)
-    float onLane, lateral;
+    float onLane, lateral, tracks;  // tracks: about 0.4 m wide at the wheels of every lane there, overlapping where they cross
     vec2 dir;
-    float traffic = regs_laneSoft(s.pos.xz, 0.7, onLane, lateral, dir);
+    float traffic = regs_laneSoftTracks(s.pos.xz, 0.7, 0.8, 0.04, onLane, tracks, lateral, dir);
     float busy = smoothstep(0.05, 0.85, traffic) * onLane;
     float laneCover = smoothstep(0.45, 1.0, cover) * (1.0 - 0.85 * busy);
-    float w = abs(abs(lateral) - 0.8);
-    float tracks = exp(-w * w / 0.04) * smoothstep(0.02, 0.3, traffic) * onLane;  // about 0.4 m wide
     amount = laneCover * (1.0 - 0.85 * tracks);
     slush = clamp(busy + tracks, 0.0, 1.0) * smoothstep(0.3, 0.8, cover);
     // a plowed lane: wet asphalt under a thin grey film of what the blade left, in streaks along the lane
@@ -236,11 +234,13 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
 
 void weather_wet_apply(inout vec4 c, RegsSurface s) {
   int cls = s.surfaceClass;
-  if (weather_misc.y > 1.5) {  // debug view REGS_DEBUG_WEATHER=3: the lane map, each lane texel coloured by its direction
-    vec2 uv = (s.pos.xz - regs_TrafficRect.xy) * regs_TrafficRect.zw;
-    vec4 l = texelFetch(regs_LaneMap, ivec2(uv * vec2(textureSize(regs_LaneMap, 0))), 0);
-    float a = floor(l.a * 255.0 + 0.5) / 256.0 * 6.2831853;
-    c.rgb = regs_laneIndex(l) == 0 ? vec3(0.15) : vec3(0.5 + 0.5 * cos(a), 0.5 + 0.5 * cos(a - 2.094), 0.5 + 0.5 * cos(a + 2.094));
+  if (weather_misc.y > 1.5) {  // debug view REGS_DEBUG_WEATHER=3: the vector lanes, coloured by direction, the wheel lines darker
+    float onLane, lateral;
+    vec2 dir;
+    regs_laneSoft(s.pos.xz, 0.3, onLane, lateral, dir);
+    float a = atan(dir.y, dir.x) * 2.0;  // the nearest lane's direction (either way along) as a hue
+    c.rgb = onLane < 0.5 ? vec3(0.15) : vec3(0.5 + 0.5 * cos(a), 0.5 + 0.5 * cos(a - 2.094), 0.5 + 0.5 * cos(a + 2.094));
+    c.rgb *= 0.75 + 0.25 * smoothstep(0.0, 0.1, abs(abs(lateral) - 0.8));  // the wheel lines
     return;
   }
   if (weather_misc.y > 0.5) {  // debug view (REGS_DEBUG_WEATHER=2): the surface map and the edge distance
