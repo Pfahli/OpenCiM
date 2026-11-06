@@ -35,6 +35,14 @@ class Vfs {
   // userdata/addons. The engine mounts them all; the port mounts only the official archives of the install root
   // (game and DLC, the DLC appearing as addons/<pack>/) unless this is on.
   void setCommunityContent(bool on) { communityContent_ = on; }
+  // A mod's layers (engine/mods.cpp, port/docs/mod-manager.md §3), scanned after the port's data in the order added:
+  // the mod folder below keyPrefix ("regs/mods/<id>/"), and its files/ subfolder at the root, where its loose files
+  // replace the game's and the port's files of the same path (recorded in overrides()).
+  void addModLayer(const std::filesystem::path& dir, const std::string& keyPrefix, const std::string& id);
+  struct Override {
+    std::string path, mod;
+  };
+  const std::vector<Override>& overrides() const { return overrides_; }
 
   // updateFileSystem(): drop every non-memory record, scan the install root, then the userdata root.
   void rescan();
@@ -72,7 +80,8 @@ class Vfs {
   const std::map<std::string, Record>& records() const { return records_; }
 
  private:
-  void scanTree(const std::filesystem::path& root, const std::string& keyPrefix, bool skipUserdata);
+  void scanTree(const std::filesystem::path& root, const std::string& keyPrefix, bool skipUserdata,
+                const std::string* overrideBy = nullptr);
   void mountArchive(const std::filesystem::path& file, const std::string& relNoExt, const std::string& keyPrefix,
                     bool plainOnly = false);
   void scanOriginal();
@@ -81,6 +90,12 @@ class Vfs {
   std::optional<std::filesystem::path> userdataRoot_, overlayRoot_, originalRoot_;
   std::string originalPrefix_;
   bool communityContent_ = false;
+  struct ModLayer {
+    std::filesystem::path dir;
+    std::string prefix, id;
+  };
+  std::vector<ModLayer> modLayers_;
+  std::vector<Override> overrides_;
   std::vector<Archive> archives_;
   std::map<std::string, Record> records_;
 };

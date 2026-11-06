@@ -618,10 +618,13 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
   gl::Uniform1f(gl::GetUniformLocation(program_, "uReflection"), m.reflection);
   gl::ActiveTexture(gl::TEXTURE0);
   gl::Uniform1i(u_.flags, int((m.flags & kMatReflection) && !m.envCube ? m.flags & ~kMatReflection : m.flags));
-  gl::Uniform4fv(u_.matAmbient, 1, m.ambient);
-  float d[4] = {m.diffuse[0], m.diffuse[1], m.diffuse[2], m.diffuse[3] * it.alpha};
+  const float sd = v.surfaceDiffuse, ss = v.surfaceSpecular;  // port atmosphere (SceneView)
+  float am[4] = {m.ambient[0] * sd, m.ambient[1] * sd, m.ambient[2] * sd, m.ambient[3]};
+  gl::Uniform4fv(u_.matAmbient, 1, am);
+  float d[4] = {m.diffuse[0] * sd, m.diffuse[1] * sd, m.diffuse[2] * sd, m.diffuse[3] * it.alpha};
   gl::Uniform4fv(u_.matDiffuse, 1, d);
-  gl::Uniform4fv(u_.matSpecular, 1, m.specular);
+  float sp[4] = {m.specular[0] * ss, m.specular[1] * ss, m.specular[2] * ss, m.specular[3]};
+  gl::Uniform4fv(u_.matSpecular, 1, sp);
   float em[4] = {m.emission[0] * v.emissionScale, m.emission[1] * v.emissionScale, m.emission[2] * v.emissionScale, m.emission[3]};
   gl::Uniform4fv(u_.matEmission, 1, em);
   gl::Uniform1f(u_.shininess, m.shininess);
@@ -754,10 +757,14 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform1f(l.alphaRef, alphaRef);  // glAlphaFunc(GREATER, ref) of the queue
   const float es = v.emissionScale;
   gl::Uniform4f(l.matEmission, m.emission[0] * es, m.emission[1] * es, m.emission[2] * es, m.emission[3]);
-  float amb[4] = {m.ambient[0], m.ambient[1], m.ambient[2], m.ambient[3] * it.alpha};  // ambient alpha = object fade
+  // ambient alpha = object fade; the scene's surface factors (port atmosphere) on the colours
+  const float sd = v.surfaceDiffuse, ss = v.surfaceSpecular;
+  float amb[4] = {m.ambient[0] * sd, m.ambient[1] * sd, m.ambient[2] * sd, m.ambient[3] * it.alpha};
+  float dif[4] = {m.diffuse[0] * sd, m.diffuse[1] * sd, m.diffuse[2] * sd, m.diffuse[3]};
+  float spe[4] = {m.specular[0] * ss, m.specular[1] * ss, m.specular[2] * ss, m.specular[3]};
   gl::Uniform4fv(l.matAmbient, 1, amb);
-  gl::Uniform4fv(l.matDiffuse, 1, m.diffuse);
-  gl::Uniform4fv(l.matSpecular, 1, m.specular);
+  gl::Uniform4fv(l.matDiffuse, 1, dif);
+  gl::Uniform4fv(l.matSpecular, 1, spe);
   gl::Uniform1f(l.matShininess, m.shininess);
   int n = int(std::min<size_t>(v.lights.size(), 8));
   for (int i = 0; i < n; ++i) {  // gl_FrontLightProduct = light × material, component-wise
@@ -765,8 +772,8 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
     float pa[4], pd[4], ps[4];
     for (int k = 0; k < 4; ++k) {
       pa[k] = li.ambient[k] * amb[k];
-      pd[k] = li.diffuse[k] * m.diffuse[k];
-      ps[k] = li.specular[k] * m.specular[k];
+      pd[k] = li.diffuse[k] * dif[k];
+      ps[k] = li.specular[k] * spe[k];
     }
     gl::Uniform4fv(l.productAmbient[i], 1, pa);
     gl::Uniform4fv(l.productDiffuse[i], 1, pd);
@@ -1012,6 +1019,16 @@ void Renderer3D::drawParticles(const SceneView& v, const ParticleDrawList& list)
     if (shadowPass && list.batches[s.batch].blend) continue;
     float c = std::cos(s.angle) * s.size, sn = std::sin(s.angle) * s.size;
     Vec3 A = R * c + U * sn, B = U * c - R * sn;
+    if (s.axis.x != 0 || s.axis.y != 0 || s.axis.z != 0) {
+      // port streak: the texture's v axis along the motion (half length |axis| + size), u across it, size wide,
+      // turned to face the camera about the motion; seen end-on it stays a billboard
+      Vec3 W = cross(s.axis, v.eye - s.pos);
+      float wl = std::sqrt(dot(W, W)), al = std::sqrt(dot(s.axis, s.axis));
+      if (wl > 1e-4f * al * std::sqrt(dot(v.eye - s.pos, v.eye - s.pos))) {
+        A = W * (s.size / wl);
+        B = s.axis * ((al + s.size) / al);
+      }
+    }
     // ARGB → R,G,B,A bytes (the TEXCOORD order of upload())
     uint32_t col = (s.argb >> 16 & 0xFF) | (s.argb & 0xFF00) | (s.argb & 0xFF) << 16 | (s.argb & 0xFF000000u);
     const Vec3 corner[4] = {s.pos + A + B, s.pos - A + B, s.pos - A - B, s.pos + A - B};

@@ -93,6 +93,7 @@ struct ParticleSprite {
   float size = 1, angle = 0;  // half extent, rotation in the view plane
   uint32_t argb = 0;          // colour over life with the distance fade in alpha
   uint32_t batch = 0;         // index into ParticleDrawList::batches
+  Vec3 axis;                  // port streaks (emitter regsStretch): half length along this world vector; 0 = billboard
 };
 struct ParticleBatch {
   GpuMaterial* material = nullptr;  // particles.shader variants per pass env, texture unit 0, two-sided
@@ -114,6 +115,9 @@ struct SceneView {
   float fogStart = 0, fogEnd = 1, fogColor[4] = {0, 0, 0, 1};
   float timer = 0;  // the effect timer (uniform timer)
   float emissionScale = 1;  // material emission × this (port day/night cycle: brighter illumination maps at night)
+  // material ambient and diffuse × surfaceDiffuse, specular × surfaceSpecular (the scene's port atmosphere fields,
+  // engine/scene3d.cpp: wet surfaces in the weather mod)
+  float surfaceDiffuse = 1, surfaceSpecular = 1;
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms

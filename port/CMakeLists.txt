@@ -79,6 +79,7 @@ add_library(regs_engine STATIC
   src/engine/sim_doors.cpp
   src/engine/sim_jams.cpp
   src/engine/particles.cpp
+  src/engine/mods.cpp
   src/engine/user_folders.cpp
   src/platform/window_win32.cpp
   src/audio/audio.cpp
@@ -102,7 +103,7 @@ else()
   set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
-add_executable(regs-tool src/tools/regs_tool.cpp src/tools/crash_win32.cpp)
+add_executable(regs-tool src/tools/regs_tool.cpp src/tools/synth_sounds.cpp src/tools/crash_win32.cpp)
 target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
 
 # the game
@@ -110,9 +111,12 @@ add_executable(regs src/app/main.cpp src/tools/crash_win32.cpp)
 target_link_libraries(regs PRIVATE regs_engine dbghelp)
 # the port's own game files (menu pages, strings, script extensions), mounted over the install from data/ next to the
 # executable; copied on every build (also when only data/ changed and nothing relinks)
+# Built-in mods (data/mods, disabled until listed in the user's mods.json) come along; their procedural sounds are
+# made here by regs-tool synth (no recorded audio in the tree)
 add_custom_target(regs_data ALL
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data)
-add_dependencies(regs_data regs)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data
+  COMMAND $<TARGET_FILE:regs-tool> synth $<TARGET_FILE_DIR:regs>/data/mods/weather/sounds)
+add_dependencies(regs_data regs regs-tool)
 if(WIN32)
   target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32)
 endif()

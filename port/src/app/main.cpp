@@ -52,6 +52,8 @@ int usage() {
                "  --windowed    ignore the fullscreen setting\n"
                "  --community-addons  also load community addons and loose overrides in the install (off: game and\n"
                "                DLC archives only)\n"
+               "  --mods <dir>  user mods folder and its mods.json (tests; default <documents>\\OpenCiM\\mods)\n"
+               "  --no-mods     mount no mod (safe mode)\n"
                "  --frames      quit after n frames (tests)\n"
                "  --screenshot  save the last frame before quitting\n");
   return 2;
@@ -78,6 +80,8 @@ int main(int argc, char** argv) {
     else if (a == "--print-paths") printPaths = true;
     else if (a == "--windowed") engine::host().forceWindowed = true;
     else if (a == "--community-addons") engine::host().communityAddons = true;
+    else if (a == "--mods" && i + 1 < argc) engine::host().modsDir = fs::absolute(widen(argv[++i]));
+    else if (a == "--no-mods") engine::host().noMods = true;
     else if (a == "--frames" && i + 1 < argc) maxFrames = std::atoll(argv[++i]);
     else if (a == "--screenshot" && i + 1 < argc) screenshot = widen(argv[++i]);
     else if (a == "--at" && i + 1 < argc) {
@@ -108,6 +112,9 @@ int main(int argc, char** argv) {
     line("  documents:", documents);
     line("  OpenCiM user folder:", documents / engine::kPortFolderName);
     line("  original folder (read):", documents / engine::kOriginalFolderName);
+    line("  user mods (+ mods.json):", engine::host().modsDir.empty() ? documents / engine::kPortFolderName / "mods"
+                                                                     : engine::host().modsDir);
+    line("  built-in mods:", data / "mods");
     return 0;
   }
   fs::create_directories(documents);

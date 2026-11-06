@@ -1,0 +1,216 @@
+// Weather mod (opencim.weather): rain spells by game date. Loaded with the game (extend/metro/scripts/game.script)
+// and deleted with it. Everything here uses generic port hooks (port/docs/mod-manager.md §4.2):
+//   rain      a gsParticleEmitter under the scene with the port fields regsEmitBox (a box around the view) and
+//             regsStretch (streaks along the fall), placed every frame from the camera's regsEyePosition and
+//             regsLookPosition;
+//   wet look  the scene's atmosphere fields (regsLightScale, regsAmbientScale, regsLightDesaturate, regsFogTint,
+//             regsFogScale, regsSurfaceDiffuse, regsSurfaceSpecular);
+//   sound     a looped rain and occasional distant thunder through new_music (the Ambience volume group), made
+//             procedurally at build time (regs-tool synth: sounds/rain.wav, sounds/thunder.wav).
+// Debug switch: REGS_TEST_WEATHER=rain (always raining, with thunder), =dry (never), =cycle (12 game hours of rain
+// from 06:00 every second day: for start and stop tests). REGS_DEBUG_WEATHER=1 echoes the state every game hour.
+// Seasons come later in this mod: $weather.$season and an onSeason hook would sit next to the rain state here.
+// Gameplay hook (off for now): $weather.$rain (0..1, MAIN.$weather) is where a later option could raise transit
+// ridership in rain.
+
+$root = "/regs/mods/opencim.weather/";
+$scene = MAIN.$scene;
+$camera = MAIN.$camera;
+$clock = MAIN.$mainClock;
+
+MAIN.$weather = this;
+$rain = 0.0;          // shown rain intensity 0..1 (eased in real time)
+$target = 0.0;        // the schedule's intensity now
+$thunderOn = false;   // the current spell has thunder
+$thunderWait = 6.0;   // real seconds to the next thunder
+$thunderCount = 0;
+$raining = false;     // for the start/stop messages
+$lastHour = -1;
+$frameThread = null;
+
+$mode = getenv("REGS_TEST_WEATHER");
+$debug = getenv("REGS_DEBUG_WEATHER") != "";
+
+// the schedule: per game day a chance of a spell starting, 8-40 game hours long, fading in and out over 1.5 hours;
+// deterministic for a game: the seed comes from the campaign's start date (saved with the game)
+$chancePerDay = 0.12;   // about 3.6 spells a month
+$fadeHours = 1.5;
+$fadeSeconds = 3.0;     // the shown intensity follows the schedule over at least this many real seconds
+$seed = 1;
+if (defined MAIN.$campaign) {
+  if (MAIN.$campaign) {
+    if (MAIN.$campaign.$campaign) $seed = ((MAIN.$campaign.$campaign.$startDate : 0) % 9973) + 1;
+  }
+}
+
+// a pseudo-random number in [0, 1) from a day and a channel (no rand(): the simulation's stream stays untouched)
+function hash01($day, $k) {
+  $hx = sin(float($day % 10007) * 12.9898 + float($seed) * 0.3711 + float($k) * 78.233) * 43758.5453;
+  return abs($hx - float(int($hx)));
+}
+
+// the spell that starts on day $d: [start hour, end hour, intensity, thunder] relative to that day's midnight, or null
+function spellOf($d) {
+  if ($mode == "cycle") {
+    if ($d % 2 != 0) return null;
+    return [6.0, 18.0, 1.0, true];
+  }
+  if (hash01($d, 0) >= $chancePerDay) return null;
+  $sStart = hash01($d, 1) * 24.0;
+  return [$sStart, $sStart + 8.0 + hash01($d, 2) * 32.0, 0.35 + 0.65 * hash01($d, 3), hash01($d, 4) < 0.45];
+}
+
+// the scheduled intensity at day $d, hour $h (spells of the two days before can still run)
+function scheduled($d, $h) {
+  $thunderOn = false;
+  if ($mode == "rain") { $thunderOn = true; return 1.0; }
+  if ($mode == "dry") return 0.0;
+  $best = 0.0;
+  for ($back = 0; $back <= 2; ++$back) {
+    $sp = spellOf($d - $back);
+    if (!$sp) continue;
+    $th = $h + 24.0 * $back;
+    if ($th < $sp[0] || $th >= $sp[1]) continue;
+    $ramp = min(1.0, min(($th - $sp[0]) / $fadeHours, ($sp[1] - $th) / $fadeHours));
+    if ($sp[2] * $ramp > $best) {
+      $best = $sp[2] * $ramp;
+      $thunderOn = $sp[3];
+    }
+  }
+  return $best;
+}
+
+// game.script calls updateERA(year) on every one of its $gameScripts at each new year (an addon game script's
+// interface); the weather has nothing to do there yet (seasons may)
+function updateERA($year) {
+}
+
+function dateText() {
+  $hh = int(float($clock.time) / 3600000.0);
+  return string($clock.days) + "." + string($clock.months) + "." + string($clock.years) + " " + string($hh) + ":00";
+}
+
+// ---- rain: streaks in a box around the view, falling straight down with a little wind ----
+with ($emitter = new_particleEmitter($scene)) {
+  .setTexture("effects/particles/lightsmoke.dds");
+  .particleBlend = 4;            // BLEND_ADDITIVE_ALPHA: light streaks, no shadows
+  .autoemit = false;
+  .density = 0.0;
+  .direction = vector(0.10, -1.0, 0.06);
+  .minParticleAngle = 0.0;
+  .maxParticleAngle = 0.03;
+  .gravitation = vector(0.0, 0.0, 0.0);
+  .particleAirResist = 0.0;
+  .ownerVelocity = 0.0;
+  .minParticleOrient = 0.0;
+  .maxParticleOrient = 0.0;
+  .addColorRange(0x4CC8D2DC, 0x38C8D2DC);   // slightly translucent
+}
+
+// ---- sounds (2D, the Ambience group) ----
+with ($rainSound = new_music($scene)) {
+  .load($root + "sounds/rain.wav", false);
+  .relative = true;
+  .volume = 0.0;
+}
+$rainPlaying = false;
+with ($thunderSound = new_music($scene)) {
+  .load($root + "sounds/thunder.wav", false);
+  .relative = true;
+}
+
+function applyLook($w) {
+  // overcast: less direct light, a little more ambient, greyer light and fog, the fog nearer; wet: darker and
+  // glossier surfaces (materials with specular)
+  $scene.regsLightScale = 1.0 - 0.35 * $w;
+  $scene.regsAmbientScale = 1.0 + 0.4 * $w;
+  $scene.regsLightDesaturate = 0.45 * $w;
+  $scene.regsFogTint = (int(170.0 * $w) << 24) | 0x7E858C;
+  $scene.regsFogScale = 1.0 - 0.4 * $w;
+  $scene.regsSurfaceDiffuse = 1.0 - 0.18 * $w;
+  $scene.regsSurfaceSpecular = 1.0 + 1.5 * $w;
+}
+
+function placeRain($w) {
+  $eye = $camera.regsEyePosition;
+  $look = $camera.regsLookPosition;
+  $ex = vector_x($eye); $ey = vector_y($eye); $ez = vector_z($eye);
+  $lx = vector_x($look); $ly = vector_y($look); $lz = vector_z($look);
+  $dist = max(20.0, vector_length(vector($ex - $lx, $ey - $ly, $ez - $lz)));
+  // the box: centred a third of the way from the look-at point to the eye, from the ground to 60 % of the eye height
+  // (streaks right in front of the camera would look huge)
+  $height = max(15.0, 0.6 * ($ey - $ly));
+  $radius = max(25.0, 0.8 * $dist);
+  $ts = max(1.0, $scene.particleEngine.timeSpeed);   // the engine runs particles faster at high game speed
+  $speed = max(25.0, 0.55 * $dist);
+  $life = $height / $speed;
+  with ($emitter) {
+    .position = vector($lx + ($ex - $lx) * 0.33, $ly + 0.5 * $height, $lz + ($ez - $lz) * 0.33);
+    .regsEmitBox = vector($radius, 0.5 * $height, $radius);
+    .minParticleSpeed = $speed * 0.9 / $ts;
+    .maxParticleSpeed = $speed * 1.1 / $ts;
+    .minParticleLife = $life * $ts;
+    .maxParticleLife = $life * 1.1 * $ts;
+    // fine streaks: about a pixel wide and 15-20 pixels long at the look-at distance, whatever the zoom
+    .particleSize = 0.0006 * $dist;
+    .regsStretch = 0.011 * $dist / $speed * $ts;
+    // many small ones: about 8000 streaks at full rain
+    .density = 8000.0 * $w / $life;
+    .autoemit = $w > 0.01;
+    .visible = (MAIN.$grid.viewMode : 0) != 0x180;   // not in the underground view
+  }
+}
+
+function updateSound($w, $dt) {
+  if ($w > 0.01 && !$rainPlaying) {
+    $rainSound.play(true);
+    $rainPlaying = true;
+  } else if ($w <= 0.01 && $rainPlaying) {
+    $rainSound.stop();
+    $rainPlaying = false;
+  }
+  $rainSound.volume = 0.6 * min(1.0, $w * 1.4);
+  if ($thunderOn && $w > 0.5) {
+    $thunderWait -= $dt;
+    if ($thunderWait <= 0.0) {
+      $thunderCount++;
+      $thunderSound.pitch = 0.8 + 0.3 * hash01($thunderCount, 11);
+      $thunderSound.volume = 0.35 + 0.45 * hash01($thunderCount, 12);
+      $thunderSound.play(false);
+      $thunderWait = 9.0 + 20.0 * hash01($thunderCount, 13);
+      if ($debug) echo "weather: thunder at " + dateText();
+    }
+  }
+}
+
+function frame($dt) {
+  $hour = float($clock.time) / 3600000.0;
+  $target = scheduled($clock.date, $hour);
+  if (($target > 0.0) != $raining) {
+    $raining = $target > 0.0;
+    echo "weather: rain " + ($raining ? "starts" : "stops") + " at " + dateText();
+  }
+  if ($debug && int($hour) != $lastHour) {
+    $lastHour = int($hour);
+    echo "weather: " + dateText() + " scheduled " + string($target) + " shown " + string($rain);
+  }
+  $step = $dt / $fadeSeconds;
+  $rain += clamp($target - $rain, -$step, $step);
+  applyLook($rain);
+  placeRain($rain);
+  updateSound($rain, $dt);
+}
+
+echo "weather: on (" + ($mode != "" ? "REGS_TEST_WEATHER=" + $mode : "seed " + string($seed)) + ")";
+$frameThread = thread "gameUI" :: loop {
+  frame(skip_frame);
+};
+
+event this.onDestroy::() {
+  if ($frameThread) { delete $frameThread; $frameThread = null; }
+  applyLook(0.0);
+  if ($rainSound) { $rainSound.stop(); delete $rainSound; $rainSound = null; }
+  if ($thunderSound) { delete $thunderSound; $thunderSound = null; }
+  if ($emitter) { delete $emitter; $emitter = null; }
+  MAIN.$weather = null;
+}

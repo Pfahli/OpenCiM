@@ -25,7 +25,11 @@ it is, what already exists, and the open decisions. Order is not priority.
     lit, and some light up again in the morning before sunrise.
   * Open: how well the window detection works on the various facades (a manual mask per texture as a fallback for
     the landmarks), the cost of many light pools (a deferred or clustered light pass in the planned new renderer).
-* **Seasons and weather.** The original's look never changes over the year. The port could follow the game's date:
+* **Seasons and weather.** **A mod, rain started** (user's decision: weather and seasons are a mod, not the base
+  port): the built-in mod `data/mods/weather` (`opencim.weather`, disabled by default) has rain spells by game date,
+  streaks, wet surfaces, grey light, rain and thunder sounds, all through generic port hooks
+  (`docs/mod-manager.md` §4.2); seasons, snow and the gameplay touches below are open in the same mod.
+  The original's look never changes over the year. The port could follow the game's date:
   * Spring and summer as today; autumn turns grass, fields and tree foliage yellow, orange and brown (a colour shift
     in the terrain and tree shaders by season, per tree species where the textures allow it); in winter deciduous
     trees lose their leaves (foliage hidden or thinned, bare branches from the trunk meshes; conifers keep theirs) and

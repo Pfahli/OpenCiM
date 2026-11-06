@@ -103,6 +103,28 @@ followed vehicle breaks down after that much simulated time), `REGS_TEST_FIRE=<i
 `REGS_TEST_FIREWORKS=1` (the new-year fireworks bit stays on). Runs with `--at` actions ignore the real mouse, keyboard and
 window focus, so scripted clicks land the same with or without focus.
 
+### Mods
+
+OpenCiM mods (`docs/mod-manager.md`; first step: no manager page yet) are folders with a `mod.json` manifest. They
+are found in the user mods folder `<user root>\mods` (`Documents\OpenCiM\mods`) and in the port's built-in mods
+folder `data\mods` next to `regs.exe` (shipped with the port, all disabled). The user mods folder's `mods.json` lists
+the enabled mods in load order:
+
+```json
+{ "enabled": ["opencim.weather"] }
+```
+
+An enabled mod's folder is mounted as `regs/mods/<id>/`, its `files\` over the game and the port's data, and its
+`extend\<game path>` scripts chain after the port's own (`//@base`, `//@rename`). `--mods <dir>` uses another user
+mods folder (with its own `mods.json`; tests), `--no-mods` mounts none (safe mode); `--print-paths` shows both mods
+folders. The log lists the mods found and enabled (`mods: …`) and the files a mod overrides.
+
+Built-in mods: **Weather** (`data/mods/weather`, id `opencim.weather`): rain spells by game date with streaks
+around the camera, wet surfaces, grey light and fog, rain and distant thunder sounds (made at build time by
+`regs-tool synth`, no recorded audio). Its README is in the mod folder. Switches: `REGS_TEST_WEATHER=rain` (always
+rain, with thunder), `=dry` (never), `=cycle` (12 game hours of rain from 06:00 every second day), and
+`REGS_DEBUG_WEATHER=1` (the schedule every game hour, thunder claps).
+
 ### Port files and graphics options
 
 The port needs an installed copy of the game and ships none of its files, like OpenRCT2. Its own files live in
@@ -110,7 +132,8 @@ The port needs an installed copy of the game and ships none of its files, like O
 
 * `data/regs/extend/<game path>` **extends** a game script without replacing it: the part before a line `//@base`
   is compiled before the installed file and the rest after it, in the same script object; `//@rename f g` renames a
-  function of the original so the extension can wrap it (`VM::extendSource`). This is also the planned basis for mods.
+  function of the original so the extension can wrap it (`VM::extendSource`). Mods extend scripts the same way,
+  chained after the port (see Mods above).
 * `data/regs/strings/<language>.strings` (`en_US` is the fallback), `data/regs/shaders/` (the port's post effects).
 
 The game's graphics page is extended this way (`data/regs/extend/metro/ui/menus/graphics.script`):
@@ -336,7 +359,8 @@ is already specified in `docs/`.
    (level crossings), a Prologic encoder with phase shift. `regs-tool sound <game> <path> [seconds] [stream]
    [layout=<name>] [at=x,y,z] [capture=<file.wav>]` plays one file (as a 3D voice with `at=`) for layout checks.
    *Mods:* a mod manager for ReGS mods (manifests, load order, script extensions, options API) is designed in
-   `docs/mod-manager.md`; its base, the script-extension mechanism, already exists.
+   `docs/mod-manager.md`; its first step runs (mod folders, manifests, `mods.json`, VFS layers, chained script
+   extensions; see Mods above), with the built-in weather mod as the first user.
 8. **Parity pass.** The original's saves load in the port (one-way: port saves need not load in the original),
    campaigns run start to finish, and mods load.
 

@@ -277,6 +277,61 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
   }
 }
 
+// Port atmosphere fields of gsScene (port/docs/mod-manager.md §4.2, for mods such as weather): unset = no change.
+//   regsLightScale     × the lights' diffuse and specular (direct light)
+//   regsAmbientScale   × the lights' ambient and the light-model ambient
+//   regsLightDesaturate  0..1: the light colours mixed towards their grey
+//   regsFogTint        ARGB: the fog colour mixed towards its RGB by alpha / 255
+//   regsFogScale       × the fog start and end distances
+//   regsSurfaceDiffuse × every material's ambient and diffuse colour (darker surfaces)
+//   regsSurfaceSpecular × every material's specular colour (only materials with MATERIAL_SPECULAR show it)
+struct Atmosphere {
+  float light = 1, ambient = 1, desaturate = 0, fogScale = 1, surfaceDiffuse = 1, surfaceSpecular = 1;
+  uint32_t fogTint = 0;
+};
+const char16_t* const kAtmosphereFloats[] = {u"regsLightScale", u"regsAmbientScale", u"regsLightDesaturate",
+                                             u"regsFogScale", u"regsSurfaceDiffuse", u"regsSurfaceSpecular"};
+
+Atmosphere atmosphereOf(VM& vm, Object* scene) {
+  Atmosphere a;
+  if (!scene) return a;
+  auto num = [&](const char16_t* n, float def) {
+    auto it = scene->fieldValues.find(n);
+    return it == scene->fieldValues.end() ? def : floatOr(vm, it->second, def);
+  };
+  a.light = std::max(0.0f, num(u"regsLightScale", 1));
+  a.ambient = std::max(0.0f, num(u"regsAmbientScale", 1));
+  a.desaturate = std::clamp(num(u"regsLightDesaturate", 0), 0.0f, 1.0f);
+  a.fogScale = std::max(0.01f, num(u"regsFogScale", 1));
+  a.surfaceDiffuse = std::max(0.0f, num(u"regsSurfaceDiffuse", 1));
+  a.surfaceSpecular = std::max(0.0f, num(u"regsSurfaceSpecular", 1));
+  if (auto it = scene->fieldValues.find(u"regsFogTint"); it != scene->fieldValues.end() && it->second.type() == VT::Int)
+    a.fogTint = uint32_t(vm.toInt(it->second));
+  return a;
+}
+
+void applyAtmosphere(const Atmosphere& a, SceneView& v) {
+  auto grade = [&](float* c, float scale) {
+    float grey = 0.3f * c[0] + 0.59f * c[1] + 0.11f * c[2];
+    for (int k = 0; k < 3; ++k) c[k] = (c[k] + (grey - c[k]) * a.desaturate) * scale;
+  };
+  for (Light& l : v.lights) {
+    grade(l.diffuse, a.light);
+    grade(l.specular, a.light);
+    grade(l.ambient, a.ambient);
+  }
+  grade(v.lightModelAmbient, a.ambient);
+  if (a.fogTint >> 24) {
+    float t = float(a.fogTint >> 24) / 255.0f, tint[4];
+    argbToFloats(a.fogTint, tint);
+    for (int k = 0; k < 3; ++k) v.fogColor[k] += (tint[k] - v.fogColor[k]) * t;
+  }
+  v.fogStart *= a.fogScale;
+  v.fogEnd *= a.fogScale;
+  v.surfaceDiffuse = a.surfaceDiffuse;
+  v.surfaceSpecular = a.surfaceSpecular;
+}
+
 }  // namespace
 
 std::shared_ptr<const ObjectData> loadObjectCached(VM& vm, const std::string& path) {
@@ -435,6 +490,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     }
     v.emissionScale = skyEmissionScale(sky);  // port day/night cycle (engine/sky.cpp)
   }
+  applyAtmosphere(atmosphereOf(vm, scene), v);  // the port's atmosphere fields of the scene (mods: weather)
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
   ParticleDrawList particles;
   {
@@ -573,6 +629,43 @@ void runCompanionScript(VM& vm, Object* o, const std::u16string& objectPath) {
 
 void registerSceneNatives(VM& vm) {
   if (ClassInfo* c = vm.findClass("gsObject")) c->factory = [](const ClassInfo* ci) { return Ref<Object>(new ObjectObj(ci)); };
+  // port fields for mods (port/docs/mod-manager.md §4.2): the scene's atmosphere (atmosphereOf above) and the
+  // camera's eye and look-at point as the 3D pass draws them
+  if (ClassInfo* c = vm.findClass("gsScene")) {
+    auto stored = [c](const char16_t* name, int type, Value def) {
+      FieldInfo& f = c->fields[name];
+      f.name = name;
+      f.type = type;
+      f.get = [name, def](VM&, Object* o) {
+        auto it = o->fieldValues.find(name);
+        return it == o->fieldValues.end() ? def : it->second;
+      };
+      f.set = [name, type](VM& v, Object* o, const Value& x) {
+        Value r = v.resolve(x);
+        o->fieldValues[name] = type == 3 ? Value::integer(v.toInt(r)) : Value::real(v.toFloat(r));
+      };
+    };
+    for (const char16_t* n : kAtmosphereFloats)
+      stored(n, 4, Value::real(std::u16string_view(n) == u"regsLightDesaturate" ? 0.0f : 1.0f));
+    stored(u"regsFogTint", 3, Value::integer(0));
+  }
+  if (ClassInfo* c = vm.findClass("gs3DCamera")) {
+    auto eyeField = [c](const char16_t* name, bool eyeNotLook) {
+      FieldInfo& f = c->fields[name];
+      f.name = name;
+      f.type = 7;
+      f.readOnly = true;
+      f.get = [eyeNotLook](VM& v, Object* o) {
+        Vec3 eye, look, up;
+        cameraView(v, o, eye, look, up);
+        Vec3 p = eyeNotLook ? eye : look;
+        return Value::vector(p.x, p.y, p.z);
+      };
+      f.set = nullptr;
+    };
+    eyeField(u"regsEyePosition", true);
+    eyeField(u"regsLookPosition", false);
+  }
   // loadFromFile(path, [applyTransform]) (gsObject::load 0x1008bd90)
   implement(vm, "gsObject", u"loadFromFile", [](VM& v, Object* s, int argc, const Value* a) {
     auto* o = dynamic_cast<ObjectObj*>(s);

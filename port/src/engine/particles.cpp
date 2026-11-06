@@ -122,6 +122,11 @@ class ParticleEmitterObj : public Object {
   Ref<Object> texture;  // setTexture (TextureObj)
   Vec3 localPos;        // position (relative to the parent)
   float timer = 0;      // the emission timer of move() (+0x190)
+  // port fields for mods (particles.md §6, mod-manager.md §4.2): a box of these half extents around the emit point
+  // that each particle starts at a random point of, and streaks: drawn along the velocity, half length =
+  // speed × regsStretch seconds (0 = the original's camera-facing billboard)
+  Vec3 emitBox;
+  float stretch = 0;
   bool emitting = false;   // gsEmittingParticleEmitter: its particles carry its child emitters
   bool contrail = false;   // gsBoatContrain: a wake ribbon, not particles (not ported)
 
@@ -219,6 +224,8 @@ bool emitParticle(VM& vm, ParticleEngineObj* eng, ParticleEmitterObj* e, const V
     Vec3 u = perpendicular(d), w = render::cross(u, d);
     p.pos = p.pos + u * (std::cos(a) * e->planeSize) + w * (std::sin(a) * e->planeSize);
   }
+  if (e->emitBox.x != 0 || e->emitBox.y != 0 || e->emitBox.z != 0)  // port: regsEmitBox
+    p.pos = p.pos + Vec3{rnd(-1, 1) * e->emitBox.x, rnd(-1, 1) * e->emitBox.y, rnd(-1, 1) * e->emitBox.z};
   p.vel = d * speed + ownerVel * e->ownerVelocity;
   p.life = rnd(e->minLife, e->maxLife);
   p.orient = rnd(e->minOrient, e->maxOrient);
@@ -669,7 +676,7 @@ void collectParticles(Display& d, VM& vm, Object* scene, const Vec3& eye, const 
   Vec3 fwd = render::normalize(forward);
   struct SysInfo {
     int batch = -1;  // −2: hidden
-    float maxDistance = 0;
+    float maxDistance = 0, stretch = 0;
   };
   std::vector<SysInfo> sys(eng->systems.size());
   std::map<render::GpuMaterial*, uint32_t> batchOf;
@@ -687,6 +694,7 @@ void collectParticles(Display& d, VM& vm, Object* scene, const Vec3& eye, const 
         if (fresh) out.batches.push_back({m, materialFlags(e->blend) & 0x180u});
         si.batch = int(it->second);
         si.maxDistance = e->maxDistance;
+        si.stretch = e->stretch;
       }
     }
     if (si.batch < 0) continue;
@@ -698,12 +706,14 @@ void collectParticles(Display& d, VM& vm, Object* scene, const Vec3& eye, const 
     if (p.age > p.growStart) size = (1 + (std::min(p.age, p.growEnd) - p.growStart) * p.growth) * p.size;
     float s2 = size * size;
     if (!(s2 < k * d2)) continue;  // larger than half the view's half-diagonal
+    Vec3 axis = si.stretch != 0 ? p.vel * si.stretch : Vec3{};  // port streaks
+    float reach = std::max(size, std::sqrt(dot(axis, axis)));
     // the view frustum with the billboard's radius (port: the original sends every particle to the blend queue)
     float c[4];
     for (int r = 0; r < 4; ++r)
       c[r] = viewProj.at(r, 0) * p.pos.x + viewProj.at(r, 1) * p.pos.y + viewProj.at(r, 2) * p.pos.z + viewProj.at(r, 3);
-    float marginW = c[3] + size * 1.5f * std::max(1.0f, halfDiagonal);
-    if (c[0] < -marginW - size || c[0] > marginW + size || c[1] < -marginW - size || c[1] > marginW + size) continue;
+    float marginW = c[3] + reach * 1.5f * std::max(1.0f, halfDiagonal);
+    if (c[0] < -marginW - reach || c[0] > marginW + reach || c[1] < -marginW - reach || c[1] > marginW + reach) continue;
     // alpha (renderParticle L:0x08218ee0): min(1, k·d²/size² − 1), faded over the last tenth of maxDistance
     float a = std::min(1.0f, k * d2 / s2 - 1);
     if (si.maxDistance != 0) {
@@ -716,7 +726,7 @@ void collectParticles(Display& d, VM& vm, Object* scene, const Vec3& eye, const 
     static const bool marked = std::getenv("REGS_DEBUG_PARTICLES") && std::atoi(std::getenv("REGS_DEBUG_PARTICLES")) == 2;
     if (marked) col = 0xFFFF00FF, size *= 3;  // debugging: opaque magenta, three times the size
     order.push_back({d2, uint32_t(out.sprites.size())});
-    out.sprites.push_back({p.pos, size, p.orient, col, uint32_t(si.batch)});
+    out.sprites.push_back({p.pos, size, p.orient, col, uint32_t(si.batch), axis});
   }
   // the blend queue's order: far to near
   std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
@@ -809,6 +819,8 @@ void registerParticleNatives(VM& vm) {
   floatField(u"maxOffTime", &ParticleEmitterObj::maxOff);
   vecField(u"gravitation", &ParticleEmitterObj::gravitation, false);
   vecField(u"direction", &ParticleEmitterObj::direction, true);  // setDirection normalises (L:0x08175440)
+  vecField(u"regsEmitBox", &ParticleEmitterObj::emitBox, false);  // port fields (see ParticleEmitterObj)
+  floatField(u"regsStretch", &ParticleEmitterObj::stretch);
   {
     FieldInfo& f = c->fields[u"particleBlend"];
     f.get = [E](VM&, Object* o) { auto* e = E(o); return Value::integer(e ? e->blend : 1); };

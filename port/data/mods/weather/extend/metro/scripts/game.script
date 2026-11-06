@@ -1,0 +1,7 @@
+// Weather mod (opencim.weather) extension of metro/scripts/game.script, chained after the port's own extensions
+// (VM::extendSource): the weather script joins the game's addon scripts, so game.script's unload() deletes it with
+// the game.
+
+//@base
+
+$gameScripts[] = load "/regs/mods/opencim.weather/scripts/weather.script";

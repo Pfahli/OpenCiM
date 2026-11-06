@@ -1,8 +1,10 @@
 # Mod manager: design
 
-Status: design, nothing implemented beyond the script-extension mechanism (`data/regs/extend/`, `VM::extendSource`)
-that the graphics page already uses. Goal: one place to install, order, enable and update **ReGS mods**, in a form
-that works for a public release that requires the original game (like OpenRCT2).
+Status: §8 step 1 implemented (2026-11-06, `engine/mods.cpp`; what exactly: §9): mod folders with manifests in the
+user and built-in mods folders, the enabled list `mods.json`, VFS layers and chained script extensions, plus the
+first port fields for mods (§4.2). The first mod is the port's built-in weather mod (`data/mods/weather`). Goal: one
+place to install, order, enable and update **ReGS mods**, in a form that works for a public release that requires
+the original game (like OpenRCT2).
 
 **Scope:** the port's own mods. The official DLC in `addons/` keeps loading through the game's addon loader as it
 does now. Existing community addons are out of scope for now (decision 2026-11-03: the port will get better mods
@@ -22,7 +24,10 @@ which mods they need.
 
 ## 2. Mod package
 
-A mod is a folder or a `.zip` in `<documents>/Cities In Motion/regs/mods/` (user mods), with a manifest:
+A mod is a folder or a `.zip` in the user mods folder `<user root>/mods/` (`Documents\OpenCiM\mods`, since the
+port's user folder moved; before that `<documents>/Cities In Motion/regs/mods/` was planned), or a folder in the port's
+built-in mods folder `data/mods/` next to the executable (optional mods shipped with the port, disabled by default),
+with a manifest:
 
 ```json
 // mod.json
@@ -58,7 +63,7 @@ addon paths as an "addon" entry (id = path, version unknown) so they can be enab
 
 ## 3. Loading
 
-1. The manager reads `regs/mods.json` (enabled list and order) and every manifest, checks versions, dependencies and
+1. The manager reads `mods.json` in the user mods folder (enabled list and order) and every manifest, checks versions, dependencies and
    conflicts, and sorts topologically (`requires`/`loadAfter`, then the user's order). Problems are shown, not fatal:
    a mod with a missing dependency is skipped.
 2. VFS layers, lowest first: install (with its addons, loaded as the game does) → port `data/` → mods (`files/`, in
@@ -82,11 +87,42 @@ Stable, versioned entry points instead of patching game scripts where possible:
 
 The extension mechanism stays available for everything the API does not cover.
 
+### 4.1 Implemented so far
+
+* `regsMods()`: the enabled mods in load order, each a map `{id, name, version, path, builtIn}` (`path` is the mod's
+  VFS root, `/regs/mods/<id>/`, for `load` and file paths).
+* A mod's own files are read by their VFS path, `/regs/mods/<id>/<file>` (scripts, sounds, textures).
+* `getenv(name)` (a game native) for test switches.
+
+### 4.2 Port fields for mods
+
+Generic engine capabilities added for mods (first user: the weather mod). They are port fields on the game's own
+classes; unset means the original behaviour, so nothing changes without a mod.
+
+| Class | Field | Meaning |
+|---|---|---|
+| `gsParticleEmitter` | `regsEmitBox` (vector) | half extents of a box around the emit point; each particle starts at a random point in it (rain or snow over an area from one emitter) |
+| `gsParticleEmitter` | `regsStretch` (float, s) | streaks: the particle is drawn along its velocity, half length = speed × this, `particleSize` wide, turned towards the camera about the motion (0: the original's billboard). With `lightsmoke.dds` and `particleBlend = 4` this gives fine rain streaks |
+| `gs3DCamera` | `regsEyePosition`, `regsLookPosition` (vector, read-only) | the camera's eye and look-at point as the 3D pass draws them (the floating camera's eye is otherwise not visible to scripts) |
+| `gsScene` | `regsLightScale` (1) | × the lights' diffuse and specular (direct sun) |
+| `gsScene` | `regsAmbientScale` (1) | × the lights' ambient and the light-model ambient |
+| `gsScene` | `regsLightDesaturate` (0) | 0..1: light colours towards grey |
+| `gsScene` | `regsFogTint` (0) | ARGB: the fog colour is mixed towards this RGB by alpha / 255 |
+| `gsScene` | `regsFogScale` (1) | × the fog start and end distance |
+| `gsScene` | `regsSurfaceDiffuse` (1) | × every material's ambient and diffuse colour (wet, darker surfaces) |
+| `gsScene` | `regsSurfaceSpecular` (1) | × every material's specular colour (glossier; only materials with `MATERIAL_SPECULAR` show highlights) |
+
+The scene fields apply when the scene is drawn (`engine/scene3d.cpp` `applyAtmosphere`), after the location's light
+and fog and the port's day/night cycle, so a mod and the cycle do not fight over the light fields. Particle physics
+run with the scene's `particleEngine.timeSpeed` (max(1, game speed)); a mod that wants real-time motion divides its
+speeds and multiplies its lives by it.
+
 ## 5. Manager UI
 
 An in-game page ("Mods", next to Graphics/Audio in the settings menu, built as a port extension): list with
 enable/disable, drag order, details (description, version, dependencies, overridden files), warnings, and "restart
-required" when the set changes. A command line `--mods <file>` and `--no-mods` (safe mode) for troubleshooting.
+required" when the set changes. On the command line `--mods <dir>` (another mods folder with its `mods.json`) and
+`--no-mods` (safe mode) for troubleshooting; both exist (§9).
 
 ## 6. Dependencies of mods and of saves
 
@@ -151,9 +187,36 @@ itself with a pull-request workflow (CI validates `mod.json`, checksums and the 
 
 ## 8. Order of work
 
-1. Mod folder scan, manifests, `mods.json`, VFS layers and chained extensions (no UI; edit `mods.json`).
+1. Mod folder scan, manifests, `mods.json`, VFS layers and chained extensions (no UI; edit `mods.json`). **Done in
+   part** (§9): no `.zip` packages, versions, dependencies, conflicts or `addon/` folders yet.
 2. (Optional, later) original addons under manager control (enable/disable/order).
 3. In-game manager page.
 4. `MAIN.$regs` option and event API.
 5. Save records.
 6. GitHub catalogue and updates (§7.1); then native plugins.
+
+## 9. Implemented (step 1, `engine/mods.cpp`)
+
+* **Folders.** Built-in mods: `data/mods/<folder>/` next to `regs.exe` (copied by the build like `data/`; the data
+  overlay skips `data/mods`, so a built-in mod mounts only when enabled). User mods: `<user root>/mods/<folder>/`,
+  where the user root is the port's user folder `Documents\OpenCiM` (`modsUserRoot()`: `host().userFolder`, or
+  `<documents>\OpenCiM` before `init_userdata` runs, since mods mount before the first script). `--mods <dir>`
+  stands in for the user mods folder (tests), `--no-mods` mounts none. A folder is a mod when it holds `mod.json`.
+* **Manifest.** Read: `id` (required; letters, digits, `.`, `-`, `_`), `name`, `version`, `saves`. The rest of §2 is
+  accepted and not checked yet. A JSON reader with `//` and `/* */` comments (`engine/mods.cpp`). Broken manifests
+  are logged and skipped. A user mod with a built-in mod's id replaces the built-in copy.
+* **Enabled list.** `<user mods folder>/mods.json`: `{ "enabled": ["<id>", …] }`, in load order; ids not installed
+  are logged and skipped. No file: nothing enabled.
+* **VFS layers** (`Vfs::addModLayer`), per enabled mod in load order, after the port's `data/` and before userdata:
+  the whole mod folder as `regs/mods/<id>/` (its scripts, sounds, textures, `extend/`), and its `files/` at the root,
+  replacing game and port files of the same path (later mods win; the log counts each mod's overrides,
+  `Vfs::overrides()` keeps the list). Rescans (`updateFileSystem`) keep the layers.
+* **Script extensions** chain (§3.3): `VM::extensionRoots` = `regs/extend/` (the port) then
+  `regs/mods/<id>/extend/` per mod; each is applied to the result of the previous one with the same `//@base` and
+  `//@rename` rules, so a mod can wrap a function the port already wraps.
+* **Script API**: `regsMods()` and the port fields of §4.2.
+* **Example**: the weather mod (`data/mods/weather`, README there) extends `metro/scripts/game.script` with one line
+  that loads its script into the game's `$gameScripts`, so the game unloads it with the others.
+
+Not yet: `.zip` packages, version and dependency checks, conflicts, `addon/` folders, `options.script`, the manager
+page, the `MAIN.$regs` events, save records.

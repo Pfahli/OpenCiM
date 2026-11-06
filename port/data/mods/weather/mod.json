@@ -1,0 +1,13 @@
+{
+  "id": "opencim.weather",
+  "name": "Weather",
+  "version": "0.1.0",
+  "authors": ["OpenCiM"],
+  "description": {
+    "en_US": "Rain spells by game date: falling rain around the camera, wet streets and roofs, grey light and fog, rain and distant thunder sounds. Seasons will follow.",
+    "de": "Regenschauer nach Spieldatum: Regen um die Kamera, nasse Straßen und Dächer, graues Licht und Nebel, Regen und fernes Donnergrollen. Jahreszeiten folgen."
+  },
+  "requires": { "regs": ">=0.1" },
+  "saves": "none",
+  "repository": ""
+}
