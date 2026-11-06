@@ -146,11 +146,11 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     float tracks = exp(-w * w / 0.04) * smoothstep(0.02, 0.3, traffic) * onLane;  // about 0.4 m wide
     amount = laneCover * (1.0 - 0.85 * tracks);
     slush = clamp(busy + tracks, 0.0, 1.0) * smoothstep(0.3, 0.8, cover);
-    // a plowed lane: bare, dark wet asphalt with a few grey streaks of what the blade left
-    amount *= 1.0 - 0.95 * plowed;
+    // a plowed lane: wet asphalt under a thin grey film of what the blade left, in streaks along the lane
+    amount *= 1.0 - 0.9 * plowed;
     float streak = weather_noise(vec2(dot(s.pos.xz, dir) * 0.15, dot(s.pos.xz, vec2(-dir.y, dir.x)) * 4.0));
-    slush = mix(slush, 0.25 * smoothstep(0.55, 0.85, streak), plowed);
-    c.rgb *= 1.0 - 0.14 * plowed * smoothstep(0.2, 0.6, cover) * (1.0 - s.fog);
+    slush = mix(slush, 0.5 + 0.3 * smoothstep(0.45, 0.85, streak), plowed);
+    c.rgb *= 1.0 - 0.06 * plowed * smoothstep(0.2, 0.6, cover) * (1.0 - s.fog);
     // the blade's ends leave a low rim along the cleared strip (where it meets snow that was not cleared)
     amount = max(amount, 0.8 * 4.0 * plowed * (1.0 - plowed) * smoothstep(0.3, 0.8, cover));
     // the bank by the engine's smooth road edge (no 0.5 m steps along the kerb)

@@ -222,7 +222,7 @@ float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, ou
   return sumW > 0.0 ? sumT / sumW : 0.0;
 }
 // the snowplows (engine/snowplows.h) on the lanes around a point: returns how freshly the lane under it was cleared
-// (0..1, soft at the lane's edge, overlapping lanes averaged) and gives the heap the plows pushed out of the nearest
+// (0..1, soft at the lane's edge; the most plowed of the lanes there) and gives the heap the plows pushed out of the nearest
 // lanes (0..1), reaching `reach` m beyond a lane's 1.35 m half width (onto the gutter and the kerb next to it)
 float regs_lanePlowed(vec2 xz, float reach, out float heap) {
   heap = 0.0;
@@ -231,7 +231,7 @@ float regs_lanePlowed(vec2 xz, float reach, out float heap) {
   ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size)));
   int seen[25];
   int n = 0;
-  float sumW = 0.0, sumP = 0.0;
+  float plowed = 0.0;
   for (int k = 0; k < 25; ++k) {
     ivec2 t = c + ivec2(k % 5 - 2, k / 5 - 2);
     if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
@@ -251,11 +251,10 @@ float regs_lanePlowed(vec2 xz, float reach, out float heap) {
     int i = idx - 1;
     vec4 v = texelFetch(regs_LaneTraffic, ivec2(i % 256, i / 256), 0);
     float w = 1.0 - smoothstep(1.05, 1.65, lat);
-    sumP += w * v.g;
-    sumW += w;
+    plowed = max(plowed, w * v.g);  // the most plowed lane: the lane-change pieces across it were not driven
     heap = max(heap, v.b * (1.0 - smoothstep(1.35 + 0.6 * reach, 1.35 + reach, lat)));
   }
-  return sumP / max(sumW, 1.0);
+  return plowed;
 }
 // the footprint map (engine/traffic_maps.h): single steps of the walkers near the camera, 0..1 (several steps on the
 // same spot add up), 5 cm texels in a tile atlas; 0 where nobody stepped or while the map is off (gsGrid.regsFootprints)
