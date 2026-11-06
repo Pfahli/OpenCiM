@@ -114,8 +114,27 @@ branch) describes its files and switches.
   so on large maps (Vienna 125,000 graph nodes) most lanes were missing for every lane effect (tyre tracks, slush);
   lanes now have their own 18-bit numbers. Checked in screenshots only (cleared strip with a rim behind the plow, a
   grey chunky windrow on the kerb); the heap's height reads only weakly from the steep default camera.
-- **Owner (2026-11-06): buses and trams on cleared roads drive at full speed again** — for the traffic slowdown below:
-  the snow slowdown must not apply on lanes a plow has cleared (the engine's lanePlow per lane).
+- **Owner (2026-11-06): buses and trams on cleared roads drive at full speed again** — done (2026-11-07): plowed
+  lanes use `gsGrid.regsRoadSpeedCleared` (snow does not slow there, heavy rain does).
+- **Easter egg (owner):** the fifth plow on the streets is purple.
+- **2026-11-07 fixes:** the plowed strip was broken into triangles (lanes averaged with lane-change pieces), the tyre
+  tracks zig-zagged: lane changes (flagged and unflagged) are left out of the lane map, and the tracks, slush and
+  plowed strips now follow each lane piece's own Bézier curve (vector lanes, `regs_laneCurve`), the 1 m lane map only
+  lists which lanes are near. Remaining: a few angular track pieces where turning lanes end inside junctions.
+
+## Settings (done 2026-11-07, settings menu > Mods)
+
+- A **Mods** entry in the settings menu (main and pause menu) opens the port's Mods page (`regs/ui/mods.script`);
+  each enabled mod's `options.script` adds headings and checkboxes. The weather mod's: **Enable weather** (rain,
+  storms, snow; off clears them within seconds), **Enable seasons** (off: no winter cold spells, the year's mean rain
+  and temperature every month; later also no autumn colours, bare trees, spring green or summer heat), **Enable
+  day/night cycle** (the port's `$regsDayNight`, same switch as on the graphics page), **Slow traffic in snow and heavy
+  rain**.
+- Found while testing: the script's `a ? b : c` evaluates both sides (two operators, as in the original engine); a
+  division by `$snowFall` killed the weather's frame thread whenever no snow fell (rain runs stopped updating after
+  the first frame since the footprints commit). Guarded.
+
+Original request:
 
 Original request:
 
@@ -136,7 +155,12 @@ Original request:
 - **Summer heat**: on hot days a visible heat shimmer over the ground (the distinct heat haze above asphalt), the
   scene looking hot.
 
-## Gameplay setting: slower traffic
+## Gameplay setting: slower traffic (done on the branch 2026-11-07)
+
+Done as specified: `gsGrid.regsRoadSpeed` × the target speed of cars, buses and trams on road and street-tram lanes
+(engine `roadWeatherFactor`), eased 0.05 per real second; measured mean road speed about 0.72× in snow and 0.85× in
+heavy rain against dry; the ticker texts come from the mod's own strings. Jam relief reacts only to no progress for
+120 s, so it is not triggered. Spec:
 
 - Mod option **"Verkehr bei Schnee und Starkregen verlangsamen" / "Slow traffic in snow and heavy rain"**
   (`$regsWeatherSlowTraffic`, default on), shown in a **Mods** section of the settings menu (the first mod options
