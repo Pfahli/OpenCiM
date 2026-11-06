@@ -13,6 +13,12 @@ branch) describes its files and switches.
   later commits: the snow round (tracks, banks, trails, shelter, slowdown) — check `git log` on the branch; anything
   marked WIP continues next session.
 - Screenshots of each round: `port/run/weather/` in that worktree (git-ignored).
+- **State at the end of 2026-11-06:** snow done in `4d983b7` (cold spells, cover, thaw, parked cars, season table),
+  `abf78ed` (traffic-dependent street snow, tyre tracks, banks, pedestrian trails), `a9ee280` (snow ~0.87 white, no
+  colour loss, overlays untouched, shelter under roofs ~1 m / rain ~0.5 m, README). **WIP / next session:** the traffic
+  slowdown (speed hook, ticker, `$regsWeatherSlowTraffic`, mods options page) is **not started**; flakes and streaks are
+  still drawn under roofs; sleet and wind drift not done; pedestrian trails faint; spray faint; the lane/overhead maps
+  only refresh when the lane graph changes. The mod README on the branch lists every feature with its state.
 
 ## Principles (owner's decisions)
 
