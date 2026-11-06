@@ -20,7 +20,7 @@ constexpr int WGL_DRAW_TO_WINDOW_ARB = 0x2001, WGL_SUPPORT_OPENGL_ARB = 0x2010, 
               WGL_PIXEL_TYPE_ARB = 0x2013, WGL_TYPE_RGBA_ARB = 0x202B, WGL_COLOR_BITS_ARB = 0x2014,
               WGL_ALPHA_BITS_ARB = 0x201B, WGL_DEPTH_BITS_ARB = 0x2022, WGL_STENCIL_BITS_ARB = 0x2023,
               WGL_ACCELERATION_ARB = 0x2003, WGL_FULL_ACCELERATION_ARB = 0x2027, WGL_SAMPLE_BUFFERS_ARB = 0x2041,
-              WGL_SAMPLES_ARB = 0x2042;
+              WGL_SAMPLES_ARB = 0x2042, WGL_SWAP_METHOD_ARB = 0x2007, WGL_SWAP_COPY_ARB = 0x2029;
 using CreateContextAttribs = HGLRC(WINAPI*)(HDC, HGLRC, const int*);
 using ChoosePixelFormat = BOOL(WINAPI*)(HDC, const int*, const FLOAT*, UINT, int*, UINT*);
 using SwapInterval = BOOL(WINAPI*)(int);
@@ -103,15 +103,23 @@ class Win32Window final : public Window {
     UINT n = 0;
     PIXELFORMATDESCRIPTOR pfd = legacyFormat();
     // MSAA through the pixel format, stepping the sample count down by 2 until a format exists (0x10059200.c:256-309)
-    for (int samples = std::max(0, desc.samples); choose; samples -= 2) {
-      const int attribs[] = {WGL_DRAW_TO_WINDOW_ARB, 1, WGL_SUPPORT_OPENGL_ARB, 1, WGL_DOUBLE_BUFFER_ARB, 1,
-                             WGL_ACCELERATION_ARB, WGL_FULL_ACCELERATION_ARB, WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
-                             WGL_COLOR_BITS_ARB, 24, WGL_ALPHA_BITS_ARB, 8, WGL_DEPTH_BITS_ARB, 24,
-                             WGL_STENCIL_BITS_ARB, 8, WGL_SAMPLE_BUFFERS_ARB, samples > 0 ? 1 : 0,
-                             WGL_SAMPLES_ARB, std::max(samples, 0), 0};
-      if (choose(dc_, attribs, nullptr, 1, &format, &n) && n > 0) break;
-      format = 0;
-      if (samples <= 0) break;
+    // Swap method: copy (WGL_SWAP_COPY_ARB). With the driver's default (exchange) the window showed single black frames
+    // alternating with good ones, most under load (fast forward): an undrawn back buffer reached the screen although
+    // every frame was drawn completely (measured: 43 black flashes in 90 s by default, 0 with copy). Formats without
+    // copy fall back to the driver's choice.
+    for (int swapCopy = 1; swapCopy >= 0 && !format; --swapCopy) {
+      for (int samples = std::max(0, desc.samples); choose; samples -= 2) {
+        const int attribs[] = {WGL_DRAW_TO_WINDOW_ARB, 1, WGL_SUPPORT_OPENGL_ARB, 1, WGL_DOUBLE_BUFFER_ARB, 1,
+                               WGL_ACCELERATION_ARB, WGL_FULL_ACCELERATION_ARB, WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
+                               WGL_COLOR_BITS_ARB, 24, WGL_ALPHA_BITS_ARB, 8, WGL_DEPTH_BITS_ARB, 24,
+                               WGL_STENCIL_BITS_ARB, 8, WGL_SAMPLE_BUFFERS_ARB, samples > 0 ? 1 : 0,
+                               WGL_SAMPLES_ARB, std::max(samples, 0),
+                               swapCopy ? WGL_SWAP_METHOD_ARB : 0, WGL_SWAP_COPY_ARB, 0};
+        if (choose(dc_, attribs, nullptr, 1, &format, &n) && n > 0) break;
+        format = 0;
+        if (samples <= 0) break;
+      }
+      if (!choose) break;
     }
     if (!format) format = ::ChoosePixelFormat(dc_, &pfd);
     DescribePixelFormat(dc_, format, sizeof pfd, &pfd);
