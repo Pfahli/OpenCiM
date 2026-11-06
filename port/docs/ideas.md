@@ -25,7 +25,10 @@ it is, what already exists, and the open decisions. Order is not priority.
     lit, and some light up again in the morning before sunrise.
   * Open: how well the window detection works on the various facades (a manual mask per texture as a fallback for
     the landmarks), the cost of many light pools (a deferred or clustered light pass in the planned new renderer).
-* **Seasons and weather.** The original's look never changes over the year. The port could follow the game's date:
+* **Seasons and weather.** A mod (the owner's decision), `port/data/mods/weather`; rain is being built first.
+  Next after rain (owner's request): **snow** that slowly accumulates on surfaces (ground, roofs, trees, and parked
+  cars too) while it snows, stays for quite a while after it stops, then melts into puddles (the rain mod's puddles
+  and drying). The original's look never changes over the year. The port could follow the game's date:
   * Spring and summer as today; autumn turns grass, fields and tree foliage yellow, orange and brown (a colour shift
     in the terrain and tree shaders by season, per tree species where the textures allow it); in winter deciduous
     trees lose their leaves (foliage hidden or thinned, bare branches from the trunk meshes; conifers keep theirs) and
