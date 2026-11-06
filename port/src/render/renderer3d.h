@@ -24,6 +24,7 @@ enum : uint8_t {
   kSurfaceRoad = 4,      // road, alley and street-tram items (types 1-7, 10-12) and their texture variations
   kSurfacePlatform = 5,  // stations, docks, heliports (types 0x10-0x12) and PAVEMENT-flagged items
   kSurfaceWater = 6,     // the water surface
+  kSurfaceVehicle = 7,   // simulated vehicles (per draw: DrawItem::surfaceClass; hookValue 1 = parked)
 };
 
 struct GpuMaterial {
@@ -169,6 +170,10 @@ struct DrawItem {
   // custom0..7 instead of the material's
   int layerMaterial = -1;
   const float (*layerCustom)[4] = nullptr;
+  // the mods' shader hooks (render/glsl.h): a surface class for this draw over the materials' (-1 = theirs) and a
+  // per-draw value (RegsSurface.item; vehicles: 1 parked, 0 moving)
+  int surfaceClass = -1;
+  float hookValue = 0;
 };
 
 // how skinned meshes are laid out for the combiner's skinning variant (default.shader: $indexingInShaders)
@@ -233,7 +238,8 @@ class Renderer3D {
     int matrix = -1, eyepos = -1, timer = -1, reflection = -1, worldup = -1, colorize = -1, vieworient = -1, alphaRef = -1;
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
     // shader hooks (render/glsl.h): -1 in programs without them
-    int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1;
+    int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1,
+        hookItem = -1;
     std::map<std::string, int> hookUniforms;
   };
   std::map<uint32_t, ProgramLocs> locs_;

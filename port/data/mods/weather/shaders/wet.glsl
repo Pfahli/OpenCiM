@@ -9,6 +9,7 @@
 // roads and pavements draw from different noise, so no patch runs across a kerb.
 uniform vec4 weather_wet;   // x water film 0..1, y puddle amount 0..1, z rain now 0..1 (ripples), w heavy rain 0..1
 uniform vec4 weather_misc;  // x lightning flash 0..1, y debug view of the surface map
+uniform vec4 weather_snow;  // x snow cover 0..1, y snowfall now 0..1, z thaw 0..1
 
 float weather_hash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -78,10 +79,58 @@ void weather_wet_apply(inout vec4 c, RegsSurface s);
 // the hook: rain only ever darkens the ground. A puddle mirrors the grey sky, a wet film shines, but neither may end
 // up brighter than the dry surface was (in the shaded streets a bright reflection read as the ground lighting up
 // while the rain set in); the lightning flash is the exception
+void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry);
+
 void weather_wet_surface(inout vec4 c, RegsSurface s) {
   vec3 dry = c.rgb;
   weather_wet_apply(c, s);
   if (weather_misc.y < 0.5) c.rgb = min(c.rgb, dry * (1.0 + 2.0 * weather_misc.x));
+  if (weather_snow.x > 0.001 && weather_misc.y < 0.5) weather_snow_apply(c, s, dry);
+}
+
+// ---- snow ----
+// The cover grows on upward faces of everything: ground, grass, pavements, roofs, foliage, platforms and parked
+// vehicles (walls and steep faces stay clear). Each kind of surface turns white over its own range of the cover, so
+// the thaw clears roads first, then pavements, then grass and roofs: grass, roofs and parked vehicles from a light
+// dusting, pavements and platforms from 25 %, roads from 55 % and there only along the kerb and the edges; their lanes
+// carry slush. A fine grain (fading with distance, so it never shimmers) lets a light cover start patchy without
+// blotches. The snow is lit like the surface under it: its brightness is the dry surface's over a typical albedo of
+// that surface, white in the sun, a little cool in the shade; a thaw makes it wetter and greyer.
+void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
+  int cls = s.surfaceClass;
+  if (cls == 6) return;
+  if (cls == 7 && s.item < 0.5) return;  // moving vehicles stay clear
+  float cover = weather_snow.x;
+  float up = smoothstep(0.55, 0.85, s.normal.y);
+  if (up <= 0.0) return;
+  float amount;
+  float slush = 0.0;
+  if (cls == 4) {  // roads: slush in the lanes, white along the kerb
+    float dEdge, dLow, dHigh;
+    weather_edges(s.pos.xz, cls, dEdge, dLow, dHigh);
+    float edge = 1.0 - smoothstep(0.6, 1.8, dHigh);
+    float lane = smoothstep(0.5, 1.0, cover);
+    amount = mix(0.35 * lane, smoothstep(0.35, 0.9, cover), edge);
+    slush = (1.0 - edge) * lane;
+  } else if (cls == 3 || cls == 5) {
+    amount = smoothstep(0.25, 0.8, cover);
+  } else {  // terrain, fields, roofs, foliage, props, parked vehicles
+    amount = smoothstep(0.03, 0.55, cover);
+  }
+  // the fine grain of a light cover: 0.6-1.5 m, subtle, gone at full cover and with distance
+  float grain = weather_noise(s.pos.xz * 1.3 + vec2(7.1, 3.3)) * 0.6 + weather_noise(s.pos.xz * 3.1 + vec2(1.9, 8.2)) * 0.4;
+  float fine = clamp(1.0 - s.dist / 160.0, 0.0, 1.0);
+  amount = clamp(amount * (1.0 + 0.35 * fine) - 0.35 * fine * grain * (1.0 - amount), 0.0, 1.0) * up;
+  if (amount <= 0.001) return;
+  // lit like the dry surface under it
+  float albedo = cls == 4 ? 0.22 : (cls == 3 || cls == 5) ? 0.33 : cls == 7 ? 0.35 : 0.28;
+  // the estimate keeps the shadows but only a trace of the texture below (a checkered square stays an even white)
+  float light = pow(clamp(dot(dry, vec3(0.3, 0.59, 0.11)) / albedo, 0.08, 1.0), 0.45) * 1.02;
+  vec3 tint = mix(vec3(0.86, 0.91, 1.0), vec3(1.0, 0.995, 0.985), smoothstep(0.35, 0.8, light));
+  vec3 snow = vec3(0.93, 0.94, 0.95) * tint * light * (1.0 - 0.15 * weather_snow.z);  // a thaw: wetter, greyer
+  vec3 slushCol = mix(c.rgb, snow * 0.7, 0.55);
+  vec3 cover3 = mix(snow, slushCol, slush);
+  c.rgb = mix(c.rgb, cover3, amount * (1.0 - s.fog));
 }
 
 void weather_wet_apply(inout vec4 c, RegsSurface s) {
@@ -96,7 +145,7 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
     return;
   }
   // 0 buildings and props (the scene's regsSurfaceDiffuse darkens them), 6 water
-  if (cls == 0 || cls == 6 || weather_wet.x + weather_wet.y <= 0.001) return;
+  if (cls == 0 || cls == 6 || cls == 7 || weather_wet.x + weather_wet.y <= 0.001) return;
   float keep = 1.0 - s.fog;  // the game's shader fogged the colour already: the effect fades with the fog
   // Wetting and drying are uniform: the film darkens a whole surface by one value, no pattern. Wet ground is the dry
   // colour a little darker and a little more saturated, the same hue (with the scene's regsSurfaceDiffuse 0.88 at

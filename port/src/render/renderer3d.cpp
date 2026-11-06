@@ -728,6 +728,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.hookEye = at("regs_HookEye");
     l.hookTime = at("regs_HookTime");
     l.hookSurfaceRect = at("regs_SurfaceMapRect");
+    l.hookItem = at("regs_HookItem");
   }
   return l;
 }
@@ -806,7 +807,8 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform4fv(l.matDiffuse, 1, dif);
   gl::Uniform4fv(l.matSpecular, 1, spe);
   gl::Uniform1f(l.matShininess, m.shininess);
-  if (l.surfaceClass >= 0) gl::Uniform1i(l.surfaceClass, m.surfaceClass);
+  if (l.surfaceClass >= 0) gl::Uniform1i(l.surfaceClass, it.surfaceClass >= 0 ? it.surfaceClass : m.surfaceClass);
+  if (l.hookItem >= 0) gl::Uniform1f(l.hookItem, it.hookValue);
   int n = int(std::min<size_t>(v.lights.size(), 8));
   for (int i = 0; i < n; ++i) {  // gl_FrontLightProduct = light × material, component-wise
     const Light& li = v.lights[size_t(i)];

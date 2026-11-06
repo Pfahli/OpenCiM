@@ -2322,6 +2322,8 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       items[k].hasCustom4 = true;
       items[k].custom4[0] = m.rotorAngle;
       items[k].custom4[1] = m.rotorSpin;
+      items[k].surfaceClass = render::kSurfaceVehicle;  // the mods' shader hooks: a vehicle, 1 when parked
+      items[k].hookValue = m.parked ? 1.0f : 0.0f;
     }
     uint32_t argb = u.tint;
     // line vehicles: the line colour tints the colorize materials (gsTransportLine.color, 0x10114ec0)

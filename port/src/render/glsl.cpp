@@ -44,13 +44,14 @@ std::string hookFragmentCode() {
 in vec4 regs_HookClip;
 uniform float regs_HookOn = 0.0;
 uniform int regs_SurfaceClass = 0;
+uniform float regs_HookItem = 0.0;
 uniform mat4 regs_HookInvViewProj;
 uniform vec3 regs_HookEye;
 uniform float regs_HookTime;
 uniform samplerCube regs_EnvMap;
 uniform sampler2D regs_SurfaceMap;
 uniform vec4 regs_SurfaceMapRect;
-struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; int surfaceClass; float time; };
+struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; int surfaceClass; float time; float item; };
 // the surface class seen from above at a world point (engine/surface_map.h; 0 where nothing walkable was painted,
 // -1 outside the map or while there is no map)
 int regs_surfaceAt(vec2 xz) {
@@ -72,6 +73,7 @@ int regs_surfaceAt(vec2 xz) {
   s.fog = clamp((s.dist - regs_Fog.start) * regs_Fog.scale, 0.0, 1.0);
   s.surfaceClass = regs_SurfaceClass;
   s.time = regs_HookTime;
+  s.item = regs_HookItem;
 )";
   for (const ShaderHook& h : hooks()) s += "  " + h.function + "(c, s);\n";
   s += "}\n";
