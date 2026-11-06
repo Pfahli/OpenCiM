@@ -81,6 +81,7 @@ add_library(regs_engine STATIC
   src/engine/particles.cpp
   src/engine/mods.cpp
   src/engine/user_folders.cpp
+  src/engine/debug_economy.cpp
   src/platform/window_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp

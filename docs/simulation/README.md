@@ -9,6 +9,7 @@ code lives. The per-subsystem traces are in separate files:
 | [citizens.md](citizens.md) | population, daily cycle, trip reasons, destination and mode choice, mood |
 | [transport.md](transport.md) | lines, stops, transport vehicles, boarding/alighting, background traffic |
 | [grid-traffic.md](grid-traffic.md) | grid tick, movement along paths, traffic, buildings, city timeline |
+| [economy.md](economy.md) | the scripts' books: fares, monthly costs, loans, reputation, company value, annual report, objectives |
 
 Evidence is cited as `0xADDR.c:line` in `decompiled/GSystem-v2/functions/`. Claims are tagged *observed* (read
 directly) or *inferred*. `tools/callgraph.mjs` lists direct callees/callers in that pseudocode.

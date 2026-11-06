@@ -295,6 +295,18 @@ void registerCoreNatives(VM& vm) {
     size_t k = deref(a[0]).toString().find(deref(a[1]).toString());
     return Value::integer(k == std::u16string::npos ? -1 : int32_t(k));
   });
+  // trimFirstLines(text, n) (0x1000bb70, L:0x0824d950): keeps the last n lines. Scans back from the second-last
+  // character; at the n-th '\n' everything up to and including it is cut. Used by the debug console.
+  implementGlobal(vm, u"trimFirstLines", [](VM&, Object*, int, const Value* a) {
+    std::u16string s = deref(a[0]).toString();
+    int32_t n = deref(a[1]).toInt(), seen = 0;
+    for (int64_t i = int64_t(s.size()) - 2; i >= 0; --i)
+      if (s[size_t(i)] == u'\n' && ++seen == n) {
+        s.erase(0, size_t(i) + 1);
+        break;
+      }
+    return str(s);
+  });
   implementGlobal(vm, u"replacestr", [](VM&, Object*, int, const Value* a) {
     std::u16string s = deref(a[0]).toString(), from = deref(a[1]).toString(), to = deref(a[2]).toString();
     if (from.empty()) return str(s);

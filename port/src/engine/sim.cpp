@@ -1932,6 +1932,31 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
       if (Value* main = vm.findGlobal(u"MAIN"))
         vm.call(vm.getMember(vm.getMember(*main, u"$main"), u"saveGameData"), {Value::string(utf8ToUtf16(colon + 1))});
   }
+  // test harness: REGS_TEST_SCENARIO_CALL=<ticks>:<function>[,<function>…] calls those scenario functions through
+  // MAIN.$scenario.callFunction(name, 0) (scenario, location and default layers) after that many simulation ticks,
+  // e.g. start_sandbox_task90 to start a random task at once (playable-todo.md §5)
+  if (const char* at = std::getenv("REGS_TEST_SCENARIO_CALL")) {
+    static int ticks = 0;
+    const char* colon = std::strchr(at, ':');
+    if (colon && ++ticks == std::atoi(at))
+      if (Value* main = vm.findGlobal(u"MAIN")) {
+        std::string list = colon + 1;
+        for (size_t p = 0; p <= list.size();) {
+          size_t q = list.find(',', p);
+          if (q == std::string::npos) q = list.size();
+          std::string name = list.substr(p, q - p);
+          p = q + 1;
+          if (name.empty()) continue;
+          LOG_INFO("test: calling scenario function %s", name.c_str());
+          try {
+            vm.call(vm.getMember(vm.getMember(*main, u"$scenario"), u"callFunction"),
+                    {Value::string(utf8ToUtf16(name)), Value::integer(0)});
+          } catch (...) {
+            LOG_WARN("test: %s failed", name.c_str());
+          }
+        }
+      }
+  }
   stepJamTest(vm, *s, x);
   for (int i = 0; i < n; ++i) {
     stepDoors(*s, step);  // the active buckets' item updates come before the children (grid tick :231-276)
