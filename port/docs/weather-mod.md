@@ -19,6 +19,13 @@ branch) describes its files and switches.
   slowdown (speed hook, ticker, `$regsWeatherSlowTraffic`, mods options page) is **not started**; flakes and streaks are
   still drawn under roofs; sleet and wind drift not done; pedestrian trails faint; spray faint; the lane/overhead maps
   only refresh when the lane graph changes. The mod README on the branch lists every feature with its state.
+- **Owner feedback (end of 2026-11-06): the snow is very angular at its edges.** Cause found, not fixed yet: the
+  surface map has 0.5 m texels and `regs_surfaceAt` reads one texel (blocky class edges, `port/src/render/glsl.cpp`);
+  `weather_edges` in `wet.glsl` searches only 5 fixed radii (0.3/0.6/1.0/1.5/2.2 m) on 8 rays, so banks come out in
+  steps; the top map behind `regs_shelterDepth` is equally coarse. Fix idea: blend the 4 neighbouring texels (a
+  bilinear mask per class instead of one class), interpolate the edge distance between rays/radii (or bake a smooth
+  distance field into the surface map), soften the shelter fade the same way. Check with crops at normal zoom; puddles
+  use the same edges, so their look must stay unchanged.
 
 ## Principles (owner's decisions)
 
