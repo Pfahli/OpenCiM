@@ -100,6 +100,31 @@ branch) describes its files and switches.
   then dry as after rain; roads clear first, then pavements, then grass and roofs; banks last.
 - **Sound**: quiet; the city ambience a little muffled; no new sound without the owner's approval.
 
+- **Footprints and trodden paths** (done on the branch, `5b4dac1`): every walker near the camera leaves single shoe
+  prints (left/right, every 0.7 m) via the engine's footprint map; where several people walk the same way the prints
+  merge into a grey trodden path; new snow fills them in (about 10 min of heavy snowfall), they go with the cover.
+- **Snow hills by the kerb** (done, `5b4dac1`): small lumpy heaps on both sides of the kerb, fading softly into the
+  pavement; the owner rejected a hard edge and dark spots around them (no darkening of flat ground).
+
+## Snowplow (next, owner's request 2026-11-06)
+
+- Only in winter while snow lies: a plough vehicle drives the streets; **behind it the street is cleared** (its lanes
+  bare and wet, the cover there reset) and it pushes the snow aside into **higher heaps on the kerb** than the normal
+  hills.
+- No pickup in the base game: candidates `metro/objects/vehicles/era1/lorry`, `era2|era3/lorry-01`, the `truck-cab`
+  tractor units (era 2–4) and the SUVs (`era3/suv-01`, `era4/Suv`); the plough blade can be an engine-made mesh (an
+  angled blade in front of the vehicle), so no game files are shipped. Engine side: a per-lane "cleared at" time that
+  the snow shader reads (like the lane traffic), and a heap amount per lane edge.
+
+## Seasons (after the snow, owner's request 2026-11-06)
+
+- **Autumn**: the foliage of deciduous trees and bushes turns from green to orange, then falls; **falling leaves**
+  drift to the ground and lie there, slowly disappearing after a while.
+- **Winter**: deciduous trees and bushes bare (no leaves).
+- **Spring**: the leaves come back in a bright green.
+- **Summer heat**: on hot days a visible heat shimmer over the ground (the distinct heat haze above asphalt), the
+  scene looking hot.
+
 ## Gameplay setting: slower traffic
 
 - Mod option **"Verkehr bei Schnee und Starkregen verlangsamen" / "Slow traffic in snow and heavy rain"**
