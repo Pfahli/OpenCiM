@@ -136,10 +136,12 @@ modes (the editor's roads, terrain and paint tools come later):
   original's last month in the save; energy consistent; coverage and passengers in the save's range; board and
   customer ratings recomputed), campaign scenario 1 from the menu for 19 months (a task accepted and completed
   with its cash and reputation reward, two achievements, the annual report), a new Wien sandbox with a loan
-  (annuity 223,70 and the monthly balance to the cent), Vienna and Cim2 sandbox saves. Fixed on the way:
-  `gsGridCitizens.getCharacter` and `clearGameData` (were stubs). Script quirk kept as in the original:
-  `monthlyProfit` uses the previous month's fares (§2 of the spec).
-- [ ] Still to run: the tutorial past its first task, scenario 2 and later scenarios, a whole campaign; the
+  (annuity 223,70 and the monthly balance to the cent), the Vienna sandbox save for 25 months across a port save
+  and reload, Cim2; scenario 2 from the Szenarien menu (debug list) for 13 months with a forced task completion
+  (F2); the tutorial through its first task. Fixed on the way (were stubs): `gsGridCitizens.getCharacter`,
+  `clearGameData`, `resetTraffic` (new games' pre-simulation) and the debug console's `trimFirstLines`. Script
+  quirk kept as in the original: `monthlyProfit` uses the previous month's fares (§2 of the spec).
+- [ ] Still to run: the tutorial past its first tasks (needs building), scenarios 3–12, a whole campaign; the
   demonstrations and parades (`gsGridItemController.activate`/`deactivate` are stubs, the ticker shows but the
   crowd items do not appear); `setClusterData` (scenario 4).
 - [x] Statistics and graphs: `gsGraphCtrl` (`setArg`, `update`, `reset`, `setColor`, `getColor`, its fields and the

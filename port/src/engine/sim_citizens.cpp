@@ -2647,6 +2647,21 @@ void registerCitizenNatives(VM& vm) {
     return c ? Value::heap(VT::Object, c) : Value::null();
   });
 
+  // resetTraffic (0x100ce9b0, L:0x0815b960; presimulate.script before a new game's 125 s of pre-simulation): every
+  // driving citizen ends its trip with its car removed (travelFinished(false)), and every citizen without a visit in
+  // progress (flags & 0xff000 == 0) draws its car model again (FUN_100ce250), so the era's cars replace the old ones
+  implement(vm, "gsGridCitizens", u"resetTraffic", [stateFor](VM&, Object* o, int, const Value*) {
+    SimState* s = stateFor(o);
+    if (!s) return Value();
+    refreshPools(*s);
+    for (size_t i = 0; i < s->citizens.size(); ++i) {
+      Citizen& c = s->citizens[i];
+      if (!c.alive) continue;
+      if ((c.flags & kStateMask) == kDrive) endTrip(*s, int(i), false);
+      if (!(s->citizens[i].flags & 0xff000u)) s->citizens[i].carModel = pickCar(*s, int(s->citizens[i].flags & 0xf));
+    }
+    return Value();
+  });
   // getCharacter(class[, gender]) (0x100ce7f0, L:0x08157710): a uniform pick among the class's addCharacter records
   // of the era (modelMask) and gender (−1 or absent: any); returns the record's character model object (the one
   // whose script set $portraitNames, $portraits, $gender), null if none. The scenarios' random tasks take a

@@ -110,13 +110,14 @@ status as of 2026-11-06:
 | `gsGridCitizens.setPriceSignificance`, `setReasonProbability`, `setUtilProbability`, `joblessRate`, `carMultiplier`, `modelMask`, `addCharacter`, `addCar` | idem | implemented (feed the simulation) |
 | `gsGridCitizens.getCharacter(class[, gender])` | `0x100ce7f0`, L:`0x08157710` | **implemented 2026-11-06** (was a stub returning unset → `$portraitNames` error) |
 | `gsGridCitizens.clearGameData` | `0x100cfdc0` → `0x100cfce0` | **implemented 2026-11-06** (empties character and car pools) |
+| `gsGridCitizens.resetTraffic` (`presimulate.script`, new games) | `0x100ce9b0` | **implemented 2026-11-06**: drivers end their trips with the car removed, idle citizens draw a new car model |
 | `gsGridCitizens.setClusterData` (scenario 4 only) | `0x100ce8d0` | not checked |
 | `gsGridCitizenController.getState`, `getClass`, `usedTransport`, `getStart`, `getTarget`, `getWorkplace`, `getHome`, `getMood`, `getCharacter`, `getCharModel`, `getVehicle`, `getID` | citizens.md §11 | implemented |
 | `gsTransportLine.getVehicles`, `attractiveness`, `ticketPrice`, `passengersTransported`, `calculateLength`, `countConnectedStops`, `isClosed`, `stopCount`, `getStop`, `hasTempStops`, `calculateCoverage`, `active`, `type` | transport.md | implemented |
 | `gsTransportVehicle.travelDistance` (+6 per path node per leg), `condition`, `attractiveness`, `passengersTransported`, `stopTime`; `onGetPassenger`, `onBroken` | transport.md §4.6, §6 | implemented |
 | `gsTransportLines.routeExists`, `countLines`, `countStops`, `getStopCount`, `getStop`; stop `getFlags`, `getModel`, `type`, `attractiveness` | pathfinding.md | implemented |
 | `gsGrid.getGridObject`, `findItem`, `getRandomItem` | — | implemented |
-| `gsGridItemController.activate` / `deactivate` (demonstrations and parades, `default.scenario` `startAnimationEvent`) | `0x100ecca0` / `0x100ecce0`: item `+0x58` = 0 / 0x15, `updateMesh`, `updateGraph` | **stub**: the event's ticker text shows, the crowd items stay as they are |
+| `gsGridItemController.activate` / `deactivate` (demonstrations and parades, `default.scenario` `startAnimationEvent`) | `0x100ecca0` / `0x100ecce0`: item `+0x58` = 0 / 0x15, `updateMesh`, `updateGraph` | **stub**: the event's ticker text shows, the crowd items stay as they are. The item's own type (`+0x58`, `grid-traffic.md` §1.3) becomes `GRID_ITEM_NONE` (drawn, in the walk graph) or `GRID_ITEM_MARKER` (hidden); the port keeps only the template's type per item, so this needs a per-item type override in the renderer, fixGrid, picking and the graph |
 | `gsAchievements.awardAchievement`, `awardSteamAchievement` | `0x1011bf70`, `0x1011c2b0` | stubs on purpose (no Paradox / Steam services); unlocking itself is script-side and works |
 | `gsGrid.addCamera` | `0x100bd510` | stub (not economy) |
 
@@ -140,9 +141,23 @@ closed every month **exactly** ("books say … (exact)"), 0 script errors:
   (reputation ≥ 70 %) and 10 (monthly profit ≥ 1 500,00) unlocked. Annual report 1923
   (`port/run/campaign/s1-20200.png`): 870 passengers, company value 22 043,00, board "Gut" (int(204 300/106 034)+2 = 3),
   customers "Neutral" (int(5·0.406) = 2), 1 task.
+* **Campaign scenario 2** ("Ein Relikt des goldenen Zeitalters", Berlin 1957, 24 000,00; started from the
+  Szenarien menu with `$debug = true` and `$disableDebug = false` in the stand-in settings so every scenario is
+  listed), 13 months: no own network, so the books are 0 and close exactly; tasks 1, 3 and 4 offered and accepted;
+  the debug key F2 forced "Buslinienbau": reward `getReward(2000·100)` = 2 000,00 booked as a sale (money
+  +2 000,00 that month, exact), +15 % reputation, achievements 6 and 10; year end 1957 with company value 26 000,00
+  and 1 task. Found on the way: the debug console's `trimFirstLines` was a stub (now ported, `0x1000bb70`).
+* **Tutorial** (from the menu, 2010, 18 000,00): task 1 accepted, scrolled and rotated by scripted keys, completed
+  with `getReward(1000·100)` = 1 000,00 (money 19 000,00, "Belohnung 1 000,00" on screen, `port/run/campaign/tut-d.png`);
+  task 1b ("Zielvorgaben ansehen") offered and accepted, the info view opened. No network, so the books are 0 and
+  close exactly for 5 months. Later tasks need building and were not played.
 * **Sandbox Wien 1980** (from the menu, Normal): 12 500,00 start money; a loan of 10 000,00 at Alpengeld (margin 10,
   60 months; offered 12.250 % = int(10·(1+0.1·h)·4)·0.25 with h ≈ 2.4): monthly payment shown 223,70 = annuity
   formula (22 370,4 → 22 370); money −223,70 each month exactly; balance 1 000 000 → 987 838 → 975 552 → 963 140 →
   950 602 → 937 936 = `amount − (22 370 − int(amount·12.25/1200))`.
-* **Vienna and Cim2 saves** (sandbox games with networks, 2010): months closed exactly; port saves of Berlin,
-  Vienna and Cim2 reload and keep closing exactly.
+* **Vienna** (sandbox save, 2010): the original save ran 11 months (2010-11 to 2011-09) and was saved by the port;
+  the port save reloaded and ran 14 more months (2011-08 to 2012-09, year end 2011: 7 947 passengers). Every month
+  closed exactly, random tasks with `getCharacter` started without errors, "Artist in Need" completed with its
+  1 950,00 reward, the annual report 2010 shows board "Hervorragend" (`port/run/campaign/v2-4000.png`).
+* **Cim2** (sandbox save, 2010): original 5 months, the port save reloaded for 3 months; exact; 0 script errors.
+* **Berlin port save** (written after ~2.5 years of the run above): reloaded for 9 months, exact, 0 errors.
