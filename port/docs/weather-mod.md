@@ -106,7 +106,18 @@ branch) describes its files and switches.
 - **Snow hills by the kerb** (done, `5b4dac1`): small lumpy heaps on both sides of the kerb, fading softly into the
   pavement; the owner rejected a hard edge and dark spots around them (no darkening of flat ground).
 
-## Snowplow (next, owner's request 2026-11-06)
+## Snowplow (done on the branch, owner's request 2026-11-06)
+
+- **Done:** based on the SUV (owner's choice), see the branch commit "snowplows". Engine: `engine/snowplows.cpp`
+  (`gsGrid.regsSnowplows` = how many; the script asks for 6 while snow lies and it is not thawing), plowed lanes and
+  kerb heaps per lane in the traffic maps (`regs_lanePlowed`). Also fixed: the lane map held only 16-bit node numbers,
+  so on large maps (Vienna 125,000 graph nodes) most lanes were missing for every lane effect (tyre tracks, slush);
+  lanes now have their own 18-bit numbers. Checked in screenshots only (cleared strip with a rim behind the plow, a
+  grey chunky windrow on the kerb); the heap's height reads only weakly from the steep default camera.
+- **Owner (2026-11-06): buses and trams on cleared roads drive at full speed again** — for the traffic slowdown below:
+  the snow slowdown must not apply on lanes a plow has cleared (the engine's lanePlow per lane).
+
+Original request:
 
 - Only in winter while snow lies: a plough vehicle drives the streets; **behind it the street is cleared** (its lanes
   bare and wet, the cover there reset) and it pushes the snow aside into **higher heaps on the kerb** than the normal
@@ -131,7 +142,8 @@ branch) describes its files and switches.
   (`$regsWeatherSlowTraffic`, default on), shown in a **Mods** section of the settings menu (the first mod options
   page).
 - Road traffic **including buses and trams** slows down: heavy rain ~0.8 of normal speed, snowfall ~0.7, snow-covered
-  roads after snowfall ~0.85 until cleared or melted; smooth ramps. Metro, trains, boats and helicopters unaffected.
+  roads after snowfall ~0.85 until cleared or melted; smooth ramps. **On lanes a snowplow cleared, buses, trams
+  and cars drive at full speed again** (owner, 2026-11-06). Metro, trains, boats and helicopters unaffected.
   Generic engine hook (a road-traffic speed factor); must not trigger jam relief falsely.
 - **News ticker**: one message when the slowdown starts (e.g. "Glätte und Schnee: Der Verkehr und der öffentliche
   Nahverkehr sind langsamer unterwegs." / "Snow and ice: traffic and public transport are slower."), the same for
