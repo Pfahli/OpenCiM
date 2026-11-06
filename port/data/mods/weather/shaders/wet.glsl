@@ -115,31 +115,25 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     // turn to bare, wet slush, quiet ones keep a nearly full cover; where some cars run, two dark tyre tracks per lane
     // at the wheels (±0.8 m from the lane's centre line, along the lane, so they follow the curves); along the kerb a
     // bank of pushed-aside snow, whiter, which melts last
-    float dEdge, dLow, dHigh;
-    weather_edges(s.pos.xz, cls, dEdge, dLow, dHigh);
-    float traffic, lateral;
+    // (regs_laneSoft: the lanes' own lines with a soft 0.7 m edge, so the slush strip and the tracks follow the road,
+    // not the lane map's 1 m cells)
+    float onLane, lateral;
     vec2 dir;
-    bool lane = regs_laneAt(s.pos.xz, traffic, lateral, dir);
-    float smoothTraffic = regs_laneTrafficSmooth(s.pos.xz);  // smooth across lanes, no steps
-    float busy = smoothstep(0.05, 0.85, smoothTraffic);
-    traffic = smoothTraffic;
+    float traffic = regs_laneSoft(s.pos.xz, 0.7, onLane, lateral, dir);
+    float busy = smoothstep(0.05, 0.85, traffic) * onLane;
     float laneCover = smoothstep(0.45, 1.0, cover) * (1.0 - 0.85 * busy);
-    float tracks = 0.0;
-    if (lane) {
-      float w = abs(abs(lateral) - 0.8);
-      tracks = exp(-w * w / 0.04) * smoothstep(0.02, 0.3, traffic);  // about 0.4 m wide
-    }
+    float w = abs(abs(lateral) - 0.8);
+    float tracks = exp(-w * w / 0.04) * smoothstep(0.02, 0.3, traffic) * onLane;  // about 0.4 m wide
     amount = laneCover * (1.0 - 0.85 * tracks);
     slush = clamp(busy + tracks, 0.0, 1.0) * smoothstep(0.3, 0.8, cover);
-    bank = (1.0 - smoothstep(0.25, 1.1, dHigh)) * smoothstep(0.08, 0.4, cover);
+    // the bank by the engine's smooth road edge (no 0.5 m steps along the kerb)
+    bank = (1.0 - smoothstep(0.25, 1.1, max(regs_roadEdge(s.pos.xz), 0.0))) * smoothstep(0.08, 0.4, cover);
     amount = max(amount, bank);
     slush *= 1.0 - bank;
   } else if (cls == 3 || cls == 5) {
     // pavements, squares, platforms: the bank on their edge by the road; where people walk lately (the engine's
     // trodden map) the snow is trodden grey and partly bare; single walkers leave faint lines, filled in by new snow
-    float dEdge, dLow, dHigh;
-    weather_edges(s.pos.xz, cls, dEdge, dLow, dHigh);
-    bank = (1.0 - smoothstep(0.2, 0.9, dLow)) * smoothstep(0.08, 0.4, cover);
+    bank = (1.0 - smoothstep(0.2, 0.9, max(-regs_roadEdge(s.pos.xz), 0.0))) * smoothstep(0.08, 0.4, cover);
     float trod = regs_troddenAt(s.pos.xz) * (1.0 - 0.6 * weather_snow.y);
     amount = smoothstep(0.25, 0.8, cover) * (1.0 - 0.7 * trod);
     slush = 0.8 * trod * smoothstep(0.25, 0.8, cover);

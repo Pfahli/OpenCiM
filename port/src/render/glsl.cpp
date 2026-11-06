@@ -57,7 +57,35 @@ struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; in
 int regs_surfaceAt(vec2 xz) {
   vec2 uv = (xz - regs_SurfaceMapRect.xy) * regs_SurfaceMapRect.zw;
   if (regs_SurfaceMapRect.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return -1;
-  return int(texture(regs_SurfaceMap, uv).r * 255.0 + 0.5) & 127;
+  ivec2 size = textureSize(regs_SurfaceMap, 0);
+  return int(texelFetch(regs_SurfaceMap, min(ivec2(uv * vec2(size)), size - 1), 0).r * 255.0 + 0.5) & 127;
+}
+// the signed distance (m) from a world point to the edge of the carriageway, + on the road, − off it, within about
+// ±1.2 m (beyond: ±1.2): from the share of road in a disk of 1.2 m around the point (centre and two rings of 8 taps
+// of the map's linearly filtered road mask), mapped back to the distance from a straight edge that gives that share.
+// Smooth along the kerb and rounded at corners, without the map's 0.5 m steps.
+float regs_roadEdge(vec2 xz) {
+  if (regs_SurfaceMapRect.z <= 0.0) return -1.2;
+  vec2 uvScale = regs_SurfaceMapRect.zw;
+  vec2 uv = (xz - regs_SurfaceMapRect.xy) * uvScale;
+  float sum = 2.0 * texture(regs_SurfaceMap, uv).g;
+  for (int r = 1; r <= 2; ++r) {
+    float rad = 0.6 * float(r);
+    for (int k = 0; k < 8; ++k) {
+      float a = float(k) * 0.7853982 + float(r) * 0.39;
+      sum += texture(regs_SurfaceMap, uv + rad * vec2(cos(a), sin(a)) * uvScale).g;
+    }
+  }
+  float share = sum / 18.0;
+  float f = abs(share - 0.5) + 0.5;  // the same curve on both sides
+  // share of a straight edge's road side at distance d: 0.5 (0), 0.587 (0.15), 0.665 (0.3), 0.852 (0.6),
+  // 0.898 (0.9), 1 (1.2)
+  float d = f < 0.587 ? (f - 0.5) / 0.087 * 0.15
+          : f < 0.665 ? 0.15 + (f - 0.587) / 0.078 * 0.15
+          : f < 0.852 ? 0.3 + (f - 0.665) / 0.187 * 0.3
+          : f < 0.898 ? 0.6 + (f - 0.852) / 0.046 * 0.3
+          : 0.9 + (f - 0.898) / 0.102 * 0.3;
+  return share >= 0.5 ? d : -d;
 }
 // the top map (engine/surface_map.h): is something overhead? regs_shelterDepth: 0 in the open, else the distance
 // (m, up to 1.5) to the nearest open spot at this height (8 rays of 0.35-1.4 m), so a hook can let snow or rain reach
@@ -69,18 +97,43 @@ bool regs_coveredAt(vec2 xz, float h) {
   float v = texture(regs_TopMap, uv).r * 65535.0;
   return v > 0.5 && v / 100.0 - 100.0 > h + 0.8;
 }
+// how much is overhead at a point, filtered between the top map's 1 m cells (0..1): the cells' yes/no blended
+// bilinearly, so the edge of a roof is a smooth line instead of 1 m steps
+float regs_coveredSoft(vec2 xz, float h) {
+  ivec2 size = textureSize(regs_TopMap, 0);
+  vec2 q = (xz - regs_SurfaceMapRect.xy) * regs_SurfaceMapRect.zw * vec2(size) - 0.5;
+  ivec2 b = ivec2(floor(q));
+  vec2 f = q - vec2(b);
+  float v[4];
+  for (int k = 0; k < 4; ++k) {
+    ivec2 t = b + ivec2(k & 1, k >> 1);
+    float top = (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) ? 0.0
+              : texelFetch(regs_TopMap, t, 0).r * 65535.0;
+    v[k] = (top > 0.5 && top / 100.0 - 100.0 > h + 0.8) ? 1.0 : 0.0;
+  }
+  return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
+}
+// the depth under shelter (m, 0 in the open, up to 1.5): the covered share of a disk of 1 m around the point (centre
+// and two rings of 8), mapped to the distance from a straight edge that gives that share; smooth and rounded, no
+// cell steps. The map is filtered linearly, so four taps tell at once whether anything is overhead nearby.
 float regs_shelterDepth(vec3 p) {
-  if (!regs_coveredAt(p.xz, p.y)) return 0.0;
-  float d = 1.5;
-  for (int r = 1; r <= 4; ++r) {
-    float rad = 0.35 * float(r);
+  if (regs_SurfaceMapRect.z <= 0.0) return 0.0;
+  vec2 uvScale = regs_SurfaceMapRect.zw;
+  vec2 uv = (p.xz - regs_SurfaceMapRect.xy) * uvScale;
+  float near = texture(regs_TopMap, uv + vec2(1.0, 1.0) * uvScale).r + texture(regs_TopMap, uv + vec2(-1.0, 1.0) * uvScale).r
+             + texture(regs_TopMap, uv + vec2(1.0, -1.0) * uvScale).r + texture(regs_TopMap, uv + vec2(-1.0, -1.0) * uvScale).r;
+  if (near <= 0.0) return 0.0;
+  float sum = 2.0 * regs_coveredSoft(p.xz, p.y), weight = 2.0;
+  for (int r = 1; r <= 2; ++r) {
+    float rad = 0.5 * float(r);
     for (int k = 0; k < 8; ++k) {
       float a = float(k) * 0.7853982 + float(r) * 0.39;
-      if (!regs_coveredAt(p.xz + rad * vec2(cos(a), sin(a)), p.y)) d = min(d, rad);
+      sum += regs_coveredSoft(p.xz + rad * vec2(cos(a), sin(a)), p.y);
+      weight += 1.0;
     }
-    if (d < 1.5) break;
   }
-  return d;
+  float share = sum / weight;
+  return clamp(1.5 * (share - 0.5) + 2.5 * max(share - 0.85, 0.0), 0.0, 1.5);
 }
 // the traffic maps (engine/traffic_maps.h)
 uniform sampler2D regs_LaneMap;
@@ -123,6 +176,44 @@ float regs_laneTrafficSmooth(vec2 xz) {
     v[k] = idx == 0 ? 0.0 : texelFetch(regs_LaneTraffic, ivec2((idx - 1) % 256, (idx - 1) / 256), 0).r;
   }
   return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
+}
+// the road lanes around a world point without the lane map's 1 m steps: the distinct lanes of the 3×3 texels around
+// it, each with the point's exact lateral offset from its centre line, weighted by how far the point lies inside its
+// band (1.35 m half width, a soft edge 'edge' m wide). Returns their weighted recent traffic; onLane: how much the
+// point is on a lane at all (0..1); lateral / dir: the nearest lane's offset (m) and direction
+float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, out vec2 dir) {
+  onLane = 0.0; lateral = 9.0; dir = vec2(1.0, 0.0);
+  if (regs_TrafficRect.z <= 0.0) return 0.0;
+  ivec2 size = textureSize(regs_LaneMap, 0);
+  ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size)));
+  int seen[9];
+  int n = 0;
+  float sumW = 0.0, sumT = 0.0;
+  for (int k = 0; k < 9; ++k) {
+    ivec2 t = c + ivec2(k % 3 - 1, k / 3 - 1);
+    if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
+    vec4 l = texelFetch(regs_LaneMap, t, 0);
+    int idx = int(l.r * 255.0 + 0.5) + 256 * int(l.g * 255.0 + 0.5);
+    if (idx == 0) continue;
+    bool dup = false;
+    for (int j = 0; j < 9; ++j)
+      if (j < n && seen[j] == idx) dup = true;
+    if (dup) continue;
+    seen[n] = idx;
+    ++n;
+    float a = floor(l.a * 255.0 + 0.5) / 256.0 * 3.14159265;
+    vec2 d = vec2(cos(a), sin(a));
+    vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
+    float lat = (floor(l.b * 255.0 + 0.5) - 128.0) * 0.02 + dot(xz - centre, vec2(-d.y, d.x));
+    float w = 1.0 - smoothstep(1.35 - 0.5 * edge, 1.35 + 0.5 * edge, abs(lat));
+    if (abs(lat) < abs(lateral)) { lateral = lat; dir = d; }
+    if (w <= 0.0) continue;
+    int i = idx - 1;
+    sumT += w * texelFetch(regs_LaneTraffic, ivec2(i % 256, i / 256), 0).r;
+    sumW += w;
+    onLane = max(onLane, w);
+  }
+  return sumW > 0.0 ? sumT / sumW : 0.0;
 }
 // how trodden the ground is at a world point (0..1, recent pedestrians)
 float regs_troddenAt(vec2 xz) {

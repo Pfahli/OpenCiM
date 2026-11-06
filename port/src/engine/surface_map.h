@@ -21,7 +21,7 @@ struct SurfaceMap {
   // per texel: the surface class in the low 7 bits, 0x80 = painted by an item (terrain cells never paint over items;
   // a carriageway never paints over the pavement next to it)
   std::vector<uint8_t> cls;
-  uint32_t texture = 0;            // GL R8, NEAREST, the class only
+  uint32_t texture = 0;            // GL RG8, LINEAR: R the class (texelFetch), G the road mask (regs_roadEdge)
   int dirtyX0 = 0, dirtyZ0 = 0, dirtyX1 = -1, dirtyZ1 = -1;  // texels to upload
   // the top map: the highest item surface above each 1 m cell (any face with an area seen from above: roofs, tents,
   // canopies, decks, bridges), (y + 100) · 100 as 16 bits (0 = nothing); a hook compares it with a point's height to
@@ -29,7 +29,7 @@ struct SurfaceMap {
   int topW = 0, topH = 0;
   float topTexel = 1.0f;
   std::vector<uint16_t> top;
-  uint32_t topTexture = 0;         // GL R16, NEAREST
+  uint32_t topTexture = 0;         // GL R16, LINEAR (exact reads: texelFetch)
   int topX0 = 0, topZ0 = 0, topX1 = -1, topZ1 = -1;
 };
 

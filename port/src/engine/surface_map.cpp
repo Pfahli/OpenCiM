@@ -123,8 +123,9 @@ void uploadTop(SurfaceMap& m) {
   if (!m.topTexture) {
     gl::GenTextures(1, &m.topTexture);
     gl::BindTexture(gl::TEXTURE_2D, m.topTexture);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    // linear: regs_shelterDepth's quick "anything overhead nearby?" test; the exact reads use texelFetch
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
     gl::TexImage2D(gl::TEXTURE_2D, 0, 0x822A /* GL_R16 */, m.topW, m.topH, 0, gl::RED, 0x1403 /* GL_UNSIGNED_SHORT */,
@@ -145,24 +146,36 @@ void uploadTop(SurfaceMap& m) {
 void surfaceMapUpload(SurfaceMap& m) {
   uploadTop(m);
   if (m.w <= 0 || m.dirtyX1 < m.dirtyX0) return;
+  // RG8: R the class byte (read exactly with texelFetch), G 255 on the carriageway (kSurfaceRoad) else 0, filtered
+  // linearly for a smooth road edge (regs_roadEdge)
+  auto rg = [&](int x0, int z0, int w, int h) {
+    std::vector<uint8_t> rect(size_t(w) * size_t(h) * 2);
+    for (int z = 0; z < h; ++z)
+      for (int x = 0; x < w; ++x) {
+        uint8_t c = m.cls[size_t(z0 + z) * size_t(m.w) + size_t(x0 + x)];
+        size_t k = (size_t(z) * size_t(w) + size_t(x)) * 2;
+        rect[k] = c;
+        rect[k + 1] = (c & 0x7F) == render::kSurfaceRoad ? 255 : 0;
+      }
+    return rect;
+  };
   if (!m.texture) {
     gl::GenTextures(1, &m.texture);
     gl::BindTexture(gl::TEXTURE_2D, m.texture);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
     gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8229 /* GL_R8 */, m.w, m.h, 0, gl::RED, gl::UNSIGNED_BYTE, m.cls.data());
+    std::vector<uint8_t> all = rg(0, 0, m.w, m.h);
+    gl::TexImage2D(gl::TEXTURE_2D, 0, 0x822B /* GL_RG8 */, m.w, m.h, 0, 0x8227 /* GL_RG */, gl::UNSIGNED_BYTE, all.data());
     gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
   } else {
     int w = m.dirtyX1 - m.dirtyX0 + 1, h = m.dirtyZ1 - m.dirtyZ0 + 1;
-    std::vector<uint8_t> rect(size_t(w) * size_t(h));
-    for (int z = 0; z < h; ++z)
-      std::copy_n(&m.cls[size_t(m.dirtyZ0 + z) * size_t(m.w) + size_t(m.dirtyX0)], size_t(w), &rect[size_t(z) * size_t(w)]);
+    std::vector<uint8_t> rect = rg(m.dirtyX0, m.dirtyZ0, w, h);
     gl::BindTexture(gl::TEXTURE_2D, m.texture);
     gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, m.dirtyX0, m.dirtyZ0, w, h, gl::RED, gl::UNSIGNED_BYTE, rect.data());
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, m.dirtyX0, m.dirtyZ0, w, h, 0x8227 /* GL_RG */, gl::UNSIGNED_BYTE, rect.data());
     gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
   }
   gl::BindTexture(gl::TEXTURE_2D, 0);
