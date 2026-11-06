@@ -17,13 +17,57 @@ void surfaceMapInit(SurfaceMap& m, float originX, float originZ, float sizeX, fl
   m.w = std::max(1, int(std::ceil(sizeX / m.texel)));
   m.h = std::max(1, int(std::ceil(sizeZ / m.texel)));
   m.cls.assign(size_t(m.w) * size_t(m.h), 0);
+  m.topW = std::max(1, int(std::ceil(sizeX / m.topTexel)));
+  m.topH = std::max(1, int(std::ceil(sizeZ / m.topTexel)));
+  m.top.assign(size_t(m.topW) * size_t(m.topH), 0);
+  m.topX0 = 0, m.topZ0 = 0, m.topX1 = m.topW - 1, m.topZ1 = m.topH - 1;
   m.dirtyX0 = 0, m.dirtyZ0 = 0, m.dirtyX1 = m.w - 1, m.dirtyZ1 = m.h - 1;  // the empty map once
   LOG_INFO("surface map: %dx%d texels of %.1f m", m.w, m.h, m.texel);
+}
+
+// the top map: every face of an item mesh with an area seen from above raises the cells under it to its height
+void paintTop(SurfaceMap& m, const MeshData& mesh, const Mat4& world, const std::vector<GpuMaterial>& materials) {
+  const float inv = 1.0f / m.topTexel;
+  for (const Submesh& sm : mesh.submeshes) {
+    if (sm.material >= 0 && size_t(sm.material) < materials.size() && materials[size_t(sm.material)].surfaceClass == kSurfaceOverlay)
+      continue;
+    for (uint32_t k = 0; k + 2 < sm.indexCount; k += 3) {
+      Vec3 p[3];
+      for (int j = 0; j < 3; ++j) {
+        uint32_t v = mesh.indices[sm.firstIndex + k + uint32_t(j)];
+        p[j] = transformPoint(world, {mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]});
+      }
+      float ax = (p[0].x - m.originX) * inv, az = (p[0].z - m.originZ) * inv;
+      float bx = (p[1].x - m.originX) * inv, bz = (p[1].z - m.originZ) * inv;
+      float cx = (p[2].x - m.originX) * inv, cz = (p[2].z - m.originZ) * inv;
+      float det = (bx - ax) * (cz - az) - (cx - ax) * (bz - az);
+      if (std::fabs(det) < 0.02f) continue;  // edge-on from above (walls, tree cards)
+      int x0 = std::max(0, int(std::floor(std::min({ax, bx, cx})))), x1 = std::min(m.topW - 1, int(std::ceil(std::max({ax, bx, cx}))));
+      int z0 = std::max(0, int(std::floor(std::min({az, bz, cz})))), z1 = std::min(m.topH - 1, int(std::ceil(std::max({az, bz, cz}))));
+      for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
+          float px = float(x) + 0.5f, pz = float(z) + 0.5f;
+          float l1 = ((px - ax) * (cz - az) - (cx - ax) * (pz - az)) / det;
+          float l2 = ((bx - ax) * (pz - az) - (px - ax) * (bz - az)) / det;
+          float l0 = 1 - l1 - l2;
+          if (l0 < -1e-4f || l1 < -1e-4f || l2 < -1e-4f) continue;
+          float y = p[0].y * l0 + p[1].y * l1 + p[2].y * l2;
+          uint16_t v = uint16_t(std::clamp((y + 100.0f) * 100.0f, 1.0f, 65535.0f));
+          uint16_t& t = m.top[size_t(z) * size_t(m.topW) + size_t(x)];
+          if (v <= t) continue;
+          t = v;
+          if (m.topX1 < m.topX0) m.topX0 = m.topX1 = x, m.topZ0 = m.topZ1 = z;
+          m.topX0 = std::min(m.topX0, x), m.topX1 = std::max(m.topX1, x);
+          m.topZ0 = std::min(m.topZ0, z), m.topZ1 = std::max(m.topZ1, z);
+        }
+    }
+  }
 }
 
 void surfaceMapPaint(SurfaceMap& m, const MeshData& mesh, const Mat4& world, const std::vector<GpuMaterial>& materials,
                      bool items) {
   if (m.w <= 0) return;
+  if (items) paintTop(m, mesh, world, materials);
   const float inv = 1.0f / m.texel;
   for (const Submesh& sm : mesh.submeshes) {
     if (sm.material < 0 || size_t(sm.material) >= materials.size()) continue;
@@ -73,7 +117,33 @@ void surfaceMapPaint(SurfaceMap& m, const MeshData& mesh, const Mat4& world, con
   }
 }
 
+void uploadTop(SurfaceMap& m) {
+  if (m.topW <= 0 || m.topX1 < m.topX0) return;
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
+  if (!m.topTexture) {
+    gl::GenTextures(1, &m.topTexture);
+    gl::BindTexture(gl::TEXTURE_2D, m.topTexture);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
+    gl::TexImage2D(gl::TEXTURE_2D, 0, 0x822A /* GL_R16 */, m.topW, m.topH, 0, gl::RED, 0x1403 /* GL_UNSIGNED_SHORT */,
+                   m.top.data());
+  } else {
+    int w = m.topX1 - m.topX0 + 1, h = m.topZ1 - m.topZ0 + 1;
+    std::vector<uint16_t> rect(size_t(w) * size_t(h));
+    for (int z = 0; z < h; ++z)
+      std::copy_n(&m.top[size_t(m.topZ0 + z) * size_t(m.topW) + size_t(m.topX0)], size_t(w), &rect[size_t(z) * size_t(w)]);
+    gl::BindTexture(gl::TEXTURE_2D, m.topTexture);
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, m.topX0, m.topZ0, w, h, gl::RED, 0x1403, rect.data());
+  }
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+  gl::BindTexture(gl::TEXTURE_2D, 0);
+  m.topX0 = 0, m.topZ0 = 0, m.topX1 = -1, m.topZ1 = -1;
+}
+
 void surfaceMapUpload(SurfaceMap& m) {
+  uploadTop(m);
   if (m.w <= 0 || m.dirtyX1 < m.dirtyX0) return;
   if (!m.texture) {
     gl::GenTextures(1, &m.texture);

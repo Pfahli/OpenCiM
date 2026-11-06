@@ -356,10 +356,10 @@ function applyLook($w, $h, $wetness) {
   // a lightning flash lifts sun and ambient for a moment; wet roofs and walls a little darker. Nothing here may
   // brighten the ground as the rain sets in: the ambient never rises (shaded streets are lit by it alone), and the
   // fog, which the nearer fog brings onto the ground, is darker than the location's
-  // snowfall: a softer overcast and a nearer fog, no tint (the snow itself stays white)
-  $scene.regsLightScale = 1.0 - 0.35 * $w - 0.17 * $h - 0.2 * $snowFall + 1.1 * $flash;
-  $scene.regsAmbientScale = 1.0 - 0.08 * $w - 0.1 * $h - 0.05 * $snowFall + 1.6 * $flash;
-  $scene.regsLightDesaturate = 0.45 * $w + 0.2 * $h + 0.1 * $snowFall;
+  // snowfall: a slightly softer light and a nearer fog, no tint and no loss of colour (only the snow is white)
+  $scene.regsLightScale = 1.0 - 0.35 * $w - 0.17 * $h - 0.1 * $snowFall + 1.1 * $flash;
+  $scene.regsAmbientScale = 1.0 - 0.08 * $w - 0.1 * $h + 1.6 * $flash;
+  $scene.regsLightDesaturate = 0.45 * $w + 0.2 * $h;
   $scene.regsFogTint = (int(200.0 * $w + 40.0 * $h) << 24) | 0x5A5F64;
   $scene.regsFogScale = 1.0 - 0.25 * $w - 0.2 * $h - 0.3 * $snowFall;
   $scene.regsSurfaceDiffuse = 1.0 - 0.12 * $wetness;

@@ -672,6 +672,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
       (key[0] == u'p' ? tc.positiveMaterial : key[0] == u'n' ? tc.negativeMaterial : tc.dataMaterial) = int(tc.materials.size());
       tc.materials.push_back(scriptMaterial(d, vm, m));
+      tc.materials.back().surfaceClass = kSurfaceOverlay;  // highlights and the catchment layer: never hooked
     }
     initGridItems(d, vm, grid, tc);
     fixGridCover(vm, *grid->data, tc, grid->viewMode);
@@ -903,6 +904,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     DrawItem it;
     it.mesh = &tc.highlight;
     it.materials = &tc.materials;
+    it.surfaceClass = kSurfaceOverlay;  // tool highlights keep their colours under the mods' shader hooks
     items.push_back(it);
   }
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
@@ -911,10 +913,11 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   if (tc.surfaceMap) surfaceMapUpload(*tc.surfaceMap);
 }
 
-bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4]) {
+bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4], uint32_t* topTexture) {
   if (!grid || !grid->terrain || !grid->terrain->surfaceMap || !grid->terrain->surfaceMap->texture) return false;
   const SurfaceMap& m = *grid->terrain->surfaceMap;
   texture = m.texture;
+  if (topTexture) *topTexture = m.topTexture;
   rect[0] = m.originX;
   rect[1] = m.originZ;
   rect[2] = 1.0f / (float(m.w) * m.texel);

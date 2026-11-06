@@ -15,6 +15,7 @@ namespace regs::render {
 constexpr int kHookEnvUnit = 8;      // texture unit of the shader hooks' environment cube (regs_EnvMap)
 constexpr int kHookSurfaceUnit = 9;  // and of the map's surface classes (regs_SurfaceMap)
 constexpr int kHookLaneUnit = 10, kHookLaneTrafficUnit = 11, kHookTroddenUnit = 12;  // the traffic maps
+constexpr int kHookTopUnit = 13;     // the top map (regs_TopMap)
 
 // GpuMaterial::surfaceClass: the map surfaces a shader hook can tell apart (mod-manager.md §4.3)
 enum : uint8_t {
@@ -26,6 +27,8 @@ enum : uint8_t {
   kSurfacePlatform = 5,  // stations, docks, heliports (types 0x10-0x12) and PAVEMENT-flagged items
   kSurfaceWater = 6,     // the water surface
   kSurfaceVehicle = 7,   // simulated vehicles (per draw: DrawItem::surfaceClass; hookValue 1 = parked)
+  kSurfaceOverlay = 8,   // not a surface: route strips, highlights, previews, markers, the data layer, the sky,
+                         // people: the hooks never run on it
 };
 
 struct GpuMaterial {
@@ -140,6 +143,7 @@ struct SceneView {
   bool hooks = false;
   uint32_t hookEnvCube = 0;
   uint32_t hookSurfaceMap = 0;  // the map's surface classes (engine/surface_map.h) on unit 9
+  uint32_t hookTopMap = 0;      // and its top map (overhead heights) on unit 13
   float hookSurfaceRect[4] = {0, 0, 0, 0};
   uint32_t hookLaneMap = 0, hookLaneTraffic = 0, hookTrodden = 0;  // engine/traffic_maps.h, units 10-12
   float hookTrafficRect[4] = {0, 0, 0, 0};

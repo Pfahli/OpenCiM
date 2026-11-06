@@ -144,6 +144,12 @@ exactly the plain translation. Hooks are fixed at start-up, before any program i
   surface map (`engine/surface_map.cpp`: 0.5 m texels painted from the division meshes as they are built, items over
   terrain; -1 outside the map), so a hook can measure the distance to its surface's edge (a kerb, a square's
   border) by sampling around the point. The weather mod's `weather_edges` searches 8 rays out to 2.2 m.
+* Classes 7 (simulated vehicles; `RegsSurface.item` = 1 when parked, per draw) and 8 (overlay: route strips,
+  highlights, previews, markers, the catchment layer, people, the sky, particles): the hooks never run on class 8.
+* `bool regs_laneAt(xz, out traffic, out lateral, out dir)`, `float regs_laneTrafficSmooth(xz)`,
+  `float regs_troddenAt(xz)` (engine/traffic_maps.h: the road lanes with their exact lateral offset and direction,
+  the recent traffic per lane, where people walked) and `float regs_shelterDepth(pos)` (the top map: 0 in the open,
+  else the distance to the nearest open spot, up to 1.5 m, for snow or rain reaching in under an edge).
 * `samplerCube regs_EnvMap` (the game's `textures/envmap.dds`, unit 8) and the hook's own uniforms
   (`regsShaderUniform`). `REGS_DEBUG_WEATHER=2` shows the surface map in the weather mod.
 

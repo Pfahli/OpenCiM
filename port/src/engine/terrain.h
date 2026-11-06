@@ -26,6 +26,7 @@ void collectGrid(Display& d, script::VM& vm, GridObj* grid, const render::Vec3& 
 
 // The map's surface map for the mods' shader hooks (engine/surface_map.h): its texture and (originX, originZ,
 // 1 / sizeX, 1 / sizeZ) in world units; false when there is none.
-bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4]);
+// topTexture: the top map (the highest item surface above each 1 m cell, same rect)
+bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4], uint32_t* topTexture = nullptr);
 
 }  // namespace regs::engine

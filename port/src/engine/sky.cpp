@@ -322,6 +322,7 @@ void addSkyItems(Display& d, VM& vm, Object* skyObj, const std::vector<Object*>&
     it.mesh = sky->mesh.get();
     it.materials = &sky->material;
     it.world = translation(eye) * scaling(0.99f * farDistance);
+    it.surfaceClass = kSurfaceOverlay;  // not a surface for the mods' shader hooks
     items.push_back(it);
   }
   // gsSun: disc oriented as the sun, scale 0.94 (gsSun::move, W:0x100964c0.c:56) × far distance
@@ -352,6 +353,7 @@ void addSkyItems(Display& d, VM& vm, Object* skyObj, const std::vector<Object*>&
     it.mesh = disc.mesh.get();
     it.materials = &disc.material;
     it.world = translation(eye) * rotation(conjugate(q)) * scaling(0.94f * farDistance);
+    it.surfaceClass = kSurfaceOverlay;
     items.push_back(it);
   }
 }

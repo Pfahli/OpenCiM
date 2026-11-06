@@ -670,7 +670,8 @@ uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& f
     if (env >= 0) gl::Uniform1i(env, kHookEnvUnit);
     if (surf >= 0) gl::Uniform1i(surf, kHookSurfaceUnit);
     const std::pair<const char*, int> traffic[] = {
-        {"regs_LaneMap", kHookLaneUnit}, {"regs_LaneTraffic", kHookLaneTrafficUnit}, {"regs_Trodden", kHookTroddenUnit}};
+        {"regs_LaneMap", kHookLaneUnit}, {"regs_LaneTraffic", kHookLaneTrafficUnit}, {"regs_Trodden", kHookTroddenUnit},
+        {"regs_TopMap", kHookTopUnit}};
     for (const auto& [name, unit] : traffic)
       if (int loc = gl::GetUniformLocation(prog, name); loc >= 0) gl::Uniform1i(loc, unit);
     gl::UseProgram(gl::GLuint(current));
@@ -799,6 +800,8 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
       gl::BindTexture(gl::TEXTURE_2D, v.hookLaneTraffic);
       gl::ActiveTexture(gl::TEXTURE0 + kHookTroddenUnit);
       gl::BindTexture(gl::TEXTURE_2D, v.hookTrodden);
+      gl::ActiveTexture(gl::TEXTURE0 + kHookTopUnit);
+      gl::BindTexture(gl::TEXTURE_2D, v.hookTopMap);
       gl::ActiveTexture(gl::TEXTURE0);
     }
   }

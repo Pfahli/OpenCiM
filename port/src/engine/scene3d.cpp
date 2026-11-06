@@ -260,7 +260,10 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
       // a skinned model (vehicle templates in the vehicle shop's preview scene): the skinning variant, bind pose
       size_t first = items.size();
       collectSkinned(d, vm, o, worldOf(vm, o), Pose(), items);
-      for (size_t i = first; i < items.size(); ++i) argbToFloats(o->colorizeArgb, items[i].colorize);
+      for (size_t i = first; i < items.size(); ++i) {
+        argbToFloats(o->colorizeArgb, items[i].colorize);
+        items[i].surfaceClass = kSurfaceOverlay;  // scene objects (previews, markers, cursors): not a surface
+      }
     } else if (o && o->data) {
       if (!o->gpu) {
         o->gpu = std::make_shared<GpuMesh>(d.r3d().upload(o->data->mesh));
@@ -272,6 +275,9 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
       it.materials = o->materials.get();
       it.world = worldOf(vm, o);
       argbToFloats(o->colorizeArgb, it.colorize);
+      // scene objects in a map view are tool previews, selection markers and cursors: the mods' shader hooks leave
+      // them alone (the map's surfaces are the grid's and the simulation's)
+      it.surfaceClass = kSurfaceOverlay;
       items.push_back(it);
     }
     if (c->cls->isA(vm.findClass("gsSun"))) suns.push_back(c);
@@ -497,7 +503,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     v.hooks = true;
     auto* env = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/envmap.dds").get());
     if (env && env->cube) v.hookEnvCube = d.texture(vm, env);
-    gridSurfaceMap(grids[0], v.hookSurfaceMap, v.hookSurfaceRect);
+    gridSurfaceMap(grids[0], v.hookSurfaceMap, v.hookSurfaceRect, &v.hookTopMap);
     gridTrafficMaps(grids[0], v.hookLaneMap, v.hookLaneTraffic, v.hookTrodden, v.hookTrafficRect);
   }
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)

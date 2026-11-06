@@ -81,8 +81,13 @@ void weather_wet_apply(inout vec4 c, RegsSurface s);
 // while the rain set in); the lightning flash is the exception
 void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry);
 
+// under a roof, a tent or a passage (the engine's top map): rain wets half a metre in from the open edge, snow
+// reaches about a metre in, puddles stay outside
+float weather_shelter = 0.0;
+
 void weather_wet_surface(inout vec4 c, RegsSurface s) {
   vec3 dry = c.rgb;
+  weather_shelter = (weather_wet.x + weather_wet.y + weather_snow.x > 0.001 && s.dist < 600.0) ? regs_shelterDepth(s.pos) : 0.0;
   weather_wet_apply(c, s);
   if (weather_misc.y < 0.5) c.rgb = min(c.rgb, dry * (1.0 + 2.0 * weather_misc.x));
   if (weather_snow.x > 0.001 && weather_misc.y < 0.5) weather_snow_apply(c, s, dry);
@@ -150,8 +155,9 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   // the fine grain of a light cover: 0.6-1.5 m, subtle, gone at full cover and with distance
   float grain = weather_noise(s.pos.xz * 1.3 + vec2(7.1, 3.3)) * 0.6 + weather_noise(s.pos.xz * 3.1 + vec2(1.9, 8.2)) * 0.4;
   float fine = clamp(1.0 - s.dist / 160.0, 0.0, 1.0);
-  amount = clamp(amount * (1.0 + 0.35 * fine) - 0.35 * fine * grain * (1.0 - amount), 0.0, 1.0) * up;
-  slush *= up;
+  float open = 1.0 - smoothstep(0.1, 1.0, weather_shelter);  // blown in about a metre under an edge, no further
+  amount = clamp(amount * (1.0 + 0.35 * fine) - 0.35 * fine * grain * (1.0 - amount), 0.0, 1.0) * up * open;
+  slush *= up * open;
   if (amount <= 0.001 && slush <= 0.001) return;
   // lit like the dry surface under it
   float albedo = cls == 4 ? 0.22 : (cls == 3 || cls == 5) ? 0.33 : cls == 7 ? 0.35 : 0.28;
@@ -162,7 +168,9 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   if (cls == 7) light = max(light, 0.85);
   if (cls == 0) light = max(light, 0.72);
   vec3 tint = mix(vec3(0.86, 0.91, 1.0), vec3(1.0, 0.995, 0.985), smoothstep(0.35, 0.8, light));
-  vec3 snow = vec3(0.93, 0.94, 0.95) * tint * light * (1.0 - 0.15 * weather_snow.z);  // a thaw: wetter, greyer
+  // below full white (about 0.87 in the sun), the ground's texture a faint modulation (±6 %), a thaw wetter and greyer
+  vec3 snow = vec3(0.86, 0.87, 0.88) * tint * light * (1.0 - 0.15 * weather_snow.z);
+  snow *= 0.94 + 0.12 * smoothstep(0.3, 1.6, est);
   snow *= 1.0 + 0.05 * bank;  // the banks: a little brighter (thicker)
   // slush (trodden snow, the busy lanes, the tyre tracks) is grey: the wet surface with a little snow in it; the clean
   // snow lies over it
@@ -205,7 +213,7 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
   float dEdge = 9.0, dLow = 9.0, dHigh = 9.0;
   if (s.dist < 450.0) weather_edges(s.pos.xz, cls, dEdge, dLow, dHigh);
   float gutter = road ? 1.0 - smoothstep(0.5, 1.6, dHigh) : 0.0;  // the road's strip along the kerb (puddles)
-  float wetHere = road ? wet : pow(wet, 1.5);
+  float wetHere = (road ? wet : pow(wet, 1.5)) * (1.0 - smoothstep(0.05, 0.5, weather_shelter));
   float k = wetHere * keep;
   float lum = dot(c.rgb, vec3(0.3, 0.59, 0.11));
   c.rgb = mix(vec3(lum), c.rgb, 1.0 + 0.15 * k * hard);           // a little more saturated, same hue
@@ -222,7 +230,7 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
   if (pud <= 0.001) return;
   // the share of the ground under water: a few % in the lanes, up to half of the gutter strip, a few % of a pavement
   float share = road ? mix(0.05 * pud * pud, 0.45 * sqrt(pud), gutter) : 0.035 * pud * pud;
-  share *= (1.0 + 0.3 * weather_wet.w) * up * hard;
+  share *= (1.0 + 0.3 * weather_wet.w) * up * hard * (1.0 - smoothstep(0.0, 0.15, weather_shelter));
   if (share <= 0.001) return;
   // per surface: its own noise, and nothing near its edge (the kerb line, a square's border)
   vec2 seed = road ? vec2(0.0) : vec2(53.7, 91.3) + float(cls) * vec2(11.0, 7.0);

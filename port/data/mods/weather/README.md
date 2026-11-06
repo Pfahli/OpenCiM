@@ -67,10 +67,54 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 
 * `REGS_TEST_WEATHER=rain` (normal rain all the time), `heavy`, `storm` (heavy rain with lightning, the first flash
   after 3 s), `dry` (never), `cycle` (12 game hours from 06:00 every second day, alternating rain and storm: start,
-  stop and drying tests).
+  stop and drying tests), `snow` (cold and snowing all the time), `snowmelt` (two cold days with a day of snow from
+  the start, then the thaw).
+* `REGS_DEBUG_TRAFFIC_MAPS=1` (engine): where the parked cars are, walkers and trodden cells, the busiest lane.
+* Settings: none yet (the slowdown option `$regsWeatherSlowTraffic` is planned with the mods options page).
 * `REGS_DEBUG_WEATHER=1`: the scheduled and shown intensity, wetness, water and puddles every game hour; `=2`: the
   ground shows the surface map (roads blue, pavements yellow, platforms magenta, grass green, edges red); `=flash`:
   each flash held at its peak for 3 s (screenshots only).
+
+## Snow (winter)
+
+* **Cold spells:** one to three per winter, 1-4 weeks, December to February (rarely a short one in late November or
+  early March), planned per winter from the seed and logged with `REGS_DEBUG_WEATHER=1` (start, end, snowfalls).
+  Inside them snowfalls replace rain; the snow stays while it is cold; after a spell a thaw melts it within a day or
+  two into the film and the standing water, so it ends in the rain's puddles (gutter first), which then dry.
+* **Falling snow:** fine soft dots drifting slowly with a little wind; light snowfall builds up like rain.
+* **Cover:** on upward faces of the ground, grass, pavements, roofs, foliage, platforms and parked vehicles (walls and
+  moving vehicles stay clear); below full white (about 0.87 in the sun), a cool tint in shade, two light levels (sun
+  and shade) so the texture below only shows as a faint modulation; buildings keep their colours.
+* **Streets:** the engine's lane traffic decides how much snow stays: quiet lanes white with faint tyre tracks, busy
+  lanes grey slush with dark tracks at the wheels (along the lanes, following curves); banks of snow along the kerbs on
+  both sides, brighter, melting last; the thaw clears roads first, then pavements, then grass and roofs.
+* **Pedestrians:** trodden grey paths where people walk (the engine's trodden map), single walkers faint, filled in by
+  new snow.
+* **Shelter:** no snow, wetness or puddles under roofs, tents and passages (the engine's top map); snow reaches about a
+  metre in under an edge, rain about half a metre.
+* **Overlays** (route strips, highlights, previews, markers, the catchment layer, people, the sky) are never touched.
+
+## Status
+
+Requirements and decisions: `port/docs/weather-mod.md` (construction-tools).
+
+| Feature | State | Commits |
+|---|---|---|
+| Mod loading, built-in mods, `mods.json`, chained extensions | done | f4949d4 |
+| Rain streaks, light and fog, rain and thunder sounds | done | f4949d4, 54edd6f |
+| Shader hooks, surface classes, surface map | done | 54edd6f |
+| Puddles (gutter strip, per surface, never across a kerb), ripples | done | 54edd6f |
+| Heavy rain and thunderstorms (flashes, thunder delays) | done | 54edd6f |
+| Spray behind vehicles, tyre hiss | done (spray very faint, see open) | 54edd6f |
+| CC0 freesound sounds and loops | done | 54edd6f |
+| Uniform wetting and drying, wet colour | done | baf2910 |
+| Seasonal rain table | done | 4d983b7 |
+| Snow: cold spells, snowfall, cover, thaw into puddles, parked cars | done | 4d983b7 |
+| Snow by traffic: lane and trodden maps, tyre tracks, banks, trails | done (trails faint with few walkers) | abf78ed |
+| Snow colour, overlays excluded, shelter (top map) | done | the last commit of this round |
+| Traffic slowdown in snow and heavy rain, ticker, options page | **open (not started)** | - |
+| Falling streaks and flakes skipped under shelter | open | - |
+| Sleet around freezing | open | - |
 
 ## Open
 

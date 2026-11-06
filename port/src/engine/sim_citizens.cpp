@@ -2347,6 +2347,7 @@ void collectCharacters(Display& d, VM& vm, SimState& s, const Vec3& eye, const M
     it.mesh = o->gpu.get();
     it.materials = o->materials.get();
     it.world = world;
+    it.surfaceClass = render::kSurfaceOverlay;  // people: not a surface for the mods' shader hooks
     items.push_back(it);
   }
 }

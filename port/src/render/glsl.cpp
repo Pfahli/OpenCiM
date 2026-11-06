@@ -43,7 +43,7 @@ std::string hookFragmentCode() {
   std::string s = R"(
 in vec4 regs_HookClip;
 uniform float regs_HookOn = 0.0;
-uniform int regs_SurfaceClass = 0;
+uniform int regs_SurfaceClass = 8;  // draws that do not set it (particles, effect quads) are overlays
 uniform float regs_HookItem = 0.0;
 uniform mat4 regs_HookInvViewProj;
 uniform vec3 regs_HookEye;
@@ -58,6 +58,29 @@ int regs_surfaceAt(vec2 xz) {
   vec2 uv = (xz - regs_SurfaceMapRect.xy) * regs_SurfaceMapRect.zw;
   if (regs_SurfaceMapRect.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return -1;
   return int(texture(regs_SurfaceMap, uv).r * 255.0 + 0.5) & 127;
+}
+// the top map (engine/surface_map.h): is something overhead? regs_shelterDepth: 0 in the open, else the distance
+// (m, up to 1.5) to the nearest open spot at this height (8 rays of 0.35-1.4 m), so a hook can let snow or rain reach
+// a little way in under an edge
+uniform sampler2D regs_TopMap;
+bool regs_coveredAt(vec2 xz, float h) {
+  vec2 uv = (xz - regs_SurfaceMapRect.xy) * regs_SurfaceMapRect.zw;
+  if (regs_SurfaceMapRect.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return false;
+  float v = texture(regs_TopMap, uv).r * 65535.0;
+  return v > 0.5 && v / 100.0 - 100.0 > h + 0.8;
+}
+float regs_shelterDepth(vec3 p) {
+  if (!regs_coveredAt(p.xz, p.y)) return 0.0;
+  float d = 1.5;
+  for (int r = 1; r <= 4; ++r) {
+    float rad = 0.35 * float(r);
+    for (int k = 0; k < 8; ++k) {
+      float a = float(k) * 0.7853982 + float(r) * 0.39;
+      if (!regs_coveredAt(p.xz + rad * vec2(cos(a), sin(a)), p.y)) d = min(d, rad);
+    }
+    if (d < 1.5) break;
+  }
+  return d;
 }
 // the traffic maps (engine/traffic_maps.h)
 uniform sampler2D regs_LaneMap;
@@ -109,6 +132,7 @@ float regs_troddenAt(vec2 xz) {
 )";
   for (const ShaderHook& h : hooks()) s += "// hook " + h.function + " (" + h.origin + ")\n" + h.code + "\n";
   s += R"(void regs_hooks(inout vec4 c) {
+  if (regs_SurfaceClass == 8) return;  // kSurfaceOverlay: route strips, highlights, previews, markers, sky, people
   vec4 w = regs_HookInvViewProj * regs_HookClip;
   RegsSurface s;
   s.pos = w.xyz / w.w;
