@@ -45,7 +45,8 @@ struct TrafficMaps {
   std::vector<float> lanePlow;     // per node: cleared by a snowplow, 1 just now, filling in again with new snow
   std::vector<float> laneHeap;     // per node: the snow its plows pushed to the kerb, 0..1
   bool plowAny = false;
-  std::vector<uint8_t> laneValue;  // 256 × rows, RGBA8 (traffic, plowed, heap, 0)
+  int laneTrafficRows = 0;         // the lane texture: RGBA32F 768 × rows (values, curve, curve; gridTrafficMaps)
+  bool laneCurvesDirty = true;
   uint32_t laneTrafficTexture = 0;
   int trafficRows = 0;
   // trodden map

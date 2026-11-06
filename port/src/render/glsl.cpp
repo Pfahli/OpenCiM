@@ -146,113 +146,115 @@ int regs_laneIndex(vec4 l) {
   return int(l.r * 255.0 + 0.5) + 256 * int(l.g * 255.0 + 0.5) + 65536 * (int(l.b * 255.0 + 0.5) >> 6);
 }
 float regs_laneStoredLat(vec4 l) { return float((int(l.b * 255.0 + 0.5) & 63) - 32) * 0.08; }
-// the road lane under a world point: false when none; else its recent traffic (0..1), the point's lateral offset
-// from the lane's centre line (m) and the lane's direction (unit, x/z, either way along)
-bool regs_laneAt(vec2 xz, out float traffic, out float lateral, out vec2 dir) {
-  traffic = 0.0; lateral = 0.0; dir = vec2(1.0, 0.0);
-  if (regs_TrafficRect.z <= 0.0) return false;
-  vec2 uv = (xz - regs_TrafficRect.xy) * regs_TrafficRect.zw;
-  if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) return false;
-  ivec2 size = textureSize(regs_LaneMap, 0);
-  ivec2 t = ivec2(uv * vec2(size));
-  vec4 v = texelFetch(regs_LaneMap, t, 0);
-  int idx = regs_laneIndex(v);
-  if (idx == 0) return false;
-  idx -= 1;
-  traffic = texelFetch(regs_LaneTraffic, ivec2(idx % 256, idx / 256), 0).r;
-  float a = floor(v.a * 255.0 + 0.5) / 256.0 * 3.14159265;
-  dir = vec2(cos(a), sin(a));
-  vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
-  lateral = regs_laneStoredLat(v) + dot(xz - centre, vec2(-dir.y, dir.x));
-  return true;
-}
-// the recent traffic around a world point, filtered between the lane texels (0 where there is no lane): smooth
-// across lane borders and the road's edge, where regs_laneAt's per-texel value steps
-float regs_laneTrafficSmooth(vec2 xz) {
-  if (regs_TrafficRect.z <= 0.0) return 0.0;
-  ivec2 size = textureSize(regs_LaneMap, 0);
-  vec2 p = (xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size) - 0.5;
-  ivec2 b = ivec2(floor(p));
-  vec2 f = p - vec2(b);
-  float v[4];
-  for (int k = 0; k < 4; ++k) {
-    ivec2 t = clamp(b + ivec2(k & 1, k >> 1), ivec2(0), size - 1);
-    vec4 l = texelFetch(regs_LaneMap, t, 0);
-    int idx = regs_laneIndex(l);
-    v[k] = idx == 0 ? 0.0 : texelFetch(regs_LaneTraffic, ivec2((idx - 1) % 256, (idx - 1) / 256), 0).r;
+// a lane's data in regs_LaneTraffic (RGBA32F, 768 × rows; engine/traffic_maps.h): k = 0 its values (traffic, plowed,
+// heap), 1 and 2 its curve's Bézier control points (p0.xz, b.xz), (c.xz, p1.xz)
+vec4 regs_laneData(int i, int k) { return texelFetch(regs_LaneTraffic, ivec2(i % 256 + 256 * k, i / 256), 0); }
+// vector lanes: a point's signed lateral offset (m) from lane i's own curve (the cubic Bézier of the lane piece, not
+// the lane map's 1 m texels), the curve's direction there and how far (m) the point lies beyond the piece's ends (0
+// alongside it); the next piece of the lane takes over there with the same line, so tracks run on without steps
+float regs_laneCurve(int i, vec2 q, out vec2 dir, out float beyond) {
+  vec4 a = regs_laneData(i, 1), b = regs_laneData(i, 2);
+  vec2 p0 = a.xy, c1 = a.zw, c2 = b.xy, p1 = b.zw;
+  vec2 ch = p1 - p0;
+  float len2 = max(dot(ch, ch), 1e-4);
+  float t0 = dot(q - p0, ch) / len2;
+  float t = clamp(t0, 0.0, 1.0);
+  vec2 B = p0, D = ch;
+  for (int k = 0; k < 2; ++k) {  // the nearest point on the curve: chord projection, then Newton steps
+    float u = 1.0 - t;
+    B = p0 * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + p1 * (t * t * t);
+    D = (c1 - p0) * (3.0 * u * u) + (c2 - c1) * (6.0 * u * t) + (p1 - c2) * (3.0 * t * t);
+    float dd = dot(D, D);
+    if (dd > 1e-6) t = clamp(t + dot(q - B, D) / dd, 0.0, 1.0);
   }
-  return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
+  float u = 1.0 - t;
+  B = p0 * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + p1 * (t * t * t);
+  D = (c1 - p0) * (3.0 * u * u) + (c2 - c1) * (6.0 * u * t) + (p1 - c2) * (3.0 * t * t);
+  dir = dot(D, D) > 1e-8 ? normalize(D) : normalize(ch);
+  beyond = abs(dot(q - B, dir));  // along the end tangent past an end; about 0 alongside the piece
+  return dot(q - B, vec2(-dir.y, dir.x));
 }
-// the road lanes around a world point without the lane map's 1 m steps: the distinct lanes of the 3×3 texels around
-// it, each with the point's exact lateral offset from its centre line, weighted by how far the point lies inside its
-// band (1.35 m half width, a soft edge 'edge' m wide). Returns their weighted recent traffic; onLane: how much the
-// point is on a lane at all (0..1); lateral / dir: the nearest lane's offset (m) and direction
+// the distinct lanes of the (2r+1)² lane map texels around a point (the lane map only says which lanes are near; the
+// lines come from the lanes' own curves): fills lanes[], returns how many (at most 25)
+int regs_lanesAround(vec2 xz, int r, out int lanes[25]) {
+  int n = 0;
+  for (int k = 0; k < 25; ++k) lanes[k] = -1;
+  ivec2 size = textureSize(regs_LaneMap, 0);
+  ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size)));
+  int w = 2 * r + 1;
+  for (int k = 0; k < w * w; ++k) {
+    ivec2 t = c + ivec2(k % w - r, k / w - r);
+    if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
+    int idx = regs_laneIndex(texelFetch(regs_LaneMap, t, 0)) - 1;
+    if (idx < 0) continue;
+    bool dup = false;
+    for (int j = 0; j < 25; ++j)
+      if (j < n && lanes[j] == idx) dup = true;
+    if (dup || n >= 25) continue;
+    lanes[n] = idx;
+    ++n;
+  }
+  return n;
+}
+// the road lanes around a world point, by their own curves: the distinct lanes of the 3×3 lane map texels around it,
+// each with the point's exact lateral offset from its curve, weighted by how far the point lies inside its band
+// (1.35 m half width, a soft edge 'edge' m wide) and alongside the piece. Returns their weighted recent traffic;
+// onLane: how much the point is on a lane at all (0..1); lateral / dir: the nearest lane's offset (m) and direction
 float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, out vec2 dir) {
   onLane = 0.0; lateral = 9.0; dir = vec2(1.0, 0.0);
   if (regs_TrafficRect.z <= 0.0) return 0.0;
-  ivec2 size = textureSize(regs_LaneMap, 0);
-  ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size)));
-  int seen[9];
-  int n = 0;
-  float sumW = 0.0, sumT = 0.0;
+  int lanes[25];
+  int n = regs_lanesAround(xz, 1, lanes);
+  float sumW = 0.0, sumT = 0.0, best = 99.0;
   for (int k = 0; k < 9; ++k) {
-    ivec2 t = c + ivec2(k % 3 - 1, k / 3 - 1);
-    if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
-    vec4 l = texelFetch(regs_LaneMap, t, 0);
-    int idx = regs_laneIndex(l);
-    if (idx == 0) continue;
-    bool dup = false;
-    for (int j = 0; j < 9; ++j)
-      if (j < n && seen[j] == idx) dup = true;
-    if (dup) continue;
-    seen[n] = idx;
-    ++n;
-    float a = floor(l.a * 255.0 + 0.5) / 256.0 * 3.14159265;
-    vec2 d = vec2(cos(a), sin(a));
-    vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
-    float lat = regs_laneStoredLat(l) + dot(xz - centre, vec2(-d.y, d.x));
-    float w = 1.0 - smoothstep(1.35 - 0.5 * edge, 1.35 + 0.5 * edge, abs(lat));
-    if (abs(lat) < abs(lateral)) { lateral = lat; dir = d; }
-    if (w <= 0.0) continue;
-    int i = idx - 1;
-    sumT += w * texelFetch(regs_LaneTraffic, ivec2(i % 256, i / 256), 0).r;
-    sumW += w;
-    onLane = max(onLane, w);
+    if (k >= n) break;
+    vec2 d;
+    float beyond;
+    float lat = regs_laneCurve(lanes[k], xz, d, beyond);
+    float along = 1.0 - smoothstep(0.0, 0.75, beyond);
+    float w = (1.0 - smoothstep(1.35 - 0.5 * edge, 1.35 + 0.5 * edge, abs(lat))) * along;
+    float score = abs(lat) + 4.0 * beyond;  // the nearest lane alongside the point
+    if (score < best) { best = score; lateral = lat; dir = d; }
+    if (w > 0.0) {
+      sumT += w * regs_laneData(lanes[k], 0).r;
+      sumW += w;
+      onLane = max(onLane, w);
+    }
   }
   return sumW > 0.0 ? sumT / sumW : 0.0;
 }
+// the road lane under a world point: false when none; else its recent traffic (0..1), the point's lateral offset
+// from the lane's centre line (m) and the lane's direction (unit, x/z)
+bool regs_laneAt(vec2 xz, out float traffic, out float lateral, out vec2 dir) {
+  float onLane;
+  traffic = regs_laneSoft(xz, 0.0, onLane, lateral, dir);
+  return onLane > 0.5;
+}
+// the recent traffic around a world point, soft across lane borders and the road's edge (0 off the lanes)
+float regs_laneTrafficSmooth(vec2 xz) {
+  float onLane, lateral;
+  vec2 dir;
+  float traffic = regs_laneSoft(xz, 1.0, onLane, lateral, dir);
+  return traffic * onLane;
+}
 // the snowplows (engine/snowplows.h) on the lanes around a point: returns how freshly the lane under it was cleared
-// (0..1, soft at the lane's edge; the most plowed of the lanes there) and gives the heap the plows pushed out of the nearest
-// lanes (0..1), reaching `reach` m beyond a lane's 1.35 m half width (onto the gutter and the kerb next to it)
+// (0..1, soft at the lane's edge; the most plowed of the lanes there) and gives the heap the plows pushed out of the
+// nearest lanes (0..1), reaching `reach` m beyond a lane's 1.35 m half width (onto the gutter and the kerb next to it)
 float regs_lanePlowed(vec2 xz, float reach, out float heap) {
   heap = 0.0;
   if (regs_TrafficRect.z <= 0.0) return 0.0;
-  ivec2 size = textureSize(regs_LaneMap, 0);
-  ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size)));
-  int seen[25];
-  int n = 0;
+  int lanes[25];
+  int n = regs_lanesAround(xz, 2, lanes);
   float plowed = 0.0;
   for (int k = 0; k < 25; ++k) {
-    ivec2 t = c + ivec2(k % 5 - 2, k / 5 - 2);
-    if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
-    vec4 l = texelFetch(regs_LaneMap, t, 0);
-    int idx = regs_laneIndex(l);
-    if (idx == 0) continue;
-    bool dup = false;
-    for (int j = 0; j < 25; ++j)
-      if (j < n && seen[j] == idx) dup = true;
-    if (dup) continue;
-    seen[n] = idx;
-    ++n;
-    float a = floor(l.a * 255.0 + 0.5) / 256.0 * 3.14159265;
-    vec2 d = vec2(cos(a), sin(a));
-    vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
-    float lat = abs(regs_laneStoredLat(l) + dot(xz - centre, vec2(-d.y, d.x)));
-    int i = idx - 1;
-    vec4 v = texelFetch(regs_LaneTraffic, ivec2(i % 256, i / 256), 0);
-    float w = 1.0 - smoothstep(1.05, 1.65, lat);
-    plowed = max(plowed, w * v.g);  // the most plowed lane: the lane-change pieces across it were not driven
-    heap = max(heap, v.b * (1.0 - smoothstep(1.35 + 0.6 * reach, 1.35 + reach, lat)));
+    if (k >= n) break;
+    vec2 d;
+    float beyond;
+    float lat = abs(regs_laneCurve(lanes[k], xz, d, beyond));
+    float along = 1.0 - smoothstep(0.0, 0.75, beyond);
+    vec4 v = regs_laneData(lanes[k], 0);
+    plowed = max(plowed, (1.0 - smoothstep(1.05, 1.65, lat)) * along * v.g);
+    heap = max(heap, v.b * (1.0 - smoothstep(1.35 + 0.6 * reach, 1.35 + reach, lat)) * along);
   }
   return plowed;
 }

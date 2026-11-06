@@ -176,6 +176,7 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
   t.graphNodes = g.nodes.size();
   t.lanesBuilt = true;
   t.lanesUploaded = false;
+  t.laneCurvesDirty = true;
   LOG_INFO("traffic maps: %dx%d texels, %zu lane texels painted from %zu lanes of %zu nodes (%zu unflagged lane changes left out)", t.laneW, t.laneH, painted,
            t.laneNodes.size(), g.nodes.size(), unflagged);
 }
@@ -480,8 +481,11 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
   if (t.lastUpload < 0 || now - t.lastUpload >= 0.2) {  // at most 5 times a second
     t.lastUpload = now;
     if (t.laneTrafficDirty) {
-      int rows = int((t.laneNodes.size() + 255) / 256);
-      t.laneValue.assign(size_t(std::max(rows, 1)) * 256 * 4, 0);
+      int rows = std::max(1, int((t.laneNodes.size() + 255) / 256));
+      // RGBA32F, 768 × rows: columns 0-255 the lanes' values (traffic, plowed, heap, 0), 256-511 and 512-767 their
+      // curves (p0.xz, b.xz) and (c.xz, p1.xz), the cubic Bézier control points (buildStrip's b = p0 + f0·L/3,
+      // c = p1 − f1·L/3); the curves are uploaded with the lane map, the values every time
+      std::vector<float> values(size_t(rows) * 256 * 4, 0.0f);
       // the traffic blurred along the lanes (two passes over each node and its successors and predecessors, about
       // ±6 m): counted per 3 m node, a track would otherwise start and stop in steps at the node ends
       const LaneGraph& G = simOf(grid)->graph;
@@ -500,14 +504,40 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
       }
       for (size_t l = 0; l < t.laneNodes.size(); ++l) {  // by lane number (paintLanes)
         size_t i = size_t(t.laneNodes[l]);
-        if (i < smooth.size())
-          t.laneValue[l * 4] = uint8_t(std::lround(255.0f * (1.0f - std::exp(-smooth[i] / 4.0f))));
-        if (i < t.lanePlow.size()) {
-          t.laneValue[l * 4 + 1] = uint8_t(std::lround(255.0f * t.lanePlow[i]));
-          t.laneValue[l * 4 + 2] = uint8_t(std::lround(255.0f * t.laneHeap[i]));
-        }
+        if (i < smooth.size()) values[l * 4] = 1.0f - std::exp(-smooth[i] / 4.0f);
+        if (i < t.lanePlow.size()) values[l * 4 + 1] = t.lanePlow[i], values[l * 4 + 2] = t.laneHeap[i];
       }
-      upload(t.laneTrafficTexture, 256, std::max(rows, 1), 0x8058 /* GL_RGBA8 */, 0x1908 /* GL_RGBA */, t.laneValue.data(), false);
+      gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+      if (!t.laneTrafficTexture || t.laneCurvesDirty || t.laneTrafficRows != rows) {
+        std::vector<float> all(size_t(rows) * 768 * 4, 0.0f);
+        for (size_t l = 0; l < t.laneNodes.size(); ++l) {
+          const LaneNode& n = G.nodes[size_t(t.laneNodes[l])];
+          float L = n.length / 3.0f;
+          size_t r = l / 256, c = l % 256;
+          float* a = &all[(r * 768 + 256 + c) * 4];
+          float* b = &all[(r * 768 + 512 + c) * 4];
+          a[0] = n.p0.x, a[1] = n.p0.z, a[2] = n.p0.x + n.f0.x * L, a[3] = n.p0.z + n.f0.z * L;
+          b[0] = n.p1.x - n.f1.x * L, b[1] = n.p1.z - n.f1.z * L, b[2] = n.p1.x, b[3] = n.p1.z;
+        }
+        for (int r = 0; r < rows; ++r) std::copy_n(&values[size_t(r) * 256 * 4], 256 * 4, &all[size_t(r) * 768 * 4]);
+        if (!t.laneTrafficTexture) {
+          gl::GenTextures(1, &t.laneTrafficTexture);
+          gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
+          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
+        } else {
+          gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
+        }
+        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, 768, rows, 0, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, all.data());
+        t.laneTrafficRows = rows;
+        t.laneCurvesDirty = false;
+      } else {
+        gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
+        gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, 256, rows, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, values.data());
+      }
+      gl::BindTexture(gl::TEXTURE_2D, 0);
       t.laneTrafficDirty = false;
     }
     for (const auto& [cell, v] : t.trodden) {

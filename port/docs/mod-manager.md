@@ -147,7 +147,8 @@ exactly the plain translation. Hooks are fixed at start-up, before any program i
 * Classes 7 (simulated vehicles; `RegsSurface.item` = 1 when parked, per draw) and 8 (overlay: route strips,
   highlights, previews, markers, the catchment layer, people, the sky, particles): the hooks never run on class 8.
 * `bool regs_laneAt(xz, out traffic, out lateral, out dir)`, `float regs_laneTrafficSmooth(xz)`,
-  `float regs_laneSoft(xz, edge, out onLane, out lateral, out dir)` (the lanes near a point by their own lines, no
+  `float regs_laneSoft(xz, edge, out onLane, out lateral, out dir)` (the lanes near a point by their own Bézier curves
+  (`regs_laneCurve`, `regs_laneData`; the lane map only lists which lanes are near), no
   1 m steps), `float regs_coveredSoft(xz, h)`,
   `float regs_footprintAt(xz)` (single steps near the camera, 5 cm texels; switched on with `gsGrid.regsFootprints` =
   the fill-in time constant in simulation seconds, 0 = off and cleared), `float regs_lanePlowed(xz, reach, out heap)`
