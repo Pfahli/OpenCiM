@@ -91,6 +91,7 @@ struct Mover {
   float rotorAngle = 0, rotorSpin = -1;
   float travelled = 0;   // port: distance the head advanced since the mover was placed (jam relief, sim_jams.cpp)
   bool testPin = false;  // port test switch REGS_TEST_JAM=<type>:hard: a blocker the jam relief must not clear
+  bool plow = false;     // port: a snowplow of the mods (engine/snowplows.h): not counted as road traffic
 };
 
 // a pending aircraft spawn: entry/exit, the runway nodes 15 and 30 steps on (back), the gate and its taxi path
@@ -438,6 +439,7 @@ struct SimState {
   std::vector<std::vector<sim::Unit>> roadConsists;
   int roadTarget = 0, roadLive = 0, trainsLive = 0;
   int extraLive = 0;               // background trips running for the traffic density
+  int plowsLive = 0;               // snowplows on the streets (engine/snowplows.h)
   float citizenCarsAvg = -1;       // running average of the citizens' moving cars (the 1x traffic)
   int spawned = 0, despawned = 0, stuck = 0;
   // line nodes by global id: (line, stop index)

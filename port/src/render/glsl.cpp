@@ -140,6 +140,12 @@ uniform sampler2D regs_LaneMap;
 uniform sampler2D regs_LaneTraffic;
 uniform sampler2D regs_Trodden;
 uniform vec4 regs_TrafficRect;
+// a lane map texel: the lane number + 1 (18 bits: R, G and the top 2 bits of B; 0 = none) and the texel centre's
+// stored lateral offset from the lane's centre line (m, the low 6 bits of B in 0.08 m steps)
+int regs_laneIndex(vec4 l) {
+  return int(l.r * 255.0 + 0.5) + 256 * int(l.g * 255.0 + 0.5) + 65536 * (int(l.b * 255.0 + 0.5) >> 6);
+}
+float regs_laneStoredLat(vec4 l) { return float((int(l.b * 255.0 + 0.5) & 63) - 32) * 0.08; }
 // the road lane under a world point: false when none; else its recent traffic (0..1), the point's lateral offset
 // from the lane's centre line (m) and the lane's direction (unit, x/z, either way along)
 bool regs_laneAt(vec2 xz, out float traffic, out float lateral, out vec2 dir) {
@@ -150,14 +156,14 @@ bool regs_laneAt(vec2 xz, out float traffic, out float lateral, out vec2 dir) {
   ivec2 size = textureSize(regs_LaneMap, 0);
   ivec2 t = ivec2(uv * vec2(size));
   vec4 v = texelFetch(regs_LaneMap, t, 0);
-  int idx = int(v.r * 255.0 + 0.5) + 256 * int(v.g * 255.0 + 0.5);
+  int idx = regs_laneIndex(v);
   if (idx == 0) return false;
   idx -= 1;
   traffic = texelFetch(regs_LaneTraffic, ivec2(idx % 256, idx / 256), 0).r;
   float a = floor(v.a * 255.0 + 0.5) / 256.0 * 3.14159265;
   dir = vec2(cos(a), sin(a));
   vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
-  lateral = (floor(v.b * 255.0 + 0.5) - 128.0) * 0.02 + dot(xz - centre, vec2(-dir.y, dir.x));
+  lateral = regs_laneStoredLat(v) + dot(xz - centre, vec2(-dir.y, dir.x));
   return true;
 }
 // the recent traffic around a world point, filtered between the lane texels (0 where there is no lane): smooth
@@ -172,7 +178,7 @@ float regs_laneTrafficSmooth(vec2 xz) {
   for (int k = 0; k < 4; ++k) {
     ivec2 t = clamp(b + ivec2(k & 1, k >> 1), ivec2(0), size - 1);
     vec4 l = texelFetch(regs_LaneMap, t, 0);
-    int idx = int(l.r * 255.0 + 0.5) + 256 * int(l.g * 255.0 + 0.5);
+    int idx = regs_laneIndex(l);
     v[k] = idx == 0 ? 0.0 : texelFetch(regs_LaneTraffic, ivec2((idx - 1) % 256, (idx - 1) / 256), 0).r;
   }
   return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
@@ -193,7 +199,7 @@ float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, ou
     ivec2 t = c + ivec2(k % 3 - 1, k / 3 - 1);
     if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
     vec4 l = texelFetch(regs_LaneMap, t, 0);
-    int idx = int(l.r * 255.0 + 0.5) + 256 * int(l.g * 255.0 + 0.5);
+    int idx = regs_laneIndex(l);
     if (idx == 0) continue;
     bool dup = false;
     for (int j = 0; j < 9; ++j)
@@ -204,7 +210,7 @@ float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, ou
     float a = floor(l.a * 255.0 + 0.5) / 256.0 * 3.14159265;
     vec2 d = vec2(cos(a), sin(a));
     vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
-    float lat = (floor(l.b * 255.0 + 0.5) - 128.0) * 0.02 + dot(xz - centre, vec2(-d.y, d.x));
+    float lat = regs_laneStoredLat(l) + dot(xz - centre, vec2(-d.y, d.x));
     float w = 1.0 - smoothstep(1.35 - 0.5 * edge, 1.35 + 0.5 * edge, abs(lat));
     if (abs(lat) < abs(lateral)) { lateral = lat; dir = d; }
     if (w <= 0.0) continue;
@@ -214,6 +220,42 @@ float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, ou
     onLane = max(onLane, w);
   }
   return sumW > 0.0 ? sumT / sumW : 0.0;
+}
+// the snowplows (engine/snowplows.h) on the lanes around a point: returns how freshly the lane under it was cleared
+// (0..1, soft at the lane's edge, overlapping lanes averaged) and gives the heap the plows pushed out of the nearest
+// lanes (0..1), reaching `reach` m beyond a lane's 1.35 m half width (onto the gutter and the kerb next to it)
+float regs_lanePlowed(vec2 xz, float reach, out float heap) {
+  heap = 0.0;
+  if (regs_TrafficRect.z <= 0.0) return 0.0;
+  ivec2 size = textureSize(regs_LaneMap, 0);
+  ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) * regs_TrafficRect.zw * vec2(size)));
+  int seen[25];
+  int n = 0;
+  float sumW = 0.0, sumP = 0.0;
+  for (int k = 0; k < 25; ++k) {
+    ivec2 t = c + ivec2(k % 5 - 2, k / 5 - 2);
+    if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, size))) continue;
+    vec4 l = texelFetch(regs_LaneMap, t, 0);
+    int idx = regs_laneIndex(l);
+    if (idx == 0) continue;
+    bool dup = false;
+    for (int j = 0; j < 25; ++j)
+      if (j < n && seen[j] == idx) dup = true;
+    if (dup) continue;
+    seen[n] = idx;
+    ++n;
+    float a = floor(l.a * 255.0 + 0.5) / 256.0 * 3.14159265;
+    vec2 d = vec2(cos(a), sin(a));
+    vec2 centre = regs_TrafficRect.xy + (vec2(t) + 0.5) / (vec2(size) * regs_TrafficRect.zw);
+    float lat = abs(regs_laneStoredLat(l) + dot(xz - centre, vec2(-d.y, d.x)));
+    int i = idx - 1;
+    vec4 v = texelFetch(regs_LaneTraffic, ivec2(i % 256, i / 256), 0);
+    float w = 1.0 - smoothstep(1.05, 1.65, lat);
+    sumP += w * v.g;
+    sumW += w;
+    heap = max(heap, v.b * (1.0 - smoothstep(1.35 + 0.6 * reach, 1.35 + reach, lat)));
+  }
+  return sumP / max(sumW, 1.0);
 }
 // the footprint map (engine/traffic_maps.h): single steps of the walkers near the camera, 0..1 (several steps on the
 // same spot add up), 5 cm texels in a tile atlas; 0 where nobody stepped or while the map is off (gsGrid.regsFootprints)

@@ -69,7 +69,9 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
   after 3 s), `dry` (never), `cycle` (12 game hours from 06:00 every second day, alternating rain and storm: start,
   stop and drying tests), `snow` (cold and snowing all the time), `snowmelt` (two cold days with a day of snow from
   the start, then the thaw).
-* `REGS_DEBUG_TRAFFIC_MAPS=1` (engine): where the parked cars are, walkers and trodden cells, the busiest lane.
+* `REGS_DEBUG_TRAFFIC_MAPS=1` (engine): where the parked cars are, walkers and trodden cells, the busiest lane, the
+  snowplows and their plowed lanes. `REGS_TEST_PLOWS=<n>`: that many snowplows while the mod asks for any;
+  `REGS_DEBUG_FOLLOW_PLOW=<n>` keeps the camera on the n-th plow.
 * Settings: none yet (the slowdown option `$regsWeatherSlowTraffic` is planned with the mods options page).
 * `REGS_DEBUG_WEATHER=1`: the scheduled and shown intensity, wetness, water and puddles every game hour; `=2`: the
   ground shows the surface map (roads blue, pavements yellow, platforms magenta, grass green, edges red); `=flash`:
@@ -88,6 +90,11 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 * **Streets:** the engine's lane traffic decides how much snow stays: quiet lanes white with faint tyre tracks, busy
   lanes grey slush with dark tracks at the wheels (along the lanes, following curves); banks of snow along the kerbs on
   both sides, brighter, melting last; the thaw clears roads first, then pavements, then grass and roofs.
+* **Snowplows:** while snow lies and it is not thawing, 6 plows (the base game's SUV in orange with a blade, push
+  arms and a flashing amber beacon the engine builds) take long trips through the city; the lane behind a plow is
+  bare dark asphalt with a low rim at the strip's edge, filling in again with new snow (about 10 minutes of heavy
+  snowfall); each pass over a snowy lane adds to a windrow on the kerb: higher than the little hills, chunky, lit by
+  the sun, a little grey from the road. Debug view: plowed lanes orange, their heap white.
 * **Pedestrians:** trodden grey paths where people walk (the engine's trodden map), single walkers faint, filled in by
   new snow.
 * **Shelter:** no snow, wetness or puddles under roofs, tents and passages (the engine's top map); snow reaches about a
@@ -112,6 +119,7 @@ Requirements and decisions: `port/docs/weather-mod.md` (construction-tools).
 | Snow: cold spells, snowfall, cover, thaw into puddles, parked cars | done | 4d983b7 |
 | Snow by traffic: lane and trodden maps, tyre tracks, banks, trails | done (trails faint with few walkers) | abf78ed |
 | Snow colour, overlays excluded, shelter (top map) | done | the last commit of this round |
+| Snowplows: cleared lanes, kerb windrows; 18-bit lane numbers (all lanes on large maps) | done | this commit |
 | Traffic slowdown in snow and heavy rain, ticker, options page | **open (not started)** | - |
 | Falling streaks and flakes skipped under shelter | open | - |
 | Sleet around freezing | open | - |

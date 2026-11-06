@@ -31,10 +31,20 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
   std::fill(t.lanes.begin(), t.lanes.end(), uint8_t(0));
   std::vector<float> best(size_t(t.laneW) * size_t(t.laneH), 1e9f);
   size_t painted = 0;
+  // the lanes get numbers of their own (18 bits in the map): large maps have more graph nodes than that in
+  // all (Vienna about 125,000)
+  t.laneId.assign(g.nodes.size(), -1);
+  t.laneNodes.clear();
+  for (size_t i = 0; i < g.nodes.size() && t.laneNodes.size() < 262143; ++i) {
+    const LaneNode& n = g.nodes[i];
+    if (!(n.flags & want) || (n.flags & skip)) continue;
+    t.laneId[i] = int32_t(t.laneNodes.size());
+    t.laneNodes.push_back(int(i));
+  }
   for (int pass = 0; pass < 2; ++pass)  // lanes first, then the intersections' lanes where nothing is yet
-    for (size_t i = 0; i < g.nodes.size() && i < 65535; ++i) {
+    for (size_t i = 0; i < g.nodes.size(); ++i) {
       const LaneNode& n = g.nodes[i];
-      if (!(n.flags & want) || (n.flags & skip)) continue;
+      if (t.laneId[i] < 0) continue;
       bool cross = (n.flags & kPathIntersection) != 0;
       if ((pass == 0) == cross) continue;
       float dx = n.p1.x - n.p0.x, dz = n.p1.z - n.p0.z, len = std::sqrt(dx * dx + dz * dz);
@@ -59,13 +69,13 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
           float side = std::fabs(cx * -uz + cz * ux);
           if (side > kLaneHalfWidth) continue;
           size_t k = size_t(z) * size_t(t.laneW) + size_t(x);
-          if (pass == 1 && (t.lanes[k * 4] | t.lanes[k * 4 + 1])) continue;
+          if (pass == 1 && best[k] < 1e9f) continue;
           if (side >= best[k]) continue;  // the nearest lane centre wins
           best[k] = side;
-          uint32_t idx = uint32_t(i + 1);
+          uint32_t idx = uint32_t(t.laneId[i] + 1);
           t.lanes[k * 4] = uint8_t(idx & 255);
-          t.lanes[k * 4 + 1] = uint8_t(idx >> 8);
-          t.lanes[k * 4 + 2] = uint8_t(std::clamp(int(std::lround(lat / 0.02f)) + 128, 0, 255));
+          t.lanes[k * 4 + 1] = uint8_t((idx >> 8) & 255);
+          t.lanes[k * 4 + 2] = uint8_t(std::clamp(int(std::lround(lat / 0.08f)) + 32, 0, 63) | int(idx >> 16) << 6);
           t.lanes[k * 4 + 3] = A;
           ++painted;
         }
@@ -73,7 +83,8 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
   t.graphNodes = g.nodes.size();
   t.lanesBuilt = true;
   t.lanesUploaded = false;
-  LOG_INFO("traffic maps: %dx%d texels, %zu lane texels painted from %zu nodes", t.laneW, t.laneH, painted, g.nodes.size());
+  LOG_INFO("traffic maps: %dx%d texels, %zu lane texels painted from %zu lanes of %zu nodes", t.laneW, t.laneH, painted,
+           t.laneNodes.size(), g.nodes.size());
 }
 
 void upload(uint32_t& tex, int w, int h, uint32_t format, uint32_t layout, const uint8_t* data, bool linear) {
@@ -323,15 +334,44 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     t.footFill = fill;
     footTick(t, s, dt);
   }
+  // snowplows: the lane under a plow's rear (all behind its blade) is cleared; the first pass over a lane with snow on
+  // it again adds to its kerb heap
+  if (t.lanePlow.size() < s.graph.nodes.size()) {
+    t.lanePlow.resize(s.graph.nodes.size(), 0.0f);
+    t.laneHeap.resize(s.graph.nodes.size(), 0.0f);
+  }
+  if (t.footFill <= 0) {
+    if (t.plowAny) {
+      std::fill(t.lanePlow.begin(), t.lanePlow.end(), 0.0f);
+      std::fill(t.laneHeap.begin(), t.laneHeap.end(), 0.0f);
+      t.plowAny = false;
+    }
+  } else {
+    if (t.plowAny && t.footFill < 1e6f) {
+      float k = std::exp(-dt / t.footFill);
+      for (float& p : t.lanePlow) p *= k;
+    }
+    for (const Mover& m : s.movers) {
+      if (!m.live || !m.plow || m.track.nodes.empty()) continue;
+      int node = m.track.nodes[m.track.at(m.dist)];
+      if (node < 0 || size_t(node) >= t.lanePlow.size()) continue;
+      float& p = t.lanePlow[size_t(node)];
+      if (p < 0.9f) t.laneHeap[size_t(node)] = std::min(1.0f, t.laneHeap[size_t(node)] + 0.6f * (1.0f - p));
+      p = 1.0f;
+      t.plowAny = true;
+    }
+  }
   static const bool debug = std::getenv("REGS_DEBUG_TRAFFIC_MAPS") != nullptr;
   static float logClock = 0;
   if (debug && (logClock += dt) > 10.0f) {
     logClock = 0;
     float maxT = 0, maxL = 0;
     for (const auto& [cell, v] : t.trodden) maxT = std::max(maxT, v);
+    int plowed = 0;
+    for (float p : t.lanePlow) plowed += p > 0.5f;
     for (float c : t.laneCount) maxL = std::max(maxL, c);
-    LOG_INFO("traffic maps: %d walkers, %zu trodden cells (max %.1f s), busiest lane %.1f s; footprints fill %.0f, %d tiles",
-             walkers, t.trodden.size(), maxT, maxL, t.footFill, kSlots - t.freeSlots);
+    LOG_INFO("traffic maps: %d walkers, %zu trodden cells (max %.1f s), busiest lane %.1f s; footprints fill %.0f, %d tiles; %d plows, %d lanes plowed",
+             walkers, t.trodden.size(), maxT, maxL, t.footFill, kSlots - t.freeSlots, s.plowsLive, plowed);
   }
 }
 
@@ -347,11 +387,18 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
   if (t.lastUpload < 0 || now - t.lastUpload >= 0.2) {  // at most 5 times a second
     t.lastUpload = now;
     if (t.laneTrafficDirty) {
-      int rows = int((t.laneCount.size() + 255) / 256);
-      t.laneValue.assign(size_t(std::max(rows, 1)) * 256, 0);
-      for (size_t i = 0; i < t.laneCount.size(); ++i)
-        t.laneValue[i] = uint8_t(std::lround(255.0f * (1.0f - std::exp(-t.laneCount[i] / 12.0f))));
-      upload(t.laneTrafficTexture, 256, std::max(rows, 1), 0x8229 /* GL_R8 */, gl::RED, t.laneValue.data(), false);
+      int rows = int((t.laneNodes.size() + 255) / 256);
+      t.laneValue.assign(size_t(std::max(rows, 1)) * 256 * 4, 0);
+      for (size_t l = 0; l < t.laneNodes.size(); ++l) {  // by lane number (paintLanes)
+        size_t i = size_t(t.laneNodes[l]);
+        if (i < t.laneCount.size())
+          t.laneValue[l * 4] = uint8_t(std::lround(255.0f * (1.0f - std::exp(-t.laneCount[i] / 12.0f))));
+        if (i < t.lanePlow.size()) {
+          t.laneValue[l * 4 + 1] = uint8_t(std::lround(255.0f * t.lanePlow[i]));
+          t.laneValue[l * 4 + 2] = uint8_t(std::lround(255.0f * t.laneHeap[i]));
+        }
+      }
+      upload(t.laneTrafficTexture, 256, std::max(rows, 1), 0x8058 /* GL_RGBA8 */, 0x1908 /* GL_RGBA */, t.laneValue.data(), false);
       t.laneTrafficDirty = false;
     }
     for (const auto& [cell, v] : t.trodden) {

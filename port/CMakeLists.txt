@@ -82,6 +82,7 @@ add_library(regs_engine STATIC
   src/engine/mods.cpp
   src/engine/surface_map.cpp
   src/engine/traffic_maps.cpp
+  src/engine/snowplows.cpp
   src/engine/user_folders.cpp
   src/engine/debug_economy.cpp
   src/platform/window_win32.cpp

@@ -48,6 +48,7 @@ $snowShown = 0.0;
 $snowFall = 0.0;
 $thaw = 0.0;
 $temp = 10.0;
+$plowCount = 6;       // snowplows on the streets in winter (REGS_TEST_PLOWS=<n> overrides it in the engine)
 $testDay = $clock.date;   // REGS_TEST_WEATHER=snowmelt: the day the test snowfall starts
 $mode = getenv("REGS_TEST_WEATHER");
 $debug = getenv("REGS_DEBUG_WEATHER") != "";
@@ -592,10 +593,13 @@ function frame($dt) {
   // the ground shader hook (shaders/wet.glsl)
   regsShaderUniform("weather_wet", quat($wet, $puddles, $rain, $heavy));
   regsShaderUniform("weather_misc", quat($flash, $debugMap ? 1.0 : 0.0, 0.0, 0.0));
-  regsShaderUniform("weather_snow", quat($snowShown, $snowFall, $thaw, 0.0));
+  regsShaderUniform("weather_snow", quat($snowShown, $snowFall, $thaw, $snowShown >= 0.1 ? 1.0 : 0.0));
   // footprints in the snow (the engine's footprint map): on while snow lies; new snow fills them in (in about ten
   // minutes of heavy snowfall), thaw faster; off (and cleared) once the cover is gone
   $grid.regsFootprints = $snowShown < 0.1 ? 0.0 : ($thaw > 0.3 ? 240.0 : ($snowFall > 0.05 ? 600.0 / $snowFall : 1.0e9));
+  // snowplows (only in winter: while snow lies and it is not thawing): they clear the lanes they drive (filling in
+  // again like the footprints) and push the snow into heaps on the kerb
+  $grid.regsSnowplows = ($snowShown > 0.3 && $thaw < 0.3) ? $plowCount : 0;
 }
 
 echo "weather: on (" + ($mode != "" ? "REGS_TEST_WEATHER=" + $mode : "seed " + string($seed)) + ")";
@@ -616,6 +620,7 @@ event this.onDestroy::() {
   if ($grid) {
     $grid.regsVehicleEmitters = [];
     $grid.regsFootprints = 0.0;
+    $grid.regsSnowplows = 0;
     $grid.regsVehicleSoundGain = 0.0;
     $grid.regsVehicleSound = null;
   }

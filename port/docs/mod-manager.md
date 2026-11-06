@@ -150,7 +150,10 @@ exactly the plain translation. Hooks are fixed at start-up, before any program i
   `float regs_laneSoft(xz, edge, out onLane, out lateral, out dir)` (the lanes near a point by their own lines, no
   1 m steps), `float regs_coveredSoft(xz, h)`,
   `float regs_footprintAt(xz)` (single steps near the camera, 5 cm texels; switched on with `gsGrid.regsFootprints` =
-  the fill-in time constant in simulation seconds, 0 = off and cleared), `float regs_roadEdge(xz)`,
+  the fill-in time constant in simulation seconds, 0 = off and cleared), `float regs_lanePlowed(xz, reach, out heap)`
+  (the snowplows of `gsGrid.regsSnowplows` = how many, engine/snowplows.h: how freshly the lane under a point was
+  cleared, filling in at the footprints' pace, and the heap pushed out of the nearest lanes up to `reach` m beyond
+  them; cleared with the footprints), `float regs_roadEdge(xz)`,
   `float regs_troddenAt(xz)` (engine/traffic_maps.h: the road lanes with their exact lateral offset and direction,
   the recent traffic per lane, where people walked) and `float regs_shelterDepth(pos)` (the top map: 0 in the open,
   else the distance to the nearest open spot, up to 1.5 m, for snow or rain reaching in under an edge).

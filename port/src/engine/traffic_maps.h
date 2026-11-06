@@ -3,13 +3,16 @@
 // went lately, for snow that stays on quiet streets, tyre tracks along the lanes and trodden paths.
 //
 // * Lane map: a top-down RGBA8 texture, 1 m per texel, of the road and street-tram lanes (lane graph nodes with
-//   kPathRoad or kPathTram, not in tunnels, not parking): per texel the lane node (16 bits, 0 = none), the signed
-//   lateral offset of the texel centre from the lane's centre line (B: (offset + 2.56 m) / 0.02 m) and the lane's
+//   kPathRoad or kPathTram, not in tunnels, not parking): per texel the lane's own number + 1 (16 bits, 0 = none; TrafficMaps::laneId), the signed
+//   lateral offset of the texel centre from the lane's centre line (B, low 6 bits: (offset + 2.56 m) / 0.08 m; its top 2 bits are the number's bits 16-17) and the lane's
 //   direction (A: angle mod π in 256 steps), so a hook can rebuild the exact lateral offset of any point inside the
 //   texel (regs_laneAt). Painted once from the lane graph (live edits: on the next graph change).
 // * Lane traffic: per lane node a decaying count of the time vehicles spent on it (road and rail units on road and
 //   tram lanes, τ = 60 s of simulation, 10 s for the first 20 s so a loaded map is up to date at once), as
-//   1 − exp(−count / 12 s) in an R8 texture of 256 nodes per row (regs_laneTraffic).
+//   1 − exp(−count / 12 s) in the R channel of an RGBA8 texture of 256 lanes per row (regs_laneTraffic). G: the
+//   snowplows (engine/snowplows.h), 1 where one drove just now, filling in again with new snow at the footprints'
+//   pace (gsGrid.regsFootprints); B: the heap its blade pushed to the kerb, growing with each pass over a lane that
+//   had snow on it again (regs_lanePlowed). Both are cleared once the footprints are off (no snow).
 // * Trodden map: an R8 texture, 1 m per texel, of a decaying count of the time visible pedestrians spent in each
 //   cell (τ = 300 s), as 1 − exp(−count / 1.5 s) (regs_troddenAt). Only cells people were in are kept (a sparse list),
 //   so updating it costs what the walkers cost.
@@ -35,9 +38,14 @@ struct TrafficMaps {
   uint32_t laneTexture = 0;
   bool lanesBuilt = false, lanesUploaded = false;
   size_t graphNodes = 0;
+  std::vector<int32_t> laneId;   // per graph node: its lane number in the maps (−1: not a painted lane)
+  std::vector<int> laneNodes;    // per lane number: the graph node
   // lane traffic
   std::vector<float> laneCount;    // per node, simulation seconds
-  std::vector<uint8_t> laneValue;  // 256 × rows, R8
+  std::vector<float> lanePlow;     // per node: cleared by a snowplow, 1 just now, filling in again with new snow
+  std::vector<float> laneHeap;     // per node: the snow its plows pushed to the kerb, 0..1
+  bool plowAny = false;
+  std::vector<uint8_t> laneValue;  // 256 × rows, RGBA8 (traffic, plowed, heap, 0)
   uint32_t laneTrafficTexture = 0;
   int trafficRows = 0;
   // trodden map

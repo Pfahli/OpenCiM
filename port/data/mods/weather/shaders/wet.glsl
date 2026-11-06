@@ -9,7 +9,7 @@
 // roads and pavements draw from different noise, so no patch runs across a kerb.
 uniform vec4 weather_wet;   // x water film 0..1, y puddle amount 0..1, z rain now 0..1 (ripples), w heavy rain 0..1
 uniform vec4 weather_misc;  // x lightning flash 0..1, y debug view of the surface map
-uniform vec4 weather_snow;  // x snow cover 0..1, y snowfall now 0..1, z thaw 0..1
+uniform vec4 weather_snow;  // x snow cover 0..1, y snowfall now 0..1, z thaw 0..1, w 1: read the snowplows' lanes
 
 float weather_hash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -119,6 +119,17 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     float lump = 0.65 * weather_noise(s.pos.xz * 0.75 + vec2(3.7, 1.3)) + 0.35 * weather_noise(s.pos.xz * 1.9 + vec2(9.2, 4.4));
     hill = smoothstep(0.2, 0.8, lump) * hillZone;
   }
+  // the snowplows (the engine's plowed lanes): their lanes cleared behind them, and the snow their blade pushed aside
+  // as a windrow along the kerb, higher and more continuous than the little hills, with lit and shaded flanks
+  float plowed = 0.0, plowHeap = 0.0, heap = 0.0;
+  if (weather_snow.w > 0.5 && (cls == 3 || cls == 4 || cls == 5) && s.dist < 500.0)
+    plowed = regs_lanePlowed(s.pos.xz, 2.5, plowHeap);
+  if (plowHeap > 0.01) {
+    float ridge = 1.0 - smoothstep(0.1, 1.15, abs(edge - 0.1));  // its crest just on the road side of the kerb
+    float lumpB = 0.55 * weather_noise(s.pos.xz * 0.45 + vec2(5.3, 2.9)) + 0.3 * weather_noise(s.pos.xz * 1.3 + vec2(1.7, 6.1))
+                + 0.15 * weather_noise(s.pos.xz * 3.1 + vec2(8.8, 0.4));
+    heap = clamp(plowHeap * (0.45 + 0.75 * lumpB) * ridge, 0.0, 1.0) * smoothstep(0.15, 0.6, cover) * up;
+  }
   if (cls == 4) {
     // roads: the more traffic a lane had lately (the engine's lane traffic), the less snow stays on it: busy lanes
     // turn to bare, wet slush, quiet ones keep a nearly full cover; where some cars run, two dark tyre tracks per lane
@@ -135,6 +146,13 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     float tracks = exp(-w * w / 0.04) * smoothstep(0.02, 0.3, traffic) * onLane;  // about 0.4 m wide
     amount = laneCover * (1.0 - 0.85 * tracks);
     slush = clamp(busy + tracks, 0.0, 1.0) * smoothstep(0.3, 0.8, cover);
+    // a plowed lane: bare, dark wet asphalt with a few grey streaks of what the blade left
+    amount *= 1.0 - 0.95 * plowed;
+    float streak = weather_noise(vec2(dot(s.pos.xz, dir) * 0.15, dot(s.pos.xz, vec2(-dir.y, dir.x)) * 4.0));
+    slush = mix(slush, 0.25 * smoothstep(0.55, 0.85, streak), plowed);
+    c.rgb *= 1.0 - 0.14 * plowed * smoothstep(0.2, 0.6, cover) * (1.0 - s.fog);
+    // the blade's ends leave a low rim along the cleared strip (where it meets snow that was not cleared)
+    amount = max(amount, 0.8 * 4.0 * plowed * (1.0 - plowed) * smoothstep(0.3, 0.8, cover));
     // the bank by the engine's smooth road edge (no 0.5 m steps along the kerb)
     bank = (1.0 - smoothstep(0.25, 1.1, max(edge, 0.0))) * smoothstep(0.08, 0.4, cover);
     amount = max(amount, bank);
@@ -164,6 +182,7 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     amount *= 1.0 - 0.8 * foot;
   }
   amount = max(amount, hill * (1.0 - foot));
+  amount = max(amount, smoothstep(0.03, 0.25, heap) * (1.0 - 0.5 * foot));
   // the fine grain of a light cover: 0.6-1.5 m, subtle, gone at full cover and with distance
   float grain = weather_noise(s.pos.xz * 1.3 + vec2(7.1, 3.3)) * 0.6 + weather_noise(s.pos.xz * 3.1 + vec2(1.9, 8.2)) * 0.4;
   float fine = clamp(1.0 - s.dist / 160.0, 0.0, 1.0);
@@ -189,6 +208,24 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   float flank = 4.0 * hill * (1.0 - hill);
   snow *= 1.0 + 0.04 * hill - 0.06 * flank;
   snow *= 1.0 - 0.2 * foot;  // a print lies a little lower, in its own shade
+  // the windrow: its height field (about 0.9 m at 1) lit by the sun, from the screen-space slope (flat ground and the
+  // heap's flat top keep their brightness); chunky, and a little grey from the road it was pushed off (most on the
+  // road side of its crest)
+  if (heap > 0.0) {
+    vec2 dpx = dFdx(s.pos.xz), dpy = dFdy(s.pos.xz);
+    vec2 dh = vec2(dFdx(heap), dFdy(heap));
+    float det = dpx.x * dpy.y - dpx.y * dpy.x;
+    vec2 g = abs(det) > 1e-8 ? vec2(dpy.y * dh.x - dpx.y * dh.y, -dpy.x * dh.x + dpx.x * dh.y) / det : vec2(0.0);
+    g = clamp(g * 0.9, vec2(-2.0), vec2(2.0));
+    vec3 n = normalize(vec3(-g.x, 1.0, -g.y));
+    vec3 sun = normalize(transpose(mat3(regs_ModelViewMatrix)) * regs_LightSource[0].position.xyz);
+    float relief = clamp((dot(n, sun) + 0.3) / (max(sun.y, 0.2) + 0.3), 0.62, 1.18);
+    float mask = smoothstep(0.02, 0.2, heap);
+    float chunk = weather_noise(s.pos.xz * 4.5 + vec2(2.2, 7.7)) * 0.6 + weather_noise(s.pos.xz * 9.0 + vec2(6.1, 1.4)) * 0.4;
+    float dirt = mask * (0.25 + 0.35 * smoothstep(-0.5, 0.6, edge)) * (0.6 + 0.4 * weather_noise(s.pos.xz * 1.1 + vec2(4.4, 9.9)));
+    snow *= mix(1.0, relief, mask) * (1.0 + 0.04 * heap) * mix(1.0, 0.92 + 0.12 * chunk, mask);
+    snow *= mix(vec3(1.0), vec3(0.8, 0.78, 0.75), dirt);
+  }
   // slush (trodden snow, the busy lanes, the tyre tracks) is grey: the wet surface with a little snow in it; the clean
   // snow lies over it
   vec3 slushCol = mix(c.rgb, snow * 0.6, 0.45);
@@ -209,6 +246,10 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
     c.rgb = mix(c.rgb, vec3(1.0, 0.0, 1.0), regs_troddenAt(s.pos.xz));        // trodden: magenta
     c.rgb = mix(c.rgb, vec3(0.0, 1.0, 1.0), regs_laneTrafficSmooth(s.pos.xz));  // lane traffic: cyan
     c.rgb = mix(c.rgb, vec3(0.0), clamp(regs_footprintAt(s.pos.xz) * 3.0, 0.0, 1.0));  // footprints: black
+    float plowHeap;
+    float plowed = regs_lanePlowed(s.pos.xz, 2.5, plowHeap);
+    c.rgb = mix(c.rgb, vec3(1.0, 0.5, 0.0), plowed);                                // plowed lanes: orange
+    c.rgb = mix(c.rgb, vec3(1.0), 0.8 * plowHeap * (1.0 - plowed));                    // their kerb heap: white
     return;
   }
   // 0 buildings and props (the scene's regsSurfaceDiffuse darkens them), 6 water
