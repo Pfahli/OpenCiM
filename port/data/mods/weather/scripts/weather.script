@@ -28,7 +28,6 @@ $target = 0.0;        // the schedule's intensity now
 $kindNow = 0;         // the current spell: 0 rain, 1 heavy rain, 2 thunderstorm
 $wet = 0.0;           // shown water film 0..1 (the darkening)
 $puddles = 0.0;       // shown puddle amount 0..1
-$shine = 0.0;         // shown wet sheen and puddle mirror 0..1
 $film = 0.0;          // the ground model (updateGround): water film 0..1 and standing water (about mm)
 $water = 0.0;
 $flash = 0.0;         // the lightning flash 0..1 now
@@ -52,13 +51,9 @@ if ($mode == "storm") $flashWait = 3.0;
 // the schedule: per game day a chance of a spell starting at a random hour, fading in and out over 1.5 game hours;
 // about one spell in five is heavy rain (more in summer), most heavy spells are thunderstorms. Deterministic for a
 // game: the seed comes from the campaign's start date (saved with the game).
-$chancePerDay = 0.09;   // about 2.7 spells a month
-$fadeHours = 4.0;       // build-up and taper of a spell, game hours
-// the shown intensity follows the schedule at most this fast per real second, so the build-up is visible at fast
-// forward too: from nothing to full rain in at least 7 s, ending in at least 4 s; heavy rain grows out of steady rain
-$riseRate = 0.15;
-$fallRate = 0.25;
-$heavyRate = 0.1;
+$chancePerDay = 0.12;   // about 3.6 spells a month
+$fadeHours = 1.5;
+$fadeSeconds = 1.5;     // the shown intensity follows the schedule over at least this many real seconds
 $seed = 1;
 if (defined MAIN.$campaign) {
   if (MAIN.$campaign) {
@@ -73,30 +68,22 @@ function hash01($day, $k) {
 }
 
 // the spell that starts on day $d: [start hour, end hour, intensity, kind] relative to that day's midnight, or null
-// (a game day passes in about 9 real seconds at normal speed, so spells last a day or two)
 function spellOf($d) {
-  if ($mode == "cycle") {   // 36 game hours from 06:00 every fourth day, alternating rain and thunderstorm
-    if ($d % 4 != 0) return null;
-    return [6.0, 42.0, 1.0, ($d % 8 == 0) ? 0 : 2];
+  if ($mode == "cycle") {
+    if ($d % 2 != 0) return null;
+    return [6.0, 18.0, 1.0, ($d % 4 == 0) ? 0 : 2];
   }
   if (hash01($d, 0) >= $chancePerDay) return null;
   $sStart = hash01($d, 1) * 24.0;
   $month = $clock.months;
   $heavyChance = ($month >= 6 && $month <= 8) ? 0.3 : 0.15;
   if (hash01($d, 5) < $heavyChance) {   // heavy rain: shorter, mostly with thunder
-    return [$sStart, $sStart + 8.0 + hash01($d, 2) * 12.0, 1.0, hash01($d, 4) < 0.7 ? 2 : 1];
+    return [$sStart, $sStart + 3.0 + hash01($d, 2) * 7.0, 1.0, hash01($d, 4) < 0.7 ? 2 : 1];
   }
-  return [$sStart, $sStart + 18.0 + hash01($d, 2) * 42.0, 0.35 + 0.65 * hash01($d, 3), 0];
+  return [$sStart, $sStart + 8.0 + hash01($d, 2) * 32.0, 0.35 + 0.65 * hash01($d, 3), 0];
 }
 
-function ease01($x) {
-  $e = clamp($x, 0.0, 1.0);
-  return $e * $e * (3.0 - 2.0 * $e);
-}
-
-// the scheduled intensity at day $d, hour $h (spells of the two days before can still run); sets $kindNow. A spell
-// starts with a few drops and builds up to its intensity over $fadeHours game hours (easing into the peak), tapers off
-// the same way at its end, and swells and eases a little in between (a slow wave of ±15 %).
+// the scheduled intensity at day $d, hour $h (spells of the two days before can still run); sets $kindNow
 function scheduled($d, $h) {
   $kindNow = 0;
   if ($mode == "rain") return 1.0;
@@ -109,10 +96,9 @@ function scheduled($d, $h) {
     if (!$sp) continue;
     $th = $h + 24.0 * $back;
     if ($th < $sp[0] || $th >= $sp[1]) continue;
-    $env = min(ease01(($th - $sp[0]) / $fadeHours), ease01(($sp[1] - $th) / $fadeHours));
-    $wave = 0.85 + 0.15 * sin(($th - $sp[0]) * 2.1 + hash01($d - $back, 6) * 6.283);
-    if ($sp[2] * $env * $wave > $best) {
-      $best = $sp[2] * $env * $wave;
+    $ramp = min(1.0, min(($th - $sp[0]) / $fadeHours, ($sp[1] - $th) / $fadeHours));
+    if ($sp[2] * $ramp > $best) {
+      $best = $sp[2] * $ramp;
       $kindNow = $sp[3];
     }
   }
@@ -225,7 +211,7 @@ function applyLook($w, $h, $wetness) {
   $scene.regsFogTint = (int(200.0 * $w + 40.0 * $h) << 24) | 0x5A5F64;
   $scene.regsFogScale = 1.0 - 0.25 * $w - 0.2 * $h;
   $scene.regsSurfaceDiffuse = 1.0 - 0.12 * $wetness;
-  $scene.regsSurfaceSpecular = 1.0 + 1.5 * $shine;
+  $scene.regsSurfaceSpecular = 1.0 + 1.5 * $wetness;
 }
 
 function placeRain($w, $h) {
@@ -274,33 +260,28 @@ function placeSpray($h) {
 }
 
 // ---- the ground's water, in game hours ----
-// film: the thin water that darkens the asphalt; wet after one to two hours of rain (drizzle: longer), dry about 20
-// hours after it. water: the standing water (about mm), filled by the rain (the square of the intensity: drizzle adds
-// none) and drained by the gutters and evaporation (0.05 + 0.03 per unit and hour). Puddles start at 1 unit (steady
-// rain: after about 5 hours, heavy rain: 1 hour; drizzle never) and are full at 3 (about 20 hours, heavy 3); after
-// the rain the asphalt dries first, the last puddles (the gutter's) take a day and a half.
+// film: the thin water that darkens the asphalt and gives it a sheen; wet after about half an hour of rain (drizzle:
+// an hour or more), dry about 4 hours after it. water: the standing water (about mm), filled by the rain (the square
+// of the intensity: drizzle hardly adds any) and drained by the gutters and evaporation (0.15 + 0.1 per unit and
+// hour). Puddles start at 1 unit (steady rain: after about 1.7 hours, heavy rain: 20 minutes; drizzle never) and are
+// full at 3; after the rain the asphalt dries first, the last puddles (the gutter's) about 11 hours later.
 // The shown values follow the model at most 0.25 (film) and 0.1 (puddles) per real second, so nothing pops in at
 // fast forward.
 function updateGround($dh, $dt, $w, $h) {
   if ($dh > 0.0 && $dh < 24.0) {   // not paused, no jump (load)
-    if ($w > 0.02) $film = min(1.0, $film + $dh * $w * 0.8 * (1.0 + $h));
-    else $film = max(0.0, $film - $dh * 0.05);
-    $water = clamp($water + $dh * ($w * $w * (0.25 + 0.75 * $h) - (0.05 + 0.03 * $water)), 0.0, 10.0);
+    if ($w > 0.02) $film = min(1.0, $film + $dh * $w * 2.5 * (1.0 + $h));
+    else $film = max(0.0, $film - $dh * 0.25);
+    $water = clamp($water + $dh * ($w * $w * (0.8 + 2.2 * $h) - (0.15 + 0.1 * $water)), 0.0, 8.0);
   }
-  $wet += clamp($film - $wet, -0.12 * $dt, 0.25 * $dt);
+  $wet += clamp($film - $wet, -0.25 * $dt, 0.25 * $dt);
   $puddleTarget = clamp(($water - 1.0) / 2.0, 0.0, 1.0);
   $puddles += clamp($puddleTarget - $puddles, -0.1 * $dt, 0.1 * $dt);
-  // the shine comes last and goes first: it grows with the standing water while it rains (from half a unit, full at
-  // 3: after a day of steady rain, never in drizzle), at most 0.05 per real second (20 s to full); without rain it
-  // fades at 0.3 per second, before the darkening and the puddles
-  $shineTarget = $w > 0.05 ? clamp(($water - 0.5) / 2.5, 0.0, 1.0) : 0.0;
-  $shine += clamp($shineTarget - $shine, -0.3 * $dt, 0.05 * $dt);
 }
 
 // ---- thunderstorms: flashes paced in real time, at least 10 s apart whatever the game speed ----
 function updateStorm($dt, $w, $h) {
   $speed = gameSpeed();
-  $storm = $kindNow == 2 && $h > 0.7;   // the flashes only once the rain is heavy
+  $storm = $kindNow == 2 && $w > 0.5;
   if ($storm && $speed > 0.0) {
     $flashWait -= $dt;
     if ($flashWait <= 0.0) {
@@ -380,17 +361,16 @@ function frame($dt) {
   if ($lastDate >= 0) $dh = float($date - $lastDate) * 24.0 + ($hour - $lastClockHour);
   $lastDate = $date;
   $lastClockHour = $hour;
-  $rain += clamp($target - $rain, -$fallRate * $dt, $riseRate * $dt);
-  // heavy rain only out of steady rain: its share follows the rain above 60 %
-  $heavyTarget = ($kindNow >= 1 && $target > 0.0) ? ease01(($rain - 0.6) / 0.4) : 0.0;
-  $heavy += clamp($heavyTarget - $heavy, -$heavyRate * 2.0 * $dt, $heavyRate * $dt);
+  $step = $dt / $fadeSeconds;
+  $rain += clamp($target - $rain, -$step, $step);
+  $heavyTarget = ($kindNow >= 1 && $target > 0.0) ? 1.0 : 0.0;
+  $heavy += clamp($heavyTarget - $heavy, -$step, $step);
   updateGround($dh, $dt, $rain, $heavy);
   updateStorm($dt, $rain, $heavy);
   if ($debug && int($hour) != $lastHour) {
     $lastHour = int($hour);
     echo "weather: " + dateText() + " scheduled " + string($target) + " shown " + string($rain) + " heavy " +
-         string($heavy) + " wet " + string($wet) + " water " + string($water) + " puddles " + string($puddles) +
-         " shine " + string($shine) + " look " +
+         string($heavy) + " wet " + string($wet) + " water " + string($water) + " puddles " + string($puddles) + " look " +
          string($camera.regsLookPosition);
   }
   applyLook($rain, $heavy, $wet);
@@ -399,7 +379,7 @@ function frame($dt) {
   updateSound($rain, $heavy);
   // the ground shader hook (shaders/wet.glsl)
   regsShaderUniform("weather_wet", quat($wet, $puddles, $rain, $heavy));
-  regsShaderUniform("weather_misc", quat($flash, $debugMap ? 1.0 : 0.0, $shine, 0.0));
+  regsShaderUniform("weather_misc", quat($flash, $debugMap ? 1.0 : 0.0, 0.0, 0.0));
 }
 
 echo "weather: on (" + ($mode != "" ? "REGS_TEST_WEATHER=" + $mode : "seed " + string($seed)) + ")";

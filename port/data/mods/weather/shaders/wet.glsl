@@ -8,7 +8,7 @@
 // near their edge. Every puddle mask fades to nothing at its surface's edge (found in the engine's surface map), and
 // roads and pavements draw from different noise, so no patch runs across a kerb.
 uniform vec4 weather_wet;   // x water film 0..1, y puddle amount 0..1, z rain now 0..1 (ripples), w heavy rain 0..1
-uniform vec4 weather_misc;  // x lightning flash 0..1, y debug view of the surface map, z sheen 0..1
+uniform vec4 weather_misc;  // x lightning flash 0..1, y debug view of the surface map
 
 float weather_hash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -105,7 +105,7 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
     c.rgb *= 1.0 - 0.15 * wet * keep;
     return;
   }
-  float sheen = weather_misc.z;  // the sheen: from the standing water, slow to come, first to go (weather.script)
+  float sheen = smoothstep(0.5, 1.0, weather_wet.x);  // the sheen comes once the film covers the ground
   // roads (4), pavement and squares (3), platforms (5); green texels (verges, sidewalk grass) stay as grass
   float green = smoothstep(0.015, 0.06, c.g - max(c.r, c.b));
   float hard = 1.0 - green;
@@ -151,7 +151,7 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
   vec3 refl = mix(texture(regs_EnvMap, rr).rgb, overcast, 0.7) * 0.75 * light;  // mostly the grey sky of the rain
   // dark still water with the sky in it: the reflection is what makes it read as water, the clamp in the hook keeps
   // it from lighting up the ground
-  vec3 water = mix(c.rgb * 0.45, refl, clamp(0.3 + fr, 0.0, 0.85) * (0.3 + 0.7 * sheen));
+  vec3 water = mix(c.rgb * 0.45, refl, clamp(0.3 + fr, 0.0, 0.85));
   water = min(water, c.rgb * 1.1);  // at most a touch lighter than the wet asphalt around it (still darker than dry)
   c.rgb = mix(c.rgb, water, p * keep);
 }
