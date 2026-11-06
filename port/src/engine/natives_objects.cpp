@@ -15,6 +15,8 @@ namespace regs::engine {
 
 using namespace regs::script;
 
+void debugEconomyClock(VM& vm, Object* clock, int what);  // engine/debug_economy.cpp (REGS_DEBUG_ECONOMY)
+
 namespace {
 
 Value plainOf(const Value& v) { return v.ref() ? v.ref()->get() : v; }
@@ -98,7 +100,11 @@ class ClockObj : public Object {
         vm.fireEvent(this, u"onDay", {});
         if (yC || mC) {
           vm.fireEvent(this, u"onMonth", {});
-          if (yC) vm.fireEvent(this, u"onYear", {});
+          debugEconomyClock(vm, this, 0);
+          if (yC) {
+            vm.fireEvent(this, u"onYear", {});
+            debugEconomyClock(vm, this, 1);
+          }
         }
       }
     }
