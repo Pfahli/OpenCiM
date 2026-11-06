@@ -8,6 +8,7 @@
 #include "engine/sky.h"
 #include "engine/sim.h"
 #include "engine/particles.h"
+#include "engine/traffic_maps.h"
 #include "engine/sound.h"
 
 #include <cstdio>
@@ -57,6 +58,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerSceneNatives(*vm_);
   registerSkyNatives(*vm_);
   registerParticleNatives(*vm_);
+  registerTrafficMapNatives(*vm_);
   registerSkinningNatives(*vm_);
   registerShaderNatives(*vm_);
   registerGridNatives(*vm_);

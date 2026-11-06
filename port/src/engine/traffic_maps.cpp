@@ -93,9 +93,166 @@ void upload(uint32_t& tex, int w, int h, uint32_t format, uint32_t layout, const
   gl::BindTexture(gl::TEXTURE_2D, 0);
 }
 
+// ---- footprints ----
+constexpr float kFootTexel = 0.05f;   // m
+constexpr int kFootTile = 32;         // texels per tile side (1.6 m)
+constexpr int kAtlasTiles = 64;       // tiles per atlas side
+constexpr int kAtlasSize = kFootTile * kAtlasTiles;
+constexpr int kSlots = kAtlasTiles * kAtlasTiles;
+constexpr float kStride = 0.7f;       // m between two steps
+constexpr float kFootRange = 400.0f;  // m from the camera: walkers further away leave no steps
+
+void footInit(TrafficMaps& t) {
+  if (t.tilesX > 0) return;
+  t.tilesX = int(std::ceil(float(t.laneW) * kTexel / (kFootTexel * kFootTile)));
+  t.tilesZ = int(std::ceil(float(t.laneH) * kTexel / (kFootTexel * kFootTile)));
+  t.tileIndex.assign(size_t(t.tilesX) * size_t(t.tilesZ), 0);
+  t.atlas.assign(size_t(kAtlasSize) * size_t(kAtlasSize), 0);
+  t.slotTile.assign(kSlots, -1);
+  t.slotStamp.assign(kSlots, 0.0f);
+  t.slotDirty.assign(kSlots, 0);
+  t.freeSlots = kSlots;
+}
+
+void footIndexDirty(TrafficMaps& t, int x, int z) {
+  if (t.indexX1 < t.indexX0) t.indexX0 = t.indexX1 = x, t.indexZ0 = t.indexZ1 = z;
+  t.indexX0 = std::min(t.indexX0, x), t.indexX1 = std::max(t.indexX1, x);
+  t.indexZ0 = std::min(t.indexZ0, z), t.indexZ1 = std::max(t.indexZ1, z);
+}
+
+void footFreeSlot(TrafficMaps& t, int slot) {
+  int tile = t.slotTile[size_t(slot)];
+  if (tile < 0) return;
+  t.tileIndex[size_t(tile)] = 0;
+  footIndexDirty(t, tile % t.tilesX, tile / t.tilesX);
+  t.slotTile[size_t(slot)] = -1;
+  int bx = (slot % kAtlasTiles) * kFootTile, bz = (slot / kAtlasTiles) * kFootTile;
+  for (int z = 0; z < kFootTile; ++z)
+    std::fill_n(&t.atlas[size_t(bz + z) * kAtlasSize + size_t(bx)], kFootTile, uint8_t(0));
+  t.slotDirty[size_t(slot)] = 1;
+  ++t.freeSlots;
+}
+
+// the atlas slot of a tile, taken on first use (the least recently stepped tile is reused when all are taken)
+int footSlot(TrafficMaps& t, int tile) {
+  if (uint16_t v = t.tileIndex[size_t(tile)]) return int(v) - 1;
+  int slot = -1;
+  if (t.freeSlots > 0) {
+    for (int i = 0; i < kSlots; ++i)
+      if (t.slotTile[size_t(i)] < 0) { slot = i; break; }
+  } else {
+    float oldest = 1e30f;
+    for (int i = 0; i < kSlots; ++i)
+      if (t.slotStamp[size_t(i)] < oldest) oldest = t.slotStamp[size_t(i)], slot = i;
+    footFreeSlot(t, slot);
+  }
+  --t.freeSlots;
+  t.slotTile[size_t(slot)] = tile;
+  t.tileIndex[size_t(tile)] = uint16_t(slot + 1);
+  footIndexDirty(t, tile % t.tilesX, tile / t.tilesX);
+  return slot;
+}
+
+// one shoe print at (x, z) pointing along (dx, dz): a sole of about 26 × 10 cm with a softer heel, added to what is
+// there, so steps on the same path add up to a trodden lane
+void footStamp(TrafficMaps& t, float x, float z, float dx, float dz) {
+  const float halfLen = 0.13f, halfWid = 0.05f;
+  float px = (x - t.originX) / kFootTexel, pz = (z - t.originZ) / kFootTexel;
+  int r = int(std::ceil(halfLen / kFootTexel)) + 1;
+  int maxX = t.tilesX * kFootTile, maxZ = t.tilesZ * kFootTile;
+  for (int gz = int(pz) - r; gz <= int(pz) + r; ++gz)
+    for (int gx = int(px) - r; gx <= int(px) + r; ++gx) {
+      if (gx < 0 || gz < 0 || gx >= maxX || gz >= maxZ) continue;
+      float ox = (float(gx) + 0.5f - px) * kFootTexel, oz = (float(gz) + 0.5f - pz) * kFootTexel;
+      float along = ox * dx + oz * dz, side = -ox * dz + oz * dx;
+      // toe wider than the heel, with a waist
+      float wid = halfWid * (along > 0 ? 1.0f : 0.8f) * (std::fabs(along / halfLen + 0.15f) < 0.2f ? 0.85f : 1.0f);
+      float e = std::sqrt((along / halfLen) * (along / halfLen) + (side / wid) * (side / wid));
+      if (e >= 1.0f) continue;
+      float v = 1.0f - std::max(0.0f, (e - 0.55f) / 0.45f);  // soft rim
+      int tile = (gz / kFootTile) * t.tilesX + gx / kFootTile;
+      int slot = footSlot(t, tile);
+      t.slotStamp[size_t(slot)] = t.age;
+      size_t k = size_t((slot / kAtlasTiles) * kFootTile + gz % kFootTile) * kAtlasSize +
+                 size_t((slot % kAtlasTiles) * kFootTile + gx % kFootTile);
+      t.atlas[k] = uint8_t(std::min(255, int(t.atlas[k]) + int(v * 200.0f)));
+      t.slotDirty[size_t(slot)] = 1;
+    }
+}
+
+void footClear(TrafficMaps& t) {
+  if (t.freeSlots == kSlots) return;
+  for (int i = 0; i < kSlots; ++i) footFreeSlot(t, i);
+  t.atlasAllDirty = true;
+}
+
+// walkers near the camera step every kStride, left and right of their line; steps fill in with footFill
+void footTick(TrafficMaps& t, SimState& s, float dt) {
+  footInit(t);
+  if (t.footFill <= 0) {
+    footClear(t);
+    for (auto& w : t.walkers) w.valid = false;
+    return;
+  }
+  if (t.walkers.size() < s.characters.size()) t.walkers.resize(s.characters.size());
+  const float range2 = kFootRange * kFootRange;
+  for (size_t i = 0; i < s.characters.size(); ++i) {
+    const Character& c = s.characters[i];
+    TrafficMaps::Walker& w = t.walkers[i];
+    float ex = c.pos.x - s.eye.x, ez = c.pos.z - s.eye.z;
+    if (!c.alive || c.animal || c.virtualLeft >= 0 || ex * ex + ez * ez > range2) {
+      w.valid = false;
+      continue;
+    }
+    if (!w.valid) {
+      w.valid = true, w.last = c.pos, w.stride = 0;
+      continue;
+    }
+    float dx = c.pos.x - w.last.x, dz = c.pos.z - w.last.z, d = std::sqrt(dx * dx + dz * dz);
+    if (d > 5.0f) {  // a jump (teleport, boarding): start again
+      w.last = c.pos, w.stride = 0;
+      continue;
+    }
+    if (d < 1e-4f) continue;
+    float ux = dx / d, uz = dz / d;
+    float at = kStride - w.stride;  // distance along this move to the next step
+    while (at <= d) {
+      float sx = w.last.x + ux * at, sz = w.last.z + uz * at;
+      float off = w.side ? 0.09f : -0.09f;  // the feet about 18 cm apart
+      footStamp(t, sx - uz * off, sz + ux * off, ux, uz);
+      w.side ^= 1;
+      at += kStride;
+    }
+    w.stride = d - (at - kStride);
+    w.last = c.pos;
+  }
+  // filling in: once a second, all steps fade with the time constant; empty tiles are given back
+  t.fadeClock += dt;
+  if (t.fadeClock >= 1.0f && t.footFill < 1e6f) {
+    float keep = std::exp(-t.fadeClock / t.footFill);
+    t.fadeClock = 0;
+    for (int slot = 0; slot < kSlots; ++slot) {
+      if (t.slotTile[size_t(slot)] < 0) continue;
+      int bx = (slot % kAtlasTiles) * kFootTile, bz = (slot / kAtlasTiles) * kFootTile;
+      bool any = false;
+      for (int z = 0; z < kFootTile; ++z) {
+        uint8_t* row = &t.atlas[size_t(bz + z) * kAtlasSize + size_t(bx)];
+        for (int x = 0; x < kFootTile; ++x) {
+          row[x] = uint8_t(float(row[x]) * keep);
+          any |= row[x] > 0;
+        }
+      }
+      if (any) t.slotDirty[size_t(slot)] = 1;
+      else footFreeSlot(t, slot);
+    }
+  } else if (t.footFill >= 1e6f) {
+    t.fadeClock = 0;
+  }
+}
+
 }  // namespace
 
-void simTrafficMapsTick(script::VM&, GridObj* grid, SimState& s, float dt) {
+void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   if (render::shaderHooks().empty() || dt <= 0) return;
   if (!s.trafficMaps) {
     s.trafficMaps = std::make_shared<TrafficMaps>();
@@ -156,6 +313,16 @@ void simTrafficMapsTick(script::VM&, GridObj* grid, SimState& s, float dt) {
     t.trodden[uint32_t(z) << 16 | uint32_t(x)] += dt;
     ++walkers;
   }
+  // footprints (gsGrid.regsFootprints)
+  {
+    float fill = 0;
+    if (grid) {
+      auto f = grid->fieldValues.find(u"regsFootprints");
+      if (f != grid->fieldValues.end()) fill = vm.toFloat(vm.resolve(f->second));
+    }
+    t.footFill = fill;
+    footTick(t, s, dt);
+  }
   static const bool debug = std::getenv("REGS_DEBUG_TRAFFIC_MAPS") != nullptr;
   static float logClock = 0;
   if (debug && (logClock += dt) > 10.0f) {
@@ -163,8 +330,8 @@ void simTrafficMapsTick(script::VM&, GridObj* grid, SimState& s, float dt) {
     float maxT = 0, maxL = 0;
     for (const auto& [cell, v] : t.trodden) maxT = std::max(maxT, v);
     for (float c : t.laneCount) maxL = std::max(maxL, c);
-    LOG_INFO("traffic maps: %d walkers, %zu trodden cells (max %.1f s), busiest lane %.1f s", walkers, t.trodden.size(),
-             maxT, maxL);
+    LOG_INFO("traffic maps: %d walkers, %zu trodden cells (max %.1f s), busiest lane %.1f s; footprints fill %.0f, %d tiles",
+             walkers, t.trodden.size(), maxT, maxL, t.footFill, kSlots - t.freeSlots);
   }
 }
 
@@ -218,6 +385,73 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
   rect[2] = 1.0f / (float(t.laneW) * kTexel);
   rect[3] = 1.0f / (float(t.laneH) * kTexel);
   return true;
+}
+
+bool gridFootprints(GridObj* grid, uint32_t& index, uint32_t& atlas, float rect[4]) {
+  SimState* s = simOf(grid);
+  if (!s || !s->trafficMaps || s->trafficMaps->tilesX <= 0) return false;
+  TrafficMaps& t = *s->trafficMaps;
+  // the upload follows the traffic maps' pace (gridTrafficMaps runs first and sets lastUpload when it uploads)
+  bool create = !t.footIndexTexture;
+  if (create) {
+    upload(t.footIndexTexture, t.tilesX, t.tilesZ, 0x822A /* GL_R16 */, gl::RED, nullptr, false);
+    upload(t.footAtlasTexture, kAtlasSize, kAtlasSize, 0x8229 /* GL_R8 */, gl::RED, nullptr, false);
+    t.indexX0 = 0, t.indexZ0 = 0, t.indexX1 = t.tilesX - 1, t.indexZ1 = t.tilesZ - 1;
+    t.atlasAllDirty = true;
+  }
+  if (t.indexX1 >= t.indexX0) {
+    int w = t.indexX1 - t.indexX0 + 1, h = t.indexZ1 - t.indexZ0 + 1;
+    std::vector<uint16_t> rectData(size_t(w) * size_t(h));
+    for (int z = 0; z < h; ++z)
+      std::copy_n(&t.tileIndex[size_t(t.indexZ0 + z) * size_t(t.tilesX) + size_t(t.indexX0)], size_t(w),
+                  &rectData[size_t(z) * size_t(w)]);
+    gl::BindTexture(gl::TEXTURE_2D, t.footIndexTexture);
+    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, t.indexX0, t.indexZ0, w, h, gl::RED, 0x1403 /* GL_UNSIGNED_SHORT */,
+                      rectData.data());
+    t.indexX0 = 0, t.indexZ0 = 0, t.indexX1 = -1, t.indexZ1 = -1;
+  }
+  gl::BindTexture(gl::TEXTURE_2D, t.footAtlasTexture);
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+  int dirty = 0;
+  for (uint8_t d : t.slotDirty) dirty += d;
+  if (t.atlasAllDirty || dirty > kSlots / 4) {
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, kAtlasSize, kAtlasSize, gl::RED, gl::UNSIGNED_BYTE, t.atlas.data());
+    std::fill(t.slotDirty.begin(), t.slotDirty.end(), uint8_t(0));
+    t.atlasAllDirty = false;
+  } else if (dirty > 0) {
+    std::vector<uint8_t> tile(size_t(kFootTile) * kFootTile);
+    for (int slot = 0; slot < kSlots; ++slot) {
+      if (!t.slotDirty[size_t(slot)]) continue;
+      t.slotDirty[size_t(slot)] = 0;
+      int bx = (slot % kAtlasTiles) * kFootTile, bz = (slot / kAtlasTiles) * kFootTile;
+      for (int z = 0; z < kFootTile; ++z)
+        std::copy_n(&t.atlas[size_t(bz + z) * kAtlasSize + size_t(bx)], kFootTile, &tile[size_t(z) * kFootTile]);
+      gl::TexSubImage2D(gl::TEXTURE_2D, 0, bx, bz, kFootTile, kFootTile, gl::RED, gl::UNSIGNED_BYTE, tile.data());
+    }
+  }
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+  gl::BindTexture(gl::TEXTURE_2D, 0);
+  index = t.footIndexTexture;
+  atlas = t.footAtlasTexture;
+  rect[0] = t.originX;
+  rect[1] = t.originZ;
+  rect[2] = kFootTexel;
+  rect[3] = float(kAtlasTiles);
+  return true;
+}
+
+void registerTrafficMapNatives(script::VM& vm) {
+  using namespace regs::script;
+  if (ClassInfo* g = vm.findClass("gsGrid")) {
+    FieldInfo& f = g->fields[u"regsFootprints"];
+    f.name = u"regsFootprints";
+    f.get = [](script::VM&, script::Object* o) {
+      auto it = o->fieldValues.find(u"regsFootprints");
+      return it == o->fieldValues.end() ? script::Value::real(0.0) : it->second;
+    };
+    f.set = [](script::VM& v, script::Object* o, const script::Value& x) { o->fieldValues[u"regsFootprints"] = v.resolve(x); };
+  }
 }
 
 }  // namespace regs::engine

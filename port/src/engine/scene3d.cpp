@@ -505,6 +505,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     if (env && env->cube) v.hookEnvCube = d.texture(vm, env);
     gridSurfaceMap(grids[0], v.hookSurfaceMap, v.hookSurfaceRect, &v.hookTopMap);
     gridTrafficMaps(grids[0], v.hookLaneMap, v.hookLaneTraffic, v.hookTrodden, v.hookTrafficRect);
+    gridFootprints(grids[0], v.hookFootIndex, v.hookFootAtlas, v.hookFootRect);
   }
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
   ParticleDrawList particles;

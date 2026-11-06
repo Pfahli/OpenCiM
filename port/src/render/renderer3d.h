@@ -16,6 +16,7 @@ constexpr int kHookEnvUnit = 8;      // texture unit of the shader hooks' enviro
 constexpr int kHookSurfaceUnit = 9;  // and of the map's surface classes (regs_SurfaceMap)
 constexpr int kHookLaneUnit = 10, kHookLaneTrafficUnit = 11, kHookTroddenUnit = 12;  // the traffic maps
 constexpr int kHookTopUnit = 13;     // the top map (regs_TopMap)
+constexpr int kHookFootIndexUnit = 14, kHookFootAtlasUnit = 15;  // the footprint map (regs_footprintAt)
 
 // GpuMaterial::surfaceClass: the map surfaces a shader hook can tell apart (mod-manager.md §4.3)
 enum : uint8_t {
@@ -147,6 +148,8 @@ struct SceneView {
   float hookSurfaceRect[4] = {0, 0, 0, 0};
   uint32_t hookLaneMap = 0, hookLaneTraffic = 0, hookTrodden = 0;  // engine/traffic_maps.h, units 10-12
   float hookTrafficRect[4] = {0, 0, 0, 0};
+  uint32_t hookFootIndex = 0, hookFootAtlas = 0;  // engine/traffic_maps.h footprints, units 14-15
+  float hookFootRect[4] = {0, 0, 0, 0};
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms
@@ -246,7 +249,7 @@ class Renderer3D {
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
     // shader hooks (render/glsl.h): -1 in programs without them
     int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1,
-        hookItem = -1, hookTrafficRect = -1;
+        hookItem = -1, hookTrafficRect = -1, hookFootRect = -1;
     std::map<std::string, int> hookUniforms;
   };
   std::map<uint32_t, ProgramLocs> locs_;

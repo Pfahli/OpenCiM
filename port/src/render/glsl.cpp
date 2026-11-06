@@ -215,6 +215,29 @@ float regs_laneSoft(vec2 xz, float edge, out float onLane, out float lateral, ou
   }
   return sumW > 0.0 ? sumT / sumW : 0.0;
 }
+// the footprint map (engine/traffic_maps.h): single steps of the walkers near the camera, 0..1 (several steps on the
+// same spot add up), 5 cm texels in a tile atlas; 0 where nobody stepped or while the map is off (gsGrid.regsFootprints)
+uniform sampler2D regs_FootIndex;
+uniform sampler2D regs_FootAtlas;
+uniform vec4 regs_FootRect;  // origin x, z, texel size (m), atlas tiles per row
+float regs_footTexel(ivec2 g) {
+  ivec2 tiles = textureSize(regs_FootIndex, 0);
+  ivec2 tile = g / 32;
+  if (any(lessThan(g, ivec2(0))) || any(greaterThanEqual(tile, tiles))) return 0.0;
+  int slot = int(texelFetch(regs_FootIndex, tile, 0).r * 65535.0 + 0.5);
+  if (slot == 0) return 0.0;
+  slot -= 1;
+  int row = int(regs_FootRect.w);
+  return texelFetch(regs_FootAtlas, ivec2(slot % row, slot / row) * 32 + (g - tile * 32), 0).r;
+}
+float regs_footprintAt(vec2 xz) {
+  if (regs_FootRect.z <= 0.0) return 0.0;
+  vec2 p = (xz - regs_FootRect.xy) / regs_FootRect.z - 0.5;
+  ivec2 b = ivec2(floor(p));
+  vec2 f = p - vec2(b);
+  return mix(mix(regs_footTexel(b), regs_footTexel(b + ivec2(1, 0)), f.x),
+             mix(regs_footTexel(b + ivec2(0, 1)), regs_footTexel(b + ivec2(1, 1)), f.x), f.y);
+}
 // how trodden the ground is at a world point (0..1, recent pedestrians)
 float regs_troddenAt(vec2 xz) {
   if (regs_TrafficRect.z <= 0.0) return 0.0;

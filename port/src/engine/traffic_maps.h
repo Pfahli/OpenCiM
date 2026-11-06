@@ -19,6 +19,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "render/math3d.h"
 #include "script/vm.h"
 
 namespace regs::engine {
@@ -47,6 +48,29 @@ struct TrafficMaps {
   float age = 0;
   bool laneTrafficDirty = false;
   double lastUpload = -1;  // steady-clock seconds of the last upload
+  // footprint map: single steps of the walkers near the camera, 5 cm texels in tiles of 32² (1.6 m), kept only where
+  // people stepped lately: an atlas of 64 × 64 tiles (R8; when full, the least recently stepped tile is reused) and
+  // an index of the map's tiles (R16, atlas slot + 1, 0 = no steps). Switched by the mods: gsGrid.regsFootprints =
+  // 0 off (and cleared), else the time constant (simulation seconds) in which steps fill in again (snowfall)
+  float footFill = 0;
+  int tilesX = 0, tilesZ = 0;
+  std::vector<uint16_t> tileIndex;  // tilesX × tilesZ
+  std::vector<uint8_t> atlas;       // 2048 × 2048
+  std::vector<int32_t> slotTile;    // per slot: the tile (z · tilesX + x), -1 free
+  std::vector<float> slotStamp;     // per slot: age at the last step (reuse order)
+  std::vector<uint8_t> slotDirty;
+  int freeSlots = 0;
+  bool atlasAllDirty = false;
+  int indexX0 = 0, indexZ0 = 0, indexX1 = -1, indexZ1 = -1;
+  struct Walker {
+    render::Vec3 last;
+    float stride = 0;
+    uint8_t side = 0;
+    bool valid = false;
+  };
+  std::vector<Walker> walkers;  // per character slot
+  float fadeClock = 0;
+  uint32_t footIndexTexture = 0, footAtlasTexture = 0;
 };
 
 // once per simulation update (engine/sim.cpp): counts the vehicles and pedestrians, decays, builds the lane map
@@ -54,5 +78,9 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt);
 // at drawing time (render thread, engine/scene3d.cpp): uploads what changed (at most 5 times a second) and hands out
 // the textures and the world rect (originX, originZ, 1 / sizeX, 1 / sizeZ); false when there are none
 bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint32_t& trodden, float rect[4]);
+// the footprint map's textures and rect (originX, originZ, texel size in m, 0); false when there are no steps
+bool gridFootprints(GridObj* grid, uint32_t& index, uint32_t& atlas, float rect[4]);
+// gsGrid.regsFootprints (see TrafficMaps::footFill)
+void registerTrafficMapNatives(script::VM& vm);
 
 }  // namespace regs::engine
