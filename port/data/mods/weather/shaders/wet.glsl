@@ -236,6 +236,13 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
 
 void weather_wet_apply(inout vec4 c, RegsSurface s) {
   int cls = s.surfaceClass;
+  if (weather_misc.y > 1.5) {  // debug view REGS_DEBUG_WEATHER=3: the lane map, each lane texel coloured by its direction
+    vec2 uv = (s.pos.xz - regs_TrafficRect.xy) * regs_TrafficRect.zw;
+    vec4 l = texelFetch(regs_LaneMap, ivec2(uv * vec2(textureSize(regs_LaneMap, 0))), 0);
+    float a = floor(l.a * 255.0 + 0.5) / 256.0 * 6.2831853;
+    c.rgb = regs_laneIndex(l) == 0 ? vec3(0.15) : vec3(0.5 + 0.5 * cos(a), 0.5 + 0.5 * cos(a - 2.094), 0.5 + 0.5 * cos(a + 2.094));
+    return;
+  }
   if (weather_misc.y > 0.5) {  // debug view (REGS_DEBUG_WEATHER=2): the surface map and the edge distance
     int m = regs_surfaceAt(s.pos.xz);
     vec3 col = m == 4 ? vec3(0.2, 0.2, 0.9) : m == 3 ? vec3(0.9, 0.8, 0.2) : m == 5 ? vec3(0.9, 0.3, 0.9)

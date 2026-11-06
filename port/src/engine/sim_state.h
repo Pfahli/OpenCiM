@@ -440,6 +440,9 @@ struct SimState {
   int roadTarget = 0, roadLive = 0, trainsLive = 0;
   int extraLive = 0;               // background trips running for the traffic density
   int plowsLive = 0;               // snowplows on the streets (engine/snowplows.h)
+  // the mods' road speed (gsGrid.regsRoadSpeed / regsRoadSpeedCleared, engine/snowplows.h): × the target speed of
+  // road vehicles, buses and trams on road and street-tram lanes; the second on lanes a snowplow cleared
+  float roadSpeed = 1.0f, roadSpeedCleared = 1.0f;
   float citizenCarsAvg = -1;       // running average of the citizens' moving cars (the 1x traffic)
   int spawned = 0, despawned = 0, stuck = 0;
   // line nodes by global id: (line, stop index)

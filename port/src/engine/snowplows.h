@@ -28,7 +28,8 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt);
 // at drawing time: the blade, its frame and the beacon in front of / on top of a plow's car
 void collectPlowParts(Display& d, const sim::UnitModel& model, const sim::PlacedPose& p, double time,
                       std::vector<render::DrawItem>& items);
-// gsGrid.regsSnowplows
+// gsGrid.regsSnowplows, and the road speed factors gsGrid.regsRoadSpeed / regsRoadSpeedCleared (1 = unset): × the
+// target speed of cars, buses and trams on road and street-tram lanes, the second on lanes a plow cleared lately
 void registerSnowplowNatives(script::VM& vm);
 
 }  // namespace regs::engine

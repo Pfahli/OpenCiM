@@ -38,3 +38,7 @@ $regs_menu_info = "Unofficial source port, requires Cities in Motion";
 $regs_newsticker_jamMoved_text = ["A stuck bus on line %0 was moved on two stops.", "A stuck tram on line %0 was moved on two stops.", "A stuck metro train on line %0 was moved on two stops.", "A stuck waterbus on line %0 was moved on two stops.", "A stuck helicopter on line %0 was moved on two stops."];
 // saves and maps from the original game's folder (Documents\Cities In Motion), after the name in the load lists
 $regs_fromOriginal_note = "(from Cities in Motion)";
+// the settings menu's Mods page (regs/ui/mods.script): the options of the enabled mods
+$regs_mods_button = "Mods";
+$regs_mods_title = "Mods";
+$regs_mods_none = "The enabled mods have no settings.";

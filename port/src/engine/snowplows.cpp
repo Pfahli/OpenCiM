@@ -4,12 +4,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 
 #include "core/log.h"
 #include "engine/display.h"
 #include "engine/grid.h"
+#include "engine/sim_graph.h"
 #include "engine/sim_state.h"
+#include "engine/traffic_maps.h"
 
 namespace regs::engine {
 
@@ -19,6 +22,7 @@ using render::Vec3;
 namespace {
 
 constexpr uint32_t kOrange = 0xFFE8780Cu;  // municipal orange (colorize of the car's paint)
+constexpr uint32_t kPurple = 0xFF7A2FC0u;  // the easter egg: the fifth plow on the streets is purple
 constexpr float kMinTrip = 400.0f;         // m, start to end
 
 uint32_t plowRandom() {  // its own stream: the simulation's (rnd) stays as it is without the mod
@@ -57,7 +61,11 @@ void spawnPlow(script::VM& vm, SimState& s) {
   Mover& m = s.movers[size_t(id)];
   m.plow = true;
   --s.roadLive, ++s.plowsLive;
-  for (Unit& unit : m.units) unit.tint = kOrange;
+  bool purple = false;  // one is purple already
+  int others = 0;
+  for (const Mover& o : s.movers)
+    if (&o != &m && o.live && o.plow && !o.units.empty()) ++others, purple |= o.units[0].tint == kPurple;
+  for (Unit& unit : m.units) unit.tint = !purple && others >= 4 ? kPurple : kOrange;  // the fifth on the streets
   static const bool debug = std::getenv("REGS_DEBUG_TRAFFIC_MAPS") != nullptr;
   if (debug)
     LOG_INFO("snowplows: plow %d out at (%.0f, %.0f), %zu nodes, %.0f m away; %d on the streets", id, a.x, a.z,
@@ -185,6 +193,32 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   int want = 0;
   if (grid)
     if (auto f = grid->fieldValues.find(u"regsSnowplows"); f != grid->fieldValues.end()) want = int(vm.toFloat(vm.resolve(f->second)));
+  // the road speed factors (gsGrid.regsRoadSpeed, regsRoadSpeedCleared; 1 when unset)
+  auto factor = [&](const char16_t* name) {
+    if (!grid) return 1.0f;
+    auto f = grid->fieldValues.find(name);
+    return f == grid->fieldValues.end() ? 1.0f : std::clamp(vm.toFloat(vm.resolve(f->second)), 0.3f, 1.0f);
+  };
+  s.roadSpeed = factor(u"regsRoadSpeed");
+  s.roadSpeedCleared = factor(u"regsRoadSpeedCleared");
+  if (const char* d = std::getenv("REGS_DEBUG_ROAD_SPEED")) {  // the factors and the mean speed of road traffic
+    static float logClock = 0;
+    if ((logClock += dt) > 10.0f && *d) {
+      logClock = 0;
+      float sum = 0, sumPlowed = 0;
+      int n = 0, nPlowed = 0;
+      for (const Mover& m : s.movers) {
+        if (!m.live || m.parked || m.train || m.boat || m.aircraft || m.track.nodes.empty()) continue;
+        int node = m.track.nodes[m.track.at(m.dist)];
+        if (!(s.graph.nodes[size_t(node)].flags & (kPathRoad | kPathTram))) continue;
+        bool cleared = s.trafficMaps && size_t(node) < s.trafficMaps->lanePlow.size() && s.trafficMaps->lanePlow[size_t(node)] > 0.5f;
+        (cleared ? sumPlowed : sum) += m.speed;
+        ++(cleared ? nPlowed : n);
+      }
+      LOG_INFO("road speed: factor %.2f, cleared %.2f; mean speed %.2f of %d vehicles, %.2f of %d on plowed lanes",
+               s.roadSpeed, s.roadSpeedCleared, n ? sum / float(n) : 0.0f, n, nPlowed ? sumPlowed / float(nPlowed) : 0.0f, nPlowed);
+    }
+  }
   // test switch REGS_TEST_PLOWS=<n>: that many plows whenever the mod asks for any
   if (const char* t = std::getenv("REGS_TEST_PLOWS"); t && want > 0) want = std::atoi(t);
   static float clock = 0;
@@ -193,11 +227,12 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     clock = 0;
     spawnPlow(vm, s);
   }
-  // debugging: REGS_DEBUG_FOLLOW_PLOW=<n> keeps the camera (ui.setCameraPos) on the n-th plow
+  // debugging: REGS_DEBUG_FOLLOW_PLOW=<n> keeps the camera (ui.setCameraPos) on the n-th plow, =purple on the purple one
   if (const char* f = std::getenv("REGS_DEBUG_FOLLOW_PLOW")) {
-    int nth = std::atoi(f);
+    const bool purple = std::strcmp(f, "purple") == 0;
+    int nth = purple ? 0 : std::atoi(f);
     for (const Mover& m : s.movers) {
-      if (!m.live || !m.plow || m.units.empty() || nth-- > 0) continue;
+      if (!m.live || !m.plow || m.units.empty() || (purple && m.units[0].tint != kPurple) || nth-- > 0) continue;
       Vec3 p = unitPose(s, m, m.units[0], m.dist).position;
       try {
         if (script::Value* main = vm.findGlobal(u"MAIN"))
@@ -242,6 +277,17 @@ void registerSnowplowNatives(script::VM& vm) {
       return it == o->fieldValues.end() ? script::Value::integer(0) : it->second;
     };
     f.set = [](script::VM& v, script::Object* o, const script::Value& x) { o->fieldValues[u"regsSnowplows"] = v.resolve(x); };
+    for (const char16_t* name : {u"regsRoadSpeed", u"regsRoadSpeedCleared"}) {
+      FieldInfo& r = g->fields[name];
+      r.name = name;
+      r.get = [key = std::u16string(name)](script::VM&, script::Object* o) {
+        auto it = o->fieldValues.find(key);
+        return it == o->fieldValues.end() ? script::Value::real(1.0f) : it->second;
+      };
+      r.set = [key = std::u16string(name)](script::VM& v, script::Object* o, const script::Value& x) {
+        o->fieldValues[key] = script::Value::real(v.toFloat(v.resolve(x)));
+      };
+    }
   }
 }
 

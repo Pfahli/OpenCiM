@@ -452,6 +452,19 @@ void crash(SimState& s, int id, int nd, float dt) {
   for (int c : s.graph.nodes[size_t(nd)].crossings) startCrash(s, s.rt[size_t(c)].occupant, dt);
 }
 
+// the mods' road speed (SimState::roadSpeed, engine/snowplows.h) for a mover's head node: road and street-tram lanes
+// only (not in tunnels: metro, trains, boats and aircraft keep their speed), the cleared factor where a snowplow
+// drove lately (TrafficMaps::lanePlow above 0.5)
+float roadWeatherFactor(const SimState& s, const Mover& m) {
+  if (s.roadSpeed >= 0.999f && s.roadSpeedCleared >= 0.999f) return 1.0f;
+  if (m.boat || m.aircraft || m.train || m.track.nodes.empty()) return 1.0f;
+  int node = m.track.nodes[m.track.at(m.dist)];
+  uint32_t f = s.graph.nodes[size_t(node)].flags;
+  if (!(f & (kPathRoad | kPathTram)) || (f & (kPathTrain | kPathMetro | 0x800000u))) return 1.0f;
+  bool cleared = s.trafficMaps && size_t(node) < s.trafficMaps->lanePlow.size() && s.trafficMaps->lanePlow[size_t(node)] > 0.5f;
+  return std::clamp(cleared ? s.roadSpeedCleared : s.roadSpeed, 0.3f, 1.0f);
+}
+
 // one update of a mover (grid-traffic.md §6.2): claims, speed, distance, release behind the last car
 void moveMover(SimState& s, int id, float dt) {
   Mover& m = s.movers[size_t(id)];
@@ -468,6 +481,7 @@ void moveMover(SimState& s, int id, float dt) {
     const UnitModel& um = s.models[size_t(u.model)];
     target = std::min(target, nodeCap(s.graph.nodes[size_t(m.track.nodes[at])], um) * um.speed);
   }
+  target *= roadWeatherFactor(s, m);  // the mods' road speed (snow, heavy rain; full on plowed lanes)
   if (!m.crashing) {
     float cand = m.speed + hm.acceleration * dt;
     m.speed = cand <= target ? cand : std::max(target, 0.0f);

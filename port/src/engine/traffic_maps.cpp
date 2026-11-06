@@ -27,7 +27,9 @@ constexpr float kPi = 3.14159265f;
 constexpr uint32_t kTunnel = 0x800000;
 
 void paintLanes(TrafficMaps& t, const LaneGraph& g) {
-  const uint32_t want = kPathRoad | kPathTram, skip = kPathPark | kPathWalk | kPathDeleted | kTunnel;
+  // not the lane-change pieces: they cross diagonally from one lane to the next, and as the nearest lane at a point
+  // they bent the tyre tracks and the plowed strips into zig-zags
+  const uint32_t want = kPathRoad | kPathTram, skip = kPathPark | kPathWalk | kPathDeleted | kTunnel | kPathLaneChange;
   std::fill(t.lanes.begin(), t.lanes.end(), uint8_t(0));
   std::vector<float> best(size_t(t.laneW) * size_t(t.laneH), 1e9f);
   size_t painted = 0;
@@ -35,18 +37,109 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
   // all (Vienna about 125,000)
   t.laneId.assign(g.nodes.size(), -1);
   t.laneNodes.clear();
+  // lane changes without the flag: a straight piece that kinks away from a predecessor and back into a successor
+  // while those two run parallel (more than 6° each way, the two within 3°): left out as well
+  auto dirOf = [&](const LaneNode& n) {
+    float dx = n.p1.x - n.p0.x, dz = n.p1.z - n.p0.z, l = std::sqrt(dx * dx + dz * dz);
+    return l > 0.05f ? Vec3{dx / l, 0, dz / l} : Vec3{0, 0, 0};
+  };
+  std::vector<std::vector<int>> preds(g.nodes.size());
+  for (size_t i = 0; i < g.nodes.size(); ++i)
+    for (int n : g.nodes[i].next)
+      if (n >= 0 && size_t(n) < g.nodes.size()) preds[size_t(n)].push_back(int(i));
+  auto unflaggedChange = [&](size_t i) {
+    Vec3 d = dirOf(g.nodes[i]);
+    if (d.x == 0 && d.z == 0) return false;
+    for (int p : preds[i]) {
+      Vec3 a = dirOf(g.nodes[size_t(p)]);
+      if (a.x * d.x + a.z * d.z > 0.9945f) continue;  // within 6°: not kinked
+      for (int q : g.nodes[i].next) {
+        Vec3 b = dirOf(g.nodes[size_t(q)]);
+        if (b.x * d.x + b.z * d.z <= 0.9945f && a.x * b.x + a.z * b.z > 0.9986f) return true;
+      }
+    }
+    return false;
+  };
+  // longer ones (several pieces): a branch forking off a lane at more than 6° while another successor runs straight
+  // on, followed until it merges into a lane (a node with two predecessors), at most 20 pieces, junctions excluded
+  std::vector<uint8_t> branch(g.nodes.size(), 0);
+  for (size_t i = 0; i < g.nodes.size(); ++i) {
+    const LaneNode& n = g.nodes[i];
+    if (n.next.size() < 2 || !(n.flags & want) || (n.flags & kPathIntersection)) continue;
+    Vec3 d = dirOf(n);
+    bool straight = false;
+    for (int q : n.next) straight |= dirOf(g.nodes[size_t(q)]).x * d.x + dirOf(g.nodes[size_t(q)]).z * d.z > 0.9945f;
+    if (!straight) continue;
+    for (int q : n.next) {
+      Vec3 b = dirOf(g.nodes[size_t(q)]);
+      if (b.x * d.x + b.z * d.z > 0.9945f) continue;
+      int k = q;
+      for (int steps = 0; steps < 20 && k >= 0; ++steps) {
+        const LaneNode& m = g.nodes[size_t(k)];
+        if ((m.flags & kPathIntersection) || preds[size_t(k)].size() >= 2) break;
+        branch[size_t(k)] = 1;
+        k = m.next.size() == 1 ? m.next[0] : -1;
+      }
+    }
+  }
+  size_t unflagged = 0;
   for (size_t i = 0; i < g.nodes.size() && t.laneNodes.size() < 262143; ++i) {
     const LaneNode& n = g.nodes[i];
     if (!(n.flags & want) || (n.flags & skip)) continue;
+    if (!(n.flags & kPathIntersection) && (branch[i] || unflaggedChange(i))) {
+      ++unflagged;
+      continue;
+    }
     t.laneId[i] = int32_t(t.laneNodes.size());
     t.laneNodes.push_back(int(i));
   }
-  for (int pass = 0; pass < 2; ++pass)  // lanes first, then the intersections' lanes where nothing is yet
+  if (std::getenv("REGS_DEBUG_LANE_FLAGS")) {  // the flags of road nodes that run across their neighbours
+    std::unordered_map<uint32_t, int> diag, all;
+    for (size_t i = 0; i < g.nodes.size(); ++i) {
+      const LaneNode& n = g.nodes[i];
+      if (!(n.flags & (kPathRoad | kPathTram))) continue;
+      ++all[n.flags & 0xffff];
+      Vec3 d = n.p1 - n.p0;
+      float len = std::sqrt(d.x * d.x + d.z * d.z);
+      if (len < 0.1f) continue;
+      float pe = n.f0.x * n.f1.x + n.f0.z * n.f1.z, ce = (d.x * n.f0.x + d.z * n.f0.z) / len;
+      if (pe > 0.995f && ce < 0.996f) ++diag[n.flags & 0xffff];  // ends parallel, chord across: an S-curve
+    }
+    for (auto& [f, k] : all) LOG_INFO("lane flags %04x: %d nodes, %d bending away from their successor", f, k, diag[f]);
+  }
+  // lanes first, then the intersections' lanes only inside the junctions, a metre away from any straight lane (turning lanes
+  // painted into the gaps between straight lanes broke their tracks into chopped diagonal pieces)
+  std::vector<uint8_t> nearStraight;
+  auto throughLane = [&](size_t i) {
+    Vec3 d = dirOf(g.nodes[i]);
+    for (int p : preds[i]) {
+      Vec3 a = dirOf(g.nodes[size_t(p)]);
+      if (a.x * d.x + a.z * d.z <= 0.9945f) continue;
+      for (int q : g.nodes[i].next) {
+        Vec3 b = dirOf(g.nodes[size_t(q)]);
+        if (b.x * d.x + b.z * d.z > 0.9945f) return true;
+      }
+    }
+    return false;
+  };
+  for (int pass = 0; pass < 2; ++pass)
     for (size_t i = 0; i < g.nodes.size(); ++i) {
       const LaneNode& n = g.nodes[i];
       if (t.laneId[i] < 0) continue;
-      bool cross = (n.flags & kPathIntersection) != 0;
+      // a junction's lanes that run straight through (predecessor, piece and successor within 6°) count as straight
+      bool cross = (n.flags & kPathIntersection) != 0 && !throughLane(i);
       if ((pass == 0) == cross) continue;
+      if (pass == 1 && nearStraight.empty()) {  // the straight lanes' texels and 1 m around them
+        nearStraight.assign(best.size(), 0);
+        for (int z = 0; z < t.laneH; ++z)
+          for (int x = 0; x < t.laneW; ++x)
+            if (best[size_t(z) * size_t(t.laneW) + size_t(x)] < 1e9f)
+              for (int dz = -1; dz <= 1; ++dz)
+                for (int dx = -1; dx <= 1; ++dx) {
+                  int xx = x + dx, zz = z + dz;
+                  if (xx >= 0 && zz >= 0 && xx < t.laneW && zz < t.laneH) nearStraight[size_t(zz) * size_t(t.laneW) + size_t(xx)] = 1;
+                }
+      }
       float dx = n.p1.x - n.p0.x, dz = n.p1.z - n.p0.z, len = std::sqrt(dx * dx + dz * dz);
       if (len < 0.05f) continue;
       float a = std::atan2(dz, dx);
@@ -69,7 +162,7 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
           float side = std::fabs(cx * -uz + cz * ux);
           if (side > kLaneHalfWidth) continue;
           size_t k = size_t(z) * size_t(t.laneW) + size_t(x);
-          if (pass == 1 && best[k] < 1e9f) continue;
+          if (pass == 1 && nearStraight[k]) continue;
           if (side >= best[k]) continue;  // the nearest lane centre wins
           best[k] = side;
           uint32_t idx = uint32_t(t.laneId[i] + 1);
@@ -83,8 +176,8 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
   t.graphNodes = g.nodes.size();
   t.lanesBuilt = true;
   t.lanesUploaded = false;
-  LOG_INFO("traffic maps: %dx%d texels, %zu lane texels painted from %zu lanes of %zu nodes", t.laneW, t.laneH, painted,
-           t.laneNodes.size(), g.nodes.size());
+  LOG_INFO("traffic maps: %dx%d texels, %zu lane texels painted from %zu lanes of %zu nodes (%zu unflagged lane changes left out)", t.laneW, t.laneH, painted,
+           t.laneNodes.size(), g.nodes.size(), unflagged);
 }
 
 void upload(uint32_t& tex, int w, int h, uint32_t format, uint32_t layout, const uint8_t* data, bool linear) {
@@ -389,10 +482,26 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
     if (t.laneTrafficDirty) {
       int rows = int((t.laneNodes.size() + 255) / 256);
       t.laneValue.assign(size_t(std::max(rows, 1)) * 256 * 4, 0);
+      // the traffic blurred along the lanes (two passes over each node and its successors and predecessors, about
+      // ±6 m): counted per 3 m node, a track would otherwise start and stop in steps at the node ends
+      const LaneGraph& G = simOf(grid)->graph;
+      std::vector<float> smooth(t.laneCount), sum(t.laneCount.size()), weight(t.laneCount.size());
+      for (int pass = 0; pass < 2; ++pass) {
+        std::fill(sum.begin(), sum.end(), 0.0f);
+        std::fill(weight.begin(), weight.end(), 0.0f);
+        for (size_t i = 0; i < smooth.size() && i < G.nodes.size(); ++i)
+          for (int n : G.nodes[i].next)
+            if (n >= 0 && size_t(n) < smooth.size()) {
+              sum[i] += smooth[size_t(n)], weight[i] += 1.0f;
+              sum[size_t(n)] += smooth[i], weight[size_t(n)] += 1.0f;
+            }
+        for (size_t i = 0; i < smooth.size(); ++i)
+          if (weight[i] > 0) smooth[i] = 0.5f * smooth[i] + 0.5f * sum[i] / weight[i];
+      }
       for (size_t l = 0; l < t.laneNodes.size(); ++l) {  // by lane number (paintLanes)
         size_t i = size_t(t.laneNodes[l]);
-        if (i < t.laneCount.size())
-          t.laneValue[l * 4] = uint8_t(std::lround(255.0f * (1.0f - std::exp(-t.laneCount[i] / 12.0f))));
+        if (i < smooth.size())
+          t.laneValue[l * 4] = uint8_t(std::lround(255.0f * (1.0f - std::exp(-smooth[i] / 4.0f))));
         if (i < t.lanePlow.size()) {
           t.laneValue[l * 4 + 1] = uint8_t(std::lround(255.0f * t.lanePlow[i]));
           t.laneValue[l * 4 + 2] = uint8_t(std::lround(255.0f * t.laneHeap[i]));

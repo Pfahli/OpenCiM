@@ -1,0 +1,10 @@
+// Weather mod (opencim.weather): its settings on the settings menu's Mods page (regs/ui/mods.script)
+$file = "regs/mods/opencim.weather/strings/" + MAIN.$language + ".strings";
+if (!file_exists($file)) $file = "regs/mods/opencim.weather/strings/en_US.strings";
+$texts = load "/" + $file;
+MAIN.$regsModsPage.addHeading($texts.$weather_options_heading);
+MAIN.$regsModsPage.addCheckbox($texts.$weather_enabled_item, "regsWeatherEnabled", true);
+MAIN.$regsModsPage.addCheckbox($texts.$weather_seasons_item, "regsSeasonsEnabled", true);
+MAIN.$regsModsPage.addCheckbox($texts.$weather_dayNight_item, "regsDayNight", false);   // the port's own switch (also on the graphics page)
+MAIN.$regsModsPage.addCheckbox($texts.$weather_slowTraffic_item, "regsWeatherSlowTraffic", true);
+delete $texts;

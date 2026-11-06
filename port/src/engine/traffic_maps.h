@@ -3,13 +3,13 @@
 // went lately, for snow that stays on quiet streets, tyre tracks along the lanes and trodden paths.
 //
 // * Lane map: a top-down RGBA8 texture, 1 m per texel, of the road and street-tram lanes (lane graph nodes with
-//   kPathRoad or kPathTram, not in tunnels, not parking): per texel the lane's own number + 1 (16 bits, 0 = none; TrafficMaps::laneId), the signed
+//   kPathRoad or kPathTram, not in tunnels, not parking, not lane changes): per texel the lane's own number + 1 (18 bits, 0 = none; TrafficMaps::laneId), the signed
 //   lateral offset of the texel centre from the lane's centre line (B, low 6 bits: (offset + 2.56 m) / 0.08 m; its top 2 bits are the number's bits 16-17) and the lane's
 //   direction (A: angle mod π in 256 steps), so a hook can rebuild the exact lateral offset of any point inside the
 //   texel (regs_laneAt). Painted once from the lane graph (live edits: on the next graph change).
 // * Lane traffic: per lane node a decaying count of the time vehicles spent on it (road and rail units on road and
 //   tram lanes, τ = 60 s of simulation, 10 s for the first 20 s so a loaded map is up to date at once), as
-//   1 − exp(−count / 12 s) in the R channel of an RGBA8 texture of 256 lanes per row (regs_laneTraffic). G: the
+//   1 − exp(−count / 4 s) in the R channel of an RGBA8 texture of 256 lanes per row (regs_laneTraffic). G: the
 //   snowplows (engine/snowplows.h), 1 where one drove just now, filling in again with new snow at the footprints'
 //   pace (gsGrid.regsFootprints); B: the heap its blade pushed to the kerb, growing with each pass over a lane that
 //   had snow on it again (regs_lanePlowed). Both are cleared once the footprints are off (no snow).
