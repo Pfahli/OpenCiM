@@ -24,4 +24,8 @@ void prepareTerrainCells(GridData& g);
 void collectGrid(Display& d, script::VM& vm, GridObj* grid, const render::Vec3& eye, const render::Mat4& viewProj,
                  float farZ, float viewScale, float detailScale, std::vector<render::DrawItem>& items);
 
+// The map's surface map for the mods' shader hooks (engine/surface_map.h): its texture and (originX, originZ,
+// 1 / sizeX, 1 / sizeZ) in world units; false when there is none.
+bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4]);
+
 }  // namespace regs::engine

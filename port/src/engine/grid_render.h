@@ -20,6 +20,7 @@ class Display;
 class GridObj;
 class ObjectObj;
 struct GridData;
+struct SurfaceMap;
 
 struct GridDivision {
   render::GpuMesh terrain[2], items[2];  // per LOD
@@ -74,6 +75,8 @@ struct TerrainCache {
   uint32_t viewMode = 0xFE;
   uint64_t viewVersion = ~0ull, tunnelItemsVersion = ~0ull;
   std::vector<uint8_t> tunnelDivision;
+  // the surface classes seen from above for the mods' shader hooks (engine/surface_map.h); null without hooks
+  std::shared_ptr<SurfaceMap> surfaceMap;
 };
 
 // The view mode a division is built with (gsGridDivision::update, L:0x08166080.c:309-345): in the underground view

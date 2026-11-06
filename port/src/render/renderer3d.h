@@ -12,6 +12,20 @@ namespace regs::render {
 
 // A material as the renderer binds it: flags, textures in unit order and the fixed-function colours the engine
 // sets with glMaterial (docs/renderer/interfaces-3d.md §2.10).
+constexpr int kHookEnvUnit = 8;      // texture unit of the shader hooks' environment cube (regs_EnvMap)
+constexpr int kHookSurfaceUnit = 9;  // and of the map's surface classes (regs_SurfaceMap)
+
+// GpuMaterial::surfaceClass: the map surfaces a shader hook can tell apart (mod-manager.md §4.3)
+enum : uint8_t {
+  kSurfaceOther = 0,     // buildings, props, vehicles, people, menus
+  kSurfaceTerrain = 1,   // the terrain group: grass, earth, sea floor, cliffs (terrain.md §5)
+  kSurfaceField = 2,     // field cells
+  kSurfacePavement = 3,  // yard (pavement) cells: paved squares and yards
+  kSurfaceRoad = 4,      // road, alley and street-tram items (types 1-7, 10-12) and their texture variations
+  kSurfacePlatform = 5,  // stations, docks, heliports (types 0x10-0x12) and PAVEMENT-flagged items
+  kSurfaceWater = 6,     // the water surface
+};
+
 struct GpuMaterial {
   uint32_t flags = 0;
   std::vector<uint32_t> textures;  // GL names, unit i = textures[i]
@@ -25,6 +39,8 @@ struct GpuMaterial {
   float depthOffset = 0;      // glPolygonOffset(2d, 2d) when non-zero
   std::string shader;         // combiner .shader path (empty: the default shader)
   uint32_t meshFlags = 0;     // combiner mesh flags of the meshes using it (MESH_SKINNED 0x100)
+  // port: what the surface is, for the mods' shader hooks (render/glsl.h, mod-manager.md §4.3)
+  uint8_t surfaceClass = kSurfaceOther;
   // combiner variants per pass environment (env flags of the pass | light count << 12); program 0 = none (the
   // built-in default shader in normal passes, not drawn in shadow passes)
   struct Variant {
@@ -118,6 +134,11 @@ struct SceneView {
   // material ambient and diffuse × surfaceDiffuse, specular × surfaceSpecular (the scene's port atmosphere fields,
   // engine/scene3d.cpp: wet surfaces in the weather mod)
   float surfaceDiffuse = 1, surfaceSpecular = 1;
+  // shader hooks (render/glsl.h): run in this view's colour passes; the environment cube they see on unit 8
+  bool hooks = false;
+  uint32_t hookEnvCube = 0;
+  uint32_t hookSurfaceMap = 0;  // the map's surface classes (engine/surface_map.h) on unit 9
+  float hookSurfaceRect[4] = {0, 0, 0, 0};
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms
@@ -163,7 +184,8 @@ class Renderer3D {
   bool init(std::string* error);
   // A combiner variant: GLSL 1.10 as generated, translated to 3.30 (render/glsl.h) and linked with the attribute
   // slots of upload(). 0 on failure (error set).
-  uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error);
+  // hooks: add the mods' shader hooks (render/glsl.h; the scene combiner variants).
+  uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false);
   GpuMesh upload(const MeshData& m, const SkinLayout& skin = {});
   void destroy(GpuMesh& m);
   bool makeTarget(RenderTarget& t, int w, int h, TargetFormat format = TargetFormat::Rgba8, bool withDepth = true,
@@ -210,6 +232,9 @@ class Renderer3D {
     int productAmbient[8], productDiffuse[8], productSpecular[8], texture[8], custom[8];
     int matrix = -1, eyepos = -1, timer = -1, reflection = -1, worldup = -1, colorize = -1, vieworient = -1, alphaRef = -1;
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
+    // shader hooks (render/glsl.h): -1 in programs without them
+    int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1;
+    std::map<std::string, int> hookUniforms;
   };
   std::map<uint32_t, ProgramLocs> locs_;
   const ProgramLocs& locs(uint32_t prog);

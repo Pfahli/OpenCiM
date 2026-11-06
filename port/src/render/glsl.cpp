@@ -32,9 +32,63 @@ vec3 regs_smoothstep(float a, float b, vec3 x) { return regs_smoothstep(vec3(a),
 vec4 regs_smoothstep(float a, float b, vec4 x) { return regs_smoothstep(vec4(a), vec4(b), x); }
 )";
 
+std::vector<ShaderHook>& hooks() {
+  static std::vector<ShaderHook> h;
+  return h;
+}
+
+// the fragment side of the hooks: the world position from the interpolated clip position (any vertex transform:
+// terrain, merged items, skinning), the surface record, then each hook in registration order
+std::string hookFragmentCode() {
+  std::string s = R"(
+in vec4 regs_HookClip;
+uniform float regs_HookOn = 0.0;
+uniform int regs_SurfaceClass = 0;
+uniform mat4 regs_HookInvViewProj;
+uniform vec3 regs_HookEye;
+uniform float regs_HookTime;
+uniform samplerCube regs_EnvMap;
+uniform sampler2D regs_SurfaceMap;
+uniform vec4 regs_SurfaceMapRect;
+struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; int surfaceClass; float time; };
+// the surface class seen from above at a world point (engine/surface_map.h; 0 where nothing walkable was painted,
+// -1 outside the map or while there is no map)
+int regs_surfaceAt(vec2 xz) {
+  vec2 uv = (xz - regs_SurfaceMapRect.xy) * regs_SurfaceMapRect.zw;
+  if (regs_SurfaceMapRect.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return -1;
+  return int(texture(regs_SurfaceMap, uv).r * 255.0 + 0.5) & 127;
+}
+)";
+  for (const ShaderHook& h : hooks()) s += "// hook " + h.function + " (" + h.origin + ")\n" + h.code + "\n";
+  s += R"(void regs_hooks(inout vec4 c) {
+  vec4 w = regs_HookInvViewProj * regs_HookClip;
+  RegsSurface s;
+  s.pos = w.xyz / w.w;
+  vec3 e = s.pos - regs_HookEye;
+  s.dist = length(e);
+  s.view = e / max(s.dist, 1e-4);
+  vec3 n = normalize(cross(dFdx(s.pos), dFdy(s.pos)));
+  s.normal = dot(n, s.view) > 0.0 ? -n : n;
+  s.fog = clamp((s.dist - regs_Fog.start) * regs_Fog.scale, 0.0, 1.0);
+  s.surfaceClass = regs_SurfaceClass;
+  s.time = regs_HookTime;
+)";
+  for (const ShaderHook& h : hooks()) s += "  " + h.function + "(c, s);\n";
+  s += "}\n";
+  return s;
+}
+
 }  // namespace
 
-std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported) {
+void addShaderHook(const ShaderHook& h) { hooks().push_back(h); }
+const std::vector<ShaderHook>& shaderHooks() { return hooks(); }
+std::map<std::string, std::array<float, 4>>& shaderHookUniforms() {
+  static std::map<std::string, std::array<float, 4>> u;
+  return u;
+}
+
+std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool withHooks) {
+  withHooks = withHooks && !hooks().empty();
   std::string s = src;
   auto sub = [&](const char* re, const char* to) { s = std::regex_replace(s, std::regex(re), to); };
   sub(R"(^\s*#version[^\n]*\n)", "");
@@ -57,6 +111,11 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     head += "in vec4 regs_Vertex;\nin vec3 regs_Normal;\nin vec4 regs_Color;\n";
     for (int i = 0; i < 8; ++i) head += "in vec4 regs_MultiTexCoord" + std::to_string(i) + ";\n";
     head += "out vec4 regs_FrontColor;\n";
+    if (withHooks) {  // the clip position for the hooks' world position
+      sub(R"(\bvoid\s+main\s*\()", "void regs_vmain(");
+      head += "out vec4 regs_HookClip;\n";
+      s += "\nvoid main() {\n  regs_vmain();\n  regs_HookClip = gl_Position;\n}\n";
+    }
   } else {
     sub(R"(\bvarying\b)", "in");
     sub(R"(\bgl_Color\b)", "regs_FrontColor");
@@ -64,7 +123,12 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
     sub(R"(\bvoid\s+main\s*\()", "void regs_main(");
-    s += "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
+    if (withHooks)
+      s += hookFragmentCode() +
+           "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_HookOn > 0.5) regs_hooks(regs_FragColor);\n"
+           "  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
+    else
+      s += "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
   }
   std::regex builtin(R"(\bgl_[A-Za-z0-9_]+)");
   for (auto it = std::sregex_iterator(s.begin(), s.end(), builtin); it != std::sregex_iterator(); ++it) {

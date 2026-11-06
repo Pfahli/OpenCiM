@@ -634,9 +634,9 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
                    reinterpret_cast<void*>(size_t(p.firstIndex) * 4));
 }
 
-uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error) {
+uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks) {
   std::string why;
-  std::string vs = translateGlsl110(vs110, false, &why), fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why);
+  std::string vs = translateGlsl110(vs110, false, &why, hooks), fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks);
   if (vs.empty() || fs.empty()) {
     if (error) *error = "unsupported built-in " + why;
     return 0;
@@ -660,6 +660,16 @@ uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& f
     gl::GetProgramInfoLog(prog, sizeof log, nullptr, log);
     if (error) *error = log;
     return 0;
+  }
+  // the hooks' environment cube lives on unit 8 (a sampler left at unit 0 would clash with the 2D map there)
+  int env = gl::GetUniformLocation(prog, "regs_EnvMap"), surf = gl::GetUniformLocation(prog, "regs_SurfaceMap");
+  if (env >= 0 || surf >= 0) {
+    gl::GLint current = 0;
+    gl::GetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &current);
+    gl::UseProgram(prog);
+    if (env >= 0) gl::Uniform1i(env, kHookEnvUnit);
+    if (surf >= 0) gl::Uniform1i(surf, kHookSurfaceUnit);
+    gl::UseProgram(gl::GLuint(current));
   }
   return prog;
 }
@@ -711,6 +721,14 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.shadowWarp = at("shadowWarp");
   l.shadowParams = at("shadowParams");
   l.bones = at("bones");
+  l.hookOn = at("regs_HookOn");
+  if (l.hookOn >= 0) {
+    l.surfaceClass = at("regs_SurfaceClass");
+    l.hookInvViewProj = at("regs_HookInvViewProj");
+    l.hookEye = at("regs_HookEye");
+    l.hookTime = at("regs_HookTime");
+    l.hookSurfaceRect = at("regs_SurfaceMapRect");
+  }
   return l;
 }
 
@@ -749,6 +767,28 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   gl::UniformMatrix4fv(l.shadowTransform, 1, 0, v.shadowTransform.m);
   gl::UniformMatrix4fv(l.shadowWarp, 1, 0, v.shadowWarp.m);
   gl::Uniform4fv(l.shadowParams, 1, v.shadowParams);
+  if (l.hookOn >= 0) {  // the mods' shader hooks: colour passes of hooked views only
+    bool on = v.hooks && !(v.env & (kEnvShadowMapRender | kEnvShadowRender));
+    gl::Uniform1f(l.hookOn, on ? 1.0f : 0.0f);
+    if (on) {
+      Mat4 inv = inverse(v.proj * v.view);
+      gl::UniformMatrix4fv(l.hookInvViewProj, 1, 0, inv.m);
+      gl::Uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
+      gl::Uniform1f(l.hookTime, v.timer);
+      ProgramLocs& lw = locs_[prog];
+      for (const auto& [name, value] : shaderHookUniforms()) {
+        auto it = lw.hookUniforms.find(name);
+        if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, gl::GetUniformLocation(prog, name.c_str())).first;
+        if (it->second >= 0) gl::Uniform4fv(it->second, 1, value.data());
+      }
+      gl::Uniform4fv(l.hookSurfaceRect, 1, v.hookSurfaceRect);
+      gl::ActiveTexture(gl::TEXTURE0 + kHookEnvUnit);
+      gl::BindTexture(gl::TEXTURE_CUBE_MAP, v.hookEnvCube);
+      gl::ActiveTexture(gl::TEXTURE0 + kHookSurfaceUnit);
+      gl::BindTexture(gl::TEXTURE_2D, v.hookSurfaceMap);
+      gl::ActiveTexture(gl::TEXTURE0);
+    }
+  }
 }
 
 void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
@@ -766,6 +806,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform4fv(l.matDiffuse, 1, dif);
   gl::Uniform4fv(l.matSpecular, 1, spe);
   gl::Uniform1f(l.matShininess, m.shininess);
+  if (l.surfaceClass >= 0) gl::Uniform1i(l.surfaceClass, m.surfaceClass);
   int n = int(std::min<size_t>(v.lights.size(), 8));
   for (int i = 0; i < n; ++i) {  // gl_FrontLightProduct = light × material, component-wise
     const Light& li = v.lights[size_t(i)];

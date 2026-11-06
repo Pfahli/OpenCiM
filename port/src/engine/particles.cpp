@@ -127,6 +127,7 @@ class ParticleEmitterObj : public Object {
   // speed × regsStretch seconds (0 = the original's camera-facing billboard)
   Vec3 emitBox;
   float stretch = 0;
+  bool vehicleOnly = false;  // listed in gsGrid.regsVehicleEmitters: emits only behind vehicles, not at its own place
   bool emitting = false;   // gsEmittingParticleEmitter: its particles carry its child emitters
   bool contrail = false;   // gsBoatContrain: a wake ribbon, not particles (not ported)
 
@@ -311,7 +312,7 @@ int emissionCount(VM& vm, ParticleEmitterObj* e, float& timer, float dt) {
 }
 
 void ParticleEmitterObj::tick(VM& vm, float dt) {
-  if (!particlesOff() && !contrail && dt > 0)
+  if (!particlesOff() && !contrail && !vehicleOnly && dt > 0)
     if (int n = emissionCount(vm, this, timer, dt)) instantEmit(vm, this, n);
   Object::tick(vm, dt);
 }
@@ -465,6 +466,7 @@ struct SimParticles {
   std::vector<MoverFx> movers;
   std::vector<ItemEffects> items;
   uint64_t itemsGeneration = ~0ull, itemsVersion = ~0ull;
+  std::unordered_map<uint64_t, float> sprayTimers;  // port vehicle emitters: (mover << 8 | emitter) → accumulator
   int fireTicks = 0;
   bool fireDone = false;
 
@@ -568,6 +570,73 @@ void tickVehicles(VM& vm, ParticleEngineObj* eng, SimState& s, SimParticles& sp,
   }
 }
 
+// Port: mod emitters on moving vehicles (gsGrid.regsVehicleEmitters, an array of emitters; mod-manager.md §4.2):
+// each emits behind the rear unit of the moving road and rail vehicles near the camera (not boats, aircraft or
+// vehicles in tunnels), its density in particles per second at 10 m/s, scaled with the square of the speed (up to 4×
+// at 20 m/s: next to nothing behind slow vehicles); its position is an offset in the vehicle's frame (x right, y up,
+// z backwards from the rear end); its direction turns with the vehicle; the owner velocity is the vehicle's. At most
+// kMaxSprayVehicles nearest vehicles within the emitter's maxDistance (150 m when 0).
+constexpr size_t kMaxSprayVehicles = 24;
+
+void tickVehicleEmitters(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimState& s, SimParticles& sp, const Vec3& eye,
+                         float dt) {
+  auto f = grid->fieldValues.find(u"regsVehicleEmitters");
+  if (f == grid->fieldValues.end()) return;
+  std::vector<ParticleEmitterObj*> emitters;
+  if (ArrayObj* arr = vm.resolve(f->second).array())
+    for (const Value& e : arr->items)
+      if (auto* pe = dynamic_cast<ParticleEmitterObj*>(vm.resolve(e).object()); pe && !pe->destroyed && pe->autoemit)
+        emitters.push_back(pe);
+  if (emitters.empty()) return;
+  float range = 0;
+  for (auto* e : emitters) range = std::max(range, e->maxDistance > 0 ? e->maxDistance : 150.0f);
+  struct Near {
+    float d2;
+    size_t mover;
+  };
+  std::vector<Near> near;
+  for (size_t id = 0; id < s.movers.size(); ++id) {
+    const Mover& m = s.movers[id];
+    if (!m.live || m.parked || m.boat || m.aircraft || m.track.nodes.empty() || m.units.empty() || m.speed < 0.5f) continue;
+    const LaneNode& node = s.graph.nodes[size_t(m.track.nodes[m.track.at(m.dist)])];
+    if (node.flags & 0x800000) continue;  // tunnel
+    Vec3 q = node.p0 - eye;
+    float d2 = dot(q, q);
+    if (d2 < (range + 40.0f) * (range + 40.0f)) near.push_back({d2, id});
+  }
+  if (near.size() > kMaxSprayVehicles) {
+    std::partial_sort(near.begin(), near.begin() + kMaxSprayVehicles, near.end(), [](const Near& a, const Near& b) { return a.d2 < b.d2; });
+    near.resize(kMaxSprayVehicles);
+  }
+  for (const Near& n : near) {
+    const Mover& m = s.movers[n.mover];
+    // the rear unit's pose
+    float r = m.dist;
+    size_t last = m.units.size() - 1;
+    for (size_t k = 1; k <= last; ++k) r -= unitLength(s, m.units[k]);
+    const Unit& u = m.units[last];
+    PlacedPose p = unitPose(s, m, u, r);
+    Vec3 fwd = render::normalize(p.forward), up{0, 1, 0};
+    Vec3 right = render::normalize(render::cross(fwd, up));
+    Vec3 rear = p.position - fwd * (0.5f * unitLength(s, u));
+    Vec3 dv = rear - eye;
+    float dist = std::sqrt(dot(dv, dv));
+    Mat4 basis = poseMatrix(p);
+    for (size_t k = 0; k < emitters.size(); ++k) {
+      ParticleEmitterObj* e = emitters[k];
+      if (dist >= (e->maxDistance > 0 ? e->maxDistance : 150.0f)) continue;
+      float& timer = sp.sprayTimers[(uint64_t(n.mover) << 8) | k];
+      float sp = std::min(2.0f, m.speed / 10.0f);
+      timer += dt * e->rate(vm) * sp * sp;
+      int count = int(timer);
+      if (count <= 0) continue;
+      timer -= float(count);
+      Vec3 at = rear + right * e->localPos.x + up * e->localPos.y - fwd * e->localPos.z;
+      for (int i = 0; i < count && i < 200; ++i) emitParticle(vm, eng, e, at, basis, fwd * m.speed);
+    }
+  }
+}
+
 // gsGridItem::move (L:0x08182b10.c:84-91): the emitters of items at the item centre, turned (orient+2)·90° (the
 // mesh's placement without the "b" variants' 45°), with grid.effectConditions
 void tickItems(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimParticles& sp, const Vec3& eye, float dt) {
@@ -664,6 +733,7 @@ void simParticlesTick(VM& vm, GridObj* grid, SimState& s, float dt) {
   auto t0 = std::chrono::steady_clock::now();
   tickVehicles(vm, eng, s, sp, s.eye, dt);
   tickItems(vm, eng, grid, sp, s.eye, dt);
+  tickVehicleEmitters(vm, eng, grid, s, sp, s.eye, dt);
   stats.simMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -775,6 +845,22 @@ void registerParticleNatives(VM& vm) {
     FieldInfo& w = c->fields[u"windVelocity"];
     w.get = [](VM&, Object* o) { return vecValue(static_cast<ParticleEngineObj*>(o)->wind); };
     w.set = [](VM& v, Object* o, const Value& x) { static_cast<ParticleEngineObj*>(o)->wind = vecOf(v.resolve(x)); };
+  }
+  // port: gsGrid.regsVehicleEmitters (tickVehicleEmitters); the listed emitters stop emitting at their own place
+  if (ClassInfo* g = vm.findClass("gsGrid")) {
+    FieldInfo& f = g->fields[u"regsVehicleEmitters"];
+    f.name = u"regsVehicleEmitters";
+    f.get = [](VM&, Object* o) {
+      auto it = o->fieldValues.find(u"regsVehicleEmitters");
+      return it == o->fieldValues.end() ? Value::null() : it->second;
+    };
+    f.set = [](VM& v, Object* o, const Value& x) {
+      Value r = v.resolve(x);
+      o->fieldValues[u"regsVehicleEmitters"] = r;
+      if (ArrayObj* arr = r.array())
+        for (const Value& e : arr->items)
+          if (auto* pe = dynamic_cast<ParticleEmitterObj*>(v.resolve(e).object())) pe->vehicleOnly = true;
+    };
   }
   ClassInfo* c = vm.findClass("gsParticleEmitter");
   if (!c) return;

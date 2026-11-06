@@ -15,6 +15,7 @@
 #include "engine/api.h"
 #include "engine/host.h"
 #include "engine/user_folders.h"
+#include "render/glsl.h"
 #include "vfs/vfs.h"
 
 namespace regs::engine {
@@ -238,6 +239,44 @@ void scanFolder(const fs::path& dir, bool builtIn, std::map<std::string, ModInfo
   }
 }
 
+bool validIdentifier(const std::string& s) {
+  if (s.empty() || std::isdigit(static_cast<unsigned char>(s[0]))) return false;
+  for (char c : s)
+    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) return false;
+  return s.rfind("gl_", 0) != 0 && s.rfind("regs_", 0) != 0;
+}
+
+// "shaderHooks": [{"file": "<path in the mod>", "function": "<name>"}] (render/glsl.h, mod-manager.md §4.3)
+void loadShaderHooks(const ModInfo& m) {
+  Json j;
+  std::string err;
+  if (!readJson(m.dir / "mod.json", j, err)) return;
+  const Json* hooks = j.get("shaderHooks");
+  if (!hooks || hooks->t != Json::T::Arr) return;
+  for (const Json& h : hooks->a) {
+    std::string file = h.str("file"), function = h.str("function");
+    if (!validIdentifier(function) || file.empty() || file.find("..") != std::string::npos) {
+      LOG_WARN("mods: %s: shader hook needs a \"file\" in the mod and a GLSL \"function\" name, skipped", m.id.c_str());
+      continue;
+    }
+    auto w = utf8ToUtf16(file);
+    FILE* f = _wfopen((m.dir / fs::path(std::wstring(w.begin(), w.end()))).wstring().c_str(), L"rb");
+    if (!f) {
+      LOG_WARN("mods: %s: shader hook %s not found, skipped", m.id.c_str(), file.c_str());
+      continue;
+    }
+    std::string code;
+    char buf[4096];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) code.append(buf, n);
+    std::fclose(f);
+    if (code.find("gl_") != std::string::npos)
+      LOG_WARN("mods: %s: shader hook %s uses a gl_ built-in; hooks are GLSL 3.30 core (the programs would not build)",
+               m.id.c_str(), file.c_str());
+    render::addShaderHook({function, code, m.id + "/" + file});
+    LOG_INFO("mods: %s: shader hook %s (%s)", m.id.c_str(), function.c_str(), file.c_str());
+  }
+}
+
 }  // namespace
 
 fs::path modsUserRoot() {
@@ -284,6 +323,7 @@ void loadMods(Vfs& vfs, VM& vm) {
     }
     ModInfo m = it->second;
     m.enabled = true;
+    loadShaderHooks(m);
     // layers: the whole folder under regs/mods/<id>/ (its scripts, sounds, textures, extend/), and files/ over the
     // game and the port's data (later mods win)
     vfs.addModLayer(m.dir, m.vfsRoot(), m.id);
@@ -307,6 +347,21 @@ void registerModNatives(VM& vm) {
       arr->items.push_back(Value::heap(VT::Map, map.get()));
     }
     return Value::heap(VT::Array, arr.get());
+  });
+  // regsShaderUniform(name, value): a vec4 uniform of the shader hooks (float → (v, 0, 0, 0), vector → (x, y, z, 0),
+  // quat → (x, y, z, w)), set in every hooked program from the next frame on
+  implementGlobal(vm, u"regsShaderUniform", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc < 2) return Value();
+    std::string name = utf16ToUtf8(v.toStr(a[0]));
+    Value x = v.resolve(a[1]);
+    std::array<float, 4> f{0, 0, 0, 0};
+    if (x.type() == VT::Vector || x.type() == VT::Quat) {
+      for (int k = 0; k < (x.type() == VT::Quat ? 4 : 3); ++k) f[size_t(k)] = x.vec()[k];
+    } else {
+      f[0] = v.toFloat(x);
+    }
+    render::shaderHookUniforms()[name] = f;
+    return Value();
   });
 }
 

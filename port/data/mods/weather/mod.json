@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "authors": ["OpenCiM"],
   "description": {
-    "en_US": "Rain spells by game date: falling rain around the camera, wet streets and roofs, grey light and fog, rain and distant thunder sounds. Seasons will follow.",
-    "de": "Regenschauer nach Spieldatum: Regen um die Kamera, nasse Straßen und Dächer, graues Licht und Nebel, Regen und fernes Donnergrollen. Jahreszeiten folgen."
+    "en_US": "Rain, heavy rain and thunderstorms by game date: fine rain around the camera, wet streets with puddles that dry after the rain, spray behind vehicles, grey light and fog, lightning, rain and thunder sounds. Seasons will follow.",
+    "de": "Regen, Starkregen und Gewitter nach Spieldatum: feiner Regen um die Kamera, nasse Straßen mit Pfützen, die nach dem Regen trocknen, Gischt hinter Fahrzeugen, graues Licht und Nebel, Blitze, Regen und Donner. Jahreszeiten folgen."
   },
   "requires": { "regs": ">=0.1" },
+  "shaderHooks": [ { "file": "shaders/wet.glsl", "function": "weather_wet_surface" } ],
   "saves": "none",
   "repository": ""
 }

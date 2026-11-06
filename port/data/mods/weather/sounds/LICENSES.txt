@@ -1,0 +1,17 @@
+﻿Sounds from freesound.org, all licensed CC0 1.0 (public domain, https://creativecommons.org/publicdomain/zero/1.0/).
+Downloaded 2026-11-06 as the site's 128 kbps MP3 previews.
+
+light-rain.mp3 - "Light Rain" by soundrecorder7 - https://freesound.org/people/soundrecorder7/sounds/167034/
+slowly-raining-loop.mp3 - "Slowly Raining Loop" by unfa - https://freesound.org/people/unfa/sounds/177479/
+heavy-rain-city-thunder.mp3 - "rain_strong_with_thunders.aif" by loopbasedmusic - https://freesound.org/people/loopbasedmusic/sounds/157486/
+heavy-rain-roof.mp3 - "Rain_06.wav" by Q.K. - https://freesound.org/people/Q.K./sounds/56311/
+thunder-blast-close.mp3 - "sfx_thunder blast.wav" by bajko - https://freesound.org/people/bajko/sounds/399656/
+thunder-clap.mp3 - "Thunder Clap OWB KY 441x16.wav" by Dave Welsh - https://freesound.org/people/Dave%20Welsh/sounds/194364/
+thunder-distant.mp3 - "Thunder.ogg" by lennyboy - https://freesound.org/people/lennyboy/sounds/244053/
+car-wet-road.mp3 - "Passing Car (Wet road)" by Breviceps - https://freesound.org/people/Breviceps/sounds/462862/
+cars-rainy-street.mp3 - "Cars passing in a rainy street.WAV" by BonnyOrbit - https://freesound.org/people/BonnyOrbit/sounds/399822/
+
+
+Not shipped with the mod: heavy-rain-city-thunder.mp3 (its thunder would not follow the lightning). Loops made at
+build time from these files (regs-tool cut): rain-light.wav, rain-normal.wav, rain-heavy.wav, wet-traffic.wav,
+thunder-mid.wav.

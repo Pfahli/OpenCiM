@@ -36,7 +36,8 @@
 using namespace regs;
 namespace fs = std::filesystem;
 
-int cmdSynth(int argc, char** argv);  // synth_sounds.cpp
+int cmdCut(int argc, char** argv);      // mod_assets.cpp
+int cmdSoftDot(int argc, char** argv);  // mod_assets.cpp
 
 namespace {
 
@@ -552,7 +553,8 @@ int main(int argc, char** argv) {
     else if (cmd == "shadowtest") rc = cmdShadowTest(argc, argv);
     else if (cmd == "skintest") rc = cmdSkinTest(argc, argv);
     else if (cmd == "sound") rc = cmdSound(argc, argv);
-    else if (cmd == "synth") rc = cmdSynth(argc, argv);
+    else if (cmd == "cut") rc = cmdCut(argc, argv);
+    else if (cmd == "softdot") rc = cmdSoftDot(argc, argv);
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

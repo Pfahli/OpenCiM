@@ -21,6 +21,8 @@
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
+#include "engine/surface_map.h"
+#include "render/glsl.h"
 
 namespace regs::engine {
 
@@ -652,7 +654,14 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         dv.center = p;
         dv.radius = tc.n * cs * 0.7071f;
       }
-    for (int group = 0; group < kGroupCount; ++group) tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
+    for (int group = 0; group < kGroupCount; ++group) {
+      tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
+      // the surface class for the mods' shader hooks (renderer3d.h)
+      tc.materials.back().surfaceClass = group == kTerrain ? kSurfaceTerrain
+                                         : group >= kYard && group < kField ? kSurfacePavement
+                                         : group >= kField && group < kWater ? kSurfaceField
+                                         : group == kWater ? kSurfaceWater : kSurfaceOther;
+    }
     // the tool highlights (terrain.md §5: positiveMaterial / negativeMaterial, selection.shader decals)
     // and the data layer of the catchment circles (dataMaterial, selection/data.shader decal)
     for (const char16_t* key : {u"positiveMaterial", u"negativeMaterial", u"dataMaterial"}) {
@@ -666,6 +675,12 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     }
     initGridItems(d, vm, grid, tc);
     fixGridCover(vm, *grid->data, tc, grid->viewMode);
+    if (!shaderHooks().empty()) {  // the surface map for the mods' shader hooks: the divisions' square
+      tc.surfaceMap = std::make_shared<SurfaceMap>();
+      const GridDivision& first = tc.divisions[0];
+      surfaceMapInit(*tc.surfaceMap, first.center.x - tc.n * cs * 0.5f, first.center.z - tc.n * cs * 0.5f,
+                     tc.cols * tc.n * cs, tc.rows * tc.n * cs);
+    }
     LOG_INFO("terrain: %dx%d divisions of %d cells", tc.cols, tc.rows, tc.n);
     if (std::getenv("REGS_DEBUG_BASE")) {  // every division once, for the walled items' list
       for (int index = 0; index < int(tc.divisions.size()); ++index) {
@@ -760,12 +775,14 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       buildTerrain(g, tc, index, lod, out);
       dv.terrain[lod] = d.r3d().upload(out);
       dv.terrainBuilt[lod] = true;
+      if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, out, dv.world, tc.materials, false);  // mods' shader hooks
     }
     if (!dv.itemsBuilt[lod]) {
       MeshData out;
       buildGridItems(g, tc, index, lod, out);
       dv.items[lod] = d.r3d().upload(out);
       dv.itemsBuilt[lod] = true;
+      if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, out, dv.world, tc.materials, true);
     }
   };
   struct Pending {
@@ -891,6 +908,18 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame
+  if (tc.surfaceMap) surfaceMapUpload(*tc.surfaceMap);
+}
+
+bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4]) {
+  if (!grid || !grid->terrain || !grid->terrain->surfaceMap || !grid->terrain->surfaceMap->texture) return false;
+  const SurfaceMap& m = *grid->terrain->surfaceMap;
+  texture = m.texture;
+  rect[0] = m.originX;
+  rect[1] = m.originZ;
+  rect[2] = 1.0f / (float(m.w) * m.texel);
+  rect[3] = 1.0f / (float(m.h) * m.texel);
+  return true;
 }
 
 }  // namespace regs::engine

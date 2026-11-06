@@ -164,7 +164,21 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
     tp.animStart = fieldFloat(vm, o, u"doorOpenStart", 0);
     tp.animLength = fieldFloat(vm, o, u"doorOpenLen", 0);
     tp.materialBase = int(tc.materials.size());
-    for (const MaterialDef& m : o->data->materials) tc.materials.push_back(objectMaterial(d, vm, o, m));
+    // the surface class for the mods' shader hooks (renderer3d.h): roads, alleys and street trams; stations, docks,
+    // heliports and PAVEMENT items; the rest (buildings, props, rail and metro track) other. In a road the materials
+    // that keep their look under a texture variation (0x08000000: asphalt, markings) are the carriageway, the others
+    // the walkways, which the variations replace (grid-items.md §2.5): pavement.
+    const bool road = (tp.type >= 1 && tp.type <= 7) || (tp.type >= 10 && tp.type <= 12);
+    const uint8_t surface = road ? kSurfaceRoad
+                            : (tp.type >= 0x10 && tp.type <= 0x12) || (tp.flags & 0x1000000) ? kSurfacePlatform
+                                                                                              : kSurfaceOther;
+    bool carriageway = false;
+    for (const MaterialDef& m : o->data->materials) carriageway = carriageway || (m.flags & kMatKeepOnVariation);
+    for (const MaterialDef& m : o->data->materials) {
+      tc.materials.push_back(objectMaterial(d, vm, o, m));
+      tc.materials.back().surfaceClass =
+          road && carriageway && !(m.flags & kMatKeepOnVariation) ? kSurfacePavement : surface;
+    }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");
       Object* mo = v == o->fieldValues.end() ? nullptr : v->second.object();
@@ -179,6 +193,8 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
         if (loadMaterialFile(path, read, def)) {
           index = int(tc.materials.size());
           tc.materials.push_back(objectMaterial(d, vm, nullptr, def));
+          // shared texture variations (the walkways of roads): the class of their first user's walkways
+          tc.materials.back().surfaceClass = road ? kSurfacePavement : surface;
         } else {
           LOG_WARN("texture variation %s: not found", path.c_str());
         }

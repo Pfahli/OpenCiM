@@ -21,6 +21,7 @@
 #include "engine/skinning.h"
 #include "engine/sky.h"
 #include "engine/terrain.h"
+#include "render/glsl.h"
 #include "vfs/vfs.h"
 
 namespace regs::engine {
@@ -226,7 +227,7 @@ uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flag
   if (!v || v->failed) return 0;
   if (!v->program) {
     std::string err;
-    v->program = d.r3d().buildProgram(v->vertex, v->fragment, &err);
+    v->program = d.r3d().buildProgram(v->vertex, v->fragment, &err, true);  // with the mods' shader hooks
     if (!v->program) {
       v->failed = true;
       LOG_WARN("shader variant %s 0x%x/0x%x: %s", shader.empty() ? "default" : shader.c_str(), flags, env, err.c_str());
@@ -491,6 +492,12 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     v.emissionScale = skyEmissionScale(sky);  // port day/night cycle (engine/sky.cpp)
   }
   applyAtmosphere(atmosphereOf(vm, scene), v);  // the port's atmosphere fields of the scene (mods: weather)
+  if (!grids.empty() && !shaderHooks().empty()) {  // the mods' shader hooks run in map views (render/glsl.h)
+    v.hooks = true;
+    auto* env = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/envmap.dds").get());
+    if (env && env->cube) v.hookEnvCube = d.texture(vm, env);
+    gridSurfaceMap(grids[0], v.hookSurfaceMap, v.hookSurfaceRect);
+  }
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
   ParticleDrawList particles;
   {
