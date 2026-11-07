@@ -288,9 +288,13 @@ int curveUnder(const GridData& g, const Vec3& p) {
   int best = -1;
   float bestD = 1.5f;  // how far beyond the outer edge (the kerb edge too)
   for (size_t i = 0; i < g.curves.size(); ++i) {
+    const CurveRoad& c = g.curves[i];
+    std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
     float side, s;
-    curveNearest(curveShape(g.curves[i], curveFreeEnds(g, g.curves[i])), p.x, p.z, side, s);
-    float d = std::fabs(side) - curveProfile(g.curves[i].kind).halfWidth;
+    curveNearest(shape, p.x, p.z, side, s);
+    // beyond an end on a road block the point is on the block (the track tool's drag starts there, not on the curve)
+    if ((s <= 0.01f && (c.ends & 1)) || (s >= shape.back().s - 0.01f && (c.ends & 2))) continue;
+    float d = std::fabs(side) - curveProfile(c.kind).halfWidth;
     if (d < bestD) bestD = d, best = int(i);
   }
   return best;

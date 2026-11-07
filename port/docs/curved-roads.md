@@ -179,5 +179,9 @@ centre line with one lane), priced at half the street track's price.
 
 Checked: a two-lane one-way street in three pieces from a grid road's east end round to its west end (4 lane links in at
 the start, 4 out at the end, none the wrong way); cars routed round the loop instead of against it; tracks on the
-one-way pieces and test trams running only the one-way direction. Not checked: one-lane one-way streets in a game, a
-grid tram track joining a one-way curve, the halved price on screen.
+one-way pieces and test trams running only the one-way direction. Then a one-lane one-way loop with a grid tram track on the two-way road: the street's track running toward the one-way
+street joins its track at one end and the one-way track joins the street track running away at the other (the
+one-lane track swings from the centre line to the right-hand track on the piece next to each end, as its tram lane
+does); tram links at both ends; test trams running the whole loop one way round (down the one-way street, along the
+street's eastbound track, up the other side), cars likewise. The tram track tool now takes a point beyond a curve's
+end on a road block as that block (a drag can start there). Not checked: the halved price on screen.

@@ -840,15 +840,8 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     const bool oneWay = (c.ends & 0x20) != 0, single = oneWay && (c.ends & 0x40);
     // a one-way road's end on a two-way road (a road block, a two-way curve, a free end; not a junction or another
     // one-way curve): its lanes meet there in the right-hand lane (merging out, splitting in) on the piece next to it
-    auto oneWayAt = [&](float x, float z, bool atStart) {
-      for (const CurveRoad& k : g.curves)
-        if ((k.ends & 0x20) && &k != &c && (atStart ? std::fabs(k.x1 - x) < 0.2f && std::fabs(k.z1 - z) < 0.2f
-                                                  : std::fabs(k.x0 - x) < 0.2f && std::fabs(k.z0 - z) < 0.2f))
-          return true;
-      return false;
-    };
-    const bool meet0 = oneWay && trim0 <= 0.0f && !oneWayAt(c.x0, c.z0, true);
-    const bool meet1 = oneWay && trim1 <= 0.0f && !oneWayAt(c.x1, c.z1, false);
+    bool meet0, meet1;
+    curveOneWayMeets(g, c, trim0, trim1, meet0, meet1);
     for (int medium = 0; medium < ((c.ends & 4) ? 2 : 1); ++medium) {  // 0 road, 1 tram
       // one-way trams: a single track with the traffic, in the outer lane (two lanes) or on the centre line (one lane)
       for (int side = 0; side < ((single && !medium) || (oneWay && medium) ? 1 : 2); ++side) {  // 0: start → end on the right, 1: end → start

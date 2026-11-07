@@ -782,7 +782,9 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           bentRoad(c, m, t0, t1);
           return;
         }
-        buildCurveMesh(c, noCaps ? CurveEnds{} : curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1);
+        bool meet0 = false, meet1 = false;
+        if (!noCaps) curveOneWayMeets(g, c, t0, t1, meet0, meet1);
+        buildCurveMesh(c, noCaps ? CurveEnds{} : curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1, meet0, meet1);
         if (c.stops.empty()) return;
         std::vector<CurveSample> shape = curveShape(c);
         for (const CurveRoad::Stop& st : c.stops) {

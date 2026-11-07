@@ -115,6 +115,9 @@ PlanarUV fitPlanarUV(const render::MeshData& m, int material);
 // junction pieces have them (small_junction4.object: bars 0.61 wide every 0.93, 2.71 deep, 0.17 inside the edge)
 void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& fillUV, int matWalk, render::MeshData& out,
                        int matMarks = -1, int matTram = -1);
+// a one-way curve's ends on a two-way road (a road block, a two-way curve, a free end; not a junction or another one-way
+// curve): its lanes and track meet the road's right-hand lane there, on the piece next to the end
+void curveOneWayMeets(const GridData& g, const CurveRoad& c, float trim0, float trim1, bool& meet0, bool& meet1);
 // the tram lanes' offset right of the centre line on a curve of the kind (the outer lanes of large roads, the median of
 // avenues)
 float curveTramOffset(int kind);
@@ -143,7 +146,7 @@ float curveMinRadius(const CurveRoad& c);
 // matTram: the street tram strip's material (tracks/small_basic), drawn when the curve has tram tracks (ends bit 2)
 // trim0 / trim1: arc lengths left out at the start / end (junctions)
 void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matMarks, int matWalk, render::MeshData& out,
-                    int matTram = -1, float trim0 = 0, float trim1 = 0);
+                    int matTram = -1, float trim0 = 0, float trim1 = 0, bool meet0 = false, bool meet1 = false);
 // a template's mesh bent along a curve shape: its local x runs along the curve from arc length s0 (backwards on the left
 // side), its local z away from the centre line from offset `across`, side +1 right / −1 left; its submesh materials
 // offset by materialBase (the template's first material in TerrainCache::materials); appended to out

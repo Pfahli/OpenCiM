@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <string>
 
 #include "engine/grid_edit.h"
@@ -69,6 +70,7 @@ struct Builder {
   float length;
   render::Submesh sub;
   float from = 0, to = 1e30f;  // the stretch bands are drawn on (arc length)
+  std::function<float(float)> shift;  // moves bands sideways along the way (a one-way track meeting a two-way road)
 
   void begin(int material) {
     sub = render::Submesh();
@@ -125,9 +127,9 @@ struct Builder {
       bool first = true;
       for (float s : rows(sa, sb)) {
         CurveSample c = curveAt(d, s);
-        float u = uStart + uRate * (s - w0);
-        uint32_t L = vertex(c.p + c.right * o0 + Vec3{0, dy, 0}, up, u, v0);
-        uint32_t R = vertex(c.p + c.right * o1 + Vec3{0, dy, 0}, up, u, v1);
+        float u = uStart + uRate * (s - w0), sh = shift ? shift(s) : 0.0f;
+        uint32_t L = vertex(c.p + c.right * (o0 + sh) + Vec3{0, dy, 0}, up, u, v0);
+        uint32_t R = vertex(c.p + c.right * (o1 + sh) + Vec3{0, dy, 0}, up, u, v1);
         if (!first) tri(prevL, prevR, L, up), tri(prevR, R, L, up);
         prevL = L, prevR = R, first = false;
       }
@@ -300,6 +302,19 @@ float curveLength(const CurveRoad& c) { return denseOf(c).back().s; }
 
 float curveTramOffset(int kind) { return kind == 1 ? 4.5f : 1.5f; }
 
+void curveOneWayMeets(const GridData& g, const CurveRoad& c, float trim0, float trim1, bool& meet0, bool& meet1) {
+  auto oneWayAt = [&](float x, float z, bool atStart) {
+    for (const CurveRoad& k : g.curves)
+      if ((k.ends & 0x20) && !sameCurve(k, c) &&
+          (atStart ? std::fabs(k.x1 - x) < 0.2f && std::fabs(k.z1 - z) < 0.2f : std::fabs(k.x0 - x) < 0.2f && std::fabs(k.z0 - z) < 0.2f))
+        return true;
+    return false;
+  };
+  const bool oneWay = (c.ends & 0x20) != 0;
+  meet0 = oneWay && trim0 <= 0.0f && !oneWayAt(c.x0, c.z0, true);
+  meet1 = oneWay && trim1 <= 0.0f && !oneWayAt(c.x1, c.z1, false);
+}
+
 bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, Vec3& p) {
   Vec3 r = rightOf(a.out);
   if (a.flow == 0) {
@@ -359,7 +374,7 @@ void curveCells(const GridData& g, const CurveRoad& c, int& x0, int& z0, int& x1
 }
 
 void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matMarks, int matWalk, render::MeshData& out,
-                    int matTram, float trim0, float trim1) {
+                    int matTram, float trim0, float trim1, bool meet0, bool meet1) {
   std::vector<CurveSample> d = curveShape(c, caps);
   Builder b{out, d, d.back().s, {}};
   // a trimmed end (a junction) has no cap: the shape's arc lengths are the curve's there
@@ -415,7 +430,20 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
     b.from = caps.free0 ? kCurveCapReach : keep0;
     b.to = caps.free1 ? d.back().s - kCurveCapReach : keep1;
     if (c.ends & 0x20) {  // one-way (a roundabout): one track, in the outer lane or (one lane) on the centre line
-      if (c.ends & 0x40) b.band(-0.7f, 0.7f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
+      if (c.ends & 0x40) {
+        // where it meets a two-way road the track swings over to that road's right-hand track on the piece next to the end
+        // (as the tram lane does: the lanes are cut into pieces of at most 5 units)
+        const float span = keep1 - keep0, piece = span / std::max(1.0f, std::ceil(span / 5.0f));
+        auto ease = [](float t) { t = std::clamp(t, 0.0f, 1.0f); return t * t * (3 - 2 * t); };
+        b.shift = [=](float s) {
+          float o = 0;
+          if (meet0) o = std::max(o, 1.5f * (1 - ease((s - keep0) / piece)));
+          if (meet1) o = std::max(o, 1.5f * (1 - ease((keep1 - s) / piece)));
+          return o;
+        };
+        b.band(-0.7f, 0.7f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
+        b.shift = nullptr;
+      }
       else b.band(0.8f, 2.2f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.1875f);
     } else {
       b.band(-2.2f, -0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
