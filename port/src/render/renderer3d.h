@@ -19,6 +19,7 @@ struct GpuMaterial {
   float specular[4] = {0, 0, 0, 1}, emission[4] = {0, 0, 0, 1};
   float shininess = 1;
   float reflection = 0;   // header byte 0x27 / 255
+  uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
   float custom[8][4] = {};    // shader parameters custom0..7
@@ -114,6 +115,12 @@ struct SceneView {
   float fogStart = 0, fogEnd = 1, fogColor[4] = {0, 0, 0, 1};
   float timer = 0;  // the effect timer (uniform timer)
   float emissionScale = 1;  // material emission × this (port day/night cycle: brighter illumination maps at night)
+  // port night lights (engine/night_lights.h, docs/renderer/night-lights.md): x = window light, y = share of the window
+  // groups lit, z = street-lamp light, w = hours / 24; x and z are 0 by day and without the cycle (no change then)
+  float night[4] = {0, 0, 0, 0};
+  uint32_t lampMap = 0;               // lamp light over the map (unit 9): rgb light, a = lamp head height
+  float lampMapXf[4] = {0, 0, 0, 0};  // uv = (world.xz − (x, y)) · (z, w)
+  float lampHeight[2] = {0, 1};       // head height = [0] + a · [1]
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms
@@ -206,6 +213,8 @@ class Renderer3D {
     int productAmbient[8], productDiffuse[8], productSpecular[8], texture[8], custom[8];
     int matrix = -1, eyepos = -1, timer = -1, reflection = -1, worldup = -1, colorize = -1, vieworient = -1, alphaRef = -1;
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
+    int viewInverse = -1, projInverse = -1, night = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
+        lampHeight = -1;
   };
   std::map<uint32_t, ProgramLocs> locs_;
   const ProgramLocs& locs(uint32_t prog);

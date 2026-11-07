@@ -242,6 +242,9 @@ the start of the game and holds it unless the option is on. Implemented in `SkyO
   .diffuse`, `MAIN.$sceneClock.time`), so the shadow pass and the corner preview follow; switching the option off
   restores the location's values.
 
+* **Night lights**: lit windows (from the buildings' specular maps) and street lamps (pools on the ground, glows on
+  the heads) while the cycle is on: night-lights.md.
+
 ### 6.3 Checks (port/run/sky/, helper scripts there)
 
 * Day / dusk / night, Vienna save, `REGS_DEBUG_TIME`: `vienna-14.png`, `vienna-19.png`, `vienna-20_5.png`,

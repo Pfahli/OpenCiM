@@ -14,6 +14,7 @@
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
+#include "engine/night_lights.h"
 #include "engine/scene3d.h"
 #include "engine/skinning.h"
 #include "vfs/vfs.h"
@@ -142,6 +143,16 @@ namespace {
 void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
   const GridData& g = *grid->data;
   auto read = [&](const std::string& p, std::vector<uint8_t>& out) { return vm.vfs().read(p, out); };
+  {  // port night lights: the window masks of the new templates' building materials, made in parallel
+    std::vector<std::pair<const MaterialDef*, std::string>> mats;
+    for (size_t t = tc.typeTemplate.size(); t < g.types.size(); ++t) {
+      auto it = grid->templates.find(g.types[t]);
+      auto* o = it == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(it->second.get());
+      if (o && o->data)
+        for (const MaterialDef& m : o->data->materials) mats.emplace_back(&m, o->pendingPath);
+    }
+    prepareWindowMasks(d, vm, mats);
+  }
   for (size_t t = tc.typeTemplate.size(); t < g.types.size(); ++t) {
     tc.typeTemplate.push_back(-1);
     auto it = grid->templates.find(g.types[t]);
@@ -164,7 +175,10 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
     tp.animStart = fieldFloat(vm, o, u"doorOpenStart", 0);
     tp.animLength = fieldFloat(vm, o, u"doorOpenLen", 0);
     tp.materialBase = int(tc.materials.size());
-    for (const MaterialDef& m : o->data->materials) tc.materials.push_back(objectMaterial(d, vm, o, m));
+    for (const MaterialDef& m : o->data->materials) {
+      tc.materials.push_back(objectMaterial(d, vm, o, m));
+      tc.materials.back().windowMask = buildingWindowMask(d, vm, m, o->pendingPath);  // port night lights
+    }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");
       Object* mo = v == o->fieldValues.end() ? nullptr : v->second.object();
@@ -428,6 +442,9 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
       oz = -x * s + z * c;
     };
     uint32_t tint = tc.itemColor[i] ? tc.itemColor[i] : 0xFFFFFFFFu;
+    // port night lights: buildings with window masks carry a seed in the vertex colour alpha (the default shader does
+    // not read vertex colours), so each building lights its own windows
+    const uint32_t seed = uint32_t(buildingSeed(it.x, it.y, it.z)) << 24;
     bool hasUv1 = mesh->uv1.size() >= mesh->vertexCount() * 2;
     bool hasTangents = mesh->tangents.size() >= mesh->vertexCount() * 4;
     uint32_t vcount = uint32_t(mesh->vertexCount());
@@ -477,7 +494,8 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
         } else {
           gr.tangents.insert(gr.tangents.end(), {1, 0, 0, 1});
         }
-        gr.colors.push_back(mesh->colors[v]);
+        gr.colors.push_back(size_t(mat) < tc.materials.size() && tc.materials[size_t(mat)].windowMask
+                                ? (mesh->colors[v] & 0x00FFFFFFu) | seed : mesh->colors[v]);
       }
       for (uint32_t k = 0; k < sm.indexCount; ++k) gr.indices.push_back(base + mesh->indices[sm.firstIndex + k] - sm.firstVertex);
     }

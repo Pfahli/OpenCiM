@@ -26,3 +26,14 @@ bool parseDds(const std::vector<uint8_t>& file, Image& out, std::string* error, 
 size_t levelSize(Image::Format f, int w, int h);
 
 }  // namespace regs::render
+
+namespace regs::render {
+
+// Decodes one level of a 2D image (BGRA8, BGR8 or DXT1/3/5) into RGBA8 rows, top row first. False for cube maps or a
+// missing level.
+bool decodeRgba(const Image& img, int level, std::vector<uint8_t>& rgba, int& w, int& h);
+
+// A PNG file (8-bit RGBA, stored deflate blocks) of w×h RGBA8 pixels.
+std::vector<uint8_t> encodePng(const uint8_t* rgba, int w, int h);
+
+}  // namespace regs::render

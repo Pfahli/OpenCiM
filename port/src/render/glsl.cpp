@@ -57,11 +57,19 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     head += "in vec4 regs_Vertex;\nin vec3 regs_Normal;\nin vec4 regs_Color;\n";
     for (int i = 0; i < 8; ++i) head += "in vec4 regs_MultiTexCoord" + std::to_string(i) + ";\n";
     head += "out vec4 regs_FrontColor;\n";
+    // port night lights (docs/renderer/night-lights.md): every vertex stage passes the world position (from clip
+    // space, so skinned and altered vertices are right too) and the vertex colour alpha (merged buildings: a seed)
+    head += "uniform mat4 regs_ViewInverse;\nuniform vec4 regs_ProjInverse;\nout vec3 regs_WorldPos;\nout float regs_Seed;\n";
+    sub(R"(\bvoid\s+main\s*\()", "void regs_vmain(");
+    s += "\nvoid main() {\n  regs_vmain();\n  float ze = -gl_Position.w;\n"
+         "  vec3 e = vec3((gl_Position.x - regs_ProjInverse.z * ze) * regs_ProjInverse.x,\n"
+         "                (gl_Position.y - regs_ProjInverse.w * ze) * regs_ProjInverse.y, ze);\n"
+         "  regs_WorldPos = (regs_ViewInverse * vec4(e, 1.0)).xyz;\n  regs_Seed = regs_Color.a;\n}\n";
   } else {
     sub(R"(\bvarying\b)", "in");
     sub(R"(\bgl_Color\b)", "regs_FrontColor");
     sub(R"(\bgl_FragColor\b)", "regs_FragColor");
-    head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\n";
+    head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\nin vec3 regs_WorldPos;\nin float regs_Seed;\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
     sub(R"(\bvoid\s+main\s*\()", "void regs_main(");
     s += "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";

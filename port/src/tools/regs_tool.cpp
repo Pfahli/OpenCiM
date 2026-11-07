@@ -23,9 +23,11 @@
 #include "engine/effects.h"
 #include "engine/engine.h"
 #include "engine/host.h"
+#include "engine/night_lights.h"
 #include "engine/shaders.h"
 #include "platform/window.h"
 #include "render/gl.h"
+#include "render/image.h"
 #include "render/mesh.h"
 #include "render/renderer3d.h"
 #include "render/skeleton.h"
@@ -533,6 +535,160 @@ int cmdSound(int argc, char** argv) {
   return v > 0 ? 0 : 1;
 }
 
+// texpng <gameDir> <vfs path> <out.png> [level]: one level of a DDS texture as a PNG
+int cmdTexPng(int argc, char** argv) {
+  if (argc < 5) return 2;
+  Vfs vfs;
+  vfs.setInstallRoot(widen(argv[2]));
+  vfs.rescan();
+  std::vector<uint8_t> data;
+  std::string err;
+  if (!vfs.read(argv[3], data, &err)) {
+    std::fprintf(stderr, "%s: %s\n", argv[3], err.c_str());
+    return 1;
+  }
+  render::Image img;
+  std::vector<uint8_t> rgba;
+  int w = 0, h = 0;
+  if (!render::parseDds(data, img, &err) || !render::decodeRgba(img, argc > 5 ? std::atoi(argv[5]) : 0, rgba, w, h)) {
+    std::fprintf(stderr, "%s: cannot decode (%s)\n", argv[3], err.c_str());
+    return 1;
+  }
+  std::vector<uint8_t> png = render::encodePng(rgba.data(), w, h);
+  FILE* f = _wfopen(widen(argv[4]).wstring().c_str(), L"wb");
+  if (!f) return 1;
+  std::fwrite(png.data(), 1, png.size(), f);
+  std::fclose(f);
+  std::printf("%s: %dx%d format %d, %d levels\n", argv[3], w, h, int(img.format), img.mipCount);
+  return 0;
+}
+
+// windowmask <gameDir> <.material path> <out.png>: the night-lights window mask of a building material
+// (engine/night_lights.cpp) over its darkened diffuse map, one colour per window group
+int cmdWindowMask(int argc, char** argv) {
+  if (argc < 5) return 2;
+  Vfs vfs;
+  vfs.setInstallRoot(widen(argv[2]));
+  vfs.rescan();
+  auto read = [&](const std::string& p, std::vector<uint8_t>& out) { return vfs.read(p, out); };
+  render::MaterialDef m;
+  if (!render::loadMaterialFile(argv[3], read, m)) {
+    std::fprintf(stderr, "%s: cannot load\n", argv[3]);
+    return 1;
+  }
+  for (size_t i = 0; i < m.textures.size(); ++i) std::printf("texture %zu: %s\n", i, m.textures[i].c_str());
+  if (!(m.flags & render::kMatSpecularMap) || !(m.flags & render::kMatDiffuseMap)) {
+    std::printf("no specular or diffuse map (flags 0x%x)\n", m.flags);
+    return 1;
+  }
+  size_t at = 1 + ((m.flags & 0x400) ? 1 : 0) + ((m.flags & 0x800) ? 2 : 0);
+  size_t il = at + 1 + ((m.flags & render::kMatNormalMap) ? 1 : 0);
+  auto load = [&](const std::string& p, render::Image& img) {
+    std::vector<uint8_t> data;
+    return read(p, data) && render::parseDds(data, img, nullptr);
+  };
+  render::Image diffuse, spec, illum, mask;
+  bool haveIllum = (m.flags & render::kMatIlluminationMap) && il < m.textures.size() && load(m.textures[il], illum);
+  if (!load(m.textures[0], diffuse) || at >= m.textures.size() || !load(m.textures[at], spec)) return 1;
+  engine::WindowMaskInfo info;
+  bool ok = engine::makeWindowMask(spec, haveIllum ? &illum : nullptr, mask, &info);
+  std::printf("specular %s: %d windows, %d rejected, glass > %.2f, %.1f %% of the texture%s%s\n", m.textures[at].c_str(),
+              info.windows, info.rejected, info.threshold, info.coverage * 100, info.skipped ? ": " : "",
+              info.skipped ? info.skipped : "");
+  if (!ok) return 1;
+  std::vector<uint8_t> drgba;
+  int dw = 0, dh = 0, level = 0;
+  while (level + 1 < diffuse.mipCount && (diffuse.width >> level) > mask.width) ++level;
+  render::decodeRgba(diffuse, level, drgba, dw, dh);
+  const int w = mask.width, h = mask.height;
+  std::vector<uint8_t> out(size_t(w) * size_t(h) * 4);
+  static const float col[4][3] = {{0.2f, 0.6f, 1.0f}, {0.3f, 1.0f, 0.3f}, {1.0f, 0.35f, 0.2f}, {1.0f, 0.9f, 0.2f}};
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      const uint8_t* dp = &drgba[(size_t(y * dh / h) * size_t(dw) + size_t(x * dw / w)) * 4];
+      const uint8_t* mp = &mask.levels[0][(size_t(y) * size_t(w) + size_t(x)) * 4];
+      for (int c = 0; c < 3; ++c) {
+        float v = dp[c] / 255.0f * 0.35f;
+        for (int g = 0; g < 4; ++g) v += mp[g] / 255.0f * col[g][c] * 0.9f;
+        out[(size_t(y) * size_t(w) + size_t(x)) * 4 + size_t(c)] = uint8_t(std::clamp(v, 0.0f, 1.0f) * 255.0f);
+      }
+      out[(size_t(y) * size_t(w) + size_t(x)) * 4 + 3] = 255;
+    }
+  std::vector<uint8_t> png = render::encodePng(out.data(), w, h);
+  FILE* f = _wfopen(widen(argv[4]).wstring().c_str(), L"wb");
+  if (!f) return 1;
+  std::fwrite(png.data(), 1, png.size(), f);
+  std::fclose(f);
+  return 0;
+}
+
+// lamps <gameDir> <.object path>...: the lamp heads the night lights find on lamp models
+int cmdLamps(int argc, char** argv) {
+  if (argc < 4) return 2;
+  Vfs vfs;
+  vfs.setInstallRoot(widen(argv[2]));
+  vfs.rescan();
+  auto read = [&](const std::string& p, std::vector<uint8_t>& out) { return vfs.read(p, out); };
+  for (int a = 3; a < argc; ++a) {
+    render::ObjectData od;
+    std::string err;
+    if (!render::loadObject(argv[a], read, od, &err)) {
+      std::printf("%s: %s\n", argv[a], err.c_str());
+      continue;
+    }
+    std::printf("%s: lamp name %s, bounds y %.2f..%.2f, %zu vertices\n", argv[a], engine::isLampTemplate(argv[a]) ? "yes" : "no",
+                od.mesh.boundsMin[1], od.mesh.boundsMax[1], od.mesh.vertexCount());
+    std::vector<render::Vec3> heads = engine::findLampHeads(od.mesh);
+    for (const render::Vec3& p : heads) std::printf("  head (%.2f, %.2f, %.2f)\n", p.x, p.y, p.z);
+    // REGS_LAMP_VIEW=<dir>: front (x, y) and top (x, z) views of the triangles, downward faces orange, heads red
+    if (const char* dir = std::getenv("REGS_LAMP_VIEW")) {
+      const render::MeshData& m = od.mesh;
+      const int S = 256;
+      float span = 0;
+      for (size_t i = 0; i < m.vertexCount(); ++i)
+        span = std::max({span, std::fabs(m.positions[i * 3]), std::fabs(m.positions[i * 3 + 1]), std::fabs(m.positions[i * 3 + 2])});
+      span = std::max(span, 1.0f) * 1.05f;
+      std::vector<uint8_t> img(size_t(S) * 2 * S * 4, 255);
+      auto plot = [&](int view, float a, float b, uint8_t r, uint8_t g, uint8_t bl) {
+        int x = int((a / span * 0.5f + 0.5f) * (S - 1)) + view * S, y = view == 0 ? int((1 - b / span) * (S - 1)) : int((b / span * 0.5f + 0.5f) * (S - 1));
+        if (x < 0 || y < 0 || x >= 2 * S || y >= S) return;
+        uint8_t* p = &img[(size_t(y) * 2 * S + size_t(x)) * 4];
+        p[0] = r, p[1] = g, p[2] = bl;
+      };
+      for (size_t k = 0; k + 2 < m.indices.size(); k += 3) {
+        uint32_t t[3] = {m.indices[k], m.indices[k + 1], m.indices[k + 2]};
+        float ny = (m.normals[t[0] * 3 + 1] + m.normals[t[1] * 3 + 1] + m.normals[t[2] * 3 + 1]) / 3;
+        bool down = ny < -0.6f;
+        for (int e = 0; e < 3; ++e) {
+          const float* p0 = &m.positions[t[e] * 3];
+          const float* p1 = &m.positions[t[(e + 1) % 3] * 3];
+          for (int s = 0; s <= 40; ++s) {
+            float f = s / 40.0f;
+            float x = p0[0] + (p1[0] - p0[0]) * f, y = p0[1] + (p1[1] - p0[1]) * f, z = p0[2] + (p1[2] - p0[2]) * f;
+            plot(0, x, y, down ? 255 : 90, down ? 140 : 90, down ? 0 : 90);
+            plot(1, x, z, down ? 255 : 90, down ? 140 : 90, down ? 0 : 90);
+          }
+        }
+      }
+      for (const render::Vec3& h : heads)
+        for (int dy = -3; dy <= 3; ++dy)
+          for (int dx = -3; dx <= 3; ++dx) {
+            plot(0, h.x + dx * span / S * 2, h.y + dy * span / S * 2, 230, 0, 0);
+            plot(1, h.x + dx * span / S * 2, h.z + dy * span / S * 2, 230, 0, 0);
+          }
+      std::string name = argv[a];
+      name = name.substr(name.find_last_of('/') + 1);
+      std::vector<uint8_t> png = render::encodePng(img.data(), 2 * S, S);
+      std::string out = std::string(dir) + "/" + name + ".png";
+      if (FILE* f = std::fopen(out.c_str(), "wb")) {
+        std::fwrite(png.data(), 1, png.size(), f);
+        std::fclose(f);
+      }
+    }
+  }
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -550,6 +706,9 @@ int main(int argc, char** argv) {
     else if (cmd == "shadowtest") rc = cmdShadowTest(argc, argv);
     else if (cmd == "skintest") rc = cmdSkinTest(argc, argv);
     else if (cmd == "sound") rc = cmdSound(argc, argv);
+    else if (cmd == "texpng") rc = cmdTexPng(argc, argv);
+    else if (cmd == "windowmask") rc = cmdWindowMask(argc, argv);
+    else if (cmd == "lamps") rc = cmdLamps(argc, argv);
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

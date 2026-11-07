@@ -364,6 +364,16 @@ float skyEmissionScale(Object* skyObj) {
                           : 1 + (kNightEmission - 1) * dn.night01;
 }
 
+NightState skyNightState(Object* skyObj) {
+  NightState s;
+  auto* sky = dynamic_cast<SkyObj*>(skyObj);
+  if (!sky || !sky->dn.on) return s;
+  s.on = true;
+  s.night01 = sky->dn.night01;
+  s.hours = sky->dn.hours;
+  return s;
+}
+
 void tracerFade(VM& vm, ControlObj* tracer, const Vec3& eye, const Vec3& target) {
   auto it = tracer->fieldValues.find(u"<fade>");
   if (it == tracer->fieldValues.end() || it->second.type() != VT::Quat) return;

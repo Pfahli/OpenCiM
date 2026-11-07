@@ -22,6 +22,15 @@ void addSkyItems(Display& d, script::VM& vm, script::Object* sky, const std::vec
 // heads, signs) stand out.
 float skyEmissionScale(script::Object* sky);
 
+// The cycle as the night lights see it (engine/night_lights.h): on with the cycle or REGS_DEBUG_TIME, night01 = 0 by
+// day and 1 at night (the light blend of the cycle), the hour shown.
+struct NightState {
+  bool on = false;
+  float night01 = 0;
+  double hours = 12;
+};
+NightState skyNightState(script::Object* sky);
+
 // gsTracerCtrl::move (L:0x081cfc00): with enableFade(a, b, c, d) the tracer's visibility follows the distance from
 // the camera eye to its target point: 0 up to a, rising to 1 at b, 1 up to c, falling to 0 at d.
 void tracerFade(script::VM& vm, ControlObj* tracer, const render::Vec3& eye, const render::Vec3& target);

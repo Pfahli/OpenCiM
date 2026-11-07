@@ -57,6 +57,7 @@ add_library(regs_engine STATIC
   src/engine/minimap.cpp
   src/engine/skinning.cpp
   src/engine/sky.cpp
+  src/engine/night_lights.cpp
   src/engine/interaction.cpp
   src/engine/tools.cpp
   src/engine/tool_objects.cpp
