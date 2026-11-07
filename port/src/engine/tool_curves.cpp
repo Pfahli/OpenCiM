@@ -8,8 +8,9 @@
 // block becomes a straight piece the curve continues) and to the free ends of other curves; elsewhere an end is free
 // and gets a turning circle. From a snapped end the road leaves straight along it (lanes must meet). The preview is
 // green when the road fits, red when it is shorter than 6 units, bends tighter than radius 6 or runs over buildings
-// (trees under it are cleared). The right button cancels the road being drawn; without one it removes the curve under
-// the cursor (its blocks become dead ends again). Every change goes on the editor's timeline, so undo works.
+// (trees under it are cleared). The right button only stops drawing; the fourth mode, remove, takes away the curve
+// under the cursor with a click (shown red; its blocks become dead ends again), as the bulldozer does in Cities:
+// Skylines. Every change goes on the editor's timeline, so undo works.
 // Script side: REGS_GRIDMODE_CURVE_ROAD, regsCurveToolMode(mode) / regsCurveToolMode() and regsCurveToolInfo() for the
 // panel (data/regs/extend/metro/scripts/editor.script).
 #include <algorithm>
@@ -47,7 +48,7 @@ struct Snap {
 };
 
 struct State {
-  int mode = 1;  // 0 straight, 1 curved, 2 freeform
+  int mode = 1;  // 0 straight, 1 curved, 2 freeform, 3 remove
   int step = 0;  // 0 nothing picked, 1 the start, 2 (curved) the bend point too
   Vec3 start, bend;
   bool startDir = false;  // the start's direction is fixed (a snapped end, or drawing on)
@@ -233,6 +234,20 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   Vec3 h = sn.ok ? sn.p : Vec3{p.x, p.y + 0.2f, p.z};  // a free end: the pavement 0.2 over the ground
   st.endSnap = sn;
   st.hoverCurve = -1;
+  if (st.mode == 3) {  // remove: the curve under the cursor shown red
+    st.hoverCurve = curveUnder(g, p);
+    st.length = st.angle = 0;
+    if (st.hoverCurve < 0) {
+      clearPreview(grid);
+      return;
+    }
+    grid->curvePreview = g.curves[size_t(st.hoverCurve)];
+    grid->hasCurvePreview = true;
+    grid->curvePreviewBad = true;
+    ++grid->curvesVersion;
+    st.previewOk = false;
+    return;
+  }
   if (st.step == 0) {
     clearPreview(grid);
     if (sn.ok && sn.block) select(vm, grid, sn.end.item, false);
@@ -330,8 +345,16 @@ void up(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (!grid->data) return;
   State& st = g_state;
   move(vm, player, grid, x, y);  // the preview at the release point
-  LOG_INFO("curve tool: click, step %d, mode %d, snap %d (block %d), preview %s", st.step, st.mode, st.endSnap.ok ? 1 : 0,
-           st.endSnap.block ? 1 : 0, st.previewOk ? "fits" : "none or red");
+  if (std::getenv("REGS_DEBUG_CURVES"))
+    LOG_INFO("curve tool: click, step %d, mode %d, snap %d (block %d), preview %s", st.step, st.mode, st.endSnap.ok ? 1 : 0,
+             st.endSnap.block ? 1 : 0, st.previewOk ? "fits" : "none or red");
+  if (st.mode == 3) {
+    int k = st.hoverCurve;
+    clearPreview(grid);
+    removeCurve(vm, player, grid, k);
+    move(vm, player, grid, x, y);
+    return;
+  }
   if (st.step == 0) {
     ToolPick pick = toolPick(vm, player, x, y, false);
     if (!pick.hit) return;
@@ -362,21 +385,8 @@ void up(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
 void right(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (!grid->data) return;
   State& st = g_state;
-  if (st.step > 0) {
-    reset(vm, grid);
-  } else {
-    ToolPick pick = toolPick(vm, player, x, y, false);
-    if (std::getenv("REGS_DEBUG_CURVES"))
-      LOG_INFO("curve tool: right click, hit %d at %.1f %.1f %.1f, curve under it %d", pick.hit ? 1 : 0, pick.point.x,
-               pick.point.y, pick.point.z, pick.hit ? curveUnder(*grid->data, pick.point) : -2);
-    if (std::getenv("REGS_DEBUG_CURVES"))
-      for (const CurveRoad& k : grid->data->curves) {
-        float side, s;
-        curveNearest(curveShape(k, curveFreeEnds(*grid->data, k)), pick.point.x, pick.point.z, side, s);
-        LOG_INFO("curve tool:   curve %.1f,%.1f -> %.1f,%.1f: distance %.1f at %.1f", k.x0, k.z0, k.x1, k.z1, side, s);
-      }
-    if (pick.hit) removeCurve(vm, player, grid, curveUnder(*grid->data, pick.point));
-  }
+  (void)st;
+  reset(vm, grid);  // only stops (removing is the Remove mode, as the bulldozer is in Cities: Skylines)
   move(vm, player, grid, x, y);
 }
 
@@ -397,10 +407,10 @@ void registerCurveTool(VM& vm) {
   m.finish = [](VM&, ControlObj*, GridObj*) { return true; };
   registerToolMode(kModeCurveRoad, m);
   vm.setGlobal(u"REGS_GRIDMODE_CURVE_ROAD", Value::integer(kModeCurveRoad));
-  // regsCurveToolMode([mode]): the mode (0 straight, 1 curved, 2 freeform); setting it drops the road being drawn
+  // regsCurveToolMode([mode]): the mode (0 straight, 1 curved, 2 freeform, 3 remove); setting it drops the road being drawn
   implementGlobal(vm, u"regsCurveToolMode", [](VM& v, Object*, int argc, const Value* a) {
     if (argc > 0) {
-      g_state.mode = std::clamp(v.toInt(a[0]), 0, 2);
+      g_state.mode = std::clamp(v.toInt(a[0]), 0, 3);
       g_state.step = 0;
       g_state.startDir = g_state.startBlock = false;
     }

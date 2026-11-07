@@ -20,8 +20,9 @@ Map editor, traffic menu, small-road tab: the button **Kurve / Curve**. A panel 
 - A free end gets a turning circle (U-turn lane, round end).
 - The preview is green when the road fits, red when it is shorter than 6 units, bends tighter than radius 6 or runs
   over buildings. Trees under it are cleared.
-- Right button: cancels the road being drawn; with none, removes the curve under the cursor (its blocks become dead
-  ends again).
+- Right button: stops drawing. A fourth mode, Remove (Entfernen), removes the curve under the cursor with a click (shown
+  red; its blocks become dead
+  ends again), as the bulldozer does in Cities: Skylines.
 - Every change is recorded on the editor's timeline (undo, day switch).
 - The panel shows the next click's meaning, the length (m) and the angle between the ends.
 
@@ -58,3 +59,11 @@ no terrain showing through at the joins.
 - The bulldozer does not remove curves (the curve tool's right button does).
 - Walkway texture variations of the map are not applied (always the plain pavement).
 - Game saves: a vehicle on a curve lane is not saved (it is dropped, as other unsaved movers).
+
+## Game test (2026-11-07, sandbox via the editor's "Speichern & Spielen")
+
+- The map with an S-curve saved and loaded into a game: curve drawn, its lanes linked to both roads (4 links each way).
+- Bus stop: on the straight road green and placed; on the curve no preview at all (stops need road blocks).
+- Tram stop: the same (green on the tracked straight road, nothing on the curve).
+- Tram track tool: on the straight road fine; dragged across the curve it lays a straight diagonal free-standing track
+  over grass and the curve, and accepts it (green). Curves have no tram tracks and do not block the track tool.

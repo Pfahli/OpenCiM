@@ -313,9 +313,9 @@ function regsCurveTool() {
   }
   MAIN.$ui.setTitleFont($t);
   $regsCurveNames = [$regsCurveStrings.$regs_curve_mode_straight, $regsCurveStrings.$regs_curve_mode_curved,
-                     $regsCurveStrings.$regs_curve_mode_freeform];
-  for ($regsI = 0; $regsI < 3; ++$regsI) {
-    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 116, 28, 110, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+                     $regsCurveStrings.$regs_curve_mode_freeform, $regsCurveStrings.$regs_curve_mode_remove];
+  for ($regsI = 0; $regsI < 4; ++$regsI) {
+    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 88, 28, 84, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
     if ($regsI == regsCurveToolMode()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveModes");
   }
   with ($regsCurveInfo = new_control($regsCurvePanel.$content)) {
@@ -340,8 +340,10 @@ function regsCurveTool() {
     while ($player.editMode == REGS_GRIDMODE_CURVE_ROAD) {
       $ci = regsCurveToolInfo();
       $s = $regsCurveStrings;
-      if ($ci[0] == 0) {
-        $regsCurveInfo.text = $ci[4] ? $s.$regs_curve_info_remove : $s.$regs_curve_info_start;
+      if (regsCurveToolMode() == 3) {
+        $regsCurveInfo.text = $ci[4] ? $s.$regs_curve_info_remove : $s.$regs_curve_info_pick;
+      } else if ($ci[0] == 0) {
+        $regsCurveInfo.text = $s.$regs_curve_info_start;
       } else if (regsCurveToolMode() == 1 && $ci[0] == 1) {
         $regsCurveInfo.text = $s.$regs_curve_info_bend;
       } else {
