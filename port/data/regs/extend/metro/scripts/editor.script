@@ -193,7 +193,9 @@ function regsSaveSelection() {
     $regsTerrainBox = null;
     if ($ok && $name != "") {
       mkdir("userdata/templates");
-      if ($grid.regsSaveTemplate("userdata/templates/"+$name+".grid", $regsSaveTerrain)) {
+      // an OpenCiM template file (.cimtpl, a GS10 package): template.grid, template.dds (the picture), template.info
+      // (size, terrain, the DLCs of its objects); the parts are made in memory first
+      if ($grid.regsSaveTemplate("memory/template.grid", $regsSaveTerrain)) {
         // the picture: a screenshot of the view's centre, without the interface and the selection highlight
         regsClearSelection($grid);
         $hudWas = MAIN.$hud.visible;
@@ -203,11 +205,12 @@ function regsSaveSelection() {
         $pointer.visible = false;
         skip_frame;
         skip_frame;
-        regsCaptureTemplatePreview("userdata/templates/"+$name+".dds");
+        regsCaptureTemplatePreview("memory/template.dds");
         skip_frame;
         skip_frame;
         MAIN.$hud.visible = $hudWas;
         $pointer.visible = $pointerWas;
+        writePackage("userdata/templates/"+$name+".cimtpl", ["memory/template.grid", "memory/template.dds", "memory/template.info"]);
         updateFileSystem();
         MAIN.$ui.showStatusMessage($rs2.$regs_template_saved_status);
       }
@@ -219,6 +222,12 @@ function regsSaveSelection() {
 // the template list: the map manager window (regs/ui/mapbrowser.script) on userdata/templates, with the preview
 // pictures and the folder buttons; the chosen template goes to the place tool
 $regsTemplateFolder = "";
+
+function regsJoin($list) {
+  $out = "";
+  foreach ($list) $out = $out + ($out == "" ? "" : "|") + current;
+  return $out;
+}
 
 function regsPlaceTemplateTool() {
   $toolbar.closeSubMenu();
@@ -237,7 +246,33 @@ function regsPlaceTemplateTool() {
     delete $b;
     delete $rs;
     if (!$ok || $chosen == "") return;
-    if (regsSetTemplate("userdata/templates/"+$chosen)) $toolbar.selectTool(REGS_GRIDMODE_PLACE_TEMPLATE);
+    $file = "userdata/templates/"+$chosen;
+    if (findstr($chosen, ".cimtpl") > 0) {
+      // a template file: its DLCs must be there (or the player places it anyway: missing objects stay out)
+      $missing = [];
+      if (file_exists($file+"/template.info")) {
+        $info = load "/"+$file+"/template.info";
+        $installed = map [];
+        foreach (MAIN.$main.regsInstalledPackages()) $installed[current] = true;
+        $needed = [];
+        foreach ($info.$packages : []) {
+          if (!(defined $installed[current]) && !MAIN.$main.regsIsBasePackage(current)) $missing[] = current;
+          else $needed[] = current;
+        }
+        delete $info;
+        // the installed ones join the map's packages (their buildings and props get loaded, the map lists them)
+        MAIN.$level.regsLoadPackages($needed);
+        foreach ($needed) {
+          if (findstr("|"+regsJoin(MAIN.$regsSelectedPackages : [])+"|", "|"+current+"|") < 0) MAIN.$regsSelectedPackages[] = current;
+        }
+      }
+      $rsm = regsStringsNow();
+      $okPlace = MAIN.$main.regsConfirmMissing($missing, $file, $rsm.$regs_template_missing_dialog);
+      delete $rsm;
+      if (!$okPlace) return;
+      $file = $file+"/template.grid";
+    }
+    if (regsSetTemplate($file)) $toolbar.selectTool(REGS_GRIDMODE_PLACE_TEMPLATE);
   };
 }
 

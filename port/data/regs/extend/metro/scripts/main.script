@@ -204,7 +204,11 @@ function regsMissingPackages($gridFile) {
 
 // asks before a map with missing packages opens: the missing ones by name, "Open anyway" or cancel (call in a thread)
 function regsConfirmPackages($gridFile) {
-  $missing = regsMissingPackages($gridFile);
+  return regsConfirmMissing(regsMissingPackages($gridFile), $gridFile);
+}
+
+// the dialog for a list of missing packages (maps, templates): their names, "Open anyway" or cancel
+function regsConfirmMissing($missing, $what, $text = "") {
   if (#$missing == 0) return true;
   $rs = regsPackageStrings();
   $items = map [];
@@ -219,10 +223,11 @@ function regsConfirmPackages($gridFile) {
       if ($b) $b.width = max($b.width, $b.getTextWidth() + 44);
     }
   };
-  $result = MAIN.$ui.showDialog($rs.$regs_packages_missing_dialog, true, true, false, @$first, null, $items);
+  if ($text == "") $text = $rs.$regs_packages_missing_dialog;
+  $result = MAIN.$ui.showDialog($text, true, true, false, @$first, null, $items);
   $strings.$menu_ok_button = $okText;
   delete $rs;
-  echo "Map \""+$gridFile+"\" needs missing packages; "+($result ? "opened anyway" : "not opened");
+  echo "\""+$what+"\" needs missing packages; "+($result ? "opened anyway" : "not opened");
   return $result;
 }
 

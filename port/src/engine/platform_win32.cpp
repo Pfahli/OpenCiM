@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <windows.h>
+#include <shellapi.h>
 #include <shlobj.h>
 
 namespace regs::engine {
@@ -35,6 +36,16 @@ std::filesystem::path platformDocumentsFolder() {
     return buf;
   const wchar_t* profile = _wgetenv(L"USERPROFILE");
   return profile ? std::filesystem::path(profile) : std::filesystem::path();
+}
+
+}  // namespace regs::engine
+
+namespace regs::engine {
+
+void platformShowInExplorer(const std::filesystem::path& path, bool select) {
+  std::wstring quoted = L"\"" + path.wstring() + L"\"";
+  std::wstring args = select ? L"/select," + quoted : quoted;
+  ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
 }
 
 }  // namespace regs::engine

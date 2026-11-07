@@ -225,7 +225,10 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   autosave with 5 versions, the object list's package filter and search, a vehicles category, folders and a map
   manager window (Karte laden: new folder, rename, move, delete, preview), templates (objects menu: save an area's
   terrain and objects, stamp it elsewhere; replaces what it touches; recorded on the timeline, so undo works).
-  Templates have no rotation and no preview picture yet.
+  Templates: Shift adds/removes objects and areas, "Gelände speichern" option, a screenshot as the picture, and
+  their own file format .cimtpl (GS10 package with template.grid, template.dds, template.info listing the DLCs of its
+  objects) with export (Explorer) and import (drop into the folder), the missing-DLC check before placing, and the
+  DLCs a template needs loaded when placing it. Still no rotation.
 - [ ] Open: bridges, tunnels, ramps and map-edge road pieces; the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 

@@ -39,6 +39,7 @@ $renameButton = null;
 $moveButton = null;
 $deleteButton = null;
 $cancelButton = null;
+$exportButton = null;
 
 function folderDir($f) {
   if ($f == "") return $root;
@@ -76,6 +77,7 @@ function readEntries() {
   if ($folder != "") $prefix = $folder+"/";
   $dirs = list_dirs(folderDir($folder));
   foreach ($dirs) {
+    if (findstr(current, ".cimtpl") > 0) continue;   // a template package: listed below as a template
     if (!($folder == "" && current == "autosave" && $root == "userdata/maps")) $entries[] = ["folder", $prefix+current, gold(expandPattern($rs.$regs_maps_folder, current))];
   }
   if ($folder == "" && $root == "userdata/maps") {
@@ -96,6 +98,27 @@ function readEntries() {
     }
     $entries[] = ["map", $prefix+changeFileExt(current, ""), $label];
   }
+  // OpenCiM templates (.cimtpl packages, mounted as folders): their name, with a note when DLCs are missing
+  foreach (list_files(folderDir($folder), ".cimtpl")) {
+    $label = changeFileExt(current, "");
+    $missing = missingPackages(folderDir($folder)+"/"+current);
+    if (#$missing > 0) $label = formatText(escapePattern($label)+" {0:"+escapePattern($rs.$regs_template_needs_dlc)+"}", [0xFFE07050]);
+    $entries[] = ["tpl", $prefix+current, $label];
+  }
+}
+
+// the packages a .cimtpl's template.info lists that are not installed (base game folders never count)
+function missingPackages($file) {
+  $out = [];
+  if (!file_exists($file+"/template.info")) return $out;
+  $info = load "/"+$file+"/template.info";
+  $installed = map [];
+  foreach (MAIN.$main.regsInstalledPackages()) $installed[current] = true;
+  foreach ($info.$packages : []) {
+    if (!(defined $installed[current]) && !MAIN.$main.regsIsBasePackage(current)) $out[] = current;
+  }
+  delete $info;
+  return $out;
 }
 
 function refresh($keepPath = "") {
@@ -133,17 +156,19 @@ function select($i) {
   // the preview: the map's minimap thumbnail
   $file = "";
   if ($kind == "map") $file = $root+"/"+$path+".dds";
+  if ($kind == "tpl") $file = $root+"/"+$path+"/template.dds";
   if ($kind == "cim") $file = "regs-cim/maps/"+changeFileExt($path, ".dds");
   $preview.visible = $file != "" && file_exists($file);
   if ($preview.visible) $preview.setImage("/"+$file);
   $nameLabel.text = "";
-  if ($kind == "map" || $kind == "cim") $nameLabel.text = changeFileExt(extractFileName($path), "");
-  $editable = ($kind == "map") || ($kind == "folder" && $path != "autosave");
+  if ($kind == "map" || $kind == "cim" || $kind == "tpl") $nameLabel.text = changeFileExt(extractFileName($path), "");
+  $editable = ($kind == "map") || ($kind == "tpl") || ($kind == "folder" && $path != "autosave");
   enable($openButton, $i >= 0);
   enable($renameButton, $editable);
   enable($moveButton, $editable);
   enable($deleteButton, $editable);
   enable($newFolderButton, $folder != "~cim");
+  if ($exportButton) enable($exportButton, $kind == "tpl");
 }
 
 function clickRow($i) {
@@ -171,6 +196,9 @@ function open() {
     refresh($kind == "up" ? $from : "");
   } else if ($kind == "map") {
     $value = $path+".grid";
+    $result = 1;
+  } else if ($kind == "tpl") {
+    $value = $path;
     $result = 1;
   } else if ($kind == "cim") {
     $value = "regs-cim:"+$path;
@@ -237,13 +265,21 @@ function rename() {
   if ($busy || $selected < 0) return;
   $kind = $entries[$selected][0];
   $path = $entries[$selected][1];
-  if ($kind != "map" && $kind != "folder") return;
+  if ($kind != "map" && $kind != "folder" && $kind != "tpl") return;
   thread :: {
-    $name = askName($rs.$regs_browser_rename_dialog, extractFileName($path));
-    if ($name == "" || $name == extractFileName($path)) return;
-    $target = $name;
+    $ext = "";
+    if ($kind == "tpl") $ext = ".cimtpl";   // a template is one file: its name without the extension
+    $old = changeFileExt(extractFileName($path), "");
+    if ($kind == "folder") $old = extractFileName($path);
+    $name = askName($rs.$regs_browser_rename_dialog, $old);
+    if ($name == "" || $name == $old) return;
+    $target = $name+$ext;
     if (parentOf($path) != "") $target = parentOf($path)+"/"+$name;
     if (file_exists($root+"/"+$target+".grid") || dirExists($target)) {
+      taken();
+      return;
+    }
+    if ($kind == "tpl" && file_exists($root+"/"+$target)) {
       taken();
       return;
     }
@@ -257,7 +293,7 @@ function move() {
   if ($busy || $selected < 0) return;
   $kind = $entries[$selected][0];
   $path = $entries[$selected][1];
-  if ($kind != "map" && $kind != "folder") return;
+  if ($kind != "map" && $kind != "folder" && $kind != "tpl") return;
   thread :: {
     // every folder it can go to: the top and all folders, not into itself or its own sub folders
     $items = map [];
@@ -276,7 +312,7 @@ function move() {
     if ($target == parentOf($path)) return;
     $dest = extractFileName($path);
     if ($target != "") $dest = $target+"/"+$dest;
-    if (file_exists($root+"/"+$dest+".grid") || dirExists($dest)) {
+    if (file_exists($root+"/"+$dest+".grid") || dirExists($dest) || ($kind == "tpl" && file_exists($root+"/"+$dest))) {
       taken();
       return;
     }
@@ -291,7 +327,7 @@ function allFolders($f) {
   foreach (list_dirs(folderDir($f))) {
     $sub = current;
     if ($f != "") $sub = $f+"/"+current;
-    if ($sub != "autosave") {
+    if ($sub != "autosave" && findstr($sub, ".cimtpl") < 0) {
       $result2[] = $sub;
       foreach (allFolders($sub)) $result2[] = current;
     }
@@ -303,9 +339,9 @@ function deleteEntry() {
   if ($busy || $selected < 0) return;
   $kind = $entries[$selected][0];
   $path = $entries[$selected][1];
-  if ($kind != "map" && $kind != "folder") return;
+  if ($kind != "map" && $kind != "folder" && $kind != "tpl") return;
   thread :: {
-    $text = expandPattern($kind == "map" ? $rs.$regs_browser_delete_map : $rs.$regs_browser_delete_folder, extractFileName($path));
+    $text = expandPattern($kind != "folder" ? $rs.$regs_browser_delete_map : $rs.$regs_browser_delete_folder, changeFileExt(extractFileName($path), ""));
     $busy = true;
     $ok = MAIN.$ui.showConfirmationDialog($text);
     $busy = false;
@@ -328,6 +364,20 @@ function menuButton($y, $text, $action) {
   }
   MAIN.$ui.setTitleFont($b);
   return $b;
+}
+
+function plainButton($x, $text, $action, $hint) {
+  with ($b = MAIN.$ui.createButton($box.$content, $x, $box.$content.height - 45, 120, 25, $text, $action)) {
+    .background = 0x60777777;
+    .setBorder(0xFF777777, 2);
+  }
+  MAIN.$ui.setTooltip($b, $hint, 0, -1);
+  return $b;
+}
+
+function exportEntry() {
+  if ($selected < 0 || $entries[$selected][0] != "tpl") return;
+  regsShowInExplorer($root+"/"+$entries[$selected][1], true);
 }
 
 function build() {
@@ -387,6 +437,10 @@ function build() {
     .setMargins(14, 0, 0, 0);
   }
   MAIN.$ui.setTitleFont($openButton);
+  if ($root == "userdata/templates") {   // sharing: the .cimtpl file in Explorer, the folder to drop files in
+    $exportButton = plainButton(170, $rs.$regs_template_export, exportEntry, $rs.$regs_template_export_hint);
+    plainButton(300, $rs.$regs_template_import, macro :: regsShowInExplorer($root, false), $rs.$regs_template_import_hint);
+  }
   with ($cancelButton = MAIN.$ui.createButton($box.$content, $box.$content.width - 152, $box.$content.height - 45, 112, 25, $strings.$menu_cancel_button, macro :: $result = -1, "/metro/ui/cancel.dds", "/metro/ui/cancel.dds", "/metro/ui/cancel.dds")) {
     .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
     .setMargins(14, 0, 0, 0);
@@ -397,6 +451,7 @@ function build() {
 // shows the manager and waits for the player (call in a thread, as the game's dialogs)
 function run() {
   $desktop.resetMouseDown();
+  updateFileSystem();   // files put into the folder from outside (imported templates)
   if ($folder != "" && $folder != "~cim" && !dirExists($folder)) $folder = "";
   build();
   refresh();

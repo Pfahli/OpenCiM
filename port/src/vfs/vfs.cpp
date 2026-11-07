@@ -111,6 +111,14 @@ void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skip
           records_[key + "/"] = std::move(d);
         }
         walk(e.path(), relPath);
+      } else if (key.rfind("userdata/", 0) == 0 && e.path().extension() == L".cimtpl") {
+        // an OpenCiM template (the editor's templates, regs/ui/mapbrowser.script): a GS10 package shown as the folder
+        // "<name>.cimtpl/" (template.grid, preview.dds, template.info); the file itself stays listed for renaming
+        Record r;
+        r.kind = Kind::Loose;
+        r.disk = e.path();
+        records_[key] = std::move(r);
+        mountArchive(e.path(), relPath, keyPrefix);
       } else if (hasGsExtension(e.path())) {
         std::string relNoExt = relPath.substr(0, relPath.size() - 3);
         mountArchive(e.path(), relNoExt, keyPrefix);

@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <set>
 
 #include "core/log.h"
 #include "core/text.h"
@@ -450,7 +451,9 @@ void registerTemplateTools(VM& vm) {
       return Value::boolean(false);
     }
     g_template = data;
-    std::string name = path.substr(path.find_last_of('/') + 1);
+    std::string base = path;
+    if (base.size() > 14 && base.compare(base.size() - 14, 14, "/template.grid") == 0) base.resize(base.size() - 14);  // a .cimtpl
+    std::string name = base.substr(base.find_last_of('/') + 1);
     g_templateName = name.substr(0, name.rfind('.'));
     return Value::boolean(true);
   }, 1, 1);
@@ -558,6 +561,29 @@ void registerTemplateTools(VM& vm) {
         }
       std::string pre = path.substr(0, path.rfind('.')) + ".dds";
       v.vfs().write(pre, dds);
+    }
+    // <path>.info: what the template is and needs, as a script the game can load (the .cimtpl package's template.info)
+    if (ok) {
+      std::set<std::string> packages;
+      for (const std::string& type : t.types)
+        if (auto tp = grid->templates.find(type); tp != grid->templates.end())
+          if (auto pk = tp->second->fieldValues.find(u"<package>"); pk != tp->second->fieldValues.end()) {
+            std::string p = utf16ToUtf8(pk->second.toString());
+            if (!p.empty()) packages.insert(p);
+          }
+      const std::string nl = "\r\n";
+      std::string info = "// OpenCiM template (.cimtpl)" + nl + "$format = 1;" + nl;
+      info += "$width = " + std::to_string(r.w) + ";" + nl + "$length = " + std::to_string(r.l) + ";" + nl;
+      info += "$objects = " + std::to_string(t.items.size()) + ";" + nl;
+      info += std::string("$terrain = ") + (withTerrain ? "true" : "false") + ";" + nl;
+      info += "// the content packages of its objects (DLCs: addons/<folder>)" + nl + "$packages = [";
+      bool first = true;
+      for (const std::string& p : packages) {
+        info += (first ? "\"" : ", \"") + p + "\"";
+        first = false;
+      }
+      info += "];" + nl;
+      v.vfs().write(path.substr(0, path.rfind('.')) + ".info", std::vector<uint8_t>(info.begin(), info.end()));
     }
     LOG_INFO("template %s: %dx%d cells, %zu objects%s", path.c_str(), r.w, r.l, t.items.size(), ok ? "" : " (not written)");
     return Value::boolean(ok);

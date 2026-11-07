@@ -182,6 +182,11 @@ it is, what already exists, and the open decisions. Order is not priority.
   * Open questions: safety (local only, off by default, a visible indicator while an agent is connected), how much
     of a map fits in one answer (areas, summaries), and whether it should also drive a running game (lines, vehicles).
 
+* **Template sharing in the OpenCiM Hub (owner's idea 2026-11-07).** A section of the mod manager where players share
+  their editor templates. The file format is ready: a .cimtpl is a GS10 package (template.grid, template.dds as the
+  picture, template.info with size, terrain flag and the DLC packages of its objects); it is mounted as a folder from
+  userdata/templates, and the template window already flags templates whose DLCs are missing.
+
 ## Online
 
 * **Multiplayer.** Needs a deterministic simulation (fixed tick, one random stream per system, see
