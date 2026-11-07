@@ -13,6 +13,7 @@
 #include "engine/tool_templates.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <map>
@@ -21,6 +22,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/grid_save.h"
@@ -40,6 +42,8 @@ namespace {
 
 constexpr int kModeSelectArea = 0x40, kModePlaceTemplate = 0x41;
 constexpr uint32_t kGroundFlags = 0x203F;  // ground style, pavement, field, water
+// a template saved without its terrain: every height holds this mark, and placing it leaves the ground as it is
+constexpr int16_t kNoTerrain = INT16_MIN;
 
 struct Rect {
   int x = 0, z = 0, w = 0, l = 0;
@@ -298,6 +302,8 @@ void upPlace(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   // the terrain: the template's heights around the target's mean height, its ground flags
   int base = meanHeight(g, r), delta = base - 0x200;
   int W = r.w + 1, L = r.l + 1;
+  bool withTerrain = tp.height.empty() || tp.height[0] != kNoTerrain;
+  if (withTerrain) {
   std::vector<int16_t> heights(size_t(W) * size_t(L));
   std::vector<uint16_t> flags(heights.size());
   for (int z = 0; z < L; ++z)
@@ -314,6 +320,7 @@ void upPlace(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     }
   gridEditCellsChanged(grid, r.x - 1, r.z - 1, r.x + W, r.z + L, true);
   if (tl) timelineRecordPatch(vm, tl, r.x, r.z, W, L, heights, flags);
+  }
   // the template's objects, parents first (as stored)
   std::vector<int> made(tp.items.size(), -1);
   int shiftT = shiftOf(tp);
@@ -387,14 +394,49 @@ void registerTemplateTools(VM& vm) {
     for (int v : {g_area.x, g_area.z, g_area.w, g_area.l, int(g_items.size())}) a->items.push_back(Value::integer(v));
     return Value::heap(VT::Array, a.get());
   }, 0, 0);
-  implementGlobal(vm, u"regsClearSelection", [](VM& v, Object*, int, const Value*) {
-    Value* main = v.findGlobal(u"MAIN");
-    GridObj* grid = nullptr;
-    if (main && main->object())
-      if (auto f = main->object()->fieldValues.find(u"$grid"); f != main->object()->fieldValues.end()) grid = dynamic_cast<GridObj*>(v.resolve(f->second).object());
-    clearSelection(v, grid);
+  implementGlobal(vm, u"regsClearSelection", [](VM& v, Object*, int argc, const Value* a) {
+    GridObj* grid = argc > 0 ? dynamic_cast<GridObj*>(v.resolve(a[0]).object()) : nullptr;
+    if (grid && grid->data) {
+      clearSelection(v, grid);
+    } else {
+      g_area = g_drag = Rect{};
+      g_items.clear();
+    }
     return Value();
-  }, 0, 0);
+  }, 0, 1);
+
+  // regsCaptureTemplatePreview(path): the next frame's centre square, scaled to 128 × 128, as <path> (DDS); the
+  // script hides the interface and the selection highlight for that frame (a screenshot as the template's picture)
+  implementGlobal(vm, u"regsCaptureTemplatePreview", [](VM& v, Object*, int, const Value* a) {
+    Display* d = display();
+    if (!d) return Value::boolean(false);
+    std::string path = utf16ToUtf8(v.toStr(a[0]));
+    VM* vmp = &v;
+    d->captureNext = [vmp, path](const std::vector<uint8_t>& px, int w, int h) {
+      const int P = 128;
+      int side = std::min(w, h), x0 = (w - side) / 2, y0 = (h - side) / 2;
+      std::vector<uint8_t> dds;
+      auto p32 = [&](uint32_t x) { dds.insert(dds.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 4); };
+      for (uint32_t x : {0x20534444u, 0x7Cu, 0x100Fu, uint32_t(P), uint32_t(P), uint32_t(P * 4), 0u, 1u}) p32(x);
+      for (int i = 0; i < 11; ++i) p32(0);
+      for (uint32_t x : {0x20u, 0x41u, 0u, 0x20u, 0xFF0000u, 0xFF00u, 0xFFu, 0xFF000000u, 0x1000u, 0u, 0u, 0u, 0u}) p32(x);
+      for (int y = 0; y < P; ++y)
+        for (int x = 0; x < P; ++x) {
+          // the mean of the screen pixels this preview pixel covers
+          int sx0 = x0 + x * side / P, sx1 = x0 + (x + 1) * side / P, sy0 = y0 + y * side / P, sy1 = y0 + (y + 1) * side / P;
+          uint32_t r = 0, g = 0, b = 0, n = 0;
+          for (int yy = sy0; yy < std::max(sy1, sy0 + 1); ++yy)
+            for (int xx = sx0; xx < std::max(sx1, sx0 + 1); ++xx) {
+              const uint8_t* q = &px[(size_t(yy) * size_t(w) + size_t(xx)) * 4];
+              r += q[0], g += q[1], b += q[2], ++n;
+            }
+          p32(0xFF000000u | (r / n) << 16 | (g / n) << 8 | (b / n));
+        }
+      vmp->vfs().write(path, dds);
+      vmp->vfs().rescan();
+    };
+    return Value::boolean(true);
+  }, 1, 1);
 
   // regsSetTemplate(path): the template the place mode stamps; false when the file is no template
   implementGlobal(vm, u"regsSetTemplate", [](VM& v, Object*, int, const Value* a) {
@@ -415,8 +457,10 @@ void registerTemplateTools(VM& vm) {
 
   // gsGrid.regsSaveTemplate(path): the selection as a template (see the file comment), and next to it <path>.dds,
   // its minimap picture (128 × 128) for the template list
-  if (ClassInfo* c = vm.findClass("gsGrid")) addMethod(c, u"regsSaveTemplate", 1, 1);
-  implement(vm, "gsGrid", u"regsSaveTemplate", [](VM& v, Object* s, int, const Value* a) {
+  // regsSaveTemplate(path, [withTerrain = true]): without the terrain only the objects are kept (kNoTerrain)
+  if (ClassInfo* c = vm.findClass("gsGrid")) addMethod(c, u"regsSaveTemplate", 1, 2);
+  implement(vm, "gsGrid", u"regsSaveTemplate", [](VM& v, Object* s, int argc, const Value* a) {
+    bool withTerrain = argc < 2 || v.truthy(a[1]);
     auto* grid = dynamic_cast<GridObj*>(s);
     if (!grid || !grid->data) return Value::boolean(false);
     const GridData& g = *grid->data;
@@ -433,8 +477,8 @@ void registerTemplateTools(VM& vm) {
     for (int z = 0; z < t.length; ++z)
       for (int x = 0; x < t.width; ++x) {
         size_t c = size_t(r.z + z) * size_t(g.width) + size_t(r.x + x), k = size_t(z) * size_t(t.width) + size_t(x);
-        t.height[k] = int16_t(int(g.height[c]) - base + 0x200);
-        t.flags[k] = uint16_t(g.flags[c] & kGroundFlags);
+        t.height[k] = withTerrain ? int16_t(int(g.height[c]) - base + 0x200) : kNoTerrain;
+        t.flags[k] = withTerrain ? uint16_t(g.flags[c] & kGroundFlags) : uint16_t(0);
       }
     std::vector<uint32_t> items = withParts(g, g_items);
     std::vector<int64_t> index(g.items.size(), -1);
@@ -502,7 +546,10 @@ void registerTemplateTools(VM& vm) {
           if (sx < W && sy < L) {
             col = at(sx, sy);
             // the light: the slope towards the north-west brightens, away darkens
-            auto hh = [&](int cx, int cz) { return int(t.height[size_t(std::min(cz, L)) * size_t(t.width) + size_t(std::min(cx, W))]); };
+            auto hh = [&](int cx, int cz) {
+              int16_t v2 = t.height[size_t(std::min(cz, L)) * size_t(t.width) + size_t(std::min(cx, W))];
+              return v2 == kNoTerrain ? 0x200 : int(v2);
+            };
             int d = (hh(sx, sy) - hh(sx + 1, sy + 1)) / 8;
             auto ch = [&](int sh) { return uint32_t(std::clamp(int((col >> sh) & 0xFF) + d, 0, 255)) << sh; };
             col = 0xFF000000u | ch(16) | ch(8) | ch(0);

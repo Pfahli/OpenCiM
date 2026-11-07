@@ -2,6 +2,7 @@
 #include <chrono>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -67,6 +68,8 @@ class Display {
 
   // Saves the next rendered frame as a PNG (read back before the buffers are swapped).
   void requestScreenshot(const std::filesystem::path& file) { shot_ = file; }
+  // the next drawn frame's pixels (RGBA, row 0 the top, width, height) to a callback, once (template previews)
+  std::function<void(const std::vector<uint8_t>&, int, int)> captureNext;
   void dumpTarget(const render::RenderTarget& rt, const std::filesystem::path& file);
 
  private:

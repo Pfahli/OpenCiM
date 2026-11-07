@@ -97,3 +97,4 @@ $regs_template_panel_hint = "Shift + click: add or remove an object\nShift + dra
 $regs_template_panel_save = "Save";
 $regs_template_browser_title = "Templates";
 $regs_template_place_button = "Place";
+$regs_template_terrain_option = "Save terrain";

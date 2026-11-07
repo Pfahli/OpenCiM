@@ -97,3 +97,4 @@ $regs_template_panel_hint = "Umschalt + Klick: Objekt hinzufügen oder entfernen
 $regs_template_panel_save = "Speichern";
 $regs_template_browser_title = "Vorlagen";
 $regs_template_place_button = "Platzieren";
+$regs_template_terrain_option = "Gelände speichern";

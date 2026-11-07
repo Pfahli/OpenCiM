@@ -106,7 +106,7 @@ $regsPanelStrings = null;
 
 function regsSaveTemplateTool() {
   $toolbar.selectTool(REGS_GRIDMODE_SELECT_AREA);
-  regsClearSelection();
+  regsClearSelection($grid);
   if ($regsPanel) return;
   $regsPanelStrings = regsStringsNow();
   $regsPanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 190, 1 | 2 | 4 | 8);
@@ -160,15 +160,55 @@ function regsSaveTemplateTool() {
   };
 }
 
+// the name dialog (the game's own) gets a checkbox "Gelände speichern" under the name field once it stands; the choice
+// is kept for the session
+$regsSaveTerrain = true;
+$regsTerrainBox = null;
+
+function regsSetSaveTerrain($on) {
+  $regsSaveTerrain = $on;
+  if ($regsTerrainBox) MAIN.$ui.selectChoiceButton($on ? $regsTerrainBox : null, $regsTerrainBox);
+}
+
 function regsSaveSelection() {
   thread :: {
     $rs2 = regsStringsNow();
     $name = "";
-    if (regsSelection() && MAIN.$ui.showDialog($rs2.$regs_template_name_dialog, true, true, true, @$name, regsTemplateCheckName) && $name != "") {
+    thread :: {   // the checkbox, once the dialog is there
+      skip_frame;
+      $d = MAIN.$ui.$currentDialog : null;
+      if (!$d) return;
+      $d.top -= 15;   // room for the checkbox: the dialog 30 px taller, its buttons lower
+      $d.height += 30;
+      $d.$content.height += 30;
+      if ($d.$yesButton) $d.$yesButton.top += 30;
+      if ($d.$noButton) $d.$noButton.top += 30;
+      $regsTerrainBox = MAIN.$ui.createChoiceButton($d.$content, "self", 12, 76, 16, 16, "", macro :: regsSetSaveTerrain(!$regsSaveTerrain), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+      with ($l = MAIN.$ui.createLabel($d.$content, 34, 74, 240, 20, $rs2.$regs_template_terrain_option)) {
+        .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+      }
+      regsSetSaveTerrain($regsSaveTerrain);
+    };
+    $ok = regsSelection() && MAIN.$ui.showDialog($rs2.$regs_template_name_dialog, true, true, true, @$name, regsTemplateCheckName);
+    $regsTerrainBox = null;
+    if ($ok && $name != "") {
       mkdir("userdata/templates");
-      if ($grid.regsSaveTemplate("userdata/templates/"+$name+".grid")) {
+      if ($grid.regsSaveTemplate("userdata/templates/"+$name+".grid", $regsSaveTerrain)) {
+        // the picture: a screenshot of the view's centre, without the interface and the selection highlight
+        regsClearSelection($grid);
+        $hudWas = MAIN.$hud.visible;
+        MAIN.$hud.visible = false;
+        $pointer = MAIN.$mouse.$mouse;
+        $pointerWas = $pointer.visible;
+        $pointer.visible = false;
+        skip_frame;
+        skip_frame;
+        regsCaptureTemplatePreview("userdata/templates/"+$name+".dds");
+        skip_frame;
+        skip_frame;
+        MAIN.$hud.visible = $hudWas;
+        $pointer.visible = $pointerWas;
         updateFileSystem();
-        regsClearSelection();
         MAIN.$ui.showStatusMessage($rs2.$regs_template_saved_status);
       }
     }
