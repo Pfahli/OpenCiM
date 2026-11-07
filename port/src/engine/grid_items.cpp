@@ -6,6 +6,7 @@
 // height in uv1.x and the shader subtracts it (shaders.cpp, portShaderPatch). Not yet: terrain normals on upward faces, the vertexGeneration triangle order,
 // base walls, skeletal animation and the fade between 800 and 880 m.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <map>
 
@@ -25,6 +26,7 @@ using namespace regs::script;
 using namespace regs::render;
 
 namespace {
+double gMatSeconds = 0, gMaskSeconds = 0;  // load-time measurement (grid items log line)
 
 // GRID_ITEM_* types and flags (L:0x08188450.c) and engine-only item bits (grid-items.md §1.4)
 constexpr int kTypeMetroStation = 0x10, kTypeTree = 0x13, kTypeMarker = 0x15, kTypeSpawnPoint = 0x16;
@@ -175,8 +177,26 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
     tp.animStart = fieldFloat(vm, o, u"doorOpenStart", 0);
     tp.animLength = fieldFloat(vm, o, u"doorOpenLen", 0);
     tp.materialBase = int(tc.materials.size());
+    // the surface class for the mods' shader hooks (renderer3d.h): roads, alleys and street trams; stations, docks,
+    // heliports and PAVEMENT items; the rest (buildings, props, rail and metro track) other. In a road the materials
+    // that keep their look under a texture variation (0x08000000: asphalt, markings) are the carriageway, the others
+    // the walkways, which the variations replace (grid-items.md §2.5): pavement.
+    const bool road = (tp.type >= 1 && tp.type <= 7) || (tp.type >= 10 && tp.type <= 12);
+    const uint8_t surface = road ? kSurfaceRoad
+                            : (tp.type >= 0x10 && tp.type <= 0x12) || (tp.flags & 0x1000000) ? kSurfacePlatform
+                                                                                              : kSurfaceOther;
+    bool carriageway = false;
+    for (const MaterialDef& m : o->data->materials) carriageway = carriageway || (m.flags & kMatKeepOnVariation);
     for (const MaterialDef& m : o->data->materials) {
+      auto tm0 = std::chrono::steady_clock::now();
       tc.materials.push_back(objectMaterial(d, vm, o, m));
+      auto tm1 = std::chrono::steady_clock::now();
+      gMatSeconds += std::chrono::duration<double>(tm1 - tm0).count();
+      tc.materials.back().surfaceClass =
+          road && carriageway && !(m.flags & kMatKeepOnVariation) ? kSurfacePavement : surface;
+      // foliage: the materials the trees' wind shader draws (set in the templates' onLoaded)
+      if (tc.materials.back().shader.find("shaders/trees/trees.shader") != std::string::npos)
+        tc.materials.back().surfaceClass = kSurfaceFoliage;
       tc.materials.back().windowMask =  // port night lights
           buildingWindowMask(d, vm, m, o->pendingPath, &o->data->mesh, int(&m - o->data->materials.data()));
       if (!tc.materials.back().windowMask)
@@ -196,6 +216,7 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
           tc.materials.back().windowKind = uint8_t(kind);
         }
       }
+      gMaskSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - tm1).count();
     }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");
@@ -211,6 +232,8 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
         if (loadMaterialFile(path, read, def)) {
           index = int(tc.materials.size());
           tc.materials.push_back(objectMaterial(d, vm, nullptr, def));
+          // shared texture variations (the walkways of roads): the class of their first user's walkways
+          tc.materials.back().surfaceClass = road ? kSurfacePavement : surface;
         } else {
           LOG_WARN("texture variation %s: not found", path.c_str());
         }
@@ -276,6 +299,8 @@ size_t bucketItems(const GridData& g, TerrainCache& tc, bool markDirty) {
 }  // namespace
 
 void initGridItems(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
+  const auto tStart = std::chrono::steady_clock::now();
+  gMatSeconds = gMaskSeconds = 0;
   const GridData& g = *grid->data;
   tc.typeTemplate.clear();
   tc.fileMaterials.clear();
@@ -284,8 +309,10 @@ void initGridItems(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
   tc.itemColor.clear();
   tc.itemsBucketed = 0;
   size_t placed = bucketItems(g, tc, false);
-  LOG_INFO("grid items: %zu of %zu placed, %zu templates, %zu materials", placed, g.items.size(), tc.templates.size(),
-           tc.materials.size());
+  LOG_INFO("grid items: %zu of %zu placed, %zu templates, %zu materials in %.0f ms (materials %.0f ms, night masks %.0f ms)",
+           placed, g.items.size(), tc.templates.size(), tc.materials.size(),
+           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count(), gMatSeconds * 1000,
+           gMaskSeconds * 1000);
 }
 
 void syncGridItems(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
@@ -430,6 +457,15 @@ bool gridItemVisible(const GridData& g, const TerrainCache& tc, uint32_t item, u
   return (viewMode & 0x20) != 0;
 }
 
+// a tree's own number in [0, 1) from its cell (merged tree vertices carry it in uv1.y)
+static float treeSeed(const GridData::Item& it) {
+  uint32_t h = uint32_t(it.x) * 73856093u ^ uint32_t(it.z) * 19349663u ^ uint32_t(it.y) * 83492791u;
+  h ^= h >> 13;
+  h *= 0x5bd1e995u;
+  h ^= h >> 15;
+  return float(h & 0xFFFFFF) / 16777216.0f;
+}
+
 void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int lod, MeshData& out) {
   const int n = tc.n;
   const float cs = g.cellSize;
@@ -506,9 +542,11 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
         place(nrm.x, nrm.z, nx, nz);
         gr.normals.insert(gr.normals.end(), {nx, nrm.y, nz});
         gr.uv0.insert(gr.uv0.end(), {mesh->uv0[size_t(v) * 2], mesh->uv0[size_t(v) * 2 + 1]});
-        // trees: uv1 = (base height, 0), the engine's own layout for merged trees (§3.2.3); the wind shader subtracts
-        // it to get the height above the tree's base (shaders.cpp, portShaderPatch)
-        if (tp.type == kTypeTree) gr.uv1.insert(gr.uv1.end(), {T.y, 0.0f});
+        // trees: uv1 = (base height, seed), the engine's own layout for merged trees (§3.2.3), whose y is 0; the wind
+        // shader subtracts x to get the height above the tree's base (shaders.cpp, portShaderPatch). Port: y is a
+        // per-tree number in [0, 1) from the item's cell, so the mods' shader hooks can vary trees one by one
+        // (RegsSurface.uv1, mod-manager.md §4.3)
+        if (tp.type == kTypeTree) gr.uv1.insert(gr.uv1.end(), {T.y, treeSeed(it)});
         else if (hasUv1) gr.uv1.insert(gr.uv1.end(), {mesh->uv1[size_t(v) * 2], mesh->uv1[size_t(v) * 2 + 1]});
         else gr.uv1.insert(gr.uv1.end(), {0.0f, 0.0f});
         if (hasTangents) {

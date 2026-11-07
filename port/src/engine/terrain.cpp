@@ -15,12 +15,16 @@
 
 #include "core/log.h"
 #include "core/text.h"
+#include "engine/api.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
+#include "engine/gui.h"
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
+#include "engine/surface_map.h"
+#include "render/glsl.h"
 
 namespace regs::engine {
 
@@ -623,8 +627,9 @@ void prepareTerrainCells(GridData& g) {
     }
 }
 
-void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
-                 float detailScale, std::vector<DrawItem>& items) {
+// the map's cache (divisions, materials, grid items, surface map), rebuilt when the map changed; collectGrid
+// calls it, and regsPrewarmGrid() on the loading screen so the first frame after it does not wait for it
+void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
   if (!grid->data || grid->data->height.empty()) return;
   const GridData& g = *grid->data;
   if (!grid->terrain) grid->terrain = std::make_shared<TerrainCache>();
@@ -652,7 +657,14 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         dv.center = p;
         dv.radius = tc.n * cs * 0.7071f;
       }
-    for (int group = 0; group < kGroupCount; ++group) tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
+    for (int group = 0; group < kGroupCount; ++group) {
+      tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
+      // the surface class for the mods' shader hooks (renderer3d.h)
+      tc.materials.back().surfaceClass = group == kTerrain ? kSurfaceTerrain
+                                         : group >= kYard && group < kField ? kSurfacePavement
+                                         : group >= kField && group < kWater ? kSurfaceField
+                                         : group == kWater ? kSurfaceWater : kSurfaceOther;
+    }
     // the tool highlights (terrain.md §5: positiveMaterial / negativeMaterial, selection.shader decals)
     // and the data layer of the catchment circles (dataMaterial, selection/data.shader decal)
     for (const char16_t* key : {u"positiveMaterial", u"negativeMaterial", u"dataMaterial"}) {
@@ -663,9 +675,16 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
       (key[0] == u'p' ? tc.positiveMaterial : key[0] == u'n' ? tc.negativeMaterial : tc.dataMaterial) = int(tc.materials.size());
       tc.materials.push_back(scriptMaterial(d, vm, m));
+      tc.materials.back().surfaceClass = kSurfaceOverlay;  // highlights and the catchment layer: never hooked
     }
     initGridItems(d, vm, grid, tc);
     fixGridCover(vm, *grid->data, tc, grid->viewMode);
+    if (!shaderHooks().empty()) {  // the surface map for the mods' shader hooks: the divisions' square
+      tc.surfaceMap = std::make_shared<SurfaceMap>();
+      const GridDivision& first = tc.divisions[0];
+      surfaceMapInit(*tc.surfaceMap, first.center.x - tc.n * cs * 0.5f, first.center.z - tc.n * cs * 0.5f,
+                     tc.cols * tc.n * cs, tc.rows * tc.n * cs);
+    }
     LOG_INFO("terrain: %dx%d divisions of %d cells", tc.cols, tc.rows, tc.n);
     if (std::getenv("REGS_DEBUG_BASE")) {  // every division once, for the walled items' list
       for (int index = 0; index < int(tc.divisions.size()); ++index) {
@@ -674,6 +693,16 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
     }
   }
+}
+
+void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
+                 float detailScale, std::vector<DrawItem>& items) {
+  if (!grid->data || grid->data->height.empty()) return;
+  ensureGridCache(d, vm, grid);
+  const GridData& g = *grid->data;
+  if (!grid->terrain) grid->terrain = std::make_shared<TerrainCache>();
+  TerrainCache& tc = *grid->terrain;
+  float cs = g.cellSize;
   // live map edits (engine/grid_edit.h): new types and items, then the touched divisions rebuilt at once where built
   syncGridItems(d, vm, grid, tc);
   applyItemColors(*grid, tc);
@@ -760,12 +789,14 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       buildTerrain(g, tc, index, lod, out);
       dv.terrain[lod] = d.r3d().upload(out);
       dv.terrainBuilt[lod] = true;
+      if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, out, dv.world, tc.materials, false);  // mods' shader hooks
     }
     if (!dv.itemsBuilt[lod]) {
       MeshData out;
       buildGridItems(g, tc, index, lod, out);
       dv.items[lod] = d.r3d().upload(out);
       dv.itemsBuilt[lod] = true;
+      if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, out, dv.world, tc.materials, true);
     }
   };
   struct Pending {
@@ -886,11 +917,67 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     DrawItem it;
     it.mesh = &tc.highlight;
     it.materials = &tc.materials;
+    it.surfaceClass = kSurfaceOverlay;  // tool highlights keep their colours under the mods' shader hooks
     items.push_back(it);
   }
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame
+  if (tc.surfaceMap) surfaceMapUpload(*tc.surfaceMap);
+}
+
+bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4], uint32_t* topTexture) {
+  if (!grid || !grid->terrain || !grid->terrain->surfaceMap || !grid->terrain->surfaceMap->texture) return false;
+  const SurfaceMap& m = *grid->terrain->surfaceMap;
+  texture = m.texture;
+  if (topTexture) *topTexture = m.topTexture;
+  rect[0] = m.originX;
+  rect[1] = m.originZ;
+  rect[2] = 1.0f / (float(m.w) * m.texel);
+  rect[3] = 1.0f / (float(m.h) * m.texel);
+  return true;
+}
+
+void registerTerrainNatives(VM& vm) {
+  // regsPrewarmGrid(): builds the main map's cache (materials, textures, window masks, grid items) now, on the loading
+  // screen before its Spielen button (data/regs/extend/metro/ui/loading/loading.script), instead of in the first
+  // frame after it, which stayed black for seconds
+  implementGlobal(vm, u"regsPrewarmGrid", [](VM& v, Object*, int, const Value*) {
+    Display* d = display();
+    Value* main = v.findGlobal(u"MAIN");
+    Object* m = main ? main->object() : nullptr;
+    Value* g = m ? m->findVar(u"grid") : nullptr;
+    auto* grid = g ? dynamic_cast<GridObj*>(v.resolve(*g).object()) : nullptr;
+    if (d && grid && grid->data) {
+      auto t0 = std::chrono::steady_clock::now();
+      ensureGridCache(*d, v, grid);
+      auto t1 = std::chrono::steady_clock::now();
+      // the first view drawn once, unseen (the loading screen covers it): its shader programs compile now; with a
+      // cold driver cache (a new driver, changed shaders) that took half a minute of black screen after Spielen
+      const int linked = render::gProgramsLinked;
+      Value* vpv = m->findVar(u"viewport");
+      Value* scene = m->findVar(u"scene");
+      Value* camera = m->findVar(u"camera");
+      auto* vp = vpv ? dynamic_cast<ControlObj*>(v.resolve(*vpv).object()) : nullptr;
+      if (vp && scene && camera) {  // the game state gives the viewport its scene and camera only after Spielen
+        Value self = Value::heap(VT::Object, vp);
+        Value oldScene = v.getMember(self, u"scene"), oldCamera = v.getMember(self, u"camera");
+        try {
+          v.setMember(self, u"scene", v.resolve(*scene));
+          v.setMember(self, u"camera", v.resolve(*camera));
+          renderViewportScene(*d, v, vp);
+          v.setMember(self, u"scene", oldScene);
+          v.setMember(self, u"camera", oldCamera);
+        } catch (const ScriptError&) {
+        }
+      }
+      auto t2 = std::chrono::steady_clock::now();
+      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs)",
+               std::chrono::duration<double, std::milli>(t1 - t0).count(),
+               std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked);
+    }
+    return Value();
+  });
 }
 
 }  // namespace regs::engine

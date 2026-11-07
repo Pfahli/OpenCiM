@@ -95,3 +95,33 @@ function regsRelayoutMenus() {
   this.perform("settings");
   this.perform("graphics");
 }
+
+// Settings menu (main and pause menu): a "Mods" entry above Back, opening the port's mods options page
+// (regs/ui/mods.script). The page shows while the machine stays in SettingsMenu (main.states is not changed), so it
+// closes itself (regsCloseModsPage) and the settings buttons come back.
+$regsModsPage = null;
+event this.enter::["SettingsMenu"]() {
+  $regsStrings = load "/regs/strings/" + (file_exists("regs/strings/" + MAIN.$language + ".strings") ? MAIN.$language : "en_US") + ".strings";
+  $regsModsText = $regsStrings.$regs_mods_button;
+  delete $regsStrings;
+  with (MAIN.$ui.createButton($menu.$buttonArea, 4, 0, 322, 32, $regsModsText, macro :: MAIN.$main.regsOpenModsPage(), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+    .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+    MAIN.$ui.setTitleFont(current);
+    $regsBack = $menu.$buttons[#$menu.$buttons - 1];
+    .setRect(4, $regsBack.top, 322, 32);
+    $regsBack.setRect(4, $regsBack.top + 38, 322, 32);
+    $menu.$buttons[] = current;
+  }
+}
+function regsOpenModsPage() {
+  if ($regsModsPage) return;
+  $menu.$menuArea.visible = false;
+  $regsModsPage = load "/regs/ui/mods.script";
+}
+function regsCloseModsPage() {
+  if (!$regsModsPage) return;
+  delete $regsModsPage;
+  $regsModsPage = null;
+  $menu.$menuArea.visible = true;
+}

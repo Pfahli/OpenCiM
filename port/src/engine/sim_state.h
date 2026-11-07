@@ -23,6 +23,7 @@ class Display;
 struct SimState;
 struct SimSounds;
 struct SimParticles;
+struct TrafficMaps;
 class TransportObj;
 
 namespace sim {
@@ -90,6 +91,7 @@ struct Mover {
   float rotorAngle = 0, rotorSpin = -1;
   float travelled = 0;   // port: distance the head advanced since the mover was placed (jam relief, sim_jams.cpp)
   bool testPin = false;  // port test switch REGS_TEST_JAM=<type>:hard: a blocker the jam relief must not clear
+  bool plow = false;     // port: a snowplow of the mods (engine/snowplows.h): not counted as road traffic
 };
 
 // a pending aircraft spawn: entry/exit, the runway nodes 15 and 30 steps on (back), the gate and its taxi path
@@ -437,6 +439,10 @@ struct SimState {
   std::vector<std::vector<sim::Unit>> roadConsists;
   int roadTarget = 0, roadLive = 0, trainsLive = 0;
   int extraLive = 0;               // background trips running for the traffic density
+  int plowsLive = 0;               // snowplows on the streets (engine/snowplows.h)
+  // the mods' road speed (gsGrid.regsRoadSpeed / regsRoadSpeedCleared, engine/snowplows.h): × the target speed of
+  // road vehicles, buses and trams on road and street-tram lanes; the second on lanes a snowplow cleared
+  float roadSpeed = 1.0f, roadSpeedCleared = 1.0f;
   float citizenCarsAvg = -1;       // running average of the citizens' moving cars (the 1x traffic)
   int spawned = 0, despawned = 0, stuck = 0;
   // line nodes by global id: (line, stop index)
@@ -473,6 +479,7 @@ struct SimState {
   bool tearingDown = false;  // a new map replaces this state: its script objects go without touching it
   std::shared_ptr<SimSounds> sounds;  // world sound slots (engine/sim_sounds.cpp), made on first use
   std::shared_ptr<SimParticles> particles;  // emitter instances of vehicles and items (engine/particles.cpp)
+  std::shared_ptr<TrafficMaps> trafficMaps;  // recent traffic for the mods' shader hooks (engine/traffic_maps.h)
 };
 
 // script objects of the transport classes, pointing back into the state

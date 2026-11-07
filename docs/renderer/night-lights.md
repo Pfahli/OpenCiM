@@ -54,7 +54,7 @@ Vienna: 129 masks in ~0.6 s at load (worker threads; uploads on the GL thread). 
 
 ### 1.3 Shader
 
-`maps.fragment` (default shader) gets `regs_windows(uv, diffuse)`: mask on unit 8 (`regs_WindowMask`, bound per
+`maps.fragment` (default shader) gets `regs_windows(uv, diffuse)`: mask on the first unit after the material's textures (`regs_WindowMask`, bound per
 material with `regs_WindowOn`), `regs_Night` (x = window strength, y = share). `color.fragment` adds the result after
 the lighting and before fog. Not in shadow passes or additive materials.
 
@@ -157,7 +157,7 @@ headlights, its trailing end the tail lights (reversed units use their other end
   exact at any angle (a CPU raster at 0.94 m texels left them stepped, and the steps crawled when cars turned).
   Additive; R = light, G = the stands' share (warm tint), B = light × (ground height − y0), so bilinear filtering
   keeps the height exact (g = y0 + B/R). The default shader samples it like the lamp
-  map (unit 10, `regs_CarMap`) and lights whatever is there between 1.5 m below and ~3 m above the vehicle's ground:
+  map (the light map's lower half on unit 6, `regs_CarMap`; the lamp map is its upper half) and lights whatever is there between 1.5 m below and ~3 m above the vehicle's ground:
   road, kerbs, cars and walls ahead, with soft edges. (A flat additive quad was tried first; kerbs and raised
   surfaces cut it with a hard line.) Low beam 15 m (buses 17 m), cone 3.4 m half width. A beam stops at the first building
   cell on its centre line (not the walls beside the road), its reach eased per vehicle so it never jumps; beams fade

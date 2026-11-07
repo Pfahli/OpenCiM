@@ -1,0 +1,108 @@
+// ReGS mods options page (settings menu > Mods; opened by the main.script extension, regsOpenModsPage). Every enabled
+// mod with an options.script in its folder adds its settings here (port/docs/mod-manager.md §4.4): the options script
+// is loaded with MAIN.$regsModsPage set to this page and calls
+//   MAIN.$regsModsPage.addHeading(text)
+//   MAIN.$regsModsPage.addCheckbox(text, name, default)   // stored as $settings.$<name> (true/false)
+// OK stores and exports the settings, Cancel drops the changes; both close the page.
+$desktop = MAIN.$desktop;
+$settings = MAIN.$settings;
+$menu = MAIN.$main.$menu;
+
+$file = "regs/strings/" + MAIN.$language + ".strings";
+if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+$regs = load "/" + $file;
+
+$box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - 600) * 0.5), 1000, 600, 1 | 2 | 4 | 8, $desktop);
+$title = MAIN.$ui.createHeadingBar($box, $regs.$regs_mods_title);
+
+$y = 60;
+$values = map [];     // setting name -> the value shown
+$buttons = map [];    // setting name -> its checkbox
+$names = [];
+
+function addHeading($text) {
+  with (new_control($box.$content)) {
+    .setRect(40, $y, $box.$content.width - 80, 22);
+    MAIN.$ui.setTitleFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  $y += 34;
+}
+
+function addCheckbox($text, $name, $default) {
+  $names[] = $name;
+  $v = $settings.getVariable($name);
+  if (!(defined $v)) $v = $default;
+  $values[$name] = $v;
+  $buttons[$name] = MAIN.$ui.createChoiceButton($box.$content, "self", 40, $y + 1, 16, 16, "", macro($name) :: toggle($0), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+  with (new_control($box.$content)) {
+    .setRect(60, $y, $box.$content.width - 100, 18);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  show($name);
+  $y += 30;
+}
+
+function show($name) {
+  MAIN.$ui.selectChoiceButton($values[$name] ? $buttons[$name] : null, $buttons[$name]);
+}
+
+function toggle($name) {
+  $values[$name] = !$values[$name];
+  show($name);
+}
+
+// the mods' options, in load order
+MAIN.$regsModsPage = this;
+$optionScripts = [];
+foreach (regsMods()) {
+  $path = current["path"];
+  if (file_exists(substr($path, 1) + "options.script")) $optionScripts[] = load $path + "options.script";
+}
+MAIN.$regsModsPage = null;
+if (#$names == 0) {
+  with (new_control($box.$content)) {
+    .setRect(40, 60, $box.$content.width - 80, 18);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $regs.$regs_mods_none;
+    .visible = true;
+    .canActivate = false;
+  }
+}
+
+function pageButton($text, $action) {
+  with ($b = MAIN.$ui.createButton($box.$content, 4, 0, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+    .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  MAIN.$ui.setTitleFont($b);
+  return $b;
+}
+with ($okButton = pageButton(MAIN.$strings.$menu_ok_button, macro :: save())) {
+  .setRect(40, $box.$content.height - .height - 20, .width, .height);
+}
+with ($backButton = pageButton(MAIN.$strings.$menu_cancel_button, macro :: MAIN.$main.regsCloseModsPage())) {
+  .setRect($box.$content.width - .width - 40, $box.$content.height - .height - 20, .width, .height);
+}
+
+function save() {
+  foreach ($names) {
+    $settings.setVariable(current, $values[current]);
+    $settings.exportVariables(current);
+  }
+  MAIN.$main.regsCloseModsPage();
+}
+
+event this.onDestroy::() {
+  foreach ($optionScripts) delete current;
+  delete $regs;
+  delete $box;
+}

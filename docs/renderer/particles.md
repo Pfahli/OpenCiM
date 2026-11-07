@@ -260,6 +260,10 @@ the rotor runs down, and at take-off.
   three times its size), `REGS_TEST_BREAKDOWN=<s>` (the vehicle `REGS_DEBUG_FOLLOW` follows breaks down after that
   much simulated time), `REGS_TEST_FIRE=<item>` (a `fire-medium` placed at that item after 60 ticks),
   `REGS_TEST_FIREWORKS=1` (keeps the new-year bit of `grid.effectConditions` on).
+* Port fields for mods (`port/docs/mod-manager.md` §4.2): `regsEmitBox` (vector: particles start at a random point
+  of a box of these half extents around the emit point) and `regsStretch` (seconds: the particle is drawn as a streak
+  along its velocity, half length speed × stretch plus `particleSize`, `particleSize` wide, facing the camera about
+  the motion axis; culled with its length). Unset, emitters behave as in the original. Used by the weather mod's rain.
 * Port change (user's request): helicopter line vehicles board with a still rotor and spin up on the pad before they
   take off; the dust follows the rotor with the original's thresholds, so there is no dust while boarding
   ([`../simulation/boats-aircraft.md`](../simulation/boats-aircraft.md) §6.3).

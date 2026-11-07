@@ -20,10 +20,11 @@ it is, what already exists, and the open decisions. Order is not priority.
   * Vehicles: done on the same branch (lamps found on the models' textures, beams as a light map, high beams on free
     roads, lights switching on one by one at dusk). Open: tram and metro interior light; better front-lamp finding.
   * Open: the cost of many vehicle light pools (a deferred or clustered light pass in the planned new renderer).
-* **Seasons and weather.** A mod (the owner's decision), `port/data/mods/weather`; rain is being built first.
-  Next after rain (owner's request): **snow** that slowly accumulates on surfaces (ground, roofs, trees, and parked
-  cars too) while it snows, stays for quite a while after it stops, then melts into puddles (the rain mod's puddles
-  and drying). The original's look never changes over the year. The port could follow the game's date:
+* **Seasons and weather.** **A mod, rain started** (user's decision: weather and seasons are a mod, not the base
+  port): the built-in mod `data/mods/weather` (`opencim.weather`, disabled by default) has rain spells by game date,
+  streaks, wet surfaces, grey light, rain and thunder sounds, all through generic port hooks
+  (`docs/mod-manager.md` §4.2); seasons, snow and the gameplay touches below are open in the same mod.
+  The original's look never changes over the year. The port could follow the game's date:
   * Spring and summer as today; autumn turns grass, fields and tree foliage yellow, orange and brown (a colour shift
     in the terrain and tree shaders by season, per tree species where the textures allow it); in winter deciduous
     trees lose their leaves (foliage hidden or thinned, bare branches from the trunk meshes; conifers keep theirs) and

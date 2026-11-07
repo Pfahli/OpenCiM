@@ -9,6 +9,8 @@ enum class LogLevel { Debug, Info, Warn, Error };
 void logSetLevel(LogLevel level);
 void logSetFile(const std::string& path);
 void logWrite(LogLevel level, const std::string& msg);
+// "  12.34 " (seconds since start) with REGS_LOG_TIME set, else ""
+std::string logStamp();
 
 template <typename... A>
 std::string fmt(const char* f, A... a) {

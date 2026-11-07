@@ -175,6 +175,7 @@ void collectLinePaths(Display& d, VM& vm, SimState& s, const Vec3& eye, float fa
       it.mesh = st.pathMesh.get();
       it.materials = temp ? &line.tempPathMaterials : &line.pathMaterials;
       it.world = render::Mat4();
+      it.surfaceClass = render::kSurfaceOverlay;  // route strips keep their colour under the mods' shader hooks
       items.push_back(it);
     }
   }

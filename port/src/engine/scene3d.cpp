@@ -2,6 +2,7 @@
 // colorize, a fixed camera, the sun's light, render-to-texture. Conventions: docs/renderer/scene-basics.md.
 #include "engine/scene3d.h"
 
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -22,6 +23,8 @@
 #include "engine/skinning.h"
 #include "engine/sky.h"
 #include "engine/terrain.h"
+#include "engine/traffic_maps.h"
+#include "render/glsl.h"
 #include "vfs/vfs.h"
 
 namespace regs::engine {
@@ -227,7 +230,7 @@ uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flag
   if (!v || v->failed) return 0;
   if (!v->program) {
     std::string err;
-    v->program = d.r3d().buildProgram(v->vertex, v->fragment, &err);
+    v->program = d.r3d().buildProgram(v->vertex, v->fragment, &err, true);  // with the mods' shader hooks
     if (!v->program) {
       v->failed = true;
       LOG_WARN("shader variant %s 0x%x/0x%x: %s", shader.empty() ? "default" : shader.c_str(), flags, env, err.c_str());
@@ -259,7 +262,10 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
       // a skinned model (vehicle templates in the vehicle shop's preview scene): the skinning variant, bind pose
       size_t first = items.size();
       collectSkinned(d, vm, o, worldOf(vm, o), Pose(), items);
-      for (size_t i = first; i < items.size(); ++i) argbToFloats(o->colorizeArgb, items[i].colorize);
+      for (size_t i = first; i < items.size(); ++i) {
+        argbToFloats(o->colorizeArgb, items[i].colorize);
+        items[i].surfaceClass = kSurfaceOverlay;  // scene objects (previews, markers, cursors): not a surface
+      }
     } else if (o && o->data) {
       if (!o->gpu) {
         o->gpu = std::make_shared<GpuMesh>(d.r3d().upload(o->data->mesh));
@@ -271,11 +277,84 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
       it.materials = o->materials.get();
       it.world = worldOf(vm, o);
       argbToFloats(o->colorizeArgb, it.colorize);
+      // scene objects in a map view are tool previews, selection markers and cursors: the mods' shader hooks leave
+      // them alone (the map's surfaces are the grid's and the simulation's)
+      it.surfaceClass = kSurfaceOverlay;
       items.push_back(it);
     }
     if (c->cls->isA(vm.findClass("gsSun"))) suns.push_back(c);
     collect(d, vm, c, items, suns, grids, sky);
   }
+}
+
+// Port atmosphere fields of gsScene (port/docs/mod-manager.md §4.2, for mods such as weather): unset = no change.
+//   regsLightScale     × the lights' diffuse and specular (direct light)
+//   regsAmbientScale   × the lights' ambient and the light-model ambient
+//   regsLightDesaturate  0..1: the light colours mixed towards their grey
+//   regsFogTint        ARGB: the fog colour mixed towards its RGB by alpha / 255
+//   regsFogScale       × the fog start and end distances
+//   regsSurfaceDiffuse × every material's ambient and diffuse colour (darker surfaces)
+//   regsSurfaceSpecular × every material's specular colour (only materials with MATERIAL_SPECULAR show it)
+//   regsLightTint      ARGB: the direct light (diffuse, specular) × its RGB / 255, by alpha / 255 (warm or cool light)
+//   regsPostHooks      > 0: the mods' post hooks run on this scene's map views (a full-screen pass; render/glsl.h)
+struct Atmosphere {
+  float light = 1, ambient = 1, desaturate = 0, fogScale = 1, surfaceDiffuse = 1, surfaceSpecular = 1;
+  uint32_t fogTint = 0, lightTint = 0;
+};
+const char16_t* const kAtmosphereFloats[] = {u"regsLightScale", u"regsAmbientScale", u"regsLightDesaturate",
+                                             u"regsFogScale", u"regsSurfaceDiffuse", u"regsSurfaceSpecular"};
+
+Atmosphere atmosphereOf(VM& vm, Object* scene) {
+  Atmosphere a;
+  if (!scene) return a;
+  auto num = [&](const char16_t* n, float def) {
+    auto it = scene->fieldValues.find(n);
+    return it == scene->fieldValues.end() ? def : floatOr(vm, it->second, def);
+  };
+  a.light = std::max(0.0f, num(u"regsLightScale", 1));
+  a.ambient = std::max(0.0f, num(u"regsAmbientScale", 1));
+  a.desaturate = std::clamp(num(u"regsLightDesaturate", 0), 0.0f, 1.0f);
+  a.fogScale = std::max(0.01f, num(u"regsFogScale", 1));
+  a.surfaceDiffuse = std::max(0.0f, num(u"regsSurfaceDiffuse", 1));
+  a.surfaceSpecular = std::max(0.0f, num(u"regsSurfaceSpecular", 1));
+  if (auto it = scene->fieldValues.find(u"regsFogTint"); it != scene->fieldValues.end() && it->second.type() == VT::Int)
+    a.fogTint = uint32_t(vm.toInt(it->second));
+  if (auto it = scene->fieldValues.find(u"regsLightTint"); it != scene->fieldValues.end() && it->second.type() == VT::Int)
+    a.lightTint = uint32_t(vm.toInt(it->second));
+  return a;
+}
+
+void applyAtmosphere(const Atmosphere& a, SceneView& v) {
+  auto grade = [&](float* c, float scale) {
+    float grey = 0.3f * c[0] + 0.59f * c[1] + 0.11f * c[2];
+    for (int k = 0; k < 3; ++k) c[k] = (c[k] + (grey - c[k]) * a.desaturate) * scale;
+  };
+  for (Light& l : v.lights) {
+    grade(l.diffuse, a.light);
+    grade(l.specular, a.light);
+    grade(l.ambient, a.ambient);
+    if (a.lightTint >> 24) {
+      float t = float(a.lightTint >> 24) / 255.0f, tint[4];
+      argbToFloats(a.lightTint, tint);
+      for (int k = 0; k < 3; ++k) {
+        l.diffuse[k] *= 1.0f + (tint[k] - 1.0f) * t;
+        l.specular[k] *= 1.0f + (tint[k] - 1.0f) * t;
+      }
+    }
+  }
+  grade(v.lightModelAmbient, a.ambient);
+  if (a.fogTint >> 24) {
+    float t = float(a.fogTint >> 24) / 255.0f, tint[4];
+    argbToFloats(a.fogTint, tint);
+    // the tint is a daylight colour: at night (a dark fog) it is as much darker, so an overcast night stays dark
+    const float fogLum = 0.3f * v.fogColor[0] + 0.59f * v.fogColor[1] + 0.11f * v.fogColor[2];
+    const float dark = std::clamp(fogLum / 0.6f, 0.0f, 1.0f);
+    for (int k = 0; k < 3; ++k) v.fogColor[k] += (tint[k] * dark - v.fogColor[k]) * t;
+  }
+  v.fogStart *= a.fogScale;
+  v.fogEnd *= a.fogScale;
+  v.surfaceDiffuse = a.surfaceDiffuse;
+  v.surfaceSpecular = a.surfaceSpecular;
 }
 
 }  // namespace
@@ -350,6 +429,10 @@ GpuMaterial scriptMaterial(Display& d, VM& vm, Object* variant) {
   return g;
 }
 
+// seconds per frame phase (load-time measurements, Display::renderFrame logs them for slow frames): 1 scene nodes,
+// 2 grid, 3 sim vehicles, 4 particles, 5 night lights, 6 programs
+double gPhaseSeconds[8] = {};
+
 void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   Object* scene = fieldOf(vm, vp, u"scene").object();
   Object* cam = fieldOf(vm, vp, u"camera").object();
@@ -400,7 +483,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   std::vector<Object*> suns;
   std::vector<GridObj*> grids;
   Object* sky = nullptr;
-  collect(d, vm, scene, items, suns, grids, sky);
+  { auto ts_ = std::chrono::steady_clock::now(); collect(d, vm, scene, items, suns, grids, sky); gPhaseSeconds[1] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
 
   SceneView v;
   v.timer = d.effectTimer;
@@ -418,8 +501,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     detailScale = std::clamp(settingNumber(vm, u"regsDetailDistance", 1.0f), 0.5f, 4.0f);
   }
   v.proj = perspective(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f), float(w) / float(h), nearZ, farZ * viewScale);
-  for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items);
-  for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items);
+  { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items); gPhaseSeconds[2] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+  { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items); gPhaseSeconds[3] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   addSkyItems(d, vm, sky, suns, eye, farZ * viewScale, items);  // sky dome and sun disc (engine/sky.cpp)
   for (Object* s : suns) {
     Light l;
@@ -436,12 +519,28 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     }
     v.emissionScale = skyEmissionScale(sky);  // port day/night cycle (engine/sky.cpp)
   }
+  applyAtmosphere(atmosphereOf(vm, scene), v);  // the port's atmosphere fields of the scene (mods: weather)
+  if (!grids.empty() && !shaderHooks().empty()) {  // the mods' shader hooks run in map views (render/glsl.h)
+    v.hooks = true;
+    auto* env = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/envmap.dds").get());
+    if (env && env->cube) v.hookEnvCube = d.texture(vm, env);
+    gridSurfaceMap(grids[0], v.hookSurfaceMap, v.hookSurfaceRect, &v.hookTopMap);
+    gridTrafficMaps(grids[0], v.hookLaneTraffic, v.hookTrafficRect, v.hookLaneCells);
+    gridFootprints(grids[0], v.hookFootAtlas, v.hookFootRect);
+    for (auto& t : shaderHookTextures())  // the mods' own textures (regsShaderTexture), loaded once
+      if (!t.tried) {
+        t.tried = true;
+        auto* tex = dynamic_cast<TextureObj*>(getTexture(vm, utf8ToUtf16(t.path)).get());
+        t.texture = tex ? d.texture(vm, tex) : 0;
+        if (!t.texture) LOG_WARN("mods: texture %s for %s not found", t.path.c_str(), t.sampler.c_str());
+      }
+  }
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
   ParticleDrawList particles;
   {
     float t = std::tan(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
-    collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles);
-    addNightLights(d, vm, grids, sky, v, particles, items);  // port day/night cycle: window and lamp light, lamp glows
+    { auto ts_ = std::chrono::steady_clock::now(); collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles); gPhaseSeconds[4] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+    { auto ts_ = std::chrono::steady_clock::now(); addNightLights(d, vm, grids, sky, v, particles, items); gPhaseSeconds[5] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
     if (!particles.sprites.empty()) v.particles = &particles;
   }
   // environment flags: light count << 12 outside shadow passes (FUN_10051120)
@@ -496,7 +595,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       }
     }
   }
-  assignPrograms(d, vm, items, v.env);
+  { auto ts_ = std::chrono::steady_clock::now(); assignPrograms(d, vm, items, v.env); gPhaseSeconds[6] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   if (v.particles) prepareParticlePrograms(d, vm, particles, v.env);
   uint32_t clear = uint32_t(vm.toInt(fieldOf(vm, vp, u"clearColor")));
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites
@@ -508,7 +607,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   }
   // port style effects (game view): the scene, or the bloom composite, goes into the style input first
   const RenderTarget* styled = nullptr;
-  if (!rt && !grids.empty() && styleActive(vm)) styled = styleTarget(d, vm, w, h, hdr ? 0 : d.antialiasing);
+  const bool postHooks = !rt && !grids.empty() && postHooksWanted(vm, scene);  // the mods' post hooks (render/glsl.h)
+  if (!rt && !grids.empty() && (styleActive(vm) || postHooks)) styled = styleTarget(d, vm, w, h, hdr ? 0 : d.antialiasing);
   if (hdr) {
     d.r3d().begin(hdr, 0, hdr->height - h, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);
@@ -540,7 +640,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   }
   if (styled) {
     Vec3 toTarget = look - eye;
-    styleFinish(d, vm, x, y, w, h, bw, bh, nearZ, farZ * viewScale, std::sqrt(dot(toTarget, toTarget)));
+    styleFinish(d, vm, x, y, w, h, bw, bh, nearZ, farZ * viewScale, std::sqrt(dot(toTarget, toTarget)), postHooks ? &v : nullptr);
     d.r3d().end(bw, bh);
   }
   d.r2d().resume();
@@ -575,6 +675,45 @@ void runCompanionScript(VM& vm, Object* o, const std::u16string& objectPath) {
 
 void registerSceneNatives(VM& vm) {
   if (ClassInfo* c = vm.findClass("gsObject")) c->factory = [](const ClassInfo* ci) { return Ref<Object>(new ObjectObj(ci)); };
+  // port fields for mods (port/docs/mod-manager.md §4.2): the scene's atmosphere (atmosphereOf above) and the
+  // camera's eye and look-at point as the 3D pass draws them
+  if (ClassInfo* c = vm.findClass("gsScene")) {
+    auto stored = [c](const char16_t* name, int type, Value def) {
+      FieldInfo& f = c->fields[name];
+      f.name = name;
+      f.type = type;
+      f.get = [name, def](VM&, Object* o) {
+        auto it = o->fieldValues.find(name);
+        return it == o->fieldValues.end() ? def : it->second;
+      };
+      f.set = [name, type](VM& v, Object* o, const Value& x) {
+        Value r = v.resolve(x);
+        o->fieldValues[name] = type == 3 ? Value::integer(v.toInt(r)) : Value::real(v.toFloat(r));
+      };
+    };
+    for (const char16_t* n : kAtmosphereFloats)
+      stored(n, 4, Value::real(std::u16string_view(n) == u"regsLightDesaturate" ? 0.0f : 1.0f));
+    stored(u"regsFogTint", 3, Value::integer(0));
+    stored(u"regsLightTint", 3, Value::integer(0));
+    stored(u"regsPostHooks", 4, Value::real(0.0f));
+  }
+  if (ClassInfo* c = vm.findClass("gs3DCamera")) {
+    auto eyeField = [c](const char16_t* name, bool eyeNotLook) {
+      FieldInfo& f = c->fields[name];
+      f.name = name;
+      f.type = 7;
+      f.readOnly = true;
+      f.get = [eyeNotLook](VM& v, Object* o) {
+        Vec3 eye, look, up;
+        cameraView(v, o, eye, look, up);
+        Vec3 p = eyeNotLook ? eye : look;
+        return Value::vector(p.x, p.y, p.z);
+      };
+      f.set = nullptr;
+    };
+    eyeField(u"regsEyePosition", true);
+    eyeField(u"regsLookPosition", false);
+  }
   // loadFromFile(path, [applyTransform]) (gsObject::load 0x1008bd90)
   implement(vm, "gsObject", u"loadFromFile", [](VM& v, Object* s, int argc, const Value* a) {
     auto* o = dynamic_cast<ObjectObj*>(s);

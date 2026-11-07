@@ -28,6 +28,8 @@
 #include "engine/sim_state.h"
 #include "engine/sim_sounds.h"
 #include "engine/particles.h"
+#include "engine/snowplows.h"
+#include "engine/traffic_maps.h"
 
 namespace regs::engine {
 
@@ -451,6 +453,19 @@ void crash(SimState& s, int id, int nd, float dt) {
   for (int c : s.graph.nodes[size_t(nd)].crossings) startCrash(s, s.rt[size_t(c)].occupant, dt);
 }
 
+// the mods' road speed (SimState::roadSpeed, engine/snowplows.h) for a mover's head node: road and street-tram lanes
+// only (not in tunnels: metro, trains, boats and aircraft keep their speed), the cleared factor where a snowplow
+// drove lately (TrafficMaps::lanePlow above 0.5)
+float roadWeatherFactor(const SimState& s, const Mover& m) {
+  if (s.roadSpeed >= 0.999f && s.roadSpeedCleared >= 0.999f) return 1.0f;
+  if (m.boat || m.aircraft || m.train || m.track.nodes.empty()) return 1.0f;
+  int node = m.track.nodes[m.track.at(m.dist)];
+  uint32_t f = s.graph.nodes[size_t(node)].flags;
+  if (!(f & (kPathRoad | kPathTram)) || (f & (kPathTrain | kPathMetro | 0x800000u))) return 1.0f;
+  bool cleared = s.trafficMaps && size_t(node) < s.trafficMaps->lanePlow.size() && s.trafficMaps->lanePlow[size_t(node)] > 0.5f;
+  return std::clamp(cleared ? s.roadSpeedCleared : s.roadSpeed, 0.3f, 1.0f);
+}
+
 // one update of a mover (grid-traffic.md §6.2): claims, speed, distance, release behind the last car
 void moveMover(SimState& s, int id, float dt) {
   Mover& m = s.movers[size_t(id)];
@@ -467,6 +482,7 @@ void moveMover(SimState& s, int id, float dt) {
     const UnitModel& um = s.models[size_t(u.model)];
     target = std::min(target, nodeCap(s.graph.nodes[size_t(m.track.nodes[at])], um) * um.speed);
   }
+  target *= roadWeatherFactor(s, m);  // the mods' road speed (snow, heavy rain; full on plowed lanes)
   if (!m.crashing) {
     float cand = m.speed + hm.acceleration * dt;
     m.speed = cand <= target ? cand : std::max(target, 0.0f);
@@ -542,6 +558,7 @@ void despawn(VM& vm, SimState& s, int id) {
   if (m.train) --s.trainsLive;
   else if (m.boat) --s.boatsLive, m.boat = false;
   else if (m.aircraft) --s.aircraftLive, m.aircraft = false;
+  else if (m.plow) --s.plowsLive, m.plow = false;
   else if (!m.transit && !m.parked) --s.roadLive;
   if (m.extra) --s.extraLive, m.extra = false;
   if (Object* o = m.controller.get()) {
@@ -1971,6 +1988,8 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   syncCharacterFields(*s);
   simSoundsTick(vm, grid, *s, x);
   simParticlesTick(vm, grid, *s, x);
+  stepSnowplows(vm, grid, *s, x);       // the mods' snowplows (engine/snowplows.h)
+  simTrafficMapsTick(vm, grid, *s, x);  // the mods' shader hooks: recent traffic (engine/traffic_maps.h)
   if (debugSim()) {
     static int frames = 0;
     if (++frames % 600 == 0) {
@@ -2374,6 +2393,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
   if (s->followShots > 0 && ++s->followFrame % (s->followShotName.rfind("halt-", 0) == 0 ? 4 : 12) == 0)
     d.requestScreenshot(s->followShotName + std::to_string(16 - s->followShots--) + ".png");
   const bool underground = grid->underground();
+  const double clockNow = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
   forEachUnit(*s, [&](const Mover& m, int unit, const Unit& u, const PlacedPose& p) {
     Vec3 e = p.position - eye;
     if (dot(e, e) > farZ * farZ) return;
@@ -2437,6 +2457,8 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       items[k].hasCustom4 = true;
       items[k].custom4[0] = m.rotorAngle;
       items[k].custom4[1] = m.rotorSpin;
+      items[k].surfaceClass = render::kSurfaceVehicle;  // the mods' shader hooks: a vehicle, 1 when parked
+      items[k].hookValue = m.parked ? 1.0f : 0.0f;
     }
     uint32_t argb = u.tint;
     // line vehicles: the line colour tints the colorize materials (gsTransportLine.color, 0x10114ec0)
@@ -2452,6 +2474,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
         items[k].colorize[1] = float((argb >> 8) & 0xFF) / 255.0f;
         items[k].colorize[2] = float(argb & 0xFF) / 255.0f;
       }
+    if (m.plow && unit == 0) collectPlowParts(d, s->models[size_t(u.model)], p, clockNow, items);  // the mods' plough
   });
 }
 

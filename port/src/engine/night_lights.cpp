@@ -17,6 +17,7 @@
 
 #include "core/log.h"
 #include "core/text.h"
+#include "render/gl.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
@@ -154,6 +155,20 @@ std::map<const GridObj*, LampCache>& lampCaches() {
   return m;
 }
 
+// the light map: one RGBA16F texture for the lamp map and the headlight map (a texture unit fewer, render/renderer3d.h
+// kNightMapUnit): the headlights in rows 0-2047 (drawn each frame), the lamp map from row 2048 (uploaded when it
+// changes); 2048 x 4096
+constexpr int kLightMapSide = 2048;
+RenderTarget* lightMap(Display& d) {
+  static RenderTarget t;
+  static bool failed = false;
+  if (!t.fbo && !failed && !d.r3d().makeTarget(t, kLightMapSide, 2 * kLightMapSide, TargetFormat::Rgba16f, false, true)) {
+    LOG_WARN("night lights: no light map texture");
+    failed = true;
+  }
+  return t.fbo ? &t : nullptr;
+}
+
 std::unordered_map<const ObjectData*, std::vector<Vec3>>& headCache() {
   static std::unordered_map<const ObjectData*, std::vector<Vec3>> m;
   return m;
@@ -278,10 +293,6 @@ void updateLampMap(Display& d, GridObj* grid, LampCache& lc) {
     float sizeX = float(g.width) * cs, sizeZ = float(g.length) * cs;
     int w = std::clamp(int(std::ceil(sizeX / kLampTexel)), 16, kLampMapMax);
     int h = std::clamp(int(std::ceil(sizeZ / kLampTexel)), 16, kLampMapMax);
-    if (lc.texture && (w != lc.w || h != lc.h)) {
-      d.r2d().destroyTexture(lc.texture);
-      lc.texture = 0;
-    }
     lc.w = w, lc.h = h;
     lc.xf[0] = ox, lc.xf[1] = oz, lc.xf[2] = 1.0f / sizeX, lc.xf[3] = 1.0f / sizeZ;
     lc.texel[0] = sizeX / float(lc.w), lc.texel[1] = sizeZ / float(lc.h);
@@ -314,8 +325,20 @@ void updateLampMap(Display& d, GridObj* grid, LampCache& lc) {
   lc.heads = std::move(heads);
   splatRect(lc, x0, z0, x1, z1);
   // one level, linear: from the highest camera a screen pixel covers about one texel, so no mipmaps are needed
-  if (!lc.texture) lc.texture = d.r2d().createTextureBGRA(lc.px.data(), lc.w, lc.h);
-  else d.r2d().updateTextureBGRA(lc.texture, lc.px.data(), lc.w, lc.h);
+  // into the light map's upper half (all of it cleared first on a full build: a smaller map leaves no old texels)
+  RenderTarget* lm = lightMap(d);
+  if (!lm) return;
+  d.r2d().flushAll();
+  gl::BindTexture(gl::TEXTURE_2D, lm->color);
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+  if (full) {
+    std::vector<uint8_t> zero(size_t(kLightMapSide) * kLightMapSide * 4, 0);
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, kLightMapSide, kLightMapSide, kLightMapSide, gl::BGRA, gl::UNSIGNED_BYTE,
+                      zero.data());
+  }
+  gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, kLightMapSide, lc.w, lc.h, gl::BGRA, gl::UNSIGNED_BYTE, lc.px.data());
+  gl::BindTexture(gl::TEXTURE_2D, 0);
+  lc.texture = lm->color;  // not owned: marks the lamp map as uploaded
   LOG_INFO("night lights: %zu lamp heads, lamp map %dx%d (%s %dx%d texels) in %lld ms", lc.heads.size(), lc.w, lc.h,
            full ? "all" : "area", x1 - x0 + 1, z1 - z0 + 1,
            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
@@ -472,7 +495,7 @@ struct VehicleLightState {
   std::vector<float> beam;     // per mover: 0 low beam … 1 high beam, eased
   std::vector<float> beamLen;  // per mover: the beam's reach, eased (a building ahead shortens it smoothly)
   std::vector<VehicleLightSource> sources;
-  RenderTarget target;
+
   uint32_t program = 0;
   bool failed = false;
   GpuMesh mesh;
@@ -618,7 +641,7 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
   if (!st.program) {
     std::string err;
     st.program = d.r3d().buildProgram(kSplatVs, kSplatFs, &err);
-    if (!st.program || !d.r3d().makeTarget(st.target, kCarMap, kCarMap, TargetFormat::Rgba16f, false, true)) {
+    if (!st.program || !lightMap(d)) {
       LOG_WARN("night lights: the vehicles' light map pass is not available (%s)", err.c_str());
       st.failed = true;
       return;
@@ -653,8 +676,10 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
   if (st.mesh.vao) d.r3d().destroy(st.mesh);
   st.mesh = d.r3d().upload(m);
   d.r2d().flushAll();
-  d.r3d().splat(st.target, st.program, st.mesh, d.window().width(), d.window().height());
-  v.carMap = st.target.color;
+  RenderTarget* lm = lightMap(d);
+  if (!lm) return;
+  d.r3d().splat(*lm, st.program, st.mesh, d.window().width(), d.window().height(), kCarMap);  // the lower half
+  v.carMap = lm->color;
   v.carMapXf[0] = ox, v.carMapXf[1] = oz, v.carMapXf[2] = v.carMapXf[3] = 1.0f / kCarMapSize;
   v.carLight[0] = y0, v.carLight[1] = 0, v.carLight[2] = kCarGain;
 }
@@ -1642,6 +1667,8 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
     std::copy(lc.xf, lc.xf + 4, v.lampMapXf);
     v.lampHeight[0] = lc.y0;
     v.lampHeight[1] = lc.yScale;
+    v.lampHeight[2] = float(lc.w) / float(kLightMapSide);  // the lamp map's share of the light map's upper half
+    v.lampHeight[3] = float(lc.h) / float(2 * kLightMapSide);
     // no sprites on the heads: the lamps' own glass glows (lampGlassMask, the shader's window path)
   }
   vehicleNight01() = ns.night01;

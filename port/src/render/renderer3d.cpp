@@ -1,5 +1,6 @@
 #include "render/renderer3d.h"
 
+#include <chrono>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -458,9 +459,12 @@ bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, boo
   return ok;
 }
 
-void Renderer3D::splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH) {
+void Renderer3D::splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH, int regionH) {
+  const int h = regionH > 0 ? std::min(regionH, t.height) : t.height;
   gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
-  gl::Viewport(0, 0, t.width, t.height);
+  gl::Viewport(0, 0, t.width, h);
+  gl::Enable(gl::SCISSOR_TEST);
+  gl::Scissor(0, 0, t.width, h);
   gl::ClearColor(0, 0, 0, 0);
   gl::Clear(gl::COLOR_BUFFER_BIT);
   gl::Disable(gl::DEPTH_TEST);
@@ -474,6 +478,7 @@ void Renderer3D::splat(const RenderTarget& t, uint32_t program, const GpuMesh& m
   gl::BindVertexArray(0);
   gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
   gl::Disable(gl::BLEND);
+  gl::Disable(gl::SCISSOR_TEST);
   gl::Enable(gl::DEPTH_TEST);
   gl::Enable(gl::CULL_FACE);
   gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -640,10 +645,13 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
   gl::Uniform1f(gl::GetUniformLocation(program_, "uReflection"), m.reflection);
   gl::ActiveTexture(gl::TEXTURE0);
   gl::Uniform1i(u_.flags, int((m.flags & kMatReflection) && !m.envCube ? m.flags & ~kMatReflection : m.flags));
-  gl::Uniform4fv(u_.matAmbient, 1, m.ambient);
-  float d[4] = {m.diffuse[0], m.diffuse[1], m.diffuse[2], m.diffuse[3] * it.alpha};
+  const float sd = v.surfaceDiffuse, ss = v.surfaceSpecular;  // port atmosphere (SceneView)
+  float am[4] = {m.ambient[0] * sd, m.ambient[1] * sd, m.ambient[2] * sd, m.ambient[3]};
+  gl::Uniform4fv(u_.matAmbient, 1, am);
+  float d[4] = {m.diffuse[0] * sd, m.diffuse[1] * sd, m.diffuse[2] * sd, m.diffuse[3] * it.alpha};
   gl::Uniform4fv(u_.matDiffuse, 1, d);
-  gl::Uniform4fv(u_.matSpecular, 1, m.specular);
+  float sp[4] = {m.specular[0] * ss, m.specular[1] * ss, m.specular[2] * ss, m.specular[3]};
+  gl::Uniform4fv(u_.matSpecular, 1, sp);
   float em[4] = {m.emission[0] * v.emissionScale, m.emission[1] * v.emissionScale, m.emission[2] * v.emissionScale, m.emission[3]};
   gl::Uniform4fv(u_.matEmission, 1, em);
   gl::Uniform1f(u_.shininess, m.shininess);
@@ -653,13 +661,45 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
                    reinterpret_cast<void*>(size_t(p.firstIndex) * 4));
 }
 
-uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error) {
+uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks) {
   std::string why;
-  std::string vs = translateGlsl110(vs110, false, &why), fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why);
+  std::string vs = translateGlsl110(vs110, false, &why, hooks), fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks);
   if (vs.empty() || fs.empty()) {
     if (error) *error = "unsupported built-in " + why;
     return 0;
   }
+  return linkProgram(vs, fs, error);
+}
+
+uint32_t Renderer3D::buildPostHookProgram(const std::string& vs110, std::string* error) {
+  std::string why;
+  std::string vs = translateGlsl110(vs110, false, &why, false);
+  if (vs.empty()) {
+    if (error) *error = "unsupported built-in " + why;
+    return 0;
+  }
+  return linkProgram(vs, postHookFragment(), error);
+}
+
+void Renderer3D::postHookState(const SceneView& v, uint32_t prog) {
+  gl::UseProgram(prog);
+  hookState(v, prog);
+  Mat4 inv = inverse(v.proj * v.view);
+  gl::UniformMatrix4fv(gl::GetUniformLocation(prog, "regs_PostInvViewProj"), 1, 0, inv.m);
+}
+
+// programs linked and the time spent (load-time measurements: Display::renderFrame logs slow frames)
+int gProgramsLinked = 0;
+double gLinkSeconds = 0;
+
+uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, std::string* error) {
+  struct Timed {
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ~Timed() {
+      ++gProgramsLinked;
+      gLinkSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    }
+  } timed;
   uint32_t v = compile(gl::VERTEX_SHADER, vs.c_str(), error), f = v ? compile(gl::FRAGMENT_SHADER, fs.c_str(), error) : 0;
   if (!v || !f) return 0;
   uint32_t prog = gl::CreateProgram();
@@ -679,6 +719,21 @@ uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& f
     gl::GetProgramInfoLog(prog, sizeof log, nullptr, log);
     if (error) *error = log;
     return 0;
+  }
+  // the hooks' environment cube lives on unit 8 (a sampler left at unit 0 would clash with the 2D map there)
+  int env = gl::GetUniformLocation(prog, "regs_EnvMap"), surf = gl::GetUniformLocation(prog, "regs_SurfaceMap");
+  if (env >= 0 || surf >= 0) {
+    gl::GLint current = 0;
+    gl::GetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &current);
+    gl::UseProgram(prog);
+    if (env >= 0) gl::Uniform1i(env, kHookEnvUnit);
+    if (surf >= 0) gl::Uniform1i(surf, kHookSurfaceUnit);
+    const std::pair<const char*, int> traffic[] = {
+        {"regs_LaneTraffic", kHookLaneTrafficUnit},
+        {"regs_TopMap", kHookTopUnit}, {"regs_FootAtlas", kHookFootAtlasUnit}};
+    for (const auto& [name, unit] : traffic)
+      if (int loc = gl::GetUniformLocation(prog, name); loc >= 0) gl::Uniform1i(loc, unit);
+    gl::UseProgram(gl::GLuint(current));
   }
   return prog;
 }
@@ -730,6 +785,19 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.shadowWarp = at("shadowWarp");
   l.shadowParams = at("shadowParams");
   l.bones = at("bones");
+  l.hookOn = at("regs_HookOn");
+  if (l.hookOn >= 0 || at("regs_PostInvViewProj") >= 0) {  // a hooked program or the post program
+    l.surfaceClass = at("regs_SurfaceClass");
+    l.hookInvViewProj = at("regs_HookInvViewProj");
+    l.hookEye = at("regs_HookEye");
+    l.hookTime = at("regs_HookTime");
+    l.hookSurfaceRect = at("regs_SurfaceMapRect");
+    l.hookItem = at("regs_HookItem");
+    l.hookTrafficRect = at("regs_TrafficRect");
+    l.hookLaneCells = at("regs_LaneCells");
+    l.hookFootRect = at("regs_FootRect");
+    l.hookNight = at("regs_HookNight");
+  }
   l.viewInverse = at("regs_ViewInverse");
   l.projInverse = at("regs_ProjInverse");
   l.night = at("regs_Night");
@@ -788,13 +856,62 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   gl::Uniform4f(l.projInverse, 1.0f / v.proj.at(0, 0), 1.0f / v.proj.at(1, 1), v.proj.at(0, 2), v.proj.at(1, 2));
   gl::Uniform4fv(l.night, 1, v.night);
   gl::Uniform1f(l.shop, v.shopShare);
-  gl::Uniform1i(l.windowMask, 8);
-  gl::Uniform1i(l.lampMap, 9);
+  gl::Uniform1i(l.windowMask, kNightMapUnit);
+  gl::Uniform1i(l.lampMap, kNightMapUnit);
   gl::Uniform4fv(l.lampMapXf, 1, v.lampMapXf);
-  gl::Uniform4f(l.lampHeight, v.lampHeight[0], v.lampHeight[1], 0, 0);
-  gl::Uniform1i(l.carMap, 10);
+  gl::Uniform4fv(l.lampHeight, 1, v.lampHeight);
+  gl::Uniform1i(l.carMap, kNightMapUnit);
   gl::Uniform4fv(l.carMapXf, 1, v.carMapXf);
   gl::Uniform4f(l.carLight, v.carLight[0], v.carLight[1], v.carMap ? v.carLight[2] : 0.0f, 0);
+  if (l.hookOn >= 0) {  // the mods' shader hooks: colour passes of hooked views; shadow-map passes for some (2)
+    bool colour = !(v.env & (kEnvShadowMapRender | kEnvShadowRender));
+    static const bool shadowHooks = shadowHooksRegistered();
+    bool on = v.hooks && (colour || ((v.env & kEnvShadowMapRender) && shadowHooks));
+    gl::Uniform1f(l.hookOn, on ? (colour ? 1.0f : 2.0f) : 0.0f);
+    if (on) {
+      hookState(v, prog);
+    }
+  }
+}
+
+// the shader hooks' uniforms and maps (units 8-14) for a program in use: the view's inverse, eye, timer, the mods'
+// uniforms (regsShaderUniform) and the engine's maps
+void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
+  const ProgramLocs& l = locs(prog);
+  Mat4 inv = inverse(v.proj * v.view);
+  gl::UniformMatrix4fv(l.hookInvViewProj, 1, 0, inv.m);
+  gl::Uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
+  gl::Uniform1f(l.hookTime, v.timer);
+  gl::Uniform1f(l.hookNight, v.night[3]);
+  ProgramLocs& lw = locs_[prog];
+  for (const auto& [name, value] : shaderHookUniforms()) {
+    auto it = lw.hookUniforms.find(name);
+    if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, gl::GetUniformLocation(prog, name.c_str())).first;
+    if (it->second >= 0) gl::Uniform4fv(it->second, 1, value.data());
+  }
+  gl::Uniform4fv(l.hookSurfaceRect, 1, v.hookSurfaceRect);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookEnvUnit);
+  gl::BindTexture(gl::TEXTURE_CUBE_MAP, v.hookEnvCube);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookSurfaceUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookSurfaceMap);
+  gl::Uniform4fv(l.hookTrafficRect, 1, v.hookTrafficRect);
+  gl::Uniform4fv(l.hookLaneCells, 1, v.hookLaneCells);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookLaneTrafficUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookLaneTraffic);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookTopUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookTopMap);
+  gl::Uniform4fv(l.hookFootRect, 1, v.hookFootRect);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookFootAtlasUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookFootAtlas);
+  for (const ShaderHookTexture& t : shaderHookTextures()) {  // the mods' own textures (regsShaderTexture)
+    auto it = lw.hookUniforms.find(t.sampler);
+    if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(t.sampler, gl::GetUniformLocation(prog, t.sampler.c_str())).first;
+    if (it->second < 0) continue;
+    gl::Uniform1i(it->second, t.unit);
+    gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(t.unit));
+    gl::BindTexture(gl::TEXTURE_2D, t.texture);
+  }
+  gl::ActiveTexture(gl::TEXTURE0);
 }
 
 void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
@@ -803,19 +920,25 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform1f(l.alphaRef, alphaRef);  // glAlphaFunc(GREATER, ref) of the queue
   const float es = v.emissionScale;
   gl::Uniform4f(l.matEmission, m.emission[0] * es, m.emission[1] * es, m.emission[2] * es, m.emission[3]);
-  float amb[4] = {m.ambient[0], m.ambient[1], m.ambient[2], m.ambient[3] * it.alpha};  // ambient alpha = object fade
+  // ambient alpha = object fade; the scene's surface factors (port atmosphere) on the colours
+  const float sd = v.surfaceDiffuse, ss = v.surfaceSpecular;
+  float amb[4] = {m.ambient[0] * sd, m.ambient[1] * sd, m.ambient[2] * sd, m.ambient[3] * it.alpha};
+  float dif[4] = {m.diffuse[0] * sd, m.diffuse[1] * sd, m.diffuse[2] * sd, m.diffuse[3]};
+  float spe[4] = {m.specular[0] * ss, m.specular[1] * ss, m.specular[2] * ss, m.specular[3]};
   gl::Uniform4fv(l.matAmbient, 1, amb);
-  gl::Uniform4fv(l.matDiffuse, 1, m.diffuse);
-  gl::Uniform4fv(l.matSpecular, 1, m.specular);
+  gl::Uniform4fv(l.matDiffuse, 1, dif);
+  gl::Uniform4fv(l.matSpecular, 1, spe);
   gl::Uniform1f(l.matShininess, m.shininess);
+  if (l.surfaceClass >= 0) gl::Uniform1i(l.surfaceClass, it.surfaceClass >= 0 ? it.surfaceClass : m.surfaceClass);
+  if (l.hookItem >= 0) gl::Uniform1f(l.hookItem, it.hookValue);
   int n = int(std::min<size_t>(v.lights.size(), 8));
   for (int i = 0; i < n; ++i) {  // gl_FrontLightProduct = light × material, component-wise
     const Light& li = v.lights[size_t(i)];
     float pa[4], pd[4], ps[4];
     for (int k = 0; k < 4; ++k) {
       pa[k] = li.ambient[k] * amb[k];
-      pd[k] = li.diffuse[k] * m.diffuse[k];
-      ps[k] = li.specular[k] * m.specular[k];
+      pd[k] = li.diffuse[k] * dif[k];
+      ps[k] = li.specular[k] * spe[k];
     }
     gl::Uniform4fv(l.productAmbient[i], 1, pa);
     gl::Uniform4fv(l.productDiffuse[i], 1, pd);
@@ -825,21 +948,24 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   for (int k = 0; k < 4; ++k) tint[k] = it.colorize[k] * float(p.colorize >> (k == 3 ? 24 : 16 - 8 * k) & 0xFF) / 255.0f;
   gl::Uniform4fv(l.colorize, 1, tint);
   gl::Uniform1f(l.reflection, m.reflection);
-  if (l.windowOn >= 0) {  // port night lights: the material's window groups on unit 8
-    float code = !m.windowMask ? 0.0f : m.windowKind == 1 ? it.lampCode
+  if (l.windowOn >= 0) {  // port night lights: the material's window groups, on the first unit after its textures
+    const int maskUnit = int(m.textures.size());
+    float code = !m.windowMask || maskUnit >= kMaterialUnits ? 0.0f : m.windowKind == 1 ? it.lampCode
                  : m.windowKind >= 4 ? (v.night[3] > 0.05f ? float(m.windowKind) : 0.0f)
                  : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
     gl::Uniform1f(l.windowOn, code);
     if (m.windowKind == 1) gl::Uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, it.cabinLight);
+    // the sampler points at the light map's unit when unused: never at a unit where the material has a cube
+    gl::Uniform1i(l.windowMask, code > 0 ? maskUnit : kNightMapUnit);
     if (code > 0) {
-      gl::ActiveTexture(gl::TEXTURE0 + 8);
+      gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(maskUnit));
       gl::BindTexture(gl::TEXTURE_2D, m.windowMask);
     }
   }
   for (int i = 0; i < 8; ++i) gl::Uniform4fv(l.custom[i], 1, it.layerCustom ? it.layerCustom[i] : m.custom[i]);
   if (it.hasCustom4) gl::Uniform4f(l.custom[4], it.custom4[0], it.custom4[1], m.custom[4][2], m.custom[4][3]);
   gl::UniformMatrix4fv(l.matrix, 1, 0, it.world.m);
-  for (size_t i = 0; i < m.textures.size() && i < 7; ++i) {
+  for (size_t i = 0; i < m.textures.size() && i < size_t(kMaterialUnits); ++i) {
     gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(i));
     gl::BindTexture(i < m.cube.size() && m.cube[i] ? gl::TEXTURE_CUBE_MAP : gl::TEXTURE_2D, m.textures[i]);
   }
@@ -949,14 +1075,9 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     gl::BindTexture(gl::TEXTURE_2D, v.shadowMap);
     gl::ActiveTexture(gl::TEXTURE0);
   }
-  if (v.lampMap) {  // port night lights: the lamp light map on unit 9 for the whole pass
-    gl::ActiveTexture(gl::TEXTURE0 + 9);
-    gl::BindTexture(gl::TEXTURE_2D, v.lampMap);
-    gl::ActiveTexture(gl::TEXTURE0);
-  }
-  if (v.carMap) {  // port night lights: the vehicles' headlight map on unit 10
-    gl::ActiveTexture(gl::TEXTURE0 + 10);
-    gl::BindTexture(gl::TEXTURE_2D, v.carMap);
+  if (v.lampMap || v.carMap) {  // port night lights: the light map (lamps and headlights in one) for the whole pass
+    gl::ActiveTexture(gl::TEXTURE0 + kNightMapUnit);
+    gl::BindTexture(gl::TEXTURE_2D, v.lampMap ? v.lampMap : v.carMap);
     gl::ActiveTexture(gl::TEXTURE0);
   }
   uint32_t current = 0;
@@ -1082,6 +1203,16 @@ void Renderer3D::drawParticles(const SceneView& v, const ParticleDrawList& list)
     if (shadowPass && list.batches[s.batch].blend) continue;
     float c = std::cos(s.angle) * s.size, sn = std::sin(s.angle) * s.size;
     Vec3 A = R * c + U * sn, B = U * c - R * sn;
+    if (s.axis.x != 0 || s.axis.y != 0 || s.axis.z != 0) {
+      // port streak: the texture's v axis along the motion (half length |axis| + size), u across it, size wide,
+      // turned to face the camera about the motion; seen end-on it stays a billboard
+      Vec3 W = cross(s.axis, v.eye - s.pos);
+      float wl = std::sqrt(dot(W, W)), al = std::sqrt(dot(s.axis, s.axis));
+      if (wl > 1e-4f * al * std::sqrt(dot(v.eye - s.pos, v.eye - s.pos))) {
+        A = W * (s.size / wl);
+        B = s.axis * ((al + s.size) / al);
+      }
+    }
     // ARGB → R,G,B,A bytes (the TEXCOORD order of upload())
     uint32_t col = (s.argb >> 16 & 0xFF) | (s.argb & 0xFF00) | (s.argb & 0xFF) << 16 | (s.argb & 0xFF000000u);
     const Vec3 corner[4] = {s.pos + A + B, s.pos - A + B, s.pos - A - B, s.pos + A - B};

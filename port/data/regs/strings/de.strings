@@ -38,3 +38,7 @@ $regs_menu_info = "Inoffizielle Portierung, benötigt Cities in Motion";
 $regs_newsticker_jamMoved_text = ["Ein festsitzender Bus der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Eine festsitzende Straßenbahn der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Ein festsitzender U-Bahnzug der Linie %0 wurde zwei Stationen weiter gesetzt.", "Ein festsitzendes Wassertaxi der Linie %0 wurde zwei Anlegestellen weiter gesetzt.", "Ein festsitzender Hubschrauber der Linie %0 wurde zwei Landeplätze weiter gesetzt."];
 // Spielstände und Karten aus dem Ordner des Originals (Dokumente\Cities In Motion), hinter dem Namen in den Ladelisten
 $regs_fromOriginal_note = "(aus Cities in Motion)";
+// die Seite Mods im Einstellungsmenü (regs/ui/mods.script): die Einstellungen der aktivierten Mods
+$regs_mods_button = "Mods";
+$regs_mods_title = "Mods";
+$regs_mods_none = "Die aktivierten Mods haben keine Einstellungen.";
