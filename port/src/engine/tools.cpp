@@ -145,6 +145,10 @@ ToolBlocks& toolBlocks() {
 }
 
 void registerToolMode(int mode, ToolMode m) { g_modes[mode] = std::move(m); }
+ToolMode toolModeOf(int mode) {
+  auto m = g_modes.find(mode);
+  return m == g_modes.end() ? ToolMode() : m->second;
+}
 
 GridObj* toolGrid(VM& vm, Object* player) {
   auto* g = dynamic_cast<GridObj*>(member(vm, player, u"grid").object());

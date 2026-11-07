@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 #include "engine/grid_edit.h"
 
@@ -290,7 +291,8 @@ void curveCells(const GridData& g, const CurveRoad& c, int& x0, int& z0, int& x1
   z1 = std::clamp(int(std::floor((hz + m) / cs + float(g.length) * 0.5f)), 0, g.length - 1);
 }
 
-void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matMarks, int matWalk, render::MeshData& out) {
+void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matMarks, int matWalk, render::MeshData& out,
+                    int matTram) {
   std::vector<CurveSample> d = curveShape(c, caps);
   Builder b{out, d, d.back().s, {}};
   Vec3 q0 = d.front().p, q1 = d.back().p, u0 = Vec3{-c.dx0, 0, -c.dz0}, u1 = Vec3{c.dx1, 0, c.dz1};
@@ -315,6 +317,78 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   if (caps.free0) b.cap(q0, u0, 1);
   if (caps.free1) b.cap(q1, u1, 1);
   b.end();
+  if ((c.ends & 4) && matTram >= 0) {  // tram tracks: tracks/small_basic.object's rail strip (both lanes), every 6 units
+    b.begin(matTram);
+    b.band(-2.2f, -0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
+    b.band(-0.8f, 0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.0625f);
+    b.band(0.8f, 2.2f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.1875f);
+    b.end();
+  }
+}
+
+void appendBentMesh(const render::MeshData& src, int materialBase, const std::vector<CurveSample>& shape, float s0,
+                    float side, float across, render::MeshData& out) {
+  if (src.positions.empty() || materialBase < 0) return;
+  const uint32_t base = uint32_t(out.vertexCount()), first = uint32_t(out.indices.size());
+  const size_t n = src.vertexCount();
+  const float sg = side >= 0 ? 1.0f : -1.0f;
+  for (size_t i = 0; i < n; ++i) {
+    float x = src.positions[i * 3], y = src.positions[i * 3 + 1], z = src.positions[i * 3 + 2];
+    CurveSample k = curveAt(shape, s0 + sg * x);
+    Vec3 dir = render::normalize(Vec3{k.dir.x, 0, k.dir.z}) * sg, right = k.right * sg, up{0, 1, 0};
+    Vec3 p = k.p + right * (z + across) + up * y;
+    Vec3 nl{src.normals.size() > i * 3 + 2 ? src.normals[i * 3] : 0.0f, src.normals.size() > i * 3 + 2 ? src.normals[i * 3 + 1] : 1.0f,
+            src.normals.size() > i * 3 + 2 ? src.normals[i * 3 + 2] : 0.0f};
+    Vec3 nw = dir * nl.x + up * nl.y + right * nl.z;
+    out.positions.insert(out.positions.end(), {p.x, p.y, p.z});
+    out.normals.insert(out.normals.end(), {nw.x, nw.y, nw.z});
+    float u = src.uv0.size() > i * 2 + 1 ? src.uv0[i * 2] : 0, v = src.uv0.size() > i * 2 + 1 ? src.uv0[i * 2 + 1] : 0;
+    out.uv0.insert(out.uv0.end(), {u, v});
+    if (src.uv1.size() > i * 2 + 1) out.uv1.insert(out.uv1.end(), {src.uv1[i * 2], src.uv1[i * 2 + 1]});
+    else out.uv1.insert(out.uv1.end(), {u, v});
+  }
+  for (const render::Submesh& sm : src.submeshes) {
+    render::Submesh o;
+    o.material = materialBase + sm.material;
+    o.firstVertex = base + sm.firstVertex;
+    o.vertexCount = sm.vertexCount;
+    o.firstIndex = uint32_t(out.indices.size());
+    for (uint32_t k = 0; k < sm.indexCount; ++k) out.indices.push_back(base + src.indices[sm.firstIndex + k]);
+    o.indexCount = sm.indexCount;
+    out.submeshes.push_back(o);
+  }
+  (void)first;
+}
+
+std::string stopTemplateName(const CurveRoad::Stop& st) {
+  return st.kind == 1 ? "stop_tram01_small" : "stop_bus0" + std::to_string(std::clamp(int(st.design), 1, 3)) + "_small";
+}
+
+void stopAnchor(const GridData& g, const CurveRoad& c, const CurveRoad::Stop& st, int& x, int& z, int& orient) {
+  std::vector<CurveSample> d = curveShape(c);
+  CurveSample k = curveAt(d, st.s);
+  Vec3 p = k.p + k.right * (float(st.side) * 4.5f);  // the pavement's middle
+  orient = std::fabs(k.dir.x) >= std::fabs(k.dir.z) ? 0 : 1;
+  int sx = orient ? 2 : 4, sz = orient ? 4 : 2;
+  const float cs = g.cellSize;
+  x = int(std::lround(p.x / cs + float(g.width) * 0.5f - float(sx) * 0.5f));
+  z = int(std::lround(p.z / cs + float(g.length) * 0.5f - float(sz) * 0.5f));
+}
+
+void refreshCurveAnchors(GridData& g) {
+  g.curveAnchors.clear();
+  for (const CurveRoad& c : g.curves)
+    for (const CurveRoad::Stop& st : c.stops) {
+      int x, z, o;
+      stopAnchor(g, c, st, x, z, o);
+      std::string name = stopTemplateName(st);
+      for (size_t i = 0; i < g.items.size(); ++i) {
+        const GridData::Item& it = g.items[i];
+        if (it.removed || it.x != x || it.z != z || it.type >= g.types.size() || g.types[it.type] != name) continue;
+        g.curveAnchors.insert(uint32_t(i));
+        break;
+      }
+    }
 }
 
 void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
@@ -354,7 +428,12 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
 }
 
 void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
-  if (g.curves.empty() || g.flags.empty()) return;
+  if (g.flags.empty()) return;
+  if (g.curveCover.size() != g.flags.size()) g.curveCover.assign(g.flags.size(), 0);
+  x0 = std::max(x0, 0), z0 = std::max(z0, 0), x1 = std::min(x1, g.width - 1), z1 = std::min(z1, g.length - 1);
+  for (int z = z0; z <= z1; ++z)  // the rect's marks again (the cover itself was cleared and re-stamped by the caller)
+    for (int x = x0; x <= x1; ++x) g.curveCover[size_t(z) * size_t(g.width) + size_t(x)] = 0;
+  if (g.curves.empty()) return;
   const float cs = g.cellSize;
   for (const CurveRoad& c : g.curves) {
     int cx0, cz0, cx1, cz1;
@@ -371,20 +450,65 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
           curveNearest(d, (float(x) + fx - float(g.width) * 0.5f) * cs, (float(z) + fz - float(g.length) * 0.5f) * cs, side, s);
           inside = std::fabs(side) <= kCurveHalfWidth - 0.2f;
         }
-        if (inside) g.flags[size_t(z) * size_t(g.width) + size_t(x)] |= 0x0F00;
+        if (!inside) continue;
+        size_t ci = size_t(z) * size_t(g.width) + size_t(x);
+        if ((g.flags[ci] & 0x0F00) != 0x0F00) g.curveCover[ci] = 1;  // covered by the curve, not by an item
+        g.flags[ci] |= 0x0F00;
       }
   }
 }
 
-void writeCurveSection(const GridData& g, std::vector<uint8_t>& out) {
+// one curve: 13 floats (the 13th the end flags), i32 kind, u32 stop count, per stop f32 s, i8 side, u8 kind, u8 design,
+// u8 0 (format 2: the count's bit 31 set; format 1 had no stop count)
+static void writeCurve(const CurveRoad& c, std::vector<uint8_t>& out) {
   auto put = [&](const void* p, size_t n) { out.insert(out.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
-  uint32_t tag = kCurveSectionTag, size = uint32_t(4 + g.curves.size() * 14 * 4), count = uint32_t(g.curves.size());
-  put(&tag, 4), put(&size, 4), put(&count, 4);
-  for (const CurveRoad& c : g.curves) {
-    float f[13] = {c.x0, c.y0, c.z0, c.dx0, c.dz0, c.x1, c.y1, c.z1, c.dx1, c.dz1, c.a, c.b, float(c.ends)};
-    int32_t kind = c.kind;
-    put(f, sizeof(f)), put(&kind, 4);
+  float f[13] = {c.x0, c.y0, c.z0, c.dx0, c.dz0, c.x1, c.y1, c.z1, c.dx1, c.dz1, c.a, c.b, float(c.ends)};
+  int32_t kind = c.kind;
+  uint32_t n = uint32_t(c.stops.size());
+  put(f, sizeof(f)), put(&kind, 4), put(&n, 4);
+  for (const CurveRoad::Stop& st : c.stops) {
+    uint8_t b[4] = {uint8_t(st.side), st.kind, st.design, 0};
+    put(&st.s, 4), put(b, 4);
   }
+}
+
+// reads one curve at p; false when it does not fit before stop
+static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, bool v2, CurveRoad& c) {
+  if (p + 56 > stop) return false;
+  float f[13];
+  int32_t kind;
+  std::memcpy(f, d.data() + p, 52);
+  std::memcpy(&kind, d.data() + p + 52, 4);
+  p += 56;
+  c = CurveRoad();
+  c.x0 = f[0], c.y0 = f[1], c.z0 = f[2], c.dx0 = f[3], c.dz0 = f[4];
+  c.x1 = f[5], c.y1 = f[6], c.z1 = f[7], c.dx1 = f[8], c.dz1 = f[9];
+  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 7);
+  if (!v2) return true;
+  if (p + 4 > stop) return false;
+  uint32_t n;
+  std::memcpy(&n, d.data() + p, 4);
+  p += 4;
+  for (uint32_t k = 0; k < n && p + 8 <= stop; ++k, p += 8) {
+    CurveRoad::Stop st;
+    std::memcpy(&st.s, d.data() + p, 4);
+    st.side = int8_t(d[p + 4]) < 0 ? -1 : 1;
+    st.kind = d[p + 5];
+    st.design = d[p + 6];
+    c.stops.push_back(st);
+  }
+  return true;
+}
+
+void writeCurveSection(const GridData& g, std::vector<uint8_t>& out) {
+  std::vector<uint8_t> body;
+  uint32_t count = uint32_t(g.curves.size()) | 0x80000000u;
+  body.insert(body.end(), (const uint8_t*)&count, (const uint8_t*)&count + 4);
+  for (const CurveRoad& c : g.curves) writeCurve(c, body);
+  uint32_t tag = kCurveSectionTag, size = uint32_t(body.size());
+  out.insert(out.end(), (const uint8_t*)&tag, (const uint8_t*)&tag + 4);
+  out.insert(out.end(), (const uint8_t*)&size, (const uint8_t*)&size + 4);
+  out.insert(out.end(), body.begin(), body.end());
 }
 
 void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, GridData& g) {
@@ -392,18 +516,12 @@ void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, 
   if (stop > d.size() || body + 4 > stop) return;
   uint32_t count;
   std::memcpy(&count, d.data() + body, 4);
+  bool v2 = (count & 0x80000000u) != 0;
+  count &= 0x7fffffffu;
   size_t p = body + 4;
-  for (uint32_t i = 0; i < count && p + 56 <= stop; ++i, p += 56) {
-    float f[13];
-    int32_t kind;
-    std::memcpy(f, d.data() + p, 52);
-    std::memcpy(&kind, d.data() + p + 52, 4);
-    CurveRoad c;
-    c.x0 = f[0], c.y0 = f[1], c.z0 = f[2], c.dx0 = f[3], c.dz0 = f[4];
-    c.x1 = f[5], c.y1 = f[6], c.z1 = f[7], c.dx1 = f[8], c.dz1 = f[9];
-    c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 3);
-    g.curves.push_back(c);
-  }
+  CurveRoad c;
+  for (uint32_t i = 0; i < count && readCurve(d, p, stop, v2, c); ++i) g.curves.push_back(c);
+  refreshCurveAnchors(g);
 }
 
 bool sameCurve(const CurveRoad& a, const CurveRoad& b) {
@@ -435,6 +553,7 @@ void applyCurveEdit(script::VM& vm, GridObj* grid, const CurveRoad& c, bool add)
       }
   }
   if (changed) {
+    refreshCurveAnchors(g);
     int x0, z0, x1, z1;
     curveCells(g, c, x0, z0, x1, z1);
     grid->curveRects.push_back({x0, z0, x1, z1});
@@ -446,25 +565,16 @@ void applyCurveEdit(script::VM& vm, GridObj* grid, const CurveRoad& c, bool add)
 }
 
 std::vector<uint8_t> curveActionBytes(const CurveRoad& c, bool add) {
-  GridData one;
-  one.curves.push_back(c);
-  std::vector<uint8_t> section;
-  writeCurveSection(one, section);  // tag, size, count, then the curve
   std::vector<uint8_t> out{uint8_t(add ? 1 : 0)};
-  out.insert(out.end(), section.begin() + 12, section.end());
+  writeCurve(c, out);
   return out;
 }
 
 bool curveFromActionBytes(const std::vector<uint8_t>& raw, CurveRoad& c, bool& add) {
-  if (raw.size() < 1 + 56) return false;
+  if (raw.size() < 1 + 60) return false;
   add = raw[0] != 0;
-  std::vector<uint8_t> body{1, 0, 0, 0};  // count 1, then the curve
-  body.insert(body.end(), raw.begin() + 1, raw.begin() + 57);
-  GridData one;
-  parseCurveSection(body, 0, body.size(), one);
-  if (one.curves.empty()) return false;
-  c = one.curves[0];
-  return true;
+  size_t p = 1;
+  return readCurve(raw, p, raw.size(), true, c);
 }
 
 }  // namespace regs::engine

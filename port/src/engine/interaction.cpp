@@ -171,7 +171,8 @@ constexpr int kNoPlane = -0x8000;
 float intersectCell(const GridData& g, const Vec3& start, const Vec3& D, int x, int z, int planeY = kNoPlane) {
   if (x < 0 || z < 0 || x >= g.width || z >= g.length) return -1;
   size_t c = size_t(z) * size_t(g.width) + size_t(x);
-  if (planeY == kNoPlane && (g.flags[c] & 0xF00) == 0xF00) return -1;  // fully covered by items
+  // fully covered by items (port: cells a curved road covers stay pickable ground)
+  if (planeY == kNoPlane && (g.flags[c] & 0xF00) == 0xF00 && !(c < g.curveCover.size() && g.curveCover[c])) return -1;
   float cs = g.cellSize, k = cs / 256.0f;
   float h00 = g.height[c] * k;
   float h10 = (x < g.width - 1 ? g.height[c + 1] : g.height[c]) * k;

@@ -707,20 +707,29 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
     if (tc.curvesBuilt) d.r3d().destroy(tc.curves);
     if (tc.curvePreviewBuilt) d.r3d().destroy(tc.curvePreview);
     tc.curvesBuilt = tc.curvePreviewBuilt = false;
-    static const std::string kTemplate = "road_small_basic";
-    int type = -1;
-    for (size_t t = 0; t < g.types.size() && type < 0; ++t)
-      if (g.types[t] == kTemplate) type = int(t);
-    if (type < 0 && grid->templates.count(kTemplate)) {  // a map with curves but no small road yet: the type joins
-      g.types.push_back(kTemplate);
-      type = int(g.types.size()) - 1;
-    }
-    syncGridItems(d, vm, grid, tc);
-    int ti = type >= 0 && size_t(type) < tc.typeTemplate.size() ? tc.typeTemplate[size_t(type)] : -1;
-    int base = ti >= 0 ? tc.templates[size_t(ti)].materialBase : -1;
+    // a template's first material in tc.materials and its object (its type joins the map when none of its items is
+    // there yet: a map with curves but no small road or tram track)
+    auto templateOf = [&](const std::string& name, ObjectObj** object) {
+      int type = -1;
+      for (size_t t = 0; t < g.types.size() && type < 0; ++t)
+        if (g.types[t] == name) type = int(t);
+      if (type < 0 && grid->templates.count(name)) {
+        g.types.push_back(name);
+        type = int(g.types.size()) - 1;
+      }
+      syncGridItems(d, vm, grid, tc);
+      int ti = type >= 0 && size_t(type) < tc.typeTemplate.size() ? tc.typeTemplate[size_t(type)] : -1;
+      if (object) *object = ti >= 0 ? tc.templates[size_t(ti)].object : nullptr;
+      return ti >= 0 ? tc.templates[size_t(ti)].materialBase : -1;
+    };
+    int base = templateOf("road_small_basic", nullptr);
     if (base < 0) {
-      LOG_WARN("curved roads: no template %s, not drawn", kTemplate.c_str());
+      LOG_WARN("curved roads: no template road_small_basic, not drawn");
     } else {
+      bool tram = false;
+      for (const CurveRoad& c : g.curves) tram = tram || (c.ends & 4);
+      if (grid->hasCurvePreview) tram = tram || (grid->curvePreview.ends & 4);
+      int tramBase = tram ? templateOf("tram_small_basic", nullptr) : -1;
       auto upload = [&](MeshData& m, GpuMesh& out, bool& built) {
         if (!m.vertexCount()) return;
         render::computeTangents(m);
@@ -728,13 +737,25 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         out = d.r3d().upload(m);
         built = true;
       };
+      // a curve with its stops: their stop templates' meshes bent along the curve beside the road (the anchor item's
+      // centre 3 units out, as on a straight block)
+      auto curveMesh = [&](const CurveRoad& c, MeshData& m) {
+        buildCurveMesh(c, curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase);
+        if (c.stops.empty()) return;
+        std::vector<CurveSample> shape = curveShape(c);
+        for (const CurveRoad::Stop& st : c.stops) {
+          ObjectObj* o = nullptr;
+          int sb = templateOf(stopTemplateName(st), &o);
+          if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), 3.0f, m);
+        }
+      };
       MeshData all;
-      for (const CurveRoad& c : g.curves) buildCurveMesh(c, curveFreeEnds(g, c), base, base + 1, base + 2, all);
+      for (const CurveRoad& c : g.curves) curveMesh(c, all);
       if (tc.surfaceMap && all.vertexCount()) surfaceMapPaint(*tc.surfaceMap, all, Mat4(), tc.materials, true);
       upload(all, tc.curves, tc.curvesBuilt);
       if (grid->hasCurvePreview) {
         MeshData p;
-        buildCurveMesh(grid->curvePreview, curveFreeEnds(g, grid->curvePreview), base, base + 1, base + 2, p);
+        curveMesh(grid->curvePreview, p);
         upload(p, tc.curvePreview, tc.curvePreviewBuilt);
       }
     }

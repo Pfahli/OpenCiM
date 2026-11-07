@@ -12,6 +12,7 @@
 // Cross-section of the small road (metro/objects/roads/small_basic.object): asphalt ±3 at −0.2 under the item height,
 // kerbs at ±3, pavements ±3..±6 at the item height, lanes ±1.5 at −0.2, traffic on the right.
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "engine/grid.h"
@@ -55,7 +56,19 @@ float curveMinRadius(const CurveRoad& c);
 
 // the road mesh of a curve in world space, with its caps: submesh materials asphalt, markings (decal), walkways;
 // appended to out
-void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matMarks, int matWalk, render::MeshData& out);
+// matTram: the street tram strip's material (tracks/small_basic), drawn when the curve has tram tracks (ends bit 2)
+void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matMarks, int matWalk, render::MeshData& out,
+                    int matTram = -1);
+// a template's mesh bent along a curve shape: its local x runs along the curve from arc length s0 (backwards on the left
+// side), its local z away from the centre line from offset `across`, side +1 right / −1 left; its submesh materials
+// offset by materialBase (the template's first material in TerrainCache::materials); appended to out
+void appendBentMesh(const render::MeshData& src, int materialBase, const std::vector<CurveSample>& shape, float s0,
+                    float side, float across, render::MeshData& out);
+// curve stops: the stop item template of a stop, its anchor item's cell and orientation (at the pavement beside s),
+// and GridData::curveAnchors rebuilt from the map's items (after loads and curve edits)
+std::string stopTemplateName(const CurveRoad::Stop& st);
+void stopAnchor(const GridData& g, const CurveRoad& c, const CurveRoad::Stop& st, int& x, int& z, int& orient);
+void refreshCurveAnchors(GridData& g);
 
 // levels the unlocked terrain corners under a curve (with its caps) to just below its asphalt and eases the rim out
 // over 3 units; corners next to covered cells (the road blocks) stay. Inside gridEditBegin/End: cells queued as changed.

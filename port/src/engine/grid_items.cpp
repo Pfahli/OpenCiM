@@ -269,6 +269,7 @@ int bucketOf(const GridData& g, const TerrainCache& tc, uint32_t i) {
   const GridTemplate& tp = tc.templates[size_t(ti)];
   uint32_t flags = it.flags | tp.flags;
   if ((flags & kFlagHidden) || tp.type == kTypeMarker || tp.type == kTypeSpawnPoint) return -1;
+  if (g.curveAnchors.count(i)) return -1;  // port: a curve stop's anchor, drawn bent by the curve renderer
   return itemDivision(g, tc, i);
 }
 
@@ -702,6 +703,7 @@ void buildHighlightOverlay(const GridData& g, const GridObj& grid, const Terrain
   for (uint32_t i : grid.highlightItems) {
     if (i >= g.items.size() || g.items[i].removed || !(g.items[i].flags & 0x100)) continue;
     if (g.items[i].flags & kFlagHidden) continue;  // hidden items (gave way to a tool's preview) are not drawn at all
+    if (g.curveAnchors.count(i)) continue;  // port: curve stop anchors
     const GridData::Item& it = g.items[i];
     int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
     int division = itemDivision(g, tc, i);

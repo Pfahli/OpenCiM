@@ -27,6 +27,10 @@ struct RoadEnd {
 std::vector<RoadEnd> findSmallRoadEnds(script::VM& vm, ControlObj* player, GridObj* grid, float wx, float wz, float radius);
 // the block of an end replaced inside an edit batch: open = a straight piece through the edge (a curve joins), else a
 // dead end closed there; recorded on the timeline (may be null). Returns the new item, −1 when there is no such piece.
+// the street tram piece on the block of a straight edge (a curve with tracks meets it): a dead end closed toward the
+// curve becomes a straight piece through the edge (a child of the road, recorded on the timeline). Returns the new
+// item, −1 when the block has no such piece.
+int openTramBlockEnd(script::VM& vm, ControlObj* player, GridObj* grid, const RoadEnd& end, script::Object* timeline);
 int replaceRoadBlockEnd(script::VM& vm, ControlObj* player, GridObj* grid, const RoadEnd& end, bool open,
                         script::Object* timeline);
 

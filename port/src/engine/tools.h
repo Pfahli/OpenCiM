@@ -103,6 +103,8 @@ struct ToolMode {
   std::function<void(script::VM&, ControlObj* player, GridObj* grid, float x, float y)> right;
 };
 void registerToolMode(int mode, ToolMode m);
+// a registered mode's functions (empty when none), for a port wrapper around it
+ToolMode toolModeOf(int mode);
 // port: the map editor's curved-road tool (engine/tool_curves.cpp)
 void registerCurveTool(script::VM& vm);
 

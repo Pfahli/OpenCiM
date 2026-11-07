@@ -1756,4 +1756,31 @@ int replaceRoadBlockEnd(VM& vm, ControlObj* player, GridObj* grid, const RoadEnd
   return i;
 }
 
+int openTramBlockEnd(VM& vm, ControlObj* player, GridObj* grid, const RoadEnd& end, Object* timeline) {
+  if (!grid || !grid->data || end.item >= grid->data->items.size()) return -1;
+  Ctx c(vm, player, grid);
+  uint32_t out = dirBit(int(std::lround(end.dir.z)), int(std::lround(end.dir.x)));
+  uint32_t back = ((out << 4) | (out >> 4)) & 0xff;
+  for (size_t i = 0; i < c.g.items.size(); ++i) {
+    const GridData::Item& it = c.g.items[i];
+    if (it.removed || it.parent != end.item + 1 || (it.flags & kItemTemp)) continue;
+    Piece o = c.live(int(i));
+    if (!o.t || o.type() != 10) continue;           // the block's street tram piece
+    if ((o.conn & 0xff) != back) return -1;          // not a dead end closed toward the curve
+    auto [bx, bz] = roadXZ(o);
+    Piece p = c.createRoadItem(bx, o.y, bz, out | back, 0, o.type(), o.tvar(), 0);
+    if (!p.t || (p.iflags & kItemNegative)) return -1;
+    uint32_t variation = o.variation;
+    timelineRecordDelete(vm, timeline, grid, uint32_t(i));
+    gridEditRemoveItem(vm, grid, uint32_t(i));
+    int n = gridEditAddItem(vm, grid, p.t->name, p.x, p.y, p.z, p.orient, p.iflags & ~(kItemTemp | kItemNegative),
+                            int(end.item), false);
+    if (n < 0) return -1;
+    c.g.items[size_t(n)].variation = variation;
+    timelineRecordCreate(vm, timeline, grid, uint32_t(n));
+    return n;
+  }
+  return -1;
+}
+
 }  // namespace regs::engine

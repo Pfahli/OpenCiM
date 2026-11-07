@@ -27,6 +27,7 @@
 #include "engine/gui.h"
 #include "engine/timeline.h"
 #include "engine/tool_tracks.h"
+#include "engine/sim_state.h"
 #include "engine/tools.h"
 
 namespace regs::engine {
@@ -390,6 +391,258 @@ void right(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   move(vm, player, grid, x, y);
 }
 
+// ---- the game's tram track and stop tools over curves ----
+// Tram track tool (GRIDMODE_LAY_TRAM_TRACK): pointing at a curve without tracks shows it with tracks; a click lays them
+// on the whole curve. Its price is the street tram pieces' for the curve's length: as many invisible tram_small_basic
+// previews (GridData::curveAnchors, not drawn) for the hover script to price, dropped when the tracks are laid. A drag
+// of the original tool whose preview runs over a curve is red (it would cut across it).
+// Stop tool (GRIDMODE_CREATE_STOP): pointing at a curve shows the chosen stop (its _small variant) on the side under the
+// cursor, bent along the curve; the tool's preview is the stop's anchor item (invisible), so price, name and building
+// go the game's way, and the click adds the curve's stop record with it. Tram stops need tracks on the curve; stops
+// keep 7 units from the curve's ends and 14 from another stop on the same side.
+
+struct Wrap {
+  ToolMode orig;
+  int mode = 0;
+  int curve = -1;       // the curve pointed at, −1 for none (the original tool runs)
+  bool armed = false;   // pressed on it
+  bool ok = false;
+  CurveRoad after;      // the curve as the click would leave it
+  int stopAnchor = -1;  // the stop tool's preview anchor
+  float lastS = -1;     // the stop preview's place (rebuilt only when it moves)
+  int lastSide = 0;
+};
+Wrap g_tram, g_stop;
+
+const char16_t kHover[] = u"onHoverConstruct";
+
+void wrapClear(VM& vm, ControlObj* player, GridObj* grid, Wrap& w) {
+  if (w.curve >= 0 || w.stopAnchor >= 0) {
+    for (uint32_t i : toolState(player).newItems) grid->data->curveAnchors.erase(i);
+    toolClearPreview(vm, player, grid);
+  }
+  if (w.stopAnchor >= 0) grid->data->curveAnchors.erase(uint32_t(w.stopAnchor));
+  w.curve = -1;
+  w.stopAnchor = -1;
+  w.ok = false;
+  clearPreview(grid);
+}
+
+// a point over the middle of a curve (not beyond its ends, where its road blocks are): a track piece there would cut
+// across it
+bool overCurve(const GridData& g, float x, float z) {
+  for (const CurveRoad& c : g.curves) {
+    float side, s;
+    curveNearest(curveShape(c), x, z, side, s);
+    if (std::fabs(side) < kCurveHalfWidth && s > 1.0f && s < curveLength(c) - 1.0f) return true;
+  }
+  return false;
+}
+
+// a preview item the hover script prices but nobody sees
+int invisiblePreview(VM& vm, ControlObj* player, GridObj* grid, const std::string& name, int x, int y, int z, int orient,
+                     bool bad) {
+  int i = toolAddPreview(vm, player, grid, name, x, y, z, orient, 0);
+  if (i < 0) return -1;
+  grid->data->curveAnchors.insert(uint32_t(i));
+  if (bad) grid->data->items[size_t(i)].flags |= kItemNegative;
+  return i;
+}
+
+void showAfter(GridObj* grid, const CurveRoad& c, bool bad) {
+  grid->curvePreview = c;
+  grid->hasCurvePreview = true;
+  grid->curvePreviewBad = bad;
+  ++grid->curvesVersion;
+}
+
+// the stop tool's stop (its toolMode: 0 bus, 1 tram; toolType: the design, as stopPreview reads them)
+bool stopToolTemplate(VM& vm, ControlObj* player, GridObj* grid, CurveRoad::Stop& st) {
+  (void)grid;
+  auto field = [&](const char16_t* name) {
+    auto f = player->fieldValues.find(name);
+    return f == player->fieldValues.end() || f->second.isNone() ? 0 : vm.toInt(f->second);
+  };
+  int mode = field(u"toolMode");
+  if (mode != 0 && mode != 1) return false;
+  st.kind = uint8_t(mode);
+  st.design = uint8_t(std::clamp(field(u"toolType") + 1, 1, 3));
+  return true;
+}
+
+void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap& w) {
+  ToolState& t = toolState(player);
+  if (!grid->data) return;
+  GridData& g = *grid->data;
+  if (w.armed) return;  // pressed on a curve: the click applies it
+  if (!t.inProgress) {
+    ToolPick pick = toolPick(vm, player, x, y, false);
+    int k = pick.hit ? curveUnder(g, pick.point) : -1;
+    if (std::getenv("REGS_DEBUG_CURVES") && k != w.curve)
+      LOG_INFO("curve tool: mode %d hover %d -> %d (hit %d at %.1f %.1f)", w.mode, w.curve, k, pick.hit ? 1 : 0, pick.point.x, pick.point.z);
+    if (k >= 0 && w.curve == k) {  // the same target: keep the preview (no new preview items per mouse move)
+      if (w.mode == 0x11) return;
+      float side, s;
+      curveNearest(curveShape(g.curves[size_t(k)]), pick.point.x, pick.point.z, side, s);
+      if ((side >= 0 ? 1 : -1) == w.lastSide && std::fabs(s - w.lastS) < 0.75f) return;
+    }
+    if (k >= 0) {
+      wrapClear(vm, player, grid, w);
+      const CurveRoad& c = g.curves[size_t(k)];
+      w.curve = k;
+      w.after = c;
+      const float cs = g.cellSize;
+      if (w.mode == 0x11) {
+        w.ok = !(c.ends & 4);
+        w.after.ends |= 4;
+        int n = std::max(1, int(std::ceil(curveLength(c) / 12.0f)));
+        int cx = int(c.x0 / cs + float(g.width) * 0.5f), cz = int(c.z0 / cs + float(g.length) * 0.5f);
+        for (int i = 0; i < n && w.ok; ++i)
+          invisiblePreview(vm, player, grid, "tram_small_basic", cx, int(c.y0 * 256.0f / cs), cz, 0, false);
+      } else {
+        CurveRoad::Stop st;
+        w.ok = stopToolTemplate(vm, player, grid, st);
+        std::vector<CurveSample> shape = curveShape(c);
+        float side, s;
+        curveNearest(shape, pick.point.x, pick.point.z, side, s);
+        st.s = s;
+        st.side = side >= 0 ? 1 : -1;
+        w.lastS = s, w.lastSide = st.side;
+        float L = curveLength(c);
+        if (s < 7.0f || s > L - 7.0f) w.ok = false;
+        if (st.kind == 1 && !(c.ends & 4)) w.ok = false;  // a tram stop needs tracks
+        for (const CurveRoad::Stop& o : c.stops)
+          if (o.side == st.side && std::fabs(o.s - s) < 14.0f) w.ok = false;
+        w.after.stops.push_back(st);
+        int ax, az, ao;
+        stopAnchor(g, w.after, st, ax, az, ao);
+        float ay = curveAt(shape, std::clamp(s, 0.0f, L)).p.y;
+        w.stopAnchor = invisiblePreview(vm, player, grid, stopTemplateName(st), ax, int(ay * 256.0f / cs), az, ao, !w.ok);
+        if (w.stopAnchor < 0) w.ok = false;
+        if (std::getenv("REGS_DEBUG_CURVES"))
+          LOG_INFO("curve tool: stop target kind %d design %d at s %.1f of %.1f side %d, anchor %d (%s), %s", int(st.kind),
+                   int(st.design), s, L, int(st.side), w.stopAnchor, stopTemplateName(st).c_str(), w.ok ? "fits" : "refused");
+      }
+      showAfter(grid, w.after, !w.ok);
+      vm.fireEvent(player, kHover, {});
+      return;
+    }
+  }
+  if (w.curve >= 0) wrapClear(vm, player, grid, w);
+  if (w.orig.move) w.orig.move(vm, player, grid, x, y);
+  // the original track tool's drag: pieces over a curve are errors (they would cut across it)
+  if (w.mode == 0x11 && t.inProgress && !g.curves.empty()) {
+    bool any = false;
+    for (uint32_t i : t.newItems) {
+      if (i >= g.items.size()) continue;
+      int ix, iz, iw, il;
+      gridItemRect(vm, grid, i, ix, iz, iw, il);
+      float wx = (float(ix) + float(iw) * 0.5f - float(g.width) * 0.5f) * g.cellSize;
+      float wz = (float(iz) + float(il) * 0.5f - float(g.length) * 0.5f) * g.cellSize;
+      if (!overCurve(g, wx, wz)) continue;
+      g.items[i].flags |= kItemNegative;
+      gridSetSelected(vm, grid, i, true, true);
+      any = true;
+    }
+    if (any) vm.fireEvent(player, kHover, {});
+  }
+}
+
+// the street tram pieces where curves with tracks meet road blocks: dead ends closed toward the curve become straight
+// pieces, so the block's tram lanes run on into the curve's (after tracks on a curve and after the track tool's drags)
+int openTramJoins(VM& vm, ControlObj* player, GridObj* grid, Object* tl) {
+  if (!grid || !grid->data) return 0;
+  std::vector<CurveRoad> curves = grid->data->curves;
+  int opened = 0;
+  gridEditBegin(vm, grid);
+  for (const CurveRoad& c : curves) {
+    if (!(c.ends & 4)) continue;
+    for (int end = 0; end < 2; ++end) {
+      if (!(c.ends & (1 << end))) continue;
+      Vec3 q = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
+      Vec3 out = end ? Vec3{-c.dx1, 0, -c.dz1} : Vec3{c.dx0, 0, c.dz0};  // the block's way into the curve
+      for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, q.x, q.z, 1.0f))
+        if (!e.deadEnd && dot(e.dir, out) > 0.9f) {
+          if (openTramBlockEnd(vm, player, grid, e, tl) >= 0) ++opened;
+          break;
+        }
+    }
+  }
+  gridEditEnd(vm, grid);
+  if (opened) LOG_INFO("curve tool: %d street tram dead ends at curves made straight", opened);
+  return opened;
+}
+
+bool wrapFinish(VM& vm, ControlObj* player, GridObj* grid, Wrap& w) {
+  if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: finish mode %d, armed %d, curve %d, ok %d", w.mode, w.armed ? 1 : 0, w.curve, w.ok ? 1 : 0);
+  if (!w.armed) {
+    bool r = w.orig.finish ? w.orig.finish(vm, player, grid) : toolCommit(vm, player, grid);
+    if (w.mode == 0x11) openTramJoins(vm, player, grid, playerTimeline(vm, player));  // a drag up to a curve with tracks
+    return r;
+  }
+  w.armed = false;
+  if (!grid || !grid->data || w.curve < 0 || size_t(w.curve) >= grid->data->curves.size() || !w.ok) {
+    if (grid) wrapClear(vm, player, grid, w);
+    return true;
+  }
+  CurveRoad before = grid->data->curves[size_t(w.curve)], after = w.after;
+  Object* tl = playerTimeline(vm, player);
+  gridEditBegin(vm, grid);
+  if (tl) timelineBeginGroup(vm, tl, w.mode == 0x11 ? "%6" : "%8");
+  bool go = true;
+  if (w.mode == 0x11) {
+    for (uint32_t i : toolState(player).newItems) grid->data->curveAnchors.erase(i);
+    toolClearPreview(vm, player, grid);  // the price carriers go
+  } else {
+    int mounted = 0;
+    toolCommit(vm, player, grid, [&](uint32_t, uint32_t) { ++mounted; });  // the anchor stop item, named by the script
+    go = mounted > 0;
+  }
+  if (go) {
+    applyCurveEdit(vm, grid, before, false);
+    timelineRecordCurve(vm, tl, before, false);
+    applyCurveEdit(vm, grid, after, true);
+    timelineRecordCurve(vm, tl, after, true);
+    if (w.mode == 0x11) openTramJoins(vm, player, grid, tl);  // the blocks' tram dead ends at its ends
+  }
+  if (tl) timelineEndGroup(vm, tl);
+  gridEditEnd(vm, grid);
+  LOG_INFO("curve tool: %s on a curve%s", w.mode == 0x11 ? "tram tracks" : "a stop",
+           go ? "" : " refused (its stop item did not fit)");
+  w.curve = -1;
+  w.stopAnchor = -1;
+  clearPreview(grid);
+  return true;
+}
+
+void wrapTool(int mode, Wrap& w) {
+  w.orig = toolModeOf(mode);
+  w.mode = mode;
+  ToolMode m = w.orig;
+  m.move = [&w](VM& v, ControlObj* p, GridObj* g, float x, float y) { wrapMove(v, p, g, x, y, w); };
+  m.down = [&w](VM& v, ControlObj* p, GridObj* g) {
+    // the press point itself (a click without a mouse move over the curve since the tool was chosen)
+    if (w.curve < 0 && g) wrapMove(v, p, g, toolState(p).toolX, toolState(p).toolY, w);
+    if (std::getenv("REGS_DEBUG_CURVES") && g) {
+      ToolPick pk = toolPick(v, p, toolState(p).toolX, toolState(p).toolY, false);
+      LOG_INFO("curve tool: press mode %d on curve %d at %.0f,%.0f: hit %d at %.1f %.1f, under %d, inProgress %d", w.mode, w.curve,
+               toolState(p).toolX, toolState(p).toolY, pk.hit ? 1 : 0, pk.point.x, pk.point.z, pk.hit ? curveUnder(*g->data, pk.point) : -2,
+               toolState(p).inProgress ? 1 : 0);
+    }
+    if (w.curve >= 0) w.armed = true;
+    else if (w.orig.down) w.orig.down(v, p, g);
+  };
+  m.finish = [&w](VM& v, ControlObj* p, GridObj* g) { return wrapFinish(v, p, g, w); };
+  m.cancel = [&w](VM& v, ControlObj* p, GridObj* g) {
+    if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: cancel mode %d (armed %d)", w.mode, w.armed ? 1 : 0);
+    w.armed = false;
+    if (g) wrapClear(v, p, g, w);
+    if (w.orig.cancel) w.orig.cancel(v, p, g);
+    else if (g) toolClearPreview(v, p, g);
+  };
+  registerToolMode(mode, m);
+}
+
 }  // namespace
 
 void registerCurveTool(VM& vm) {
@@ -406,6 +659,8 @@ void registerCurveTool(VM& vm) {
   };
   m.finish = [](VM&, ControlObj*, GridObj*) { return true; };
   registerToolMode(kModeCurveRoad, m);
+  wrapTool(0x11, g_tram);  // the game's tram track tool and stop tool over curves (registered before this)
+  wrapTool(10, g_stop);
   vm.setGlobal(u"REGS_GRIDMODE_CURVE_ROAD", Value::integer(kModeCurveRoad));
   // regsCurveToolMode([mode]): the mode (0 straight, 1 curved, 2 freeform, 3 remove); setting it drops the road being drawn
   implementGlobal(vm, u"regsCurveToolMode", [](VM& v, Object*, int argc, const Value* a) {

@@ -21,6 +21,7 @@
 #include "engine/api.h"
 #include "engine/display.h"
 #include "engine/grid.h"
+#include "engine/curve_roads.h"
 #include "engine/grid_edit.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
@@ -2289,6 +2290,24 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   LOG_INFO("sim: map edit, %zu items added, %zu removed: %zu lane nodes now, %d vehicles taken off, lines %s, %zu walk areas, %.0f ms",
            added.size(), removed.size(), G.nodes.size(), despawned, linesChanged ? "changed" : "unchanged", rects.size(), ms);
+  // port curved roads: a road or tram piece added or removed next to a curve changes the lanes its ends meet (a street
+  // tram block laid up to a curve with tracks: the curve's tram lanes take that block's height and link with it)
+  if (!g.curves.empty()) {
+    bool near = false;
+    for (const auto* list : {&added, &removed})
+      for (uint32_t i : *list) {
+        if (near || i >= g.items.size()) continue;
+        int type = gridItemShape(vm, grid, i).type;
+        if (type < 1 || type > 12) continue;
+        for (const CurveRoad& c : g.curves) {
+          int x0, z0, x1, z1;
+          curveCells(g, c, x0, z0, x1, z1);
+          const auto& it = g.items[i];
+          if (it.x >= x0 - 8 && it.x <= x1 + 8 && it.z >= z0 - 8 && it.z <= z1 + 8) near = true;
+        }
+      }
+    if (near) simCurvesChanged(vm, grid, {});
+  }
 }
 
 void simTerrainChanged(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {

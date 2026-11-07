@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <queue>
@@ -680,18 +681,62 @@ void rebuildCurveNodes(const GridData& g, LaneGraph& G) {
         add(n);
       }
     }
-    for (int side = 0; side < 2; ++side) {  // 0: start → end on the right, 1: end → start
-      for (size_t k = 0; k + 1 < s.size(); ++k) {
-        const CurveSample &a = side ? s[s.size() - 1 - k] : s[k], &b = side ? s[s.size() - 2 - k] : s[k + 1];
-        float sign = side ? -1.0f : 1.0f;
-        LaneNode n;
-        n.flags = 0x300;  // a small road's lanes (classOfType of type 2)
-        n.item = -1;
-        n.p0 = a.p + a.right * (1.5f * sign) + Vec3{0, -0.2f, 0};
-        n.p1 = b.p + b.right * (1.5f * sign) + Vec3{0, -0.2f, 0};
-        n.f0 = a.dir * sign;
-        n.f1 = b.dir * sign;
-        add(n);
+    // tram tracks (ends bit 2): tram lanes on the road's lane lines, at the height of the street tram lanes they meet
+    // at each end (a tram item's own height; the item height when no tram lane is there)
+    const float L = s.back().s;
+    auto tramHeight = [&](const Vec3& at, float fallback) {
+      std::vector<int> found;
+      G.query(int(at.x / G.cellSize) + G.width / 2 - 1, int(at.z / G.cellSize) + G.length / 2 - 1, 2, 2, 0, found);
+      for (int ni : found) {
+        const LaneNode& m = G.nodes[size_t(ni)];
+        if ((m.flags & 0x1000f900) != 0x800 || (m.flags & kPathDeleted)) continue;
+        for (const Vec3& p : {m.p0, m.p1})
+          if ((p.x - at.x) * (p.x - at.x) + (p.z - at.z) * (p.z - at.z) < 0.09f) return p.y;
+      }
+      return fallback;
+    };
+    float tramDy0 = 0, tramDy1 = 0;
+    if ((c.ends & 4) && std::getenv("REGS_DEBUG_CURVES"))
+      for (const CurveSample* e : {&s.front(), &s.back()})
+        for (float sd : {1.5f, -1.5f}) {
+          Vec3 at = e->p + e->right * sd;
+          float best = 1e9f;
+          Vec3 bp;
+          for (const LaneNode& m : G.nodes) {
+            if ((m.flags & 0x1000f900) != 0x800 || (m.flags & kPathDeleted)) continue;
+            for (const Vec3& p : {m.p0, m.p1}) {
+              float d = (p.x - at.x) * (p.x - at.x) + (p.z - at.z) * (p.z - at.z);
+              if (d < best) best = d, bp = p;
+            }
+          }
+          LOG_INFO("curved roads: tram end %.1f,%.1f,%.1f: nearest street tram lane end %.2f away at %.1f,%.1f,%.1f", at.x, at.y,
+                   at.z, std::sqrt(best), bp.x, bp.y, bp.z);
+        }
+    if (c.ends & 4) {
+      tramDy0 = tramHeight(s.front().p + s.front().right * 1.5f, s.front().p.y) - s.front().p.y;
+      tramDy1 = tramHeight(s.back().p + s.back().right * 1.5f, s.back().p.y) - s.back().p.y;
+    }
+    for (int medium = 0; medium < ((c.ends & 4) ? 2 : 1); ++medium) {  // 0 road, 1 tram
+      for (int side = 0; side < 2; ++side) {  // 0: start → end on the right, 1: end → start
+        for (size_t k = 0; k + 1 < s.size(); ++k) {
+          const CurveSample &a = side ? s[s.size() - 1 - k] : s[k], &b = side ? s[s.size() - 2 - k] : s[k + 1];
+          float sign = side ? -1.0f : 1.0f;
+          auto dy = [&](const CurveSample& q) {
+            return medium ? tramDy0 + (tramDy1 - tramDy0) * (L > 0 ? q.s / L : 0) : -0.2f;
+          };
+          LaneNode n;
+          n.flags = medium ? 0x800 : 0x300;  // street tram / small road lanes (classOfType of types 10 and 2)
+          n.item = -1;
+          n.p0 = a.p + a.right * (1.5f * sign) + Vec3{0, dy(a), 0};
+          n.p1 = b.p + b.right * (1.5f * sign) + Vec3{0, dy(b), 0};
+          n.f0 = a.dir * sign;
+          n.f1 = b.dir * sign;
+          // a stop of this medium on this lane's side within the piece: its platform lane (STOP)
+          float lo = std::min(a.s, b.s), hi = std::max(a.s, b.s);
+          for (const CurveRoad::Stop& st : c.stops)
+            if (int(st.kind) == medium && (st.side > 0) == (side == 0) && st.s >= lo && st.s < hi) n.flags |= kPathStop;
+          add(n);
+        }
       }
     }
   }

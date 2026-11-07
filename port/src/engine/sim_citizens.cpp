@@ -459,6 +459,7 @@ bool stampWalkItem(SimState& s, size_t i, int rx0, int rz0, int rx1, int rz1, bo
   WalkGrid& wg = s.walk;
   const auto& it = g.items[i];
   if ((it.flags & 0x500000) || it.removed) return false;
+  if (g.curveAnchors.count(uint32_t(i))) return false;  // port: a curve stop's anchor (the curve stamps its pavement)
   ItemInfo info = itemInfo(s, int(i));
   if (!info.tpl || info.type == 0x15 || info.type == 0x13) return false;  // markers, trees
   int w = (it.orient & 1) ? info.sz : info.sx, l = (it.orient & 1) ? info.sx : info.sz;  // template size

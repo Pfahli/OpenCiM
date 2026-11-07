@@ -39,9 +39,25 @@ struct GridData {
                                                      // end block)
     float a = 0, b = 0;                              // the Bézier's handle lengths at the start and the end
     int kind = 0;                                    // 0: small road
-    uint8_t ends = 0;  // bit 0: the start lies on a road block (a straight piece the tool made of a dead end), bit 1: the end
+    uint8_t ends = 0;  // bit 0: the start lies on a road block (a straight piece the tool made of a dead end), bit 1: the end;
+                       // bit 2: tram tracks along it
+    // stops along it: a bus or tram stop centred at arc length s on one side, its platform bent to the curve; a real stop
+    // item of the game (the anchor, stop_bus0<design>_small / stop_tram01_small at stopAnchor's cell) carries it for
+    // lines, picking and saving, and is not drawn (GridData::curveAnchors)
+    struct Stop {
+      float s = 0;
+      int8_t side = 1;     // +1 right of the curve's direction, −1 left
+      uint8_t kind = 0;    // 0 bus, 1 tram
+      uint8_t design = 1;  // the stop template's number
+    };
+    std::vector<Stop> stops;
   };
   std::vector<CurveRoad> curves;
+  // the stop items that anchor curve stops (and the stop tool's preview of one): not drawn, no walk map of their own
+  // (refreshCurveAnchors, engine/curve_roads.h)
+  std::set<uint32_t> curveAnchors;
+  // per cell: 1 where a curve put the cell cover (applyCurveCover); picking takes such cells as ground (no item there)
+  std::vector<uint8_t> curveCover;
 };
 using CurveRoad = GridData::CurveRoad;
 
