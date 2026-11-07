@@ -147,7 +147,8 @@ bool coversAny(const EditState& st, const GridData::Item& a, const GridData::Ite
   ItemFootprint fa = footprintOf(st, a), fb = footprintOf(st, b);
   for (int z = z0; z < z1; ++z)
     for (int x = x0; x < x1; ++x)
-      if (itemCellCover(fa, sa.flags, x - a.x, z - a.z) && itemCellCover(fb, sb.flags, x - b.x, z - b.z)) return true;
+      // quadrants: diagonal pieces share the cells along their cut, each covering its half (0xf00 = whole cell)
+      if (itemCellCover(fa, sa.flags, x - a.x, z - a.z) & itemCellCover(fb, sb.flags, x - b.x, z - b.z)) return true;
   return false;
 }
 
