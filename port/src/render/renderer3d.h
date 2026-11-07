@@ -16,10 +16,12 @@ constexpr int kHookEnvUnit = 8;      // texture unit of the shader hooks' enviro
 constexpr int kHookSurfaceUnit = 9;  // and of the map's surface classes (regs_SurfaceMap)
 constexpr int kHookLaneUnit = 10, kHookLaneTrafficUnit = 11, kHookTroddenUnit = 12;  // the traffic maps
 constexpr int kHookTopUnit = 13;     // the top map (regs_TopMap)
-constexpr int kHookFootIndexUnit = 14, kHookFootAtlasUnit = 15;  // the footprint map (regs_footprintAt)
-// the port night lights (engine/night_lights.h): window mask, lamp map, headlight map. Above the 16 units GL 3.3
-// guarantees, which the materials (0-6), the shadow map (7) and the shader hooks (8-15) fill; desktop GPUs have 32.
-constexpr int kNightWindowUnit = 16, kNightLampUnit = 17, kNightCarUnit = 18;
+constexpr int kHookFootAtlasUnit = 14;  // the footprint map, atlas and tile index in one (regs_footprintAt)
+// the port night lights (engine/night_lights.h): window mask, lamp map, headlight map. All fits the 16 units GL 3.3
+// guarantees (Macs, Raspberry Pi and many ARM GPUs have no more): the materials use 0-4 (no game shader samples
+// texture5 or texture6, checked over all 95 shader files with the DLCs), the shadow map 7, the shader hooks 8-14.
+constexpr int kNightWindowUnit = 5, kNightLampUnit = 6, kNightCarUnit = 15;
+constexpr int kMaterialUnits = 5;  // material textures bound per draw (units 0-4)
 
 // shader programs linked so far and the seconds spent (load-time measurements, REGS_LOG_TIME)
 extern int gProgramsLinked;
@@ -160,7 +162,7 @@ struct SceneView {
   float hookSurfaceRect[4] = {0, 0, 0, 0};
   uint32_t hookLaneMap = 0, hookLaneTraffic = 0, hookTrodden = 0;  // engine/traffic_maps.h, units 10-12
   float hookTrafficRect[4] = {0, 0, 0, 0};
-  uint32_t hookFootIndex = 0, hookFootAtlas = 0;  // engine/traffic_maps.h footprints, units 14-15
+  uint32_t hookFootAtlas = 0;  // engine/traffic_maps.h footprints (atlas and tile index), unit 14
   float hookFootRect[4] = {0, 0, 0, 0};
   // port night lights (engine/night_lights.h, docs/renderer/night-lights.md): x = window light, y = share of the window
   // groups lit, z = street-lamp light, w = night01 of the cycle; x and z are 0 by day and without the cycle

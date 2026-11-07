@@ -84,7 +84,7 @@ struct TrafficMaps {
   };
   std::vector<Walker> walkers;  // per character slot
   float fadeClock = 0;
-  uint32_t footIndexTexture = 0, footAtlasTexture = 0;
+  uint32_t footAtlasTexture = 0;  // the atlas and below it the tile index (gridFootprints)
 };
 
 // once per simulation update (engine/sim.cpp): counts the vehicles and pedestrians, decays, builds the lane map
@@ -93,7 +93,7 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt);
 // the textures and the world rect (originX, originZ, 1 / sizeX, 1 / sizeZ); false when there are none
 bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint32_t& trodden, float rect[4]);
 // the footprint map's textures and rect (originX, originZ, texel size in m, 0); false when there are no steps
-bool gridFootprints(GridObj* grid, uint32_t& index, uint32_t& atlas, float rect[4]);
+bool gridFootprints(GridObj* grid, uint32_t& atlas, float rect[4]);
 // gsGrid.regsFootprints (see TrafficMaps::footFill)
 void registerTrafficMapNatives(script::VM& vm);
 

@@ -108,7 +108,7 @@ bool Renderer2D::init(std::string* error) {
   gl::GLint units = 0;
   gl::GetIntegerv(0x8872 /* GL_MAX_TEXTURE_IMAGE_UNITS */, &units);
   info = std::string("OpenGL ") + (ver ? ver : "?") + " / " + (ren ? ren : "?") + " / " + std::to_string(units) +
-         " texture units" + (units < 19 ? " (night lights need 19)" : "");
+         " texture units" + (units < 16 ? " (fewer than the 16 the port needs)" : "");
   return true;
 }
 

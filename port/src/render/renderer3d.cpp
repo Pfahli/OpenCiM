@@ -726,7 +726,7 @@ uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, s
     if (surf >= 0) gl::Uniform1i(surf, kHookSurfaceUnit);
     const std::pair<const char*, int> traffic[] = {
         {"regs_LaneMap", kHookLaneUnit}, {"regs_LaneTraffic", kHookLaneTrafficUnit}, {"regs_Trodden", kHookTroddenUnit},
-        {"regs_TopMap", kHookTopUnit}, {"regs_FootIndex", kHookFootIndexUnit}, {"regs_FootAtlas", kHookFootAtlasUnit}};
+        {"regs_TopMap", kHookTopUnit}, {"regs_FootAtlas", kHookFootAtlasUnit}};
     for (const auto& [name, unit] : traffic)
       if (int loc = gl::GetUniformLocation(prog, name); loc >= 0) gl::Uniform1i(loc, unit);
     gl::UseProgram(gl::GLuint(current));
@@ -869,7 +869,7 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   }
 }
 
-// the shader hooks' uniforms and maps (units 8-15) for a program in use: the view's inverse, eye, timer, the mods'
+// the shader hooks' uniforms and maps (units 8-14) for a program in use: the view's inverse, eye, timer, the mods'
 // uniforms (regsShaderUniform) and the engine's maps
 void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
   const ProgramLocs& l = locs(prog);
@@ -899,8 +899,6 @@ void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
   gl::ActiveTexture(gl::TEXTURE0 + kHookTopUnit);
   gl::BindTexture(gl::TEXTURE_2D, v.hookTopMap);
   gl::Uniform4fv(l.hookFootRect, 1, v.hookFootRect);
-  gl::ActiveTexture(gl::TEXTURE0 + kHookFootIndexUnit);
-  gl::BindTexture(gl::TEXTURE_2D, v.hookFootIndex);
   gl::ActiveTexture(gl::TEXTURE0 + kHookFootAtlasUnit);
   gl::BindTexture(gl::TEXTURE_2D, v.hookFootAtlas);
   gl::ActiveTexture(gl::TEXTURE0);
@@ -954,7 +952,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   for (int i = 0; i < 8; ++i) gl::Uniform4fv(l.custom[i], 1, it.layerCustom ? it.layerCustom[i] : m.custom[i]);
   if (it.hasCustom4) gl::Uniform4f(l.custom[4], it.custom4[0], it.custom4[1], m.custom[4][2], m.custom[4][3]);
   gl::UniformMatrix4fv(l.matrix, 1, 0, it.world.m);
-  for (size_t i = 0; i < m.textures.size() && i < 7; ++i) {
+  for (size_t i = 0; i < m.textures.size() && i < size_t(kMaterialUnits); ++i) {
     gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(i));
     gl::BindTexture(i < m.cube.size() && m.cube[i] ? gl::TEXTURE_CUBE_MAP : gl::TEXTURE_2D, m.textures[i]);
   }

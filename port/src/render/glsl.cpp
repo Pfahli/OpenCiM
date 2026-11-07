@@ -263,14 +263,17 @@ float regs_lanePlowed(vec2 xz, float reach, out float heap) {
 }
 // the footprint map (engine/traffic_maps.h): single steps of the walkers near the camera, 0..1 (several steps on the
 // same spot add up), 5 cm texels in a tile atlas; 0 where nobody stepped or while the map is off (gsGrid.regsFootprints)
-uniform sampler2D regs_FootIndex;
+// one texture: the tile atlas (32-texel tiles, 64 per row: 2048² at the top), below it the tile index (two texels per
+// 1.6 m tile: slot + 1, low and high byte; 0 where nobody stepped)
 uniform sampler2D regs_FootAtlas;
 uniform vec4 regs_FootRect;  // origin x, z, texel size (m), atlas tiles per row
 float regs_footTexel(ivec2 g) {
-  ivec2 tiles = textureSize(regs_FootIndex, 0);
+  ivec2 size = textureSize(regs_FootAtlas, 0);
   ivec2 tile = g / 32;
-  if (any(lessThan(g, ivec2(0))) || any(greaterThanEqual(tile, tiles))) return 0.0;
-  int slot = int(texelFetch(regs_FootIndex, tile, 0).r * 65535.0 + 0.5);
+  if (any(lessThan(g, ivec2(0))) || tile.x >= size.x / 2 || tile.y >= size.y - 2048) return 0.0;
+  ivec2 at = ivec2(tile.x * 2, 2048 + tile.y);
+  int slot = int(texelFetch(regs_FootAtlas, at, 0).r * 255.0 + 0.5) +
+             256 * int(texelFetch(regs_FootAtlas, at + ivec2(1, 0), 0).r * 255.0 + 0.5);
   if (slot == 0) return 0.0;
   slot -= 1;
   int row = int(regs_FootRect.w);

@@ -562,27 +562,34 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
   return true;
 }
 
-bool gridFootprints(GridObj* grid, uint32_t& index, uint32_t& atlas, float rect[4]) {
+// One R8 texture (a texture unit fewer for the shader hooks): the tile atlas at the top (kAtlasSize²), below it the
+// tile index, two texels per tile (slot + 1, low and high byte; 0 where nobody stepped); the width is the larger of
+// the two, the rest zero.
+bool gridFootprints(GridObj* grid, uint32_t& atlas, float rect[4]) {
   SimState* s = simOf(grid);
   if (!s || !s->trafficMaps || s->trafficMaps->tilesX <= 0) return false;
   TrafficMaps& t = *s->trafficMaps;
   // the upload follows the traffic maps' pace (gridTrafficMaps runs first and sets lastUpload when it uploads)
-  bool create = !t.footIndexTexture;
+  bool create = !t.footAtlasTexture;
   if (create) {
-    upload(t.footIndexTexture, t.tilesX, t.tilesZ, 0x822A /* GL_R16 */, gl::RED, nullptr, false);
-    upload(t.footAtlasTexture, kAtlasSize, kAtlasSize, 0x8229 /* GL_R8 */, gl::RED, nullptr, false);
+    const int w = std::max(kAtlasSize, 2 * t.tilesX), h = kAtlasSize + t.tilesZ;
+    std::vector<uint8_t> zero(size_t(w) * size_t(h), 0);
+    upload(t.footAtlasTexture, w, h, 0x8229 /* GL_R8 */, gl::RED, zero.data(), false);
     t.indexX0 = 0, t.indexZ0 = 0, t.indexX1 = t.tilesX - 1, t.indexZ1 = t.tilesZ - 1;
     t.atlasAllDirty = true;
   }
   if (t.indexX1 >= t.indexX0) {
     int w = t.indexX1 - t.indexX0 + 1, h = t.indexZ1 - t.indexZ0 + 1;
-    std::vector<uint16_t> rectData(size_t(w) * size_t(h));
+    std::vector<uint8_t> rectData(size_t(w) * 2 * size_t(h));
     for (int z = 0; z < h; ++z)
-      std::copy_n(&t.tileIndex[size_t(t.indexZ0 + z) * size_t(t.tilesX) + size_t(t.indexX0)], size_t(w),
-                  &rectData[size_t(z) * size_t(w)]);
-    gl::BindTexture(gl::TEXTURE_2D, t.footIndexTexture);
-    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, t.indexX0, t.indexZ0, w, h, gl::RED, 0x1403 /* GL_UNSIGNED_SHORT */,
+      for (int x = 0; x < w; ++x) {
+        uint16_t v = t.tileIndex[size_t(t.indexZ0 + z) * size_t(t.tilesX) + size_t(t.indexX0 + x)];
+        rectData[(size_t(z) * size_t(w) + size_t(x)) * 2] = uint8_t(v & 0xFF);
+        rectData[(size_t(z) * size_t(w) + size_t(x)) * 2 + 1] = uint8_t(v >> 8);
+      }
+    gl::BindTexture(gl::TEXTURE_2D, t.footAtlasTexture);
+    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 2 * t.indexX0, kAtlasSize + t.indexZ0, 2 * w, h, gl::RED, gl::UNSIGNED_BYTE,
                       rectData.data());
     t.indexX0 = 0, t.indexZ0 = 0, t.indexX1 = -1, t.indexZ1 = -1;
   }
@@ -607,7 +614,6 @@ bool gridFootprints(GridObj* grid, uint32_t& index, uint32_t& atlas, float rect[
   }
   gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
   gl::BindTexture(gl::TEXTURE_2D, 0);
-  index = t.footIndexTexture;
   atlas = t.footAtlasTexture;
   rect[0] = t.originX;
   rect[1] = t.originZ;
