@@ -25,6 +25,16 @@ $game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
 .\build\x64-Release\regs.exe $game --windowed
 ```
 
+Start flags for tests (environment variables; the intro is skipped, the load dialogs answer themselves and the
+loading screen's Spielen button presses itself; `data/regs/extend/metro/scripts/main.script`):
+
+| Variable | Effect |
+|---|---|
+| `REGS_START=save:<name>` | loads a save (`<folder>/<name>` for one in a folder) |
+| `REGS_START=map:<map file>` | a sandbox game on a map (`testmap.grid` = `userdata/maps/testmap.grid`) |
+| `REGS_START=editor:<map file>` | opens a map in the map editor |
+| `REGS_START_RUN=1` | with save or map: the game clock runs from the start |
+
 ### Where data lives
 
 OpenCiM keeps all player data in its own folder, `Documents\OpenCiM`: `settings.script`, `controls.keys`, the game

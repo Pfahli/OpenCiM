@@ -54,6 +54,9 @@ $regsSaveDialog = false;   // set by getSaveGamesList: the menu's next dialog is
 $regsNav = "";
 $regsNavTyped = "";
 $regsDlgValue = "";
+$regsStartSave = "";   // start flags (REGS_START, at the end of this file), declared before their use
+$regsStartMap = "";
+$regsStartPlay = false;
 $regsAutosaving = false;   // saveGameData leaves the dialogs' folder alone during an autosave (declared above its use)
 
 function regsText($name) {
@@ -101,6 +104,11 @@ function regsSavesIn($folder) {
 // the menus' showDialog for a save list: [ok, value]. Folder clicks reopen the dialog in that folder; "New folder"
 // asks for a name and opens the new folder.
 function regsRunSaveDialog($text, $inputText, $default, $items, $checkKeys) {
+  if (!$inputText && $regsStartSave != "") {  // the start flag REGS_START=save:<name> answers the load dialog
+    $regsStartV = $regsStartSave;
+    $regsStartSave = "";
+    return [true, $regsStartV];
+  }
   $regsDlgValue = $default;
   $result = false;
   loop {
@@ -568,4 +576,54 @@ function regsEnlargeMap($size, $old) {
     MAIN.$minimap.$minimap.scale = -1.0 / (3.0 * MAIN.$grid.width);
     MAIN.$minimap.update();
   }
+}
+
+// ---- start flags for test runs (port): REGS_START=save:<name> loads a save ("<folder>/<name>" in a folder),
+// REGS_START=map:<map file> starts a sandbox game on a map (userdata/maps unless the name has a folder),
+// REGS_START=editor:<map file> (e.g. "testmap.grid") opens a map in the editor. The intro logos are skipped, the load
+// dialogs answer themselves (regsRunSaveDialog, the main menu's map browser) and the loading screen's Spielen button
+// presses itself (loading.script extension); REGS_START_RUN=1 also starts the game clock.
+$regsStart = getenv("REGS_START");
+$regsStartRun = getenv("REGS_START_RUN") != "";
+event this.enter::["Logo1"]() {
+  if ($regsStart != "") this.perform("timeout");
+}
+event this.enter::["Logo2"]() {
+  if ($regsStart != "") this.perform("timeout");
+}
+event this.enter::["MainMenu"]() {
+  if ($regsStart == "") return;
+  $regsWhat = $regsStart;
+  $regsStart = "";
+  if (findstr($regsWhat, "save:") == 0) {
+    $regsStartSave = substr($regsWhat, 5, 1000);
+    $regsStartPlay = true;
+    echo "start flag: loading save \""+$regsStartSave+"\"";
+    thread :: { wait 0.1; MAIN.$main.perform("loadgame"); };
+  } else if (findstr($regsWhat, "editor:") == 0) {
+    $regsStartMap = substr($regsWhat, 7, 1000);
+    echo "start flag: opening map \""+$regsStartMap+"\" in the editor";
+    thread :: { wait 0.1; MAIN.$main.perform("editor"); wait 0.1; MAIN.$main.perform("loadmap"); };
+  } else if (findstr($regsWhat, "map:") == 0) {
+    $regsStartMapFile = substr($regsWhat, 4, 1000);
+    if (findstr($regsStartMapFile, "/") < 0) $regsStartMapFile = "userdata/maps/"+$regsStartMapFile;
+    $regsStartPlay = true;
+    echo "start flag: sandbox game on \""+$regsStartMapFile+"\"";
+    thread :: {
+      wait 0.1;
+      MAIN.$main.perform("newgame");
+      wait 0.1;
+      MAIN.$main.perform("sandbox");
+      wait 0.3;
+      $submenu.$selectedMap = $regsStartMapFile;
+      MAIN.$main.perform("ok");
+    };
+  } else {
+    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file> or editor:<map file>)";
+  }
+}
+event this.enter::["Game"]() {
+  if (!$regsStartRun) return;
+  $regsStartRun = false;
+  if (MAIN.$minimap : false) MAIN.$minimap.selectSpeed(1);
 }

@@ -64,6 +64,12 @@ function showDialog($text, $inputText = false, $default = "", $items = null) {
     return;
   }
   MAIN.$main.$regsSaveDialog = false;
+  if (!$inputText && $items != null && $text == $strings.$menu_loadMap_dialog && (MAIN.$main.$regsStartMap : "") != "") {
+    $regsValue = MAIN.$main.$regsStartMap;  // the start flag REGS_START=editor:<map file> answers the map browser
+    MAIN.$main.$regsStartMap = "";
+    buttonClick($regsValue, "ok");
+    return;
+  }
   if (!$inputText && $items != null && $text == $strings.$menu_loadMap_dialog) {
     $inDialog = true;
     $regsBrowser = load "/regs/ui/mapbrowser.script";
