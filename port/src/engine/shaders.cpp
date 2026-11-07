@@ -152,7 +152,11 @@ const char16_t* kNightMapsDecl =
     u"    vec3 rc = rm < 0.5 ? vec3(0.0) : rm < 1.5 ? head : rm < 2.5 ? tail : tail * 1.8;\n"
     u"    vec3 cabin = m.b * inside * vec3(0.78, 0.7, 0.56) * (0.55 + 1.2 * dot(albedo, vec3(0.3, 0.59, 0.11)));\n"
     u"    if (inside > 0.5 && m.b > 0.0) cabin *= 1.0 - 0.85 * regs_passengers();\n"
-    u"    return (m.r * fc + m.g * rc) * (0.75 + 0.5 * dot(albedo, vec3(0.3, 0.59, 0.11))) * on + cabin * regs_Cabin.w;\n"
+    // a lamp smaller than a pixel keeps its light (the mip averages it away otherwise), so it does not flicker
+    u"    vec2 foot = max(abs(dFdx(uv)), abs(dFdy(uv))) * vec2(textureSize(regs_WindowMask, 0));\n"
+    u"    float boost = clamp(max(foot.x, foot.y), 1.0, 4.0);\n"
+    u"    boost *= boost;\n"
+    u"    return (m.r * fc + m.g * rc) * boost * (0.75 + 0.5 * dot(albedo, vec3(0.3, 0.59, 0.11))) * on + cabin * regs_Cabin.w;\n"
     u"  }\n"
     u"  float s = floor(regs_Seed * 255.0 + 0.5);\n"
     u"  vec4 r = regs_hash4(s, 1.0), t = regs_hash4(s, 2.0), b = regs_hash4(s, 3.0);\n"

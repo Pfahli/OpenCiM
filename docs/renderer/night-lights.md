@@ -129,7 +129,9 @@ headlights, its trailing end the tail lights (reversed units use their other end
   where it sits on the model. Texels on front-facing faces at the front surface and at lamp height that are bright,
   nearly white and clearly brighter than the rest of the front (or very shiny in the specular map) are head lamps;
   texels on the rear faces that are clearly red are tail lamps. Only compact spots count (no thin chrome trims, nothing
-  over 3 % of the texture), of each kind those at least a quarter of the largest. The mask (R front, G rear) goes
+  over 3 % of the texture), of each kind those at least a quarter of the largest. Found lamps grow by one texel (on the same
+  end's faces), and the shader keeps a lamp's light when it is smaller than a pixel (its emission × the squared texel
+  footprint, up to 16×): the 1-3-texel lamps of the base-game cars otherwise flickered in and out as the cars moved. The mask (R front, G rear) goes
   through the window path of the shader (`windowKind` 1, `DrawItem::lampCode` per part: head white, tail red,
   brighter red while standing). `regs-tool vehiclelamps <game> <outDir> <.object>…` shows what is found.
   Rear lamps are found reliably (red); front lamps are 1–3 texels on most base-game textures and are missed on some

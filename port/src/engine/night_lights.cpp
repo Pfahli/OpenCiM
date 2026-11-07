@@ -1050,6 +1050,22 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     for (size_t p : sp.texels) keep[p] = 1;
     (sp.kind == 1 ? st.frontLamps : st.rearLamps)++;
   }
+  {  // lamps are 1-3 texels: one texel more around them (on the same end's faces) so they survive minification
+    std::vector<uint8_t> grow = keep;
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x) {
+        size_t k = size_t(y) * size_t(w) + size_t(x);
+        if (!keep[k]) continue;
+        for (int dy = -1; dy <= 1; ++dy)
+          for (int dx = -1; dx <= 1; ++dx) {
+            int xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            size_t kk = size_t(yy) * size_t(w) + size_t(xx);
+            if (!keep[kk] && side[kk] == lamp[k]) grow[kk] = 1, lamp[kk] = lamp[k];
+          }
+      }
+    keep.swap(grow);
+  }
   // window glass (interior light of buses, trams and trains): the specular map's bright areas, above 60 % of its
   // brightest level (the paint is shiny too, but well below the glass); window-sized areas only (no lamp lenses)
   std::vector<uint8_t> win(lamp.size(), 0);
