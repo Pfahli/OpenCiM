@@ -458,6 +458,28 @@ bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, boo
   return ok;
 }
 
+void Renderer3D::splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH) {
+  gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
+  gl::Viewport(0, 0, t.width, t.height);
+  gl::ClearColor(0, 0, 0, 0);
+  gl::Clear(gl::COLOR_BUFFER_BIT);
+  gl::Disable(gl::DEPTH_TEST);
+  gl::Disable(gl::CULL_FACE);
+  gl::Enable(gl::BLEND);
+  gl::BlendFunc(gl::ONE, gl::ONE);
+  gl::UseProgram(program);
+  gl::BindVertexArray(mesh.vao);
+  for (const GpuMesh::Part& p : mesh.parts)
+    gl::DrawElements(gl::TRIANGLES, gl::GLsizei(p.indexCount), gl::UNSIGNED_INT, reinterpret_cast<void*>(size_t(p.firstIndex) * 4));
+  gl::BindVertexArray(0);
+  gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+  gl::Disable(gl::BLEND);
+  gl::Enable(gl::DEPTH_TEST);
+  gl::Enable(gl::CULL_FACE);
+  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  gl::Viewport(0, 0, backW, backH);
+}
+
 void Renderer3D::resolve(const RenderTarget& t) {
   if (!t.msFbo) return;
   gl::BindFramebuffer(gl::READ_FRAMEBUFFER, t.msFbo);
