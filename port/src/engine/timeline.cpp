@@ -482,9 +482,7 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       int x = a.wx, z = a.wz;
       if (h(x, z) == 0x7FFF || h(x + 1, z) == 0x7FFF || h(x, z + 1) == 0x7FFF || h(x + 1, z + 1) == 0x7FFF) break;
       if (std::min({h(x, z), h(x + 1, z), h(x, z + 1), h(x + 1, z + 1)}) >= -0x140) break;
-      uint16_t& f = g.flags[size_t(z) * size_t(g.width) + size_t(x)];
-      f = a.on ? uint16_t(f | 0x2000) : uint16_t(f & 0xDFFF);
-      gridEditCellsChanged(ap.grid, x, z, x, z, true);
+      gridSetWaterFlag(ap.grid, x, z, a.on != 0);  // the whole basin (gsGridTimelineAction_water::apply L:0x081a4b30)
       break;
     }
     case kName: {
@@ -541,7 +539,168 @@ std::u16string labelOf(const Action& a) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// recording (the editor: gsGridPlayer.timeline; gsGridTimeline::addAction L:0x081a7380 / L:0x081a4c70,
+// beginGroup L:0x081a73c0, endGroup L:0x081a7490, addBrushAction L:0x081a7590)
+
+struct Recording {
+  bool groupOpen = false;  // +0xa8: actions go into this group (the newest action of groupDay)
+  int depth = 0;           // +0xb0: nested beginGroup calls while a group is open
+  uint32_t groupDay = 0;
+  bool brushOpen = false;  // +0xac: the newest action of the container is a brush that later dabs extend
+};
+std::unordered_map<const Object*, Recording> g_recording;
+
+void resetRecording(Object* s) { g_recording.erase(s); }
+
+std::vector<Action>& recordContainer(VM& vm, Object* s, Recording& rec) {
+  TimelineData& t = timelineOf(s);
+  if (rec.groupOpen) {
+    auto it = t.days.find(rec.groupDay);
+    if (it != t.days.end() && !it->second.empty() && it->second.front().tag == kGroup) return it->second.front().children;
+    rec.groupOpen = false;  // the group went away (day removed): back to the day
+    rec.depth = 0;
+  }
+  return t.days[uint32_t(std::max(0, currentDayOf(vm, s)))];
+}
+
+void recordAction(VM& vm, Object* s, Action a) {
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  c.insert(c.begin(), std::move(a));
+  if (!rec.groupOpen) vm.fireEvent(s, u"onChange", {});
+}
+
+ObjRef refOf(GridObj* grid, uint32_t item, uint32_t mask) {
+  const GridData& g = *grid->data;
+  const GridData::Item& it = g.items[item];
+  ObjRef r;
+  r.name = it.type < g.types.size() ? g.types[it.type] : std::string();
+  r.x = it.x;
+  r.y = int16_t(it.y + heightShift(g));
+  r.z = it.z;
+  r.orient = it.orient;
+  r.flags = it.flags & mask;
+  return r;
+}
+
 }  // namespace
+
+Object* playerTimeline(VM& vm, Object* player) {
+  if (!player) return nullptr;
+  auto it = player->fieldValues.find(u"timeline");
+  if (it == player->fieldValues.end()) return nullptr;
+  Object* t = vm.resolve(it->second).object();
+  return t && !t->destroyed ? t : nullptr;
+}
+
+void timelineBeginGroup(VM& vm, Object* s, const std::string& label) {
+  if (!s) return;
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  if (rec.groupOpen) {
+    ++rec.depth;
+    return;
+  }
+  Action g;
+  g.tag = kGroup;
+  g.label = label.substr(0, 31);
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  c.insert(c.begin(), std::move(g));
+  vm.fireEvent(s, u"onChange", {});
+  rec.groupOpen = true;
+  rec.depth = 0;
+  rec.groupDay = uint32_t(std::max(0, currentDayOf(vm, s)));
+}
+
+void timelineEndGroup(VM& vm, Object* s) {
+  if (!s) return;
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  if (rec.depth > 0) {
+    --rec.depth;
+    return;
+  }
+  if (!rec.groupOpen) return;
+  rec.groupOpen = false;
+  TimelineData& t = timelineOf(s);
+  auto it = t.days.find(rec.groupDay);
+  if (it != t.days.end() && !it->second.empty() && it->second.front().tag == kGroup && it->second.front().children.empty()) {
+    it->second.erase(it->second.begin());  // an empty group is dropped
+    if (it->second.empty()) t.days.erase(it);
+  }
+  vm.fireEvent(s, u"onChange", {});
+}
+
+void timelineRecordCreate(VM& vm, Object* s, GridObj* grid, uint32_t item) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  const GridData::Item& it = grid->data->items[item];
+  Action a;
+  a.tag = kCreate;
+  a.obj = refOf(grid, item, 0x42000000);
+  if (it.parent && it.parent <= grid->data->items.size()) a.parent = refOf(grid, it.parent - 1, kFlagAutoChild);
+  recordAction(vm, s, std::move(a));
+  if (it.variation) timelineRecordVariation(vm, s, grid, item, it.variation);
+}
+
+void timelineRecordDelete(VM& vm, Object* s, GridObj* grid, uint32_t item) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  Action a;
+  a.tag = kDelete;
+  a.obj = refOf(grid, item, kFlagAutoChild);
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordVariation(VM& vm, Object* s, GridObj* grid, uint32_t item, uint32_t variation) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  Action a;
+  a.tag = kVariation;
+  a.obj = refOf(grid, item, kFlagAutoChild);
+  a.variation = variation;
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordName(VM& vm, Object* s, GridObj* grid, uint32_t item, const std::string& name) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  Action a;
+  a.tag = kName;
+  a.obj = refOf(grid, item, kFlagAutoChild);
+  a.text = name;
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordBrush(VM& vm, Object* s, int type, int radius, int x, int strength, int z) {
+  if (!s) return;
+  Recording& rec = g_recording[s];
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  if (rec.brushOpen && !c.empty()) {
+    Action& b = c.front();
+    if (b.tag == kBrush && b.brushType == int8_t(type) && b.radius == int8_t(radius) && b.points.size() < 0xFFFF &&
+        b.strength == int16_t(strength)) {
+      b.points.emplace_back(int16_t(x), int16_t(z));
+      return;
+    }
+  }
+  Action a;
+  a.tag = kBrush;
+  a.brushType = int8_t(type);
+  a.radius = int8_t(radius);
+  a.strength = int16_t(strength);
+  a.points.emplace_back(int16_t(x), int16_t(z));
+  recordAction(vm, s, std::move(a));
+  g_recording[s].brushOpen = true;
+}
+
+void timelineRecordWater(VM& vm, Object* s, int x, int z, bool on) {
+  if (!s) return;
+  Action a;
+  a.tag = kWater;
+  a.wx = int16_t(x);
+  a.wz = int16_t(z);
+  a.on = on ? 1 : 0;
+  recordAction(vm, s, std::move(a));
+}
 
 void registerTimelineNatives(VM& vm) {
   // loadFromFile(path) (L:0x081a6b20): the actions per day; currentDay from the header
@@ -552,6 +711,7 @@ void registerTimelineNatives(VM& vm) {
     if (!v.vfs().read(path, file) || file.size() < 16 || r.u32(0) != kTimeline) return Value::boolean(false);
     TimelineData& t = timelineOf(s);
     t.days.clear();
+    resetRecording(s);
     size_t end = std::min(file.size(), size_t(8) + r.u32(4));
     for (size_t at = 16; at + 8 <= end;) {
       uint32_t tag = r.u32(at), size = r.u32(at + 4);
@@ -637,10 +797,12 @@ void registerTimelineNatives(VM& vm) {
   });
   // the editor's undo of the current day (L:0x081a37e0, L:0x081a3770, L:0x081a36c0) and its action list (L:0x081a5d50)
   implement(vm, "gsGridTimeline", u"removeDay", [](VM& v, Object* s, int, const Value*) {
+    resetRecording(s);
     if (timelineOf(s).days.erase(uint32_t(currentDayOf(v, s)))) v.fireEvent(s, u"onChange", {});
     return Value();
   });
   implement(vm, "gsGridTimeline", u"removeLastAction", [](VM& v, Object* s, int, const Value*) {
+    resetRecording(s);
     auto& days = timelineOf(s).days;
     auto it = days.find(uint32_t(currentDayOf(v, s)));
     if (it == days.end() || it->second.empty()) return Value();
@@ -650,6 +812,7 @@ void registerTimelineNatives(VM& vm) {
     return Value();
   });
   implement(vm, "gsGridTimeline", u"removeAction", [](VM& v, Object* s, int, const Value* a) {
+    resetRecording(s);
     auto& days = timelineOf(s).days;
     auto it = days.find(uint32_t(currentDayOf(v, s)));
     int i = v.toInt(a[0]);
@@ -665,6 +828,13 @@ void registerTimelineNatives(VM& vm) {
     if (auto it = days.find(uint32_t(currentDayOf(v, s))); it != days.end())
       for (const Action& act : it->second) arr->items.push_back(Value::string(labelOf(act)));
     return Value::heap(VT::Array, arr.get());
+  });
+  // clear() (L:0x081a3460): every day gone (the debug console's flatten_timeline)
+  implement(vm, "gsGridTimeline", u"clear", [](VM& v, Object* s, int, const Value*) {
+    resetRecording(s);
+    timelineOf(s).days.clear();
+    v.fireEvent(s, u"onChange", {});
+    return Value();
   });
   implement(vm, "gsGridTimeline", u"removeRedundantActions", [](VM&, Object*, int, const Value*) {
     return Value();  // editor clean-up (L:0x081a8e80); not needed for play

@@ -1430,6 +1430,10 @@ void cancelLaying(VM& vm, ControlObj* player, GridObj* grid) {
 
 }  // namespace
 
+void toolSoftenArea(GridObj* grid, int cx, int cz, int r) {
+  if (grid && grid->data) softenArea(grid, cx, cz, r);
+}
+
 void registerTrackTools(VM& vm) {
   ToolMode tram;
   tram.move = moveLayTram;

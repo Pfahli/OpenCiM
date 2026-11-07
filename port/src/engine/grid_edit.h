@@ -31,6 +31,10 @@ void gridEditItemChanged(GridObj* grid, uint32_t item);
 // terrain cells [x0, x1] × [z0, z1] (inclusive) whose heights (heights = true), water or ground flags changed
 void gridEditCellsChanged(GridObj* grid, int x0, int z0, int x1, int z1, bool heights);
 
+// gsGrid::setWaterFlag (L:0x08142090): sets or clears the water flag of cell (x, z) and floods it over the
+// 4-connected cells that differ and have a corner below the water line (−0x140): the whole basin fills or drains.
+// Returns true when a cell changed (the cells are queued as changed with heights, which rebuilds the water).
+bool gridSetWaterFlag(GridObj* grid, int x, int z, bool on);
 // the live items whose footprint corner is cell (x, z) (gsGrid::getObjects slot search for ObjRef matching)
 std::vector<uint32_t> gridItemsAt(script::VM& vm, GridObj* grid, int x, int z);
 // the live items whose footprint corner lies in the divisions around [x0, x1] × [z0, z1], grown by one division (the

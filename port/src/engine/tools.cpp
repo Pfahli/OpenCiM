@@ -469,6 +469,7 @@ void toolMouseDown(VM& vm, ControlObj* player, float x, float y, int key) {
   if (key == kMouseLeft) {
     if (!t.inProgress) {
       t.toolX = x, t.toolY = y;
+      if (auto m = g_modes.find(mode); m != g_modes.end() && m->second.down && grid) m->second.down(vm, player, grid);
       if (mode != kGridModeRemoveObjects) t.inProgress = true;
       t.startX = t.cellX, t.startY = t.cellY, t.startZ = t.cellZ, t.startW = t.cellW;
       t.cellX = t.cellZ = -1;

@@ -369,6 +369,44 @@ void gridEditCellsChanged(GridObj* grid, int x0, int z0, int x1, int z1, bool he
   if (heights) st.heightCells.add(x0, z0, x1, z1);
 }
 
+bool gridSetWaterFlag(GridObj* grid, int x, int z, bool on) {
+  if (!grid->data) return false;
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  if (x < 0 || z < 0 || x >= W || z >= L) return false;
+  auto idx = [&](int cx, int cz) { return size_t(cz) * size_t(W) + size_t(cx); };
+  // a corner of the cell below the water line (−0x140); a missing neighbour counts as the cell itself
+  auto low = [&](int cx, int cz) {
+    int16_t h0 = g.height[idx(cx, cz)];
+    int16_t h1 = cx + 1 < W ? g.height[idx(cx + 1, cz)] : h0;
+    int16_t h2 = cz + 1 < L ? g.height[idx(cx, cz + 1)] : h0;
+    int16_t h3 = cx + 1 < W && cz + 1 < L ? g.height[idx(cx + 1, cz + 1)] : h0;
+    return h0 < -0x140 || h1 < -0x140 || h2 < -0x140 || h3 < -0x140;
+  };
+  auto wet = [&](int cx, int cz) { return (g.flags[idx(cx, cz)] & 0x2000) != 0; };
+  auto set = [&](int cx, int cz) {
+    uint16_t& f = g.flags[idx(cx, cz)];
+    f = on ? uint16_t(f | 0x2000) : uint16_t(f & 0xDFFF);
+  };
+  bool changed = wet(x, z) != on;
+  if (changed) set(x, z);
+  int x0 = x, z0 = z, x1 = x, z1 = z;
+  std::vector<std::pair<int, int>> stack{{x, z}};
+  while (!stack.empty()) {
+    auto [cx, cz] = stack.back();
+    stack.pop_back();
+    x0 = std::min(x0, cx), z0 = std::min(z0, cz), x1 = std::max(x1, cx), z1 = std::max(z1, cz);
+    for (auto [nx, nz] : {std::pair{cx - 1, cz}, {cx + 1, cz}, {cx, cz - 1}, {cx, cz + 1}}) {
+      if (nx < 0 || nz < 0 || nx >= W || nz >= L || wet(nx, nz) == on || !low(nx, nz)) continue;
+      set(nx, nz);
+      stack.push_back({nx, nz});
+      changed = true;
+    }
+  }
+  if (changed) gridEditCellsChanged(grid, x0, z0, x1 + 1, z1 + 1, true);
+  return changed;
+}
+
 std::vector<uint32_t> gridItemsAt(VM& vm, GridObj* grid, int x, int z) {
   std::vector<uint32_t> out;
   if (!grid->data) return out;

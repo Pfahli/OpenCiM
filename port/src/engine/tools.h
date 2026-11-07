@@ -91,8 +91,15 @@ struct ToolMode {
   std::function<bool(script::VM&, ControlObj* player, GridObj* grid)> finish;
   // cancelTool's case: drop the preview. Default: toolClearPreview. cancelTool then runs finishTool, as the engine.
   std::function<void(script::VM&, ControlObj* player, GridObj* grid)> cancel;
+  // mouseDown's case for the left button, before the tool starts (toolX/toolY are the press point, cellX/cellZ still
+  // the hovered cell): the shift and ruin brushes keep an undo copy of their area, grow trees opens a timeline group.
+  // Default: none.
+  std::function<void(script::VM&, ControlObj* player, GridObj* grid)> down;
 };
 void registerToolMode(int mode, ToolMode m);
+
+// softenArea(cx, cz, r, 1) (L:0x0818cfb0): one pass of the 5-tap mean over the unlocked corners of a disc (tool_tracks)
+void toolSoftenArea(GridObj* grid, int cx, int cz, int r);
 
 // gsGridPlayer::createTrackBlock / createRoadBlock (L:0x08195400 / L:0x08190700): the preview pieces of track or road
 // for one cell and connection mask, as the laying tools make them and as placeObject makes a placed object's road and
