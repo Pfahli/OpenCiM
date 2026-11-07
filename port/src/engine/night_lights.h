@@ -32,7 +32,8 @@ struct TerrainCache;
 
 struct WindowMaskInfo {
   int windows = 0;          // window groups (connected glass areas) kept
-  int rejected = 0;         // glass areas too large for windows (glass roofs, metal sheets)
+  int rejected = 0;
+  int shops = 0;            // of them shop windows (ground floor, by the mesh)         // glass areas too large for windows (glass roofs, metal sheets)
   float threshold = 0;      // specular level taken as glass
   float coverage = 0;       // share of the texture that is window
   const char* skipped = nullptr;  // why there is no mask
@@ -40,15 +41,18 @@ struct WindowMaskInfo {
 
 // The window mask of a building texture from its specular map (and its illumination map, which wins: textures whose
 // illumination map already lights windows get none). BGRA8 levels with mipmaps, each channel one window group.
+// With the mesh and material, glass used only by faces within 4.2 m of the ground is a shop window (channel A,
+// lit brighter and longer); the other windows then form three groups.
 bool makeWindowMask(const render::Image& specular, const render::Image* illumination, render::Image& out,
-                    WindowMaskInfo* info);
+                    WindowMaskInfo* info, const render::MeshData* mesh = nullptr, int material = -1);
 
 // The GL mask texture of a building material (cached by its texture paths), 0 when it has no windows. Only materials
 // of templates under a buildings folder get one.
-uint32_t buildingWindowMask(Display& d, script::VM& vm, const render::MaterialDef& m, const std::string& objectPath);
-// Makes the masks of these (material, object path) pairs on worker threads (map load: many at once).
+uint32_t buildingWindowMask(Display& d, script::VM& vm, const render::MaterialDef& m, const std::string& objectPath,
+                            const render::MeshData* mesh = nullptr, int material = -1);
+// Makes the masks of these objects' materials on worker threads (map load: many at once).
 void prepareWindowMasks(Display& d, script::VM& vm,
-                        const std::vector<std::pair<const render::MaterialDef*, std::string>>& materials);
+                        const std::vector<std::pair<const render::ObjectData*, std::string>>& objects);
 
 // Vehicle lamps: on each vehicle material's texture, the texels on the model's front or rear faces at lamp height
 // (found by rasterising the mesh in texture space) that look like lamp glass: bright and nearly white at the front,
@@ -71,6 +75,21 @@ float& vehicleNight01();
 inline float vehicleLampCode(int front, int rear, float on) {
   return on > 0.01f && (front || rear) ? 10.0f + float(4 * front + rear) + 0.9f * std::min(on, 1.0f) : 0.0f;
 }
+
+// Street-lamp glass: on a lamp model's texture, the texels of its heads (within 0.8 m of a light point, from 1.5 m
+// below to 1 m above) that face down or look like glass (light, unsaturated, lighter than the housing, or shiny).
+// Channel R. The default shader lights it warm while the lamps are on (per lamp by the seed in the vertex alpha).
+bool makeLampGlassMask(const render::MeshData& mesh, int material, const std::vector<render::Vec3>& heads,
+                       const render::Image& diffuse, const render::Image* specular, render::Image& out, int* texels);
+uint32_t lampGlassMask(Display& d, script::VM& vm, const render::ObjectData& od, int material,
+                       const std::string& objectPath);
+
+// Lit signs and advertisements: ad props (not graffiti) and shop/wall signs by name; their panel (the faces along
+// the model's main direction, not tiny ones) glows in its own colours like a light box, on about 60 % of them
+// (per item by the seed). Materials with an illumination map keep the game's own light.
+bool isSignTemplate(const std::string& objectPath);
+bool makeSignMask(const render::MeshData& mesh, int material, int w, int h, render::Image& out, int* texels);
+uint32_t signMask(Display& d, script::VM& vm, const render::ObjectData& od, int material, const std::string& objectPath);
 
 // A per-building seed (1..255) for the vertex colour alpha of merged building vertices.
 uint8_t buildingSeed(int x, int y, int z);

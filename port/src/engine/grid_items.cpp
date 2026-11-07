@@ -144,14 +144,14 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
   const GridData& g = *grid->data;
   auto read = [&](const std::string& p, std::vector<uint8_t>& out) { return vm.vfs().read(p, out); };
   {  // port night lights: the window masks of the new templates' building materials, made in parallel
-    std::vector<std::pair<const MaterialDef*, std::string>> mats;
+    std::vector<std::pair<const ObjectData*, std::string>> objs;
     for (size_t t = tc.typeTemplate.size(); t < g.types.size(); ++t) {
       auto it = grid->templates.find(g.types[t]);
       auto* o = it == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(it->second.get());
       if (o && o->data)
-        for (const MaterialDef& m : o->data->materials) mats.emplace_back(&m, o->pendingPath);
+        objs.emplace_back(o->data.get(), o->pendingPath);
     }
-    prepareWindowMasks(d, vm, mats);
+    prepareWindowMasks(d, vm, objs);
   }
   for (size_t t = tc.typeTemplate.size(); t < g.types.size(); ++t) {
     tc.typeTemplate.push_back(-1);
@@ -177,7 +177,18 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
     tp.materialBase = int(tc.materials.size());
     for (const MaterialDef& m : o->data->materials) {
       tc.materials.push_back(objectMaterial(d, vm, o, m));
-      tc.materials.back().windowMask = buildingWindowMask(d, vm, m, o->pendingPath);  // port night lights
+      tc.materials.back().windowMask =  // port night lights
+          buildingWindowMask(d, vm, m, o->pendingPath, &o->data->mesh, int(&m - o->data->materials.data()));
+      if (!tc.materials.back().windowMask)
+        if (uint32_t glass = lampGlassMask(d, vm, *o->data, int(&m - o->data->materials.data()), o->pendingPath)) {
+          tc.materials.back().windowMask = glass;  // a street lamp's glass
+          tc.materials.back().windowKind = 2;
+        }
+      if (!tc.materials.back().windowMask)
+        if (uint32_t sign = signMask(d, vm, *o->data, int(&m - o->data->materials.data()), o->pendingPath)) {
+          tc.materials.back().windowMask = sign;  // a lit sign or advertisement
+          tc.materials.back().windowKind = 3;
+        }
     }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");
@@ -199,6 +210,14 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
         known = tc.fileMaterials.emplace(path, index).first;
       }
       tp.variation[n - 1] = known->second;
+      // port night lights: a lit sign keeps its panel mask with the other poster (an own copy of the shared material)
+      if (known->second >= 0 && !o->data->materials.empty() && tc.materials[size_t(tp.materialBase)].windowKind == 3) {
+        GpuMaterial lit = tc.materials[size_t(known->second)];
+        lit.windowMask = tc.materials[size_t(tp.materialBase)].windowMask;
+        lit.windowKind = 3;
+        tp.variation[n - 1] = int(tc.materials.size());
+        tc.materials.push_back(lit);
+      }
     }
     if (auto c = o->fieldValues.find(u"colorMap"); c != o->fieldValues.end())
       if (auto* cm = dynamic_cast<ColormapObj*>(c->second.object()); cm && !cm->argb.empty()) tp.colorMap = cm;

@@ -105,6 +105,16 @@ float windowShare(float hours) {
   return k[n - 1][1];
 }
 
+// share of the shop windows lit over the day: displays stay lit long into the night
+float shopShare(float hours) {
+  static const float k[][2] = {{0, 0.45f}, {3, 0.32f}, {6, 0.45f}, {9, 0.6f}, {17, 0.9f}, {21, 0.9f}, {22.5f, 0.72f}, {24, 0.45f}};
+  const int n = int(sizeof k / sizeof k[0]);
+  hours = std::fmod(std::fmod(hours, 24.0f) + 24.0f, 24.0f);
+  for (int i = 0; i + 1 < n; ++i)
+    if (hours <= k[i + 1][0]) return k[i][1] + (k[i + 1][1] - k[i][1]) * (hours - k[i][0]) / (k[i + 1][0] - k[i][0]);
+  return k[n - 1][1];
+}
+
 constexpr float kCarGain = 3.2f;     // headlight light at the beam's brightest, in units of the surface colour
 constexpr float kLampGain = 1.9f;     // lamp light at the pool centre, in units of the surface colour
 constexpr float kLampTexel = 1.5f;    // metres per lamp-map texel (capped by kLampMapMax)
@@ -567,7 +577,8 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
 
 // ---- windows ----
 
-bool makeWindowMask(const Image& specular, const Image* illumination, Image& out, WindowMaskInfo* info) {
+bool makeWindowMask(const Image& specular, const Image* illumination, Image& out, WindowMaskInfo* info,
+                    const MeshData* mesh, int material) {
   WindowMaskInfo local;
   WindowMaskInfo& st = info ? *info : local;
   std::vector<uint8_t> rgba;
@@ -655,6 +666,40 @@ bool makeWindowMask(const Image& specular, const Image* illumination, Image& out
       }
     }
   }
+  // shop windows: glass whose texels the mesh uses only within 4.2 m of the model's ground (its origin); they get
+  // their own channel (A), the other windows three random groups (B, G, R)
+  std::vector<uint8_t> floorOf(n, 0);  // bit 1: a ground-floor face uses the texel, bit 2: a face above it
+  if (mesh && mesh->uv0.size() >= mesh->vertexCount() * 2) {
+    const size_t nv = mesh->vertexCount();
+    for (const Submesh& sm : mesh->submeshes) {
+      if (sm.material != material) continue;
+      for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh->indices.size(); k += 3) {
+        uint32_t t[3] = {mesh->indices[k], mesh->indices[k + 1], mesh->indices[k + 2]};
+        if (t[0] >= nv || t[1] >= nv || t[2] >= nv) continue;
+        float u[3], v[3];
+        float ub = std::floor(std::min({mesh->uv0[t[0] * 2], mesh->uv0[t[1] * 2], mesh->uv0[t[2] * 2]}));
+        float vb = std::floor(std::min({mesh->uv0[t[0] * 2 + 1], mesh->uv0[t[1] * 2 + 1], mesh->uv0[t[2] * 2 + 1]}));
+        for (int j = 0; j < 3; ++j) u[j] = (mesh->uv0[t[j] * 2] - ub) * float(w), v[j] = (mesh->uv0[t[j] * 2 + 1] - vb) * float(h);
+        float area = (u[1] - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (v[1] - v[0]);
+        if (std::fabs(area) < 1e-6f) continue;
+        int x0 = std::max(0, int(std::floor(std::min({u[0], u[1], u[2]})))), x1 = std::min(w - 1, int(std::ceil(std::max({u[0], u[1], u[2]}))));
+        int y0 = std::max(0, int(std::floor(std::min({v[0], v[1], v[2]})))), y1 = std::min(h - 1, int(std::ceil(std::max({v[0], v[1], v[2]}))));
+        for (int y = y0; y <= y1; ++y)
+          for (int x = x0; x <= x1; ++x) {
+            float px = float(x) + 0.5f, py = float(y) + 0.5f;
+            float b1 = ((px - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (py - v[0])) / area;
+            float b2 = ((u[1] - u[0]) * (py - v[0]) - (px - u[0]) * (v[1] - v[0])) / area;
+            float b0 = 1 - b1 - b2;
+            if (b0 < -0.02f || b1 < -0.02f || b2 < -0.02f) continue;
+            float py3 = b0 * mesh->positions[t[0] * 3 + 1] + b1 * mesh->positions[t[1] * 3 + 1] + b2 * mesh->positions[t[2] * 3 + 1];
+            floorOf[size_t(y) * size_t(w) + size_t(x)] |= py3 < 4.2f ? 1 : 2;
+          }
+      }
+    }
+  }
+  std::vector<size_t> groundGlass(comps.size(), 0);
+  for (size_t i = 0; i < n; ++i)
+    if (label[i] >= 0 && glass[i] && floorOf[i] == 1) ++groundGlass[size_t(label[i])];
   // a glass area over 6 % of the texture is no window (glass roofs, sheet metal); groups at random per window
   std::vector<int> group(comps.size(), -1);
   std::vector<float> bright(comps.size(), 1.0f);  // per window: lamps, curtains, room depth
@@ -666,7 +711,9 @@ bool makeWindowMask(const Image& specular, const Image* illumination, Image& out
       continue;
     }
     uint32_t hc = hash32(hash32(uint32_t(c) * 0x9E3779B9u + 0x632BE5ABu) ^ uint32_t(w));
-    group[c] = int(hc >> 20 & 3);
+    bool shop = groundGlass[c] * 10 >= comps[c].glass * 6;
+    group[c] = shop ? 3 : int((hc >> 20) % 3);
+    st.shops += shop;
     bright[c] = 0.5f + 0.5f * float(hc & 0xFFFF) / 65535.0f;
     ++st.windows;
   }
@@ -712,6 +759,8 @@ std::map<std::string, uint32_t>& maskCache() {
 }
 
 struct MaskJob {
+  const MeshData* mesh = nullptr;
+  int material = -1;
   std::string key, spec, objectPath;
   std::vector<uint8_t> specData, illumData;
   Image mask;
@@ -722,18 +771,19 @@ struct MaskJob {
 void runMaskJob(MaskJob& j) {
   Image si, ii;
   bool haveIllum = !j.illumData.empty() && parseDds(j.illumData, ii, nullptr);
-  j.ok = !j.specData.empty() && parseDds(j.specData, si, nullptr) && makeWindowMask(si, haveIllum ? &ii : nullptr, j.mask, &j.info);
+  j.ok = !j.specData.empty() && parseDds(j.specData, si, nullptr) && makeWindowMask(si, haveIllum ? &ii : nullptr, j.mask, &j.info, j.mesh, j.material);
 }
 
 void finishMaskJob(Display& d, MaskJob& j) {
   uint32_t tex = j.ok ? d.r2d().createTexture(j.mask) : 0;
   if (debugNight())
-    LOG_INFO("night: windows %s (%s): %d groups, %d rejected, glass > %.2f, %.1f %% %s", j.spec.c_str(), j.objectPath.c_str(),
-             j.info.windows, j.info.rejected, j.info.threshold, j.info.coverage * 100, j.info.skipped ? j.info.skipped : "");
+    LOG_INFO("night: windows %s (%s): %d windows (%d shop), %d rejected, glass > %.2f, %.1f %% %s", j.spec.c_str(), j.objectPath.c_str(),
+             j.info.windows, j.info.shops, j.info.rejected, j.info.threshold, j.info.coverage * 100, j.info.skipped ? j.info.skipped : "");
   maskCache().emplace(j.key, tex);
 }
 
-bool newJob(VM& vm, const MaterialDef& m, const std::string& objectPath, MaskJob& j) {
+bool newJob(VM& vm, const MaterialDef& m, const std::string& objectPath, MaskJob& j, const MeshData* mesh, int material) {
+  j.mesh = mesh, j.material = material;
   std::string illum;
   if (!maskSources(m, objectPath, j.spec, illum)) return false;
   j.key = j.spec + "|" + illum;
@@ -746,14 +796,15 @@ bool newJob(VM& vm, const MaterialDef& m, const std::string& objectPath, MaskJob
 
 }  // namespace
 
-void prepareWindowMasks(Display& d, VM& vm, const std::vector<std::pair<const MaterialDef*, std::string>>& materials) {
+void prepareWindowMasks(Display& d, VM& vm, const std::vector<std::pair<const ObjectData*, std::string>>& objects) {
   auto t0 = std::chrono::steady_clock::now();
   std::vector<MaskJob> jobs;
   std::set<std::string> queued;
-  for (const auto& [m, path] : materials) {
-    MaskJob j;
-    if (newJob(vm, *m, path, j) && queued.insert(j.key).second) jobs.push_back(std::move(j));
-  }
+  for (const auto& [od, path] : objects)
+    for (size_t i = 0; i < od->materials.size(); ++i) {
+      MaskJob j;
+      if (newJob(vm, od->materials[i], path, j, &od->mesh, int(i)) && queued.insert(j.key).second) jobs.push_back(std::move(j));
+    }
   if (jobs.empty()) return;
   // decoding and labelling run on worker threads; the uploads stay on this (the GL) thread
   std::atomic<size_t> next{0};
@@ -769,12 +820,13 @@ void prepareWindowMasks(Display& d, VM& vm, const std::vector<std::pair<const Ma
            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
 }
 
-uint32_t buildingWindowMask(Display& d, VM& vm, const MaterialDef& m, const std::string& objectPath) {
+uint32_t buildingWindowMask(Display& d, VM& vm, const MaterialDef& m, const std::string& objectPath, const MeshData* mesh,
+                            int material) {
   std::string spec, illum;
   if (!maskSources(m, objectPath, spec, illum)) return 0;
   if (auto it = maskCache().find(spec + "|" + illum); it != maskCache().end()) return it->second;
   MaskJob j;  // not prepared (live edits bring a new template): made here
-  if (!newJob(vm, m, objectPath, j)) return 0;
+  if (!newJob(vm, m, objectPath, j, mesh, material)) return 0;
   runMaskJob(j);
   finishMaskJob(d, j);
   return maskCache()[j.key];
@@ -970,6 +1022,216 @@ float& vehicleNight01() {
   return n;
 }
 
+// ---- street-lamp glass ----
+
+bool makeLampGlassMask(const MeshData& mesh, int material, const std::vector<Vec3>& heads, const Image& diffuse,
+                       const Image* specular, Image& out, int* texels) {
+  std::vector<uint8_t> dif, spe;
+  int w = 0, h = 0, sw = 0, sh = 0;
+  if (heads.empty() || !decodeAtMost(diffuse, 512, dif, w, h)) return false;
+  bool haveSpec = specular && decodeAtMost(*specular, 512, spe, sw, sh);
+  const size_t nv = mesh.vertexCount();
+  if (!nv || mesh.uv0.size() < nv * 2 || mesh.normals.size() < nv * 3) return false;
+  // texels of the head: within 0.8 m (horizontally) of a light point, from 1.5 m below it (hanging lanterns) to 1 m
+  // above; 1 = its underside (faces pointing down), 2 = the rest of the head
+  std::vector<uint8_t> part(size_t(w) * size_t(h), 0);
+  for (const Submesh& sm : mesh.submeshes) {
+    if (sm.material != material) continue;
+    for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size(); k += 3) {
+      uint32_t t[3] = {mesh.indices[k], mesh.indices[k + 1], mesh.indices[k + 2]};
+      if (t[0] >= nv || t[1] >= nv || t[2] >= nv) continue;
+      float u[3], v[3];
+      float ub = std::floor(std::min({mesh.uv0[t[0] * 2], mesh.uv0[t[1] * 2], mesh.uv0[t[2] * 2]}));
+      float vb = std::floor(std::min({mesh.uv0[t[0] * 2 + 1], mesh.uv0[t[1] * 2 + 1], mesh.uv0[t[2] * 2 + 1]}));
+      for (int j = 0; j < 3; ++j) u[j] = (mesh.uv0[t[j] * 2] - ub) * float(w), v[j] = (mesh.uv0[t[j] * 2 + 1] - vb) * float(h);
+      float area = (u[1] - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (v[1] - v[0]);
+      if (std::fabs(area) < 1e-6f) continue;
+      int x0 = std::max(0, int(std::floor(std::min({u[0], u[1], u[2]})))), x1 = std::min(w - 1, int(std::ceil(std::max({u[0], u[1], u[2]}))));
+      int y0 = std::max(0, int(std::floor(std::min({v[0], v[1], v[2]})))), y1 = std::min(h - 1, int(std::ceil(std::max({v[0], v[1], v[2]}))));
+      for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+          float px = float(x) + 0.5f, py = float(y) + 0.5f;
+          float b1 = ((px - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (py - v[0])) / area;
+          float b2 = ((u[1] - u[0]) * (py - v[0]) - (px - u[0]) * (v[1] - v[0])) / area;
+          float b0 = 1 - b1 - b2;
+          if (b0 < -0.02f || b1 < -0.02f || b2 < -0.02f) continue;
+          float bb[3] = {b0, b1, b2};
+          Vec3 p;
+          float ny = 0;
+          for (int j = 0; j < 3; ++j) {
+            p = p + Vec3{mesh.positions[t[j] * 3], mesh.positions[t[j] * 3 + 1], mesh.positions[t[j] * 3 + 2]} * bb[j];
+            ny += bb[j] * mesh.normals[t[j] * 3 + 1];
+          }
+          bool near = false;
+          for (const Vec3& hd : heads) {
+            float dx = p.x - hd.x, dz = p.z - hd.z;
+            near = near || (dx * dx + dz * dz < 0.64f && p.y > hd.y - 1.5f && p.y < hd.y + 1.0f);
+          }
+          if (!near) continue;
+          uint8_t& pt = part[size_t(y) * size_t(w) + size_t(x)];
+          pt = std::max<uint8_t>(pt, ny < -0.6f ? 1 : 2);
+        }
+    }
+  }
+  // the glass: the underside, and on the rest of the head what looks like glass (light and unsaturated, clearly
+  // lighter than the head's housing, or shiny in the specular map)
+  std::vector<float> lums;
+  for (size_t k = 0; k < part.size(); ++k)
+    if (part[k] == 2) lums.push_back((0.3f * dif[k * 4] + 0.59f * dif[k * 4 + 1] + 0.11f * dif[k * 4 + 2]) / 255.0f);
+  float median = 0;
+  if (!lums.empty()) {
+    std::nth_element(lums.begin(), lums.begin() + std::ptrdiff_t(lums.size() / 2), lums.end());
+    median = lums[lums.size() / 2];
+  }
+  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);
+  int count = 0;
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      size_t k = size_t(y) * size_t(w) + size_t(x);
+      if (!part[k]) continue;
+      const uint8_t* p = &dif[k * 4];
+      float r = p[0] / 255.0f, g = p[1] / 255.0f, b = p[2] / 255.0f;
+      float mx = std::max({r, g, b}), mn = std::min({r, g, b}), lum = 0.3f * r + 0.59f * g + 0.11f * b;
+      float sat = mx > 0 ? (mx - mn) / mx : 0;
+      float s = 0;
+      if (haveSpec) {
+        const uint8_t* q = &spe[(size_t(y * sh / h) * size_t(sw) + size_t(x * sw / w)) * 4];
+        s = std::max({q[0], q[1], q[2]}) / 255.0f;
+      }
+      bool glass = part[k] == 1 || (sat < 0.45f && (lum > std::max(0.4f, median + 0.15f) || s > 0.5f));
+      if (!glass) continue;
+      px[k * 4 + 2] = 255;
+      ++count;
+    }
+  if (texels) *texels = count;
+  if (!count) return false;
+  out = Image();
+  out.format = Image::Format::BGRA8;
+  out.width = w, out.height = h;
+  out.levels.push_back(std::move(px));
+  buildMips(out);
+  return true;
+}
+
+uint32_t lampGlassMask(Display& d, VM& vm, const ObjectData& od, int material, const std::string& objectPath) {
+  if (!isLampTemplate(objectPath) || ownGlow(od)) return 0;
+  static std::map<std::pair<const ObjectData*, int>, uint32_t> cache;
+  auto keyv = std::make_pair(&od, material);
+  if (auto it = cache.find(keyv); it != cache.end()) return it->second;
+  uint32_t tex = 0;
+  int count = 0;
+  const MaterialDef& m = od.materials[size_t(material)];
+  std::vector<uint8_t> data;
+  Image di, si, mask;
+  if ((m.flags & kMatDiffuseMap) && !m.textures.empty() && vm.vfs().read(m.textures[0], data) && parseDds(data, di, nullptr)) {
+    size_t at = 1 + ((m.flags & 0x400) ? 1 : 0) + ((m.flags & 0x800) ? 2 : 0);
+    bool haveSpec = (m.flags & kMatSpecularMap) && at < m.textures.size() && vm.vfs().read(m.textures[at], data) &&
+                    parseDds(data, si, nullptr);
+    if (makeLampGlassMask(od.mesh, material, headsOf(od, objectPath), di, haveSpec ? &si : nullptr, mask, &count))
+      tex = d.r2d().createTexture(mask);
+  }
+  if (debugNight()) LOG_INFO("night: lamp glass %s / %s: %d texels", objectPath.c_str(), m.name.c_str(), count);
+  cache.emplace(keyv, tex);
+  return tex;
+}
+
+// ---- lit signs and advertisements ----
+
+bool isSignTemplate(const std::string& objectPath) {
+  std::string p = objectPath;
+  std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+  std::string stem = p.substr(p.find_last_of('/') + 1);
+  if (p.find("/ad-props/") != std::string::npos) return stem.find("graffiti") == std::string::npos;
+  for (const char* k : {"wallsign", "casinosign", "beergardensign", "marketsign", "grocerysign"})
+    if (stem.find(k) != std::string::npos) return true;
+  return false;
+}
+
+bool makeSignMask(const MeshData& mesh, int material, int w, int h, Image& out, int* texels) {
+  const size_t nv = mesh.vertexCount();
+  if (!nv || mesh.uv0.size() < nv * 2) return false;
+  // the sign's face: the direction (and its opposite) holding the most triangle area, over the whole model
+  auto P = [&](uint32_t i) { return Vec3{mesh.positions[i * 3], mesh.positions[i * 3 + 1], mesh.positions[i * 3 + 2]}; };
+  struct Tri {
+    uint32_t t[3];
+    Vec3 n;
+    float area;
+    int material;
+  };
+  std::vector<Tri> tris;
+  for (const Submesh& sm : mesh.submeshes)
+    for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size(); k += 3) {
+      Tri tr{{mesh.indices[k], mesh.indices[k + 1], mesh.indices[k + 2]}, {}, 0, sm.material};
+      if (tr.t[0] >= nv || tr.t[1] >= nv || tr.t[2] >= nv) continue;
+      Vec3 c = cross(P(tr.t[1]) - P(tr.t[0]), P(tr.t[2]) - P(tr.t[0]));
+      float l = std::sqrt(dot(c, c));
+      if (l < 1e-8f) continue;
+      tr.n = c * (1.0f / l), tr.area = 0.5f * l;
+      tris.push_back(tr);
+    }
+  Vec3 best;
+  float bestArea = 0;
+  for (const Tri& a : tris) {
+    float sum = 0;
+    for (const Tri& b : tris) sum += std::fabs(dot(a.n, b.n)) > 0.9f ? b.area : 0.0f;
+    if (sum > bestArea) bestArea = sum, best = a.n;
+  }
+  if (bestArea <= 0) return false;
+  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);
+  int count = 0;
+  for (const Tri& tr : tris) {
+    // the panel: faces along the main direction and not tiny (frame edges, legs)
+    if (tr.material != material || std::fabs(dot(tr.n, best)) < 0.9f || tr.area < 0.04f * bestArea) continue;
+    float u[3], v[3];
+    float ub = std::floor(std::min({mesh.uv0[tr.t[0] * 2], mesh.uv0[tr.t[1] * 2], mesh.uv0[tr.t[2] * 2]}));
+    float vb = std::floor(std::min({mesh.uv0[tr.t[0] * 2 + 1], mesh.uv0[tr.t[1] * 2 + 1], mesh.uv0[tr.t[2] * 2 + 1]}));
+    for (int j = 0; j < 3; ++j) u[j] = (mesh.uv0[tr.t[j] * 2] - ub) * float(w), v[j] = (mesh.uv0[tr.t[j] * 2 + 1] - vb) * float(h);
+    float area = (u[1] - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (v[1] - v[0]);
+    if (std::fabs(area) < 1e-6f) continue;
+    int x0 = std::max(0, int(std::floor(std::min({u[0], u[1], u[2]})))), x1 = std::min(w - 1, int(std::ceil(std::max({u[0], u[1], u[2]}))));
+    int y0 = std::max(0, int(std::floor(std::min({v[0], v[1], v[2]})))), y1 = std::min(h - 1, int(std::ceil(std::max({v[0], v[1], v[2]}))));
+    for (int y = y0; y <= y1; ++y)
+      for (int x = x0; x <= x1; ++x) {
+        float px0 = float(x) + 0.5f, py0 = float(y) + 0.5f;
+        float b1 = ((px0 - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (py0 - v[0])) / area;
+        float b2 = ((u[1] - u[0]) * (py0 - v[0]) - (px0 - u[0]) * (v[1] - v[0])) / area;
+        if (b1 < -0.01f || b2 < -0.01f || 1 - b1 - b2 < -0.01f) continue;
+        uint8_t& o = px[(size_t(y) * size_t(w) + size_t(x)) * 4 + 2];
+        if (!o) o = 255, ++count;
+      }
+  }
+  if (texels) *texels = count;
+  if (!count) return false;
+  out = Image();
+  out.format = Image::Format::BGRA8;
+  out.width = w, out.height = h;
+  out.levels.push_back(std::move(px));
+  buildMips(out);
+  return true;
+}
+
+uint32_t signMask(Display& d, VM& vm, const ObjectData& od, int material, const std::string& objectPath) {
+  if (!isSignTemplate(objectPath)) return 0;
+  const MaterialDef& m = od.materials[size_t(material)];
+  if (!(m.flags & kMatDiffuseMap) || (m.flags & kMatIlluminationMap) || m.textures.empty()) return 0;  // lit already
+  if (m.name.find("painted") != std::string::npos) return 0;  // ads painted on walls are not lit
+  static std::map<std::pair<const ObjectData*, int>, uint32_t> cache;
+  auto keyv = std::make_pair(&od, material);
+  if (auto it = cache.find(keyv); it != cache.end()) return it->second;
+  uint32_t tex = 0;
+  int count = 0;
+  std::vector<uint8_t> data;
+  Image di, mask;
+  if (vm.vfs().read(m.textures[0], data) && parseDds(data, di, nullptr)) {
+    int w = di.width, h = di.height;
+    for (int l = 0; l + 1 < di.mipCount && std::max(w, h) > 512; ++l) w = std::max(1, w / 2), h = std::max(1, h / 2);
+    if (makeSignMask(od.mesh, material, w, h, mask, &count)) tex = d.r2d().createTexture(mask);
+  }
+  if (debugNight()) LOG_INFO("night: sign %s / %s: %d texels", objectPath.c_str(), m.name.c_str(), count);
+  cache.emplace(keyv, tex);
+  return tex;
+}
+
 uint8_t buildingSeed(int x, int y, int z) {
   return uint8_t(1 + hash32(uint32_t(x) * 73856093u ^ uint32_t(z) * 19349663u ^ uint32_t(y) * 83492791u) % 255);
 }
@@ -1099,7 +1361,8 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
   v.night[0] = windows;
   v.night[1] = windowShare(float(ns.hours));
   v.night[2] = 0;
-  v.night[3] = float(ns.hours / 24.0);
+  v.night[3] = ns.night01;
+  v.shopShare = shopShare(float(ns.hours));
   GridObj* grid = nullptr;
   for (GridObj* g : grids)
     if (g->data && g->terrain && !g->data->items.empty()) grid = g;
@@ -1130,21 +1393,7 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
     std::copy(lc.xf, lc.xf + 4, v.lampMapXf);
     v.lampHeight[0] = lc.y0;
     v.lampHeight[1] = lc.yScale;
-    // head glows: lamps in front of the camera within 700 m, each switching on at its own point of the dusk
-    for (const auto& h : lc.heads) {
-      Vec3 dv = h.pos - v.eye;
-      float dist2 = dot(dv, dv);
-      if (dist2 > 700.0f * 700.0f || !inView(h.pos, 1.2f)) continue;
-      float on = smooth(h.onAt, h.onAt + 0.04f, ns.night01);
-      if (on <= 0) continue;
-      float dist = std::sqrt(dist2);
-      ParticleSprite s;
-      s.pos = h.pos + dv * (-0.9f / std::max(dist, 1.0f));  // toward the eye, over the lamp housing
-      s.size = 1.5f;
-      s.argb = uint32_t(std::lround(255.0f * on)) << 24 | 0xFFE0B0u;
-      s.batch = batch;
-      glows.push_back(s);
-    }
+    // no sprites on the heads: the lamps' own glass glows (lampGlassMask, the shader's window path)
   }
   vehicleNight01() = ns.night01;
   if (ns.night01 > 0.12f) addVehicleLights(d, vm, grid, lc, v, ns.night01, batch, glows);

@@ -711,6 +711,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.viewInverse = at("regs_ViewInverse");
   l.projInverse = at("regs_ProjInverse");
   l.night = at("regs_Night");
+  l.shop = at("regs_Shop");
   l.windowMask = at("regs_WindowMask");
   l.windowOn = at("regs_WindowOn");
   l.lampMap = at("regs_LampMap");
@@ -763,6 +764,7 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   gl::UniformMatrix4fv(l.viewInverse, 1, 0, vi.m);
   gl::Uniform4f(l.projInverse, 1.0f / v.proj.at(0, 0), 1.0f / v.proj.at(1, 1), v.proj.at(0, 2), v.proj.at(1, 2));
   gl::Uniform4fv(l.night, 1, v.night);
+  gl::Uniform1f(l.shop, v.shopShare);
   gl::Uniform1i(l.windowMask, 8);
   gl::Uniform1i(l.lampMap, 9);
   gl::Uniform4fv(l.lampMapXf, 1, v.lampMapXf);
@@ -801,7 +803,8 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform4fv(l.colorize, 1, tint);
   gl::Uniform1f(l.reflection, m.reflection);
   if (l.windowOn >= 0) {  // port night lights: the material's window groups on unit 8
-    float code = !m.windowMask ? 0.0f : m.windowKind == 1 ? it.lampCode : v.night[0] > 0 ? 1.0f : 0.0f;
+    float code = !m.windowMask ? 0.0f : m.windowKind == 1 ? it.lampCode
+                 : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
     gl::Uniform1f(l.windowOn, code);
     if (code > 0) {
       gl::ActiveTexture(gl::TEXTURE0 + 8);

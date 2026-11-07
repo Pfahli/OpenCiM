@@ -25,8 +25,9 @@ window, shop front and door glass.
    texture brings its own lit windows (the US/Tokyo DLC buildings), so it gets no mask.
 3. Glass texels are grown by ~1 % of the width and labelled (4-connected), so the panes of one window, split by thin
    frames, are one window. Areas over 6 % of the texture (glass roofs, sheet metal) are dropped.
-4. Each window gets one of **four random groups** and a random brightness 0.5…1. Channel k of the mask (BGRA8) holds
-   coverage × brightness of the group-k windows (soft edges: smoothstep(T ± 0.07)).
+4. **Shop windows**: with the building mesh rasterised into texture space, glass that only faces within 4.2 m of the
+   model's ground uses goes into its own channel (A). The other windows get one of **three random groups** and a random
+   brightness 0.5…1. Each channel of the mask (BGRA8) holds coverage × brightness of its windows (soft edges: smoothstep(T ± 0.07)).
 5. Box-filtered mipmaps. Because each channel is plain coverage, the mips stay exact: a distant facade shows the
    average of what is lit, never a wrong window.
 
@@ -46,6 +47,8 @@ Vienna: 129 masks in ~0.6 s at load (worker threads; uploads on the GL thread). 
 * **Colour**: per group and building, warm incandescent (1, 0.6, 0.3) … soft white (1, 0.84, 0.62); 6 % cool
   (0.55, 0.64, 0.82, TV/fluorescent). Brightness × (0.7…1.3) per group, × (0.6 + 1.5·luminance of the diffuse
   texel) so curtains and window detail stay visible.
+* **Shop windows**: brighter and whiter (1.6 × (1, 0.82…0.95, 0.6…0.88)), on their own schedule (0.9 of them from 17:00
+  to 21:00, 0.72 at 22:30, 0.45 at midnight, 0.32 at 3:00), switched per building.
 * **Strength** = smoothstep(0.18, 0.72, night01) of the cycle (night01 = 1 − day weight), so windows come on through
   the dusk and go out with the dawn.
 
@@ -95,11 +98,22 @@ walls next to a lamp are lit; roofs above the lamps are not. Strength = 1.9 × s
 Built once per map while the cycle is on (Vienna: 2523 heads in ~50 ms); after live edits only the area of lamps
 added or removed is redone. Off in the underground view.
 
-### 2.3 Glow on the head
+### 2.3 The lamp glass
 
-Each head within 700 m and in view gets an additive camera-facing sprite (1.5 m half size, colour (1, 0.88, 0.69),
-a soft core and a faint halo; the particle batch path, `particles.shader`), moved 0.9 m toward the eye so the housing
-does not hide it. Each lamp switches on at its own point of the dusk (night01 0.36…0.50), over ~2 game minutes.
+No sprites: each lamp model's own glass glows (`lampGlassMask`, the shader's window path, kind 2). The mesh is
+rasterised into its texture; texels of the head (within 0.8 m of a light point, from 1.5 m below it, for hanging
+lanterns, to 1 m above) that face down, or look like glass (light, unsaturated, lighter than the housing, or shiny in
+the specular map), glow warm (2.6, 2.15, 1.5) × (0.65 + 0.7 · luminance). Merged lamps carry a seed in the vertex
+alpha, so each switches on at its own point of the dusk (night01 0.36…0.50), as the pools fade in.
+
+### 2.4 Lit signs and advertisements
+
+Ad props (`ad-props/`, not graffiti or ads painted on walls) and shop/wall signs (`wallsign*`, casino, beer garden,
+market, grocery signs) by name. Their panel, the faces along the model's main direction (the direction holding the
+most triangle area, either side) that are not tiny, glows in its own colours like a light box (albedo × 1.7), on
+60 % of the items (per item seed), switching on at night01 0.3…0.5. Texture variations (other posters) get their own
+copy of the shared variation material with the panel mask. Materials with an illumination map (some roof ads) keep the
+game's own light.
 
 ## 3. Vehicles
 
@@ -120,7 +134,7 @@ headlights, its trailing end the tail lights (reversed units use their other end
   brighter red while standing). `regs-tool vehiclelamps <game> <outDir> <.object>…` shows what is found.
   Rear lamps are found reliably (red); front lamps are 1–3 texels on most base-game textures and are missed on some
   models, and a tram's white destination board can count as one. Ends of models without found lamps get a small glow
-  sprite on the bumper instead.
+  sprite on the bumper instead (the only sprites left).
 * **Beam on the road** (headlight light map): each frame the beams are splatted on the CPU into a 1024² map (0.625 m
   texels) around the point the camera looks at, snapped to whole texels; the default shader samples it like the lamp
   map (unit 10, `regs_CarMap`) and lights whatever is there between 1.5 m below and ~3 m above the vehicle's ground:
@@ -144,4 +158,5 @@ sprites are a few hundred quads. Vienna, 1600×900, vsync off: 2646 FPS at 14:00
 * `bed21/23/1/3-2950.png`: the same street at 21:00, 23:00, 1:00, 3:00 (windows going out).
 * `veh1-2950.png` (first vehicle lights), `veh2-2950/3250.png` (lamps on the models, light-map beams), `dusk-*.png`
   (vehicles switching on one by one), `hb-*.png` with `hb.log` (high beams on the outskirts).
+* `ls1-*.png`, `ls3-2950.png` (all signs lit for the check), `fin-2950.png`: lamp glass, shop windows, signs at 21:00.
 * `t2-3200.png`: underground view, no lamp light. `fps14/fps23-3350.png`: frame rate.

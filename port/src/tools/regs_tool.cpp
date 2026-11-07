@@ -647,7 +647,14 @@ int cmdVehicleLamps(int argc, char** argv) {
       bool spec = (m.flags & render::kMatSpecularMap) && at < m.textures.size() && read(m.textures[at], data) &&
                   render::parseDds(data, si, nullptr);
       engine::VehicleLampInfo info;
-      bool ok = engine::makeVehicleLampMask(od.mesh, int(mi), di, spec ? &si : nullptr, mask, &info);
+      bool ok;
+      if (engine::isLampTemplate(argv[a])) {  // a street lamp: its glass
+        int texels = 0;
+        ok = engine::makeLampGlassMask(od.mesh, int(mi), engine::findLampHeads(od.mesh), di, spec ? &si : nullptr, mask, &texels);
+        info.frontLamps = texels;
+      } else {
+        ok = engine::makeVehicleLampMask(od.mesh, int(mi), di, spec ? &si : nullptr, mask, &info);
+      }
       std::printf("%s / %s: %d front, %d rear lamp areas\n", argv[a], m.name.c_str(), info.frontLamps, info.rearLamps);
       if (!ok) continue;
       std::vector<uint8_t> drgba;

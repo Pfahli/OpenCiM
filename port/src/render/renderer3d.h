@@ -20,7 +20,7 @@ struct GpuMaterial {
   float shininess = 1;
   float reflection = 0;   // header byte 0x27 / 255
   uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
-  uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode)
+  uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
   float custom[8][4] = {};    // shader parameters custom0..7
@@ -117,8 +117,9 @@ struct SceneView {
   float timer = 0;  // the effect timer (uniform timer)
   float emissionScale = 1;  // material emission × this (port day/night cycle: brighter illumination maps at night)
   // port night lights (engine/night_lights.h, docs/renderer/night-lights.md): x = window light, y = share of the window
-  // groups lit, z = street-lamp light, w = hours / 24; x and z are 0 by day and without the cycle (no change then)
+  // groups lit, z = street-lamp light, w = night01 of the cycle; x and z are 0 by day and without the cycle
   float night[4] = {0, 0, 0, 0};
+  float shopShare = 0;  // share of the shop windows lit (their own schedule)
   uint32_t lampMap = 0;               // lamp light over the map (unit 9): rgb light, a = lamp head height
   float lampMapXf[4] = {0, 0, 0, 0};  // uv = (world.xz − (x, y)) · (z, w)
   float lampHeight[2] = {0, 1};       // head height = [0] + a · [1]
@@ -218,7 +219,7 @@ class Renderer3D {
     int productAmbient[8], productDiffuse[8], productSpecular[8], texture[8], custom[8];
     int matrix = -1, eyepos = -1, timer = -1, reflection = -1, worldup = -1, colorize = -1, vieworient = -1, alphaRef = -1;
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
-    int viewInverse = -1, projInverse = -1, night = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
+    int viewInverse = -1, projInverse = -1, night = -1, shop = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
   };
   std::map<uint32_t, ProgramLocs> locs_;
