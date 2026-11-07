@@ -681,6 +681,23 @@ void rebuildCurveNodes(const GridData& g, LaneGraph& G) {
         add(n);
       }
     }
+    // an end on a grass tram track (ends bits 3, 4): the road stops flat there, so its cars turn on the spot (a half
+    // circle of radius 1.5 just beyond the edge); the trams run on into the track block
+    for (int end = 0; end < 2; ++end) {
+      if (!(c.ends & (8 << end))) continue;
+      Vec3 e = end ? Vec3{c.x1, c.y1 - 0.2f, c.z1} : Vec3{c.x0, c.y0 - 0.2f, c.z0};
+      Vec3 u = end ? Vec3{c.dx1, 0, c.dz1} : Vec3{-c.dx0, 0, -c.dz0};
+      Vec3 r = render::normalize(Vec3{-u.z, 0, u.x});
+      Vec3 pts[3] = {e + r * 1.5f, e + u * 1.5f, e - r * 1.5f};
+      Vec3 dirs[3] = {u, r * -1.0f, u * -1.0f};
+      for (int k = 0; k < 2; ++k) {
+        LaneNode n;
+        n.flags = 0x300;
+        n.item = -1;
+        n.p0 = pts[k], n.p1 = pts[k + 1], n.f0 = dirs[k], n.f1 = dirs[k + 1];
+        add(n);
+      }
+    }
     // tram tracks (ends bit 2): tram lanes on the road's lane lines, at the height of the street tram lanes they meet
     // at each end (a tram item's own height; the item height when no tram lane is there)
     const float L = s.back().s;

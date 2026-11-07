@@ -40,7 +40,8 @@ struct GridData {
     float a = 0, b = 0;                              // the Bézier's handle lengths at the start and the end
     int kind = 0;                                    // 0: small road
     uint8_t ends = 0;  // bit 0: the start lies on a road block (a straight piece the tool made of a dead end), bit 1: the end;
-                       // bit 2: tram tracks along it
+                       // bit 2: tram tracks along it; bit 3: the start's block is a tram track on the grass (no road:
+                       // the road stops flat there and its tracks run on), bit 4: the end's
     // stops along it: a bus or tram stop centred at arc length s on one side, its platform bent to the curve; a real stop
     // item of the game (the anchor, stop_bus0<design>_small / stop_tram01_small at stopAnchor's cell) carries it for
     // lines, picking and saving, and is not drawn (GridData::curveAnchors)

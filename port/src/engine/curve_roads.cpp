@@ -147,6 +147,18 @@ struct Builder {
     }
   }
 
+  // a flat end (on a grass tram track's block): the cross-section's face, down into the ground, facing out along u
+  void endFace(const CurveSample& c, const Vec3& u) {
+    const float parts[3][3] = {{-6.0f, -3.0f, 0.0f}, {-3.0f, 3.0f, -0.2f}, {3.0f, 6.0f, 0.0f}};  // from, to, top
+    for (const auto& k : parts) {
+      uint32_t a = vertex(c.p + c.right * k[0] + Vec3{0, -0.6f, 0}, u, 0.1921f, 0.9970f);
+      uint32_t b = vertex(c.p + c.right * k[1] + Vec3{0, -0.6f, 0}, u, 0.1921f, 0.9970f);
+      uint32_t t = vertex(c.p + c.right * k[1] + Vec3{0, k[2], 0}, u, 0.1921f, 0.9952f);
+      uint32_t s = vertex(c.p + c.right * k[0] + Vec3{0, k[2], 0}, u, 0.1921f, 0.9952f);
+      tri(a, b, t, u), tri(a, t, s, u);
+    }
+  }
+
   // a free end's round end: around q (the item height) a half disc facing out along u, asphalt to radius 3, kerb,
   // pavement to 6, the outer edge down into the ground; part 0 asphalt, 1 walkways (the caller's submeshes)
   void cap(const Vec3& q, const Vec3& u, int part) {
@@ -316,6 +328,8 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   b.wall(6.0f, -0.6f, 0.0f, 1.0f, 0.1921f, 0.9970f, 0.9952f);
   if (caps.free0) b.cap(q0, u0, 1);
   if (caps.free1) b.cap(q1, u1, 1);
+  if (c.ends & 8) b.endFace(d.front(), u0);
+  if (c.ends & 16) b.endFace(d.back(), u1);
   b.end();
   if ((c.ends & 4) && matTram >= 0) {  // tram tracks: tracks/small_basic.object's rail strip (both lanes), every 6 units
     b.begin(matTram);
@@ -391,6 +405,13 @@ void refreshCurveAnchors(GridData& g) {
     }
 }
 
+// a point past an end on a block (the block's own ground; a grass tram track's block keeps its grass and height)
+static bool beyondBlockEnd(const CurveRoad& c, float x, float z) {
+  if ((c.ends & 1) && (x - c.x0) * c.dx0 + (z - c.z0) * c.dz0 < -0.05f) return true;
+  if ((c.ends & 2) && (x - c.x1) * c.dx1 + (z - c.z1) * c.dz1 > 0.05f) return true;
+  return false;
+}
+
 void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
   GridData& g = *grid->data;
   if (g.height.empty()) return;
@@ -411,6 +432,7 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
       // the block hides it, and the curve's first cells would otherwise show grass through the asphalt
       bool underItem = covered(x - 1, z - 1) || covered(x, z - 1) || covered(x - 1, z) || covered(x, z);
       float wx = (float(x) - float(g.width) * 0.5f) * cs, wz = (float(z) - float(g.length) * 0.5f) * cs;
+      if (beyondBlockEnd(c, wx, wz)) continue;
       float side, s;
       curveNearest(d, wx, wz, side, s);
       float ad = std::fabs(side);
@@ -446,9 +468,9 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
         bool inside = true;
         for (int k = 0; k < 5 && inside; ++k) {  // the four corners and the centre
           float fx = k == 4 ? 0.5f : float(k & 1), fz = k == 4 ? 0.5f : float(k >> 1);
-          float side, s;
-          curveNearest(d, (float(x) + fx - float(g.width) * 0.5f) * cs, (float(z) + fz - float(g.length) * 0.5f) * cs, side, s);
-          inside = std::fabs(side) <= kCurveHalfWidth - 0.2f;
+          float side, s, px = (float(x) + fx - float(g.width) * 0.5f) * cs, pz = (float(z) + fz - float(g.length) * 0.5f) * cs;
+          curveNearest(d, px, pz, side, s);
+          inside = std::fabs(side) <= kCurveHalfWidth - 0.2f && !beyondBlockEnd(c, px, pz);
         }
         if (!inside) continue;
         size_t ci = size_t(z) * size_t(g.width) + size_t(x);
@@ -483,7 +505,7 @@ static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, boo
   c = CurveRoad();
   c.x0 = f[0], c.y0 = f[1], c.z0 = f[2], c.dx0 = f[3], c.dz0 = f[4];
   c.x1 = f[5], c.y1 = f[6], c.z1 = f[7], c.dx1 = f[8], c.dz1 = f[9];
-  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 7);
+  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 31);
   if (!v2) return true;
   if (p + 4 > stop) return false;
   uint32_t n;

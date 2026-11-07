@@ -17,6 +17,10 @@ Map editor, traffic menu, small-road tab: the button **Kurve / Curve**. A panel 
 - Starts and ends snap to the closed side of a small road's dead end and to the free ends of other curves. A dead end it
   meets becomes a straight piece the curve continues. A road from or to a snapped end leaves or arrives along it; with
   both ends snapped the join is a smooth curve or S of its own.
+- Ends also snap to the closed side of a tram track's dead end on the grass (axis-aligned blocks). The track's dead
+  end becomes a straight piece, the curve gets tram tracks that run on into it, and the road stops flat at the block
+  edge. Cars turn on the spot there (a small U-turn lane); the curve's other end needs street tracks (or another track
+  end) for trams to pass. End flags bits 3/4 in the map file.
 - A free end gets a turning circle (U-turn lane, round end).
 - The preview is green when the road fits, red when it is shorter than 6 units, bends tighter than radius 6 or runs
   over buildings. Trees under it are cleared.

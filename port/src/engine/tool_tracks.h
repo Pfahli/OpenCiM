@@ -21,6 +21,7 @@ struct RoadEnd {
   render::Vec3 point;  // the edge centre, y = the block's item height (world units)
   render::Vec3 dir;    // the way out of the block through that edge (unit, axis-aligned)
   bool deadEnd = false;  // a dead end's closed side (else an edge of a straight piece)
+  bool tram = false;     // a tram track block on the grass (no road)
 };
 // the small-road block edges within radius of (wx, wz), nearest first: dead ends' closed sides and both edges of
 // straight pieces

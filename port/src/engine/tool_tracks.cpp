@@ -1699,7 +1699,8 @@ std::vector<RoadEnd> findSmallRoadEnds(VM& vm, ControlObj* player, GridObj* grid
   int cx = int(std::floor(wx / cs + float(g.width) * 0.5f)), cz = int(std::floor(wz / cs + float(g.length) * 0.5f));
   int r = int(std::ceil(radius / cs)) + 8;
   for (const Piece& o : c.getObjects(cx - r, cz - r, 2 * r + 1, 2 * r + 1)) {
-    if (o.type() != 2 || (o.iflags & kItemTemp)) continue;  // small roads only
+    // small roads, and tram tracks on the grass (a tram piece of no road)
+    bool tram = o.type() == 10 && o.parentLive < 0;    if ((o.type() != 2 && !tram) || (o.iflags & kItemTemp)) continue;
     uint32_t b = o.conn & 0xff;
     auto [bx, bz] = roadXZ(o);
     render::Vec3 centre{(2.0f * float(bx) + 4.0f - float(g.width)) * cs * 0.5f,
@@ -1713,6 +1714,7 @@ std::vector<RoadEnd> findSmallRoadEnds(VM& vm, ControlObj* player, GridObj* grid
       e.dir = render::Vec3{float(dx), 0, float(dz)};
       e.point = centre + e.dir * 6.0f;
       e.deadEnd = deadEnd;
+      e.tram = tram;
       float ex = e.point.x - wx, ez = e.point.z - wz;
       if (ex * ex + ez * ez <= radius * radius) out.push_back(e);
     };

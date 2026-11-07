@@ -5,7 +5,8 @@
 //   freeform  click the start, click the end: the road keeps the direction it starts with and bends to the end.
 // After each road the tool draws on from its end (in that end's direction) until the right button stops it; a road
 // ending on an existing road stops it too. Starts and ends snap to the closed side of a small road's dead end (the
-// block becomes a straight piece the curve continues) and to the free ends of other curves; elsewhere an end is free
+// block becomes a straight piece the curve continues), to a grass tram track's dead end (the same, and the curve gets
+// tracks; the road stops flat there) and to the free ends of other curves; elsewhere an end is free
 // and gets a turning circle. From a snapped end the road leaves straight along it (lanes must meet). The preview is
 // green when the road fits, red when it is shorter than 6 units, bends tighter than radius 6 or runs over buildings
 // (trees under it are cleared). The right button only stops drawing; the fourth mode, remove, takes away the curve
@@ -216,7 +217,11 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   c.x0 = S.x, c.y0 = S.y, c.z0 = S.z, c.dx0 = d0.x, c.dz0 = d0.z;
   c.x1 = E.x, c.y1 = E.y, c.z1 = E.z, c.dx1 = d1.x, c.dz1 = d1.z;
   c.a = std::max(a, 0.5f), c.b = std::max(b, 0.5f);
-  c.ends = uint8_t((st.startBlock ? 1 : 0) | (sn.ok && sn.block && st.step > 0 ? 2 : 0));
+  bool endBlock = sn.ok && sn.block && st.step > 0;
+  c.ends = uint8_t((st.startBlock ? 1 : 0) | (endBlock ? 2 : 0));
+  // an end on a grass tram track: the road stops flat at its block and gets tracks that run on into it
+  if (st.startBlock && st.startEnd.tram) c.ends |= 8 | 4;
+  if (endBlock && sn.end.tram) c.ends |= 16 | 4;
   return true;
 }
 
@@ -283,6 +288,8 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   st.angle = std::acos(cosA) * 180.0f / kPi;
 }
 
+int openTramJoins(VM& vm, ControlObj* player, GridObj* grid, Object* tl);
+
 void commit(VM& vm, ControlObj* player, GridObj* grid) {
   State& st = g_state;
   CurveRoad c = st.preview;
@@ -301,6 +308,7 @@ void commit(VM& vm, ControlObj* player, GridObj* grid) {
   }
   applyCurveEdit(vm, grid, c, true);
   timelineRecordCurve(vm, tl, c, true);
+  if (c.ends & 4) openTramJoins(vm, player, grid, tl);  // tracks from a grass track: street tram dead ends at its other end
   if (tl) timelineEndGroup(vm, tl);
   gridEditEnd(vm, grid);
   LOG_INFO("curve tool: road %.1f long, %zu trees cleared, %zu curves now", curveLength(c), trees.size(),
@@ -576,7 +584,7 @@ int openTramJoins(VM& vm, ControlObj* player, GridObj* grid, Object* tl) {
       Vec3 out = end ? Vec3{-c.dx1, 0, -c.dz1} : Vec3{c.dx0, 0, c.dz0};  // the block's way into the curve
       for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, q.x, q.z, 1.0f))
         if (!e.deadEnd && dot(e.dir, out) > 0.9f) {
-          if (openTramBlockEnd(vm, player, grid, e, tl) >= 0) ++opened;
+          if (!e.tram && openTramBlockEnd(vm, player, grid, e, tl) >= 0) ++opened;
           break;
         }
     }
