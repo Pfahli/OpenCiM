@@ -166,3 +166,18 @@ fitted by `tools/make-toolbar-icon.ps1` into the game's own diamond (44x36 at 10
 border of a game icon of the same kind, with the selected state at 55 % brightness as the game's are. Files:
 `data/regs/ui/toolbar/{curve-small,curve-large,curve-avenue,curve-alley,roundabout}{,_se,_ho}.dds` (uncompressed
 32-bit DDS). The source pictures are in the owner's Magnific library.
+
+## One-way streets (2026-11-08)
+
+Curve panel, second row (small roads): "Beide Richtungen / Einbahn 1 Spur / Einbahn 2 Spuren". A one-way curve runs
+the way it is drawn (end flag bit 5, one lane bit 6; roundabout rings carry bit 7 besides, so only they lose the zebra
+crossings and get tracks all round with one click). Lanes: two lanes forward, or one on the centre line; where a one-way
+end meets a two-way road (a road block, a two-way curve, a free end; not a junction or another one-way curve) its lanes
+merge into / split from the right-hand lane on the piece next to it. Markings: the game's straight arrow
+(road-marks.dds) on every lane every 25 units. Tram tracks: a single track with the traffic (right-hand lane, or the
+centre line with one lane), priced at half the street track's price.
+
+Checked: a two-lane one-way street in three pieces from a grid road's east end round to its west end (4 lane links in at
+the start, 4 out at the end, none the wrong way); cars routed round the loop instead of against it; tracks on the
+one-way pieces and test trams running only the one-way direction. Not checked: one-lane one-way streets in a game, a
+grid tram track joining a one-way curve, the halved price on screen.

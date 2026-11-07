@@ -43,7 +43,7 @@ struct GridData {
                        // bit 2: tram tracks along it; bit 3: the start's block is a tram track on the grass (no road:
                        // its turning circle lies over the track, the tracks run on through it), bit 4: the end's;
                        // bit 5: one-way (both lanes run from the start to the end: roundabouts), bit 6 with it: a
-                       // single lane on the centre line
+                       // single lane on the centre line; bit 7: part of a roundabout's ring
     // stops along it: a bus or tram stop centred at arc length s on one side, its platform bent to the curve; a real stop
     // item of the game (the anchor, stop_bus0<design>_small / stop_tram01_small at stopAnchor's cell) carries it for
     // lines, picking and saving, and is not drawn (GridData::curveAnchors)

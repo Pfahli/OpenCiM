@@ -377,6 +377,27 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   b.band(2.52f, 2.81f, -0.19f, 9.0f, 0.0f, 9.0f, 0.9916f, -0.1099f, 0.0722f, 0.0401f);
   if (!(c.ends & 0x40))  // centre dashes (a single-lane one-way road has none)
     b.band(-0.19f, 0.10f, -0.19f, 6.0f, 2.0f, 2.27f, 0.4317f, -0.03546f, 0.1099f, 0.0764f);
+  if (c.ends & 0x20) {  // one-way: road-marks.dds' straight arrow on every lane every 25 units, pointing the way to drive
+    const float u0 = 0.027f, u1 = 0.070f, vTail = 0.977f, vTip = 0.596f, len = 4.0f, half = 0.5f;
+    const Vec3 up{0, 1, 0};
+    const float a0 = std::max(keep0, caps.free0 ? kCurveCapReach : 0.0f) + 6.0f;
+    const float a1 = std::min(keep1, d.back().s - (caps.free1 ? kCurveCapReach : 0.0f)) - 6.0f - len;
+    const int count = a1 >= a0 ? 1 + int((a1 - a0) / 25.0f) : 0;
+    const float first = count > 0 ? a0 + (a1 - a0 - float(count - 1) * 25.0f) * 0.5f : 0.0f;  // centred along the road
+    for (int i = 0; i < count; ++i)
+      for (float lane : (c.ends & 0x40) ? std::vector<float>{0.0f} : std::vector<float>{-1.5f, 1.5f}) {
+        uint32_t pl = 0, pr = 0;
+        for (int k = 0; k <= 4; ++k) {
+          float t = float(k) / 4.0f;
+          CurveSample q = curveAt(d, first + float(i) * 25.0f + t * len);
+          float v = vTail + (vTip - vTail) * t;
+          uint32_t l = b.vertex(q.p + q.right * (lane - half) + Vec3{0, -0.19f, 0}, up, u0, v);
+          uint32_t r = b.vertex(q.p + q.right * (lane + half) + Vec3{0, -0.19f, 0}, up, u1, v);
+          if (k > 0) b.tri(pl, pr, l, up), b.tri(pr, r, l, up);
+          pl = l, pr = r;
+        }
+      }
+  }
   b.end();
   b.begin(matWalk);
   b.band(-6.0f, -3.0f, 0.0f, 12.0f, 0.0f, 12.0f, 0.5383f, -0.008925f, 0.0458f, 0.0190f);  // pavements
@@ -684,7 +705,7 @@ static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, boo
   c = CurveRoad();
   c.x0 = f[0], c.y0 = f[1], c.z0 = f[2], c.dx0 = f[3], c.dz0 = f[4];
   c.x1 = f[5], c.y1 = f[6], c.z1 = f[7], c.dx1 = f[8], c.dz1 = f[9];
-  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 127);
+  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 255);
   if (!v2) return true;
   if (p + 4 > stop) return false;
   uint32_t n;
@@ -849,7 +870,7 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
       arm.end = ends[k].end;
       arm.tram = (c.ends & 4) != 0;
       arm.kind = c.kind;
-      if (c.ends & 0x20) arm.flow = arm.end ? 1 : 2, arm.single = (c.ends & 0x40) != 0;
+      if (c.ends & 0x20) arm.flow = arm.end ? 1 : 2, arm.single = (c.ends & 0x40) != 0, arm.ring = (c.ends & 0x80) != 0;
       size_t n = d.size(), hit = n;  // the first sample from the junction's end at the radius
       for (size_t i = 0; i < n; ++i) {
         size_t at = arm.end ? n - 1 - i : i;
@@ -898,8 +919,8 @@ Vec3 splitCurve(const CurveRoad& c, float s, CurveRoad& first, CurveRoad& second
   first.a = std::max(0.5f, len(Q0 - P0)), first.b = std::max(0.5f, len(S - R0));
   second.x0 = S.x, second.y0 = S.y, second.z0 = S.z, second.dx0 = dm.x, second.dz0 = dm.z;
   second.a = std::max(0.5f, len(R1 - S)), second.b = std::max(0.5f, len(P3 - Q2));
-  first.ends = uint8_t(c.ends & (1 | 4 | 8 | 32 | 64));
-  second.ends = uint8_t(c.ends & (2 | 4 | 16 | 32 | 64));
+  first.ends = uint8_t(c.ends & (1 | 4 | 8 | 32 | 64 | 128));
+  second.ends = uint8_t(c.ends & (2 | 4 | 16 | 32 | 64 | 128));
   first.stops.clear(), second.stops.clear();
   for (CurveRoad::Stop st : c.stops) {
     if (st.s < s) {
@@ -1200,7 +1221,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   };
   // zebra crossings: bars across each arm just inside its mouth, cycling through the atlas' bar variants
   for (const CurveArm& A : j.arms) {
-    if (A.flow) continue;  // no crossing over a one-way road (a roundabout's ring)
+    if (A.ring) continue;  // no crossing over a roundabout's ring
     Vec3 in = A.out * -1.0f, r = rightOf(A.out), m0 = at(A.mouth);
     int bars = std::max(1, int((2.0f * curveProfile(A.kind).carriageway - 0.32f) / 0.93f));
     float first = -(float(bars) * 0.93f - 0.32f) * 0.5f;

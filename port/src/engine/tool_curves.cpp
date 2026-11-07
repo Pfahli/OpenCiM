@@ -70,6 +70,7 @@ struct Snap {
 struct State {
   int mode = 1;  // 0 straight, 1 curved, 2 freeform, 3 remove
   int kind = 0;  // the road kind drawn (CurveProfile): 0 small, 1 large, 2 avenue, 3 alley
+  int oneWay = 0;  // small roads: 0 both ways, 1 one-way with one lane, 2 one-way with two lanes (in the drawing direction)
   int step = 0;  // 0 nothing picked, 1 the start, 2 (curved) the bend point too
   Vec3 start, bend;
   bool startDir = false;  // the start's direction is fixed (a snapped end, or drawing on)
@@ -391,6 +392,7 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   bool endBlock = forced && sn.block && st.step > 0;
   c.ends = uint8_t((st.startBlock ? 1 : 0) | (endBlock ? 2 : 0));
   // an end on a grass tram track: the curve gets tracks that run on into it (its turning circle lies over the track)
+  if (c.kind == 0 && st.oneWay) c.ends |= uint8_t(0x20 | (st.oneWay == 1 ? 0x40 : 0));  // one-way, as drawn
   if (st.startBlock && st.startEnd.tram) c.ends |= 8 | 4;
   if (endBlock && sn.end.tram) c.ends |= 16 | 4;
   return true;
@@ -411,7 +413,7 @@ std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single) {
     c.dx0 = dz[q], c.dz0 = -dx[q];  // the tangent turning from east to north
     c.dx1 = dz[q + 1], c.dz1 = -dx[q + 1];
     c.a = c.b = 0.5523f * r;
-    c.ends = uint8_t(0x20 | (single ? 0x40 : 0));
+    c.ends = uint8_t(0x20 | 0x80 | (single ? 0x40 : 0));  // one-way, a ring
     arcs.push_back(c);
   }
   return arcs;
@@ -876,12 +878,14 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
       if (w.mode == 0x11) {
         const CurveProfile& pf = curveProfile(c.kind);
         // a roundabout's ring takes tracks all round (trams turn on it): priced for the whole ring
-        w.ring = (c.ends & 0x20) ? ringOf(g, k) : std::vector<int>();
+        w.ring = (c.ends & 0x80) ? ringOf(g, k) : std::vector<int>();
         bool missing = !(c.ends & 4);
         float total = curveLength(c);
         for (int r : w.ring) missing = missing || !(g.curves[size_t(r)].ends & 4), total += curveLength(g.curves[size_t(r)]);
         w.ok = missing && pf.tram[0];  // footpaths take none
         w.after.ends |= 4;
+        // a one-way road (a roundabout ring too) takes a single track: half the street pieces' price
+        if (c.ends & 0x20) total *= 0.5f;
         int n = std::max(1, int(std::ceil(total / pf.piece)));
         int cx = int(c.x0 / cs + float(g.width) * 0.5f), cz = int(c.z0 / cs + float(g.length) * 0.5f);
         for (int i = 0; i < n && w.ok; ++i)
@@ -1085,6 +1089,11 @@ void registerCurveTool(VM& vm) {
       g_state.startSnap = Snap();
     }
     return Value::integer(g_state.kind);
+  }, 0, 1);
+  // regsCurveToolOneWay([n]): small roads both ways (0), one-way with one lane (1) or two lanes (2)
+  implementGlobal(vm, u"regsCurveToolOneWay", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc > 0) g_state.oneWay = std::clamp(v.toInt(a[0]), 0, 2);
+    return Value::integer(g_state.oneWay);
   }, 0, 1);
   // regsCurveToolInfo(): [step, length, angle in degrees, fits (0/1), a curve under the cursor (0/1)] for the panel
   implementGlobal(vm, u"regsCurveToolInfo", [](VM&, Object*, int, const Value*) {

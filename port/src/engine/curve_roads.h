@@ -81,6 +81,7 @@ struct CurveArm {
   bool tram = false;        // the curve has tram tracks (they run on through the junction to the other tracked arms)
   int flow = 0;             // one-way curves: 1 runs into the junction, 2 out of it (0 two-way)
   bool single = false;      // a one-way curve with a single lane on its centre line
+  bool ring = false;        // a roundabout's ring (no zebra crossing over it)
 };
 struct CurveJunction {
   render::Vec3 centre;

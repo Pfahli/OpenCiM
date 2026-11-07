@@ -312,7 +312,7 @@ function regsCurveTool() {
   regsCurveToolMode(regsCurveToolMode() >= 4 ? 1 : regsCurveToolMode());   // a fresh start (not a roundabout)
   if ($regsCurvePanel) return;
   $regsCurveStrings = regsStringsNow();
-  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 190, 1 | 2 | 4 | 8);
+  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 222, 1 | 2 | 4 | 8);
   with ($t = new_control($regsCurvePanel.$content)) {
     .setRect(10, 0, 330, 22);
     .text = $regsCurveStrings.$regs_curve_panel_title;
@@ -326,8 +326,14 @@ function regsCurveTool() {
     $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 88, 28, 84, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
     if ($regsI == regsCurveToolMode()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveModes");
   }
+  // small roads: both ways or one-way (one or two lanes, the way it is drawn)
+  $regsWayNames = [$regsCurveStrings.$regs_curve_way_both, $regsCurveStrings.$regs_curve_way_one1, $regsCurveStrings.$regs_curve_way_one2];
+  for ($regsI = 0; $regsI < 3; ++$regsI) {
+    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveWays", 10 + $regsI * 120, 58, 116, 25, $regsWayNames[$regsI], macro($regsI) :: regsCurveToolOneWay($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+    if ($regsI == regsCurveToolOneWay()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveWays");
+  }
   with ($regsCurveInfo = new_control($regsCurvePanel.$content)) {
-    .setRect(10, 62, 340, 20);
+    .setRect(10, 94, 340, 20);
     MAIN.$ui.setTextFont(current);
     .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
     .visible = true;
@@ -336,7 +342,7 @@ function regsCurveTool() {
   $regsHints = [$regsCurveStrings.$regs_curve_panel_hint1, $regsCurveStrings.$regs_curve_panel_hint2];
   for ($regsI = 0; $regsI < 2; ++$regsI) {
     with ($h = new_control($regsCurvePanel.$content)) {
-      .setRect(10, 90 + 20 * $regsI, 340, 18);
+      .setRect(10, 122 + 20 * $regsI, 340, 18);
       MAIN.$ui.setTextFont(current, 0xFFBBBBBB);
       .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
       .text = $regsHints[$regsI];
