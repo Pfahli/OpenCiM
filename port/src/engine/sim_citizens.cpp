@@ -600,6 +600,35 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
         if (pavement) wg.height[ci] = int32_t(std::lround(y * 256.0f / cs));
       }
   }
+  // junctions over the arms' ends: the carriageway crossable (1) anywhere, the pavement corners walkable (2)
+  for (const CurveJunction& j : findCurveJunctions(g)) {
+    int cx0, cz0, cx1, cz1;
+    junctionCells(g, j, cx0, cz0, cx1, cz1);
+    cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
+    if (cx0 > cx1 || cz0 > cz1) continue;
+    const CurveProfile& pf = curveProfile(j.kind);
+    std::vector<Vec3> outer = junctionOutline(j, pf.halfWidth, 6);
+    std::vector<Vec3> inner = pf.carriageway > 0 ? junctionOutline(j, pf.carriageway, 6) : std::vector<Vec3>();
+    for (int cz = cz0; cz <= cz1; ++cz)
+      for (int cx = cx0; cx <= cx1; ++cx) {
+        size_t ci = size_t(cz) * size_t(g.width) + size_t(cx);
+        uint32_t w = wg.words[ci];
+        bool any = false, pavement = false;
+        for (int q = 0; q < 16; ++q) {
+          int qx = q & 3, qz = q >> 2;
+          float wx = (float(cx) + (float(qx) + 0.5f) * 0.25f - float(g.width) * 0.5f) * cs;
+          float wz = (float(cz) + (float(qz) + 0.5f) * 0.25f - float(g.length) * 0.5f) * cs;
+          if (!insideOutline(outer, wx, wz)) continue;
+          uint32_t code = !inner.empty() && insideOutline(inner, wx, wz) ? 1u : 2u;
+          w = (w & ~(3u << (2 * q))) | (code << (2 * q));
+          any = true;
+          pavement = pavement || code == 2;
+        }
+        if (!any) continue;
+        wg.words[ci] = w;
+        if (pavement) wg.height[ci] = int32_t(std::lround(j.centre.y * 256.0f / cs));
+      }
+  }
 }
 
 void buildWalkGrid(SimState& s) {

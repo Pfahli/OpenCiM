@@ -716,14 +716,15 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     return ps;
   };
   auto keep = [](const PathRecord& p) { return !(p.flags & (kPathStart | kPathEnd)); };
-  auto bentNodes = [&](const CurveRoad& c) {
+  auto bentNodes = [&](const CurveRoad& c, float t0, float t1) {
     const CurveProfile& pf = curveProfile(c.kind);
-    CurvePieces cp = curvePieces(c);
+    const float kept = curveLength(c) - t0 - t1;
+    CurvePieces cp = curvePieces(c, kept);
     std::vector<CurveSample> shape = curveShape(c);
     auto lay = [&](PathSetObj* ps) {
       if (!ps) return;
-      for (int i = 0; i < cp.count; ++i) {
-        float s0 = (float(i) + 0.5f) * pf.piece * cp.stretch;
+      for (int i = 0; i < cp.count && kept > 0.05f; ++i) {
+        float s0 = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
         for (const auto& [name, p] : ps->paths) {
           if (!keep(p)) continue;
           CurveSample a = curveAt(shape, s0 + p.p0.x * cp.stretch), b = curveAt(shape, s0 + p.p1.x * cp.stretch);
@@ -762,12 +763,16 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       }
     }
   };
-  for (const CurveRoad& c : g.curves) {
+  std::vector<CurveJunction> junctions = findCurveJunctions(g);
+  for (size_t ci = 0; ci < g.curves.size(); ++ci) {
+    const CurveRoad& c = g.curves[ci];
+    float trim0, trim1;
+    curveTrims(junctions, int(ci), trim0, trim1);
     if (c.kind != 0) {
-      bentNodes(c);
+      bentNodes(c, trim0, trim1);
       continue;
     }
-    std::vector<CurveSample> s = sampleCurve(c, 5.0f);
+    std::vector<CurveSample> s = sampleCurveRange(c, trim0, curveLength(c) - trim1, 5.0f);
     if (s.size() < 2) continue;
     // a free end's U-turn (also an end on a grass tram track, whose turning circle lies over the track): from the lane
     // arriving there (right of the way out) around the point 3 units further on
@@ -830,7 +835,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
           const CurveSample &a = side ? s[s.size() - 1 - k] : s[k], &b = side ? s[s.size() - 2 - k] : s[k + 1];
           float sign = side ? -1.0f : 1.0f;
           auto dy = [&](const CurveSample& q) {
-            return medium ? tramDy0 + (tramDy1 - tramDy0) * (L > 0 ? q.s / L : 0) : -0.2f;
+            return medium ? tramDy0 + (tramDy1 - tramDy0) * (L > s.front().s ? (q.s - s.front().s) / (L - s.front().s) : 0) : -0.2f;
           };
           LaneNode n;
           n.flags = medium ? 0x800 : 0x300;  // street tram / small road lanes (classOfType of types 10 and 2)
@@ -848,7 +853,35 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       }
     }
   }
+  const size_t junctionFirst = G.nodes.size();
+  // junctions: from every arm's incoming lanes into the same lanes of every other arm (Bézier turns; the crossing
+  // links below keep crossing turns apart)
+  for (const CurveJunction& j : junctions) {
+    const CurveLanes& ln = curveLanes(j.kind);
+    for (size_t a = 0; a < j.arms.size(); ++a)
+      for (size_t b = 0; b < j.arms.size(); ++b) {
+        if (a == b) continue;
+        const CurveArm &A = j.arms[a], &B = j.arms[b];
+        Vec3 ra = render::normalize(Vec3{-A.out.z, 0, A.out.x}), rb = render::normalize(Vec3{-B.out.z, 0, B.out.x});
+        for (int k = 0; k < ln.count; ++k) {
+          LaneNode n;
+          n.flags = ln.medium | kPathIntersection;
+          n.item = -1;
+          n.p0 = A.mouth - ra * ln.offset[k] + Vec3{0, -0.2f, 0};  // toward the centre on its right
+          n.p1 = B.mouth + rb * ln.offset[k] + Vec3{0, -0.2f, 0};
+          n.f0 = A.out * -1.0f;
+          n.f1 = B.out;
+          add(n);
+        }
+      }
+  }
   linkCrossings(G, first);
+  if (junctionFirst < G.nodes.size()) {  // every turn should continue both ways
+    size_t joined = 0, total = G.nodes.size() - junctionFirst;
+    for (size_t i = junctionFirst; i < G.nodes.size(); ++i)
+      if (G.nodes[i].inDegree > 0 && !G.nodes[i].next.empty()) ++joined;
+    LOG_INFO("curved roads: %zu junctions, %zu turn lanes, %zu joined both ways", junctions.size(), total, joined);
+  }
   if (!g.curves.empty()) {  // how they joined the items' lanes (both ways at each road block they meet)
     std::vector<uint8_t> isCurve(G.nodes.size(), 0);
     for (int n : G.curveNodes) isCurve[size_t(n)] = 1;

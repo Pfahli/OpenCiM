@@ -138,7 +138,7 @@ struct Builder {
   void wall(float o, float dyBottom, float dyTop, float facing, float u, float vBottom, float vTop) {
     uint32_t pb = 0, pt = 0;
     bool first = true;
-    for (float s : rows(0, length)) {
+    for (float s : rows(std::max(0.0f, from), std::min(length, to))) {
       CurveSample c = curveAt(d, s);
       Vec3 n = c.right * facing;
       uint32_t B = vertex(c.p + c.right * o + Vec3{0, dyBottom, 0}, n, u, vBottom);
@@ -236,9 +236,9 @@ const CurveProfile& curveProfile(int kind) {
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
 
-CurvePieces curvePieces(const CurveRoad& c) {
+CurvePieces curvePieces(const CurveRoad& c, float length) {
   const CurveProfile& pf = curveProfile(c.kind);
-  float L = curveLength(c);
+  float L = length >= 0 ? std::max(length, 0.01f) : curveLength(c);
   CurvePieces r;
   r.count = std::max(1, int(std::lround(L / pf.piece)));
   r.stretch = L / (float(r.count) * pf.piece);
@@ -283,7 +283,26 @@ std::vector<CurveSample> sampleCurve(const CurveRoad& c, float step) {
   return out;
 }
 
+std::vector<CurveSample> sampleCurveRange(const CurveRoad& c, float s0, float s1, float step) {
+  std::vector<CurveSample> d = denseOf(c);
+  float L = d.back().s;
+  s0 = std::clamp(s0, 0.0f, L), s1 = std::clamp(s1, s0, L);
+  int n = std::max(1, int(std::ceil((s1 - s0) / step)));
+  std::vector<CurveSample> out;
+  for (int i = 0; i <= n; ++i) {
+    float s = s0 + (s1 - s0) * float(i) / float(n);
+    out.push_back(s <= 0 ? d.front() : s >= L ? d.back() : curveAt(d, s));
+  }
+  return out;
+}
+
 float curveLength(const CurveRoad& c) { return denseOf(c).back().s; }
+
+const CurveLanes& curveLanes(int kind) {
+  static const CurveLanes k[kCurveKinds] = {
+      {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0}};
+  return k[std::clamp(kind, 0, kCurveKinds - 1)];
+}
 
 float curveMinRadius(const CurveRoad& c) {
   std::vector<CurveSample> d = denseOf(c);
@@ -326,9 +345,12 @@ void curveCells(const GridData& g, const CurveRoad& c, int& x0, int& z0, int& x1
 }
 
 void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matMarks, int matWalk, render::MeshData& out,
-                    int matTram) {
+                    int matTram, float trim0, float trim1) {
   std::vector<CurveSample> d = curveShape(c, caps);
   Builder b{out, d, d.back().s, {}};
+  // a trimmed end (a junction) has no cap: the shape's arc lengths are the curve's there
+  const float keep0 = caps.free0 ? 0.0f : trim0, keep1 = d.back().s - (caps.free1 ? 0.0f : trim1);
+  b.from = keep0, b.to = keep1;
   Vec3 q0 = d.front().p, q1 = d.back().p, u0 = Vec3{-c.dx0, 0, -c.dz0}, u1 = Vec3{c.dx1, 0, c.dz1};
   // the texture regions of small_basic.object, which repeat per 12-unit block (edge lines every 9, dashes every 6)
   b.begin(matAsphalt);
@@ -354,8 +376,8 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   if ((c.ends & 4) && matTram >= 0) {  // tram tracks: tracks/small_basic.object's rail strip (both lanes), every 6 units
     b.begin(matTram);
     // the curve itself, not its turning circles' reach (a grass track's own rails run on from an end on its block)
-    b.from = caps.free0 ? kCurveCapReach : 0.0f;
-    b.to = d.back().s - (caps.free1 ? kCurveCapReach : 0.0f);
+    b.from = caps.free0 ? kCurveCapReach : keep0;
+    b.to = caps.free1 ? d.back().s - kCurveCapReach : keep1;
     b.band(-2.2f, -0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
     b.band(-0.8f, 0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.0625f);
     b.band(0.8f, 2.2f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.1875f);
@@ -363,7 +385,7 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   }
 }
 
-render::MeshData sliceMeshAlongX(const render::MeshData& src, float step) {
+render::MeshData sliceMeshAlongX(const render::MeshData& src, float step, int axis) {
   struct V {
     float a[10];  // position, normal, uv0, uv1
   };
@@ -385,9 +407,9 @@ render::MeshData sliceMeshAlongX(const render::MeshData& src, float step) {
     std::vector<V> out;
     for (size_t i = 0; i < in.size(); ++i) {
       const V &p = in[i], &q = in[(i + 1) % in.size()];
-      bool pin = keepAbove ? p.a[0] >= c : p.a[0] <= c, qin = keepAbove ? q.a[0] >= c : q.a[0] <= c;
+      bool pin = keepAbove ? p.a[axis] >= c : p.a[axis] <= c, qin = keepAbove ? q.a[axis] >= c : q.a[axis] <= c;
       if (pin) out.push_back(p);
-      if (pin != qin) out.push_back(lerp(p, q, (c - p.a[0]) / (q.a[0] - p.a[0])));
+      if (pin != qin) out.push_back(lerp(p, q, (c - p.a[axis]) / (q.a[axis] - p.a[axis])));
     }
     return out;
   };
@@ -406,7 +428,7 @@ render::MeshData sliceMeshAlongX(const render::MeshData& src, float step) {
     for (uint32_t t = 0; t + 2 < sm.indexCount; t += 3) {
       std::vector<V> tri = {get(src.indices[sm.firstIndex + t]), get(src.indices[sm.firstIndex + t + 1]),
                             get(src.indices[sm.firstIndex + t + 2])};
-      float lo = std::min({tri[0].a[0], tri[1].a[0], tri[2].a[0]}), hi = std::max({tri[0].a[0], tri[1].a[0], tri[2].a[0]});
+      float lo = std::min({tri[0].a[axis], tri[1].a[axis], tri[2].a[axis]}), hi = std::max({tri[0].a[axis], tri[1].a[axis], tri[2].a[axis]});
       int k0 = int(std::floor(lo / step)), k1 = int(std::ceil(hi / step));
       for (int k = k0; k < k1; ++k) {
         std::vector<V> poly = clip(clip(tri, float(k) * step, true), float(k + 1) * step, false);
@@ -595,6 +617,26 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
         g.flags[ci] |= 0x0F00;
       }
   }
+  // the junctions' cells wholly inside their outlines
+  for (const CurveJunction& j : findCurveJunctions(g)) {
+    int cx0, cz0, cx1, cz1;
+    junctionCells(g, j, cx0, cz0, cx1, cz1);
+    cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
+    if (cx0 > cx1 || cz0 > cz1) continue;
+    std::vector<Vec3> outer = junctionOutline(j, curveProfile(j.kind).halfWidth - 0.2f, 6);
+    for (int z = cz0; z <= cz1; ++z)
+      for (int x = cx0; x <= cx1; ++x) {
+        bool inside = true;
+        for (int k = 0; k < 5 && inside; ++k) {
+          float fx = k == 4 ? 0.5f : float(k & 1), fz = k == 4 ? 0.5f : float(k >> 1);
+          inside = insideOutline(outer, (float(x) + fx - float(g.width) * 0.5f) * cs, (float(z) + fz - float(g.length) * 0.5f) * cs);
+        }
+        if (!inside) continue;
+        size_t ci = size_t(z) * size_t(g.width) + size_t(x);
+        if ((g.flags[ci] & 0x0F00) != 0x0F00) g.curveCover[ci] = 1;
+        g.flags[ci] |= 0x0F00;
+      }
+  }
 }
 
 // one curve: 13 floats (the 13th the end flags), i32 kind, u32 stop count, per stop f32 s, i8 side, u8 kind, u8 design,
@@ -670,17 +712,30 @@ bool sameCurve(const CurveRoad& a, const CurveRoad& b) {
          a.kind == b.kind;
 }
 
+static std::vector<CurveJunction> junctionsAt(const GridData& g, const CurveRoad& c);
+
 void applyCurveEdit(script::VM& vm, GridObj* grid, const CurveRoad& c, bool add) {
   if (!grid || !grid->data) return;
   GridData& g = *grid->data;
   gridEditBegin(vm, grid);
   bool changed = false;
+  // the junctions at its ends before and after (their areas change with it)
+  std::vector<std::array<int, 4>> areas;
+  auto junctionAreas = [&]() {
+    for (const CurveJunction& j : junctionsAt(g, c)) {
+      int x0, z0, x1, z1;
+      junctionCells(g, j, x0, z0, x1, z1);
+      areas.push_back({x0, z0, x1, z1});
+    }
+  };
+  junctionAreas();
   if (add) {
     bool known = false;
     for (const CurveRoad& k : g.curves) known = known || sameCurve(k, c);
     if (!known) {
       g.curves.push_back(c);
       levelTerrainUnderCurve(grid, c);
+      levelTerrainUnderJunctions(grid, c);
       changed = true;
     }
   } else {
@@ -699,6 +754,11 @@ void applyCurveEdit(script::VM& vm, GridObj* grid, const CurveRoad& c, bool add)
     grid->curvesDirty = true;
     ++grid->curvesVersion;
     gridEditCellsChanged(grid, x0, z0, x1, z1, true);  // the cover under it again (applyCurveCover), the terrain mesh
+    junctionAreas();
+    for (const auto& a : areas) {
+      grid->curveRects.push_back(a);
+      gridEditCellsChanged(grid, a[0], a[1], a[2], a[3], true);
+    }
   }
   gridEditEnd(vm, grid);
 }
@@ -714,6 +774,370 @@ bool curveFromActionBytes(const std::vector<uint8_t>& raw, CurveRoad& c, bool& a
   add = raw[0] != 0;
   size_t p = 1;
   return readCurve(raw, p, raw.size(), true, c);
+}
+
+// ---- junctions ----
+
+std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
+  struct End {
+    int curve, end, kind;
+    Vec3 p, out;
+  };
+  std::vector<End> ends;
+  for (size_t i = 0; i < g.curves.size(); ++i) {
+    const CurveRoad& c = g.curves[i];
+    ends.push_back({int(i), 0, c.kind, {c.x0, c.y0, c.z0}, render::normalize(Vec3{c.dx0, 0, c.dz0})});
+    ends.push_back({int(i), 1, c.kind, {c.x1, c.y1, c.z1}, render::normalize(Vec3{-c.dx1, 0, -c.dz1})});
+  }
+  std::vector<uint8_t> used(ends.size(), 0);
+  std::vector<CurveJunction> out;
+  for (size_t a = 0; a < ends.size(); ++a) {
+    if (used[a]) continue;
+    std::vector<size_t> group{a};
+    for (size_t b = a + 1; b < ends.size(); ++b)
+      if (!used[b] && ends[b].kind == ends[a].kind && std::fabs(ends[b].p.x - ends[a].p.x) < 0.2f &&
+          std::fabs(ends[b].p.z - ends[a].p.z) < 0.2f)
+        group.push_back(b);
+    for (size_t k : group) used[k] = 1;
+    if (group.size() < 2) continue;
+    if (group.size() == 2 && dot(ends[group[0]].out, ends[group[1]].out) < -0.985f) continue;  // a smooth join
+    CurveJunction j;
+    j.kind = ends[a].kind;
+    for (size_t k : group) j.centre = j.centre + ends[k].p * (1.0f / float(group.size()));
+    // the radius: two neighbouring arms' edges (half a width out) meet hw / tan(angle / 2) from the centre
+    const CurveProfile& pf = curveProfile(j.kind);
+    std::vector<float> ang;
+    for (size_t k : group) ang.push_back(std::atan2(ends[k].out.z, ends[k].out.x));
+    std::sort(ang.begin(), ang.end());
+    float R = pf.halfWidth;
+    for (size_t k = 0; k < ang.size(); ++k) {
+      float gap = k + 1 < ang.size() ? ang[k + 1] - ang[k] : ang[0] + 2 * kPi - ang[k];
+      if (gap < kPi - 0.05f && gap > 0.01f) R = std::max(R, pf.halfWidth / std::tan(gap * 0.5f));
+    }
+    j.radius = std::min(R + (j.kind == 3 ? 0.5f : 1.5f), 40.0f);
+    for (size_t k : group) {
+      const CurveRoad& c = g.curves[size_t(ends[k].curve)];
+      std::vector<CurveSample> d = denseOf(c);
+      const float L = d.back().s;
+      CurveArm arm;
+      arm.curve = ends[k].curve;
+      arm.end = ends[k].end;
+      size_t n = d.size(), hit = n;  // the first sample from the junction's end at the radius
+      for (size_t i = 0; i < n; ++i) {
+        size_t at = arm.end ? n - 1 - i : i;
+        float dx = d[at].p.x - j.centre.x, dz = d[at].p.z - j.centre.z;
+        if (dx * dx + dz * dz >= j.radius * j.radius) {
+          hit = at;
+          break;
+        }
+      }
+      const CurveSample& q = hit < n ? d[hit] : (arm.end ? d.front() : d.back());
+      arm.trim = arm.end ? L - q.s : q.s;
+      arm.mouth = q.p;
+      Vec3 dir = render::normalize(Vec3{q.dir.x, 0, q.dir.z});
+      arm.out = arm.end ? dir * -1.0f : dir;
+      j.arms.push_back(arm);
+    }
+    const Vec3 c = j.centre;
+    std::sort(j.arms.begin(), j.arms.end(), [&](const CurveArm& x, const CurveArm& y) {
+      return std::atan2(x.mouth.z - c.z, x.mouth.x - c.x) < std::atan2(y.mouth.z - c.z, y.mouth.x - c.x);
+    });
+    out.push_back(j);
+  }
+  return out;
+}
+
+Vec3 splitCurve(const CurveRoad& c, float s, CurveRoad& first, CurveRoad& second) {
+  std::vector<CurveSample> d = denseOf(c);
+  const float L = d.back().s;
+  s = std::clamp(s, 0.01f, L - 0.01f);
+  // t at arc length s (the dense samples are evenly spaced in t)
+  size_t i = 1;
+  while (i + 1 < d.size() && d[i].s < s) ++i;
+  float f = d[i].s > d[i - 1].s ? (s - d[i - 1].s) / (d[i].s - d[i - 1].s) : 0;
+  float t = (float(i - 1) + f) / float(d.size() - 1);
+  // de Casteljau on the plan (x, z); the heights at the cut from the curve's own easing
+  Vec3 P0{c.x0, 0, c.z0}, P1{c.x0 + c.dx0 * c.a, 0, c.z0 + c.dz0 * c.a}, P3{c.x1, 0, c.z1};
+  Vec3 P2{c.x1 - c.dx1 * c.b, 0, c.z1 - c.dz1 * c.b};
+  auto lerp = [](const Vec3& a, const Vec3& b, float k) { return a + (b - a) * k; };
+  Vec3 Q0 = lerp(P0, P1, t), Q1 = lerp(P1, P2, t), Q2 = lerp(P2, P3, t), R0 = lerp(Q0, Q1, t), R1 = lerp(Q1, Q2, t);
+  Vec3 S = lerp(R0, R1, t);
+  S.y = bezier(c, t).y;
+  auto len = [](const Vec3& v) { return std::sqrt(v.x * v.x + v.z * v.z); };
+  Vec3 dm = render::normalize(Vec3{R1.x - R0.x, 0, R1.z - R0.z});
+  first = c, second = c;
+  first.x1 = S.x, first.y1 = S.y, first.z1 = S.z, first.dx1 = dm.x, first.dz1 = dm.z;
+  first.a = std::max(0.5f, len(Q0 - P0)), first.b = std::max(0.5f, len(S - R0));
+  second.x0 = S.x, second.y0 = S.y, second.z0 = S.z, second.dx0 = dm.x, second.dz0 = dm.z;
+  second.a = std::max(0.5f, len(R1 - S)), second.b = std::max(0.5f, len(P3 - Q2));
+  first.ends = uint8_t(c.ends & (1 | 4 | 8));
+  second.ends = uint8_t(c.ends & (2 | 4 | 16));
+  first.stops.clear(), second.stops.clear();
+  for (CurveRoad::Stop st : c.stops) {
+    if (st.s < s) {
+      first.stops.push_back(st);
+    } else {
+      st.s -= s;
+      second.stops.push_back(st);
+    }
+  }
+  return S;
+}
+
+void curveTrims(const std::vector<CurveJunction>& js, int curve, float& trim0, float& trim1) {
+  trim0 = trim1 = 0;
+  for (const CurveJunction& j : js)
+    for (const CurveArm& a : j.arms)
+      if (a.curve == curve) (a.end ? trim1 : trim0) = a.trim;
+}
+
+std::vector<Vec3> junctionOutline(const CurveJunction& j, float w, int perGap) {
+  std::vector<Vec3> pts;
+  const size_t n = j.arms.size();
+  const Vec3 c = j.centre;
+  auto angleOf = [&](const Vec3& p) { return std::atan2(p.z - c.z, p.x - c.x); };
+  auto atY = [&](Vec3 p) {
+    p.y = c.y;
+    return p;
+  };
+  for (size_t i = 0; i < n; ++i) {
+    const CurveArm &A = j.arms[i], &B = j.arms[(i + 1) % n];
+    Vec3 ra = rightOf(A.out), rb = rightOf(B.out);
+    Vec3 Ea = atY(A.mouth + ra * w), Eb = atY(B.mouth - rb * w);
+    pts.push_back(atY(A.mouth - ra * w));  // the mouth edge
+    pts.push_back(Ea);
+    float gap = angleOf(B.mouth) - angleOf(A.mouth);
+    while (gap <= 0.0f) gap += 2 * kPi;
+    if (gap > kPi + 0.09f) {  // around the back of the centre
+      Vec3 ua = render::normalize(Vec3{A.mouth.x - c.x, 0, A.mouth.z - c.z});
+      Vec3 ub = render::normalize(Vec3{B.mouth.x - c.x, 0, B.mouth.z - c.z});
+      Vec3 Ba = c + rightOf(ua) * w, Bb = c - rightOf(ub) * w;
+      float a0 = std::atan2(Ba.z - c.z, Ba.x - c.x), a1 = std::atan2(Bb.z - c.z, Bb.x - c.x);
+      while (a1 <= a0) a1 += 2 * kPi;
+      pts.push_back(atY(Ba));
+      for (int k = 1; k <= perGap - 2; ++k) {
+        float a = a0 + (a1 - a0) * float(k) / float(perGap - 1);
+        pts.push_back(atY(c + Vec3{std::cos(a) * w, 0, std::sin(a) * w}));
+      }
+      pts.push_back(atY(Bb));
+      continue;
+    }
+    bool straight = gap > kPi - 0.09f;
+    Vec3 X;
+    if (!straight) {  // where the two edges meet
+      float den = A.out.x * B.out.z - A.out.z * B.out.x;
+      if (std::fabs(den) < 1e-4f) {
+        straight = true;
+      } else {
+        Vec3 dd = Eb - Ea;
+        float t = (dd.x * B.out.z - dd.z * B.out.x) / den;
+        X = Ea + A.out * t;
+      }
+    }
+    Vec3 c1 = Ea + (X - Ea) * 0.55f, c2 = Eb + (X - Eb) * 0.55f;
+    for (int k = 1; k <= perGap; ++k) {
+      float t = float(k) / float(perGap + 1), u = 1 - t;
+      Vec3 p = straight ? Ea + (Eb - Ea) * t
+                        : Ea * (u * u * u) + c1 * (3 * u * u * t) + c2 * (3 * u * t * t) + Eb * (t * t * t);
+      pts.push_back(atY(p));
+    }
+  }
+  return pts;
+}
+
+bool insideOutline(const std::vector<Vec3>& poly, float x, float z) {
+  bool in = false;
+  for (size_t i = 0, k = poly.size() - 1; i < poly.size(); k = i++) {
+    const Vec3 &a = poly[i], &b = poly[k];
+    if ((a.z > z) != (b.z > z) && x < (b.x - a.x) * (z - a.z) / (b.z - a.z) + a.x) in = !in;
+  }
+  return in;
+}
+
+PlanarUV fitPlanarUV(const render::MeshData& m, int material) {
+  PlanarUV r;
+  double S[3][3] = {}, U[3] = {}, V[3] = {};
+  float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
+  int count = 0;
+  for (const render::Submesh& sm : m.submeshes) {
+    if (sm.material != material) continue;
+    for (uint32_t k = 0; k < sm.indexCount; ++k) {
+      uint32_t v = m.indices[sm.firstIndex + k];
+      if (m.uv0.size() <= size_t(v) * 2 + 1) continue;
+      double f[3] = {1.0, m.positions[v * 3], m.positions[v * 3 + 2]};
+      for (int a = 0; a < 3; ++a) {
+        for (int b = 0; b < 3; ++b) S[a][b] += f[a] * f[b];
+        U[a] += f[a] * m.uv0[v * 2];
+        V[a] += f[a] * m.uv0[v * 2 + 1];
+      }
+      x0 = std::min(x0, float(f[1])), x1 = std::max(x1, float(f[1]));
+      z0 = std::min(z0, float(f[2])), z1 = std::max(z1, float(f[2]));
+      ++count;
+    }
+  }
+  auto det3 = [](double M[3][3]) {
+    return M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+           M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+  };
+  double D = det3(S);
+  if (count < 3 || std::fabs(D) < 1e-9 || x1 - x0 < 0.1f || z1 - z0 < 0.1f) return r;
+  for (int col = 0; col < 3; ++col) {  // Cramer's rule for both fits
+    double Mu[3][3], Mv[3][3];
+    for (int a = 0; a < 3; ++a)
+      for (int b = 0; b < 3; ++b) Mu[a][b] = b == col ? U[a] : S[a][b], Mv[a][b] = b == col ? V[a] : S[a][b];
+    r.a[col] = float(det3(Mu) / D);
+    r.b[col] = float(det3(Mv) / D);
+  }
+  r.x0 = x0, r.x1 = x1, r.z0 = z0, r.z1 = z1;
+  r.ok = true;
+  return r;
+}
+
+void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, int matWalk, render::MeshData& out) {
+  const CurveProfile& pf = curveProfile(j.kind);
+  const Vec3 up{0, 1, 0};
+  const bool footpath = pf.carriageway <= 0;
+  const int perGap = 12;
+  const float fillW = footpath ? pf.halfWidth : pf.carriageway, fillY = footpath ? 0.0f : -0.2f;
+  std::vector<Vec3> inner = junctionOutline(j, fillW, perGap);
+  const size_t N = inner.size();
+  if (N < 3) return;
+  // the fill: a fan from the centre, cut into the texture's tiles (the template's own UV plane per tile)
+  if (matFill >= 0 && uv.ok) {
+    render::MeshData fan;
+    auto put = [&](const Vec3& p) {
+      fan.positions.insert(fan.positions.end(), {p.x, p.y + fillY, p.z});
+      fan.normals.insert(fan.normals.end(), {0.0f, 1.0f, 0.0f});
+      fan.uv0.insert(fan.uv0.end(), {0.0f, 0.0f});
+      fan.uv1.insert(fan.uv1.end(), {0.0f, 0.0f});
+    };
+    put(j.centre);
+    for (const Vec3& p : inner) put(p);
+    render::Submesh sm;
+    for (uint32_t i = 0; i < uint32_t(N); ++i) {
+      uint32_t a = 0, b = 1 + i, c = 1 + (i + 1) % uint32_t(N);
+      Vec3 pa = j.centre, pb = inner[i], pc = inner[(i + 1) % N];
+      if (render::cross(pb - pa, pc - pa).y < 0) std::swap(b, c);
+      fan.indices.insert(fan.indices.end(), {a, b, c});
+    }
+    sm.vertexCount = uint32_t(fan.vertexCount());
+    sm.indexCount = uint32_t(fan.indices.size());
+    fan.submeshes.push_back(sm);
+    const float W = uv.x1 - uv.x0, H = uv.z1 - uv.z0;
+    render::MeshData cut = sliceMeshAlongX(sliceMeshAlongX(fan, W, 0), H, 2);
+    for (size_t t = 0; t + 2 < cut.indices.size(); t += 3) {
+      uint32_t v[3] = {cut.indices[t], cut.indices[t + 1], cut.indices[t + 2]};
+      float cx = 0, cz = 0;
+      for (uint32_t k : v) cx += cut.positions[k * 3] / 3.0f, cz += cut.positions[k * 3 + 2] / 3.0f;
+      float ix = std::floor(cx / W), iz = std::floor(cz / H);
+      for (uint32_t k : v) {
+        float lx = cut.positions[k * 3] - ix * W + uv.x0, lz = cut.positions[k * 3 + 2] - iz * H + uv.z0;
+        cut.uv0[k * 2] = uv.a[0] + uv.a[1] * lx + uv.a[2] * lz;
+        cut.uv0[k * 2 + 1] = uv.b[0] + uv.b[1] * lx + uv.b[2] * lz;
+        cut.uv1[k * 2] = cut.uv0[k * 2], cut.uv1[k * 2 + 1] = cut.uv0[k * 2 + 1];
+      }
+    }
+    appendPlacedMesh(cut, matFill, Vec3{0, 0, 0}, Vec3{1, 0, 0}, Vec3{0, 0, 1}, out);
+  }
+  if (footpath || matWalk < 0) return;
+  // the pavement corners between the arms (the small road's pavement texture region) with their kerbs and outer walls
+  std::vector<Vec3> outer = junctionOutline(j, pf.halfWidth, perGap);
+  render::Submesh sub;
+  sub.material = matWalk;
+  sub.firstVertex = uint32_t(out.vertexCount());
+  sub.firstIndex = uint32_t(out.indices.size());
+  auto vertex = [&](const Vec3& p, const Vec3& n, float u, float v) {
+    out.positions.insert(out.positions.end(), {p.x, p.y, p.z});
+    out.normals.insert(out.normals.end(), {n.x, n.y, n.z});
+    out.uv0.insert(out.uv0.end(), {u, v});
+    out.uv1.insert(out.uv1.end(), {u, v});
+    return uint32_t(out.vertexCount() - 1);
+  };
+  auto pos = [&](uint32_t i) { return Vec3{out.positions[i * 3], out.positions[i * 3 + 1], out.positions[i * 3 + 2]}; };
+  auto tri = [&](uint32_t a, uint32_t b, uint32_t c, const Vec3& facing) {
+    if (dot(render::cross(pos(b) - pos(a), pos(c) - pos(a)), facing) < 0) std::swap(b, c);
+    out.indices.insert(out.indices.end(), {a, b, c});
+  };
+  const size_t n = j.arms.size(), per = size_t(perGap) + 2;
+  for (size_t i = 0; i < n; ++i) {
+    std::vector<size_t> line;  // the corner after arm i: its mouth edge's far point, the gap, the next arm's near point
+    for (size_t k = 1; k <= size_t(perGap) + 1; ++k) line.push_back(i * per + k);
+    line.push_back(((i + 1) % n) * per);
+    float total = 0;
+    for (size_t k = 1; k < line.size(); ++k) {
+      Vec3 e = inner[line[k]] - inner[line[k - 1]];
+      total += std::sqrt(dot(e, e));
+    }
+    const float scale = total > 12.0f ? 12.0f / total : 1.0f;
+    float arc = 0;
+    uint32_t pI = 0, pO = 0, kb = 0, kt = 0, ob = 0, ot = 0;
+    for (size_t k = 0; k < line.size(); ++k) {
+      const Vec3 &pi = inner[line[k]], &po = outer[line[k]];
+      if (k > 0) {
+        Vec3 e = pi - inner[line[k - 1]];
+        arc += std::sqrt(dot(e, e));
+      }
+      float u = 0.8597f - 0.008933f * arc * scale;
+      Vec3 toC = render::normalize(Vec3{j.centre.x - pi.x, 0, j.centre.z - pi.z});
+      Vec3 away = render::normalize(Vec3{po.x - j.centre.x, 0, po.z - j.centre.z});
+      uint32_t I = vertex(pi, up, u, 0.0190f), O = vertex(po, up, u, 0.0458f);
+      uint32_t KB = vertex(pi + Vec3{0, -0.2f, 0}, toC, 0.1921f, 0.9970f), KT = vertex(pi, toC, 0.1921f, 0.9952f);
+      uint32_t OB = vertex(po + Vec3{0, -0.6f, 0}, away, 0.1921f, 0.9970f), OT = vertex(po, away, 0.1921f, 0.9952f);
+      if (k > 0) {
+        tri(pI, pO, I, up), tri(pO, O, I, up);
+        tri(kb, KB, kt, toC), tri(KB, KT, kt, toC);
+        tri(ob, OB, ot, away), tri(OB, OT, ot, away);
+      }
+      pI = I, pO = O, kb = KB, kt = KT, ob = OB, ot = OT;
+    }
+  }
+  sub.vertexCount = uint32_t(out.vertexCount()) - sub.firstVertex;
+  sub.indexCount = uint32_t(out.indices.size()) - sub.firstIndex;
+  if (sub.indexCount) out.submeshes.push_back(sub);
+}
+
+void junctionCells(const GridData& g, const CurveJunction& j, int& x0, int& z0, int& x1, int& z1) {
+  float lx = 1e30f, lz = 1e30f, hx = -1e30f, hz = -1e30f;
+  for (const Vec3& p : junctionOutline(j, curveProfile(j.kind).halfWidth, 4))
+    lx = std::min(lx, p.x), lz = std::min(lz, p.z), hx = std::max(hx, p.x), hz = std::max(hz, p.z);
+  const float m = 3.0f, cs = g.cellSize;
+  x0 = std::clamp(int(std::floor((lx - m) / cs + float(g.width) * 0.5f)), 0, g.width - 1);
+  z0 = std::clamp(int(std::floor((lz - m) / cs + float(g.length) * 0.5f)), 0, g.length - 1);
+  x1 = std::clamp(int(std::floor((hx + m) / cs + float(g.width) * 0.5f)), 0, g.width - 1);
+  z1 = std::clamp(int(std::floor((hz + m) / cs + float(g.length) * 0.5f)), 0, g.length - 1);
+}
+
+// the junctions with an arm ending where one of c's ends is
+static std::vector<CurveJunction> junctionsAt(const GridData& g, const CurveRoad& c) {
+  std::vector<CurveJunction> r;
+  for (const CurveJunction& j : findCurveJunctions(g))
+    for (const Vec3& e : {Vec3{c.x0, 0, c.z0}, Vec3{c.x1, 0, c.z1}})
+      if (j.kind == c.kind && std::fabs(j.centre.x - e.x) < 0.3f && std::fabs(j.centre.z - e.z) < 0.3f) {
+        r.push_back(j);
+        break;
+      }
+  return r;
+}
+
+void levelTerrainUnderJunctions(GridObj* grid, const CurveRoad& c) {
+  GridData& g = *grid->data;
+  if (g.height.empty()) return;
+  const float cs = g.cellSize;
+  for (const CurveJunction& j : junctionsAt(g, c)) {
+    std::vector<Vec3> outer = junctionOutline(j, curveProfile(j.kind).halfWidth, 6);
+    int x0, z0, x1, z1;
+    junctionCells(g, j, x0, z0, x1, z1);
+    int16_t target = int16_t(std::lround((j.centre.y - 0.25f) * 256.0f / cs));
+    for (int z = z0; z <= std::min(z1 + 1, g.length - 1); ++z)
+      for (int x = x0; x <= std::min(x1 + 1, g.width - 1); ++x) {
+        size_t ci = size_t(z) * size_t(g.width) + size_t(x);
+        if (g.flags[ci] & 0x1000) continue;  // a locked corner
+        float wx = (float(x) - float(g.width) * 0.5f) * cs, wz = (float(z) - float(g.length) * 0.5f) * cs;
+        if (!insideOutline(outer, wx, wz)) continue;
+        g.height[ci] = target;
+      }
+    gridEditCellsChanged(grid, std::max(0, x0 - 1), std::max(0, z0 - 1), x1, z1, true);
+  }
 }
 
 }  // namespace regs::engine

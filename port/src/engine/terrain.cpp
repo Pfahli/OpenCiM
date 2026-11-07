@@ -747,9 +747,11 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (it == sliced.end()) it = sliced.emplace(o, sliceMeshAlongX(o->mesh, 1.5f)).first;
         return it->second;
       };
-      auto bentRoad = [&](const CurveRoad& c, MeshData& m) {
+      auto bentRoad = [&](const CurveRoad& c, MeshData& m, float t0, float t1) {
         const CurveProfile& pf = curveProfile(c.kind);
-        CurvePieces cp = curvePieces(c);
+        const float kept = curveLength(c) - t0 - t1;
+        if (kept <= 0.05f) return;
+        CurvePieces cp = curvePieces(c, kept);
         std::vector<CurveSample> shape = curveShape(c);
         auto pieces = [&](const char* name) {
           ObjectObj* o = nullptr;
@@ -757,7 +759,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           if (b < 0 || !o || !o->data) return;
           const MeshData& sm = slicedOf(o->data.get());
           for (int i = 0; i < cp.count; ++i)
-            appendBentMesh(sm, b, shape, (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
+            appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
         };
         pieces(pf.straight);
         if (c.ends & 4) pieces(pf.tram);
@@ -775,12 +777,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           appendPlacedMesh(dob->data->mesh, db, o, ax, az, m);
         }
       };
-      auto curveMesh = [&](const CurveRoad& c, MeshData& m) {
+      auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1) {
         if (c.kind != 0) {
-          bentRoad(c, m);
+          bentRoad(c, m, t0, t1);
           return;
         }
-        buildCurveMesh(c, curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase);
+        buildCurveMesh(c, curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1);
         if (c.stops.empty()) return;
         std::vector<CurveSample> shape = curveShape(c);
         for (const CurveRoad::Stop& st : c.stops) {
@@ -790,12 +792,38 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         }
       };
       MeshData all;
-      for (const CurveRoad& c : g.curves) curveMesh(c, all);
+      std::vector<CurveJunction> junctions = findCurveJunctions(g);
+      for (size_t i = 0; i < g.curves.size(); ++i) {
+        float t0, t1;
+        curveTrims(junctions, int(i), t0, t1);
+        curveMesh(g.curves[i], all, t0, t1);
+      }
+      // junctions: roads fill with the small road's asphalt (one texture for all road kinds) and its pavement, footpaths
+      // with the footpath; the fill's texture plane is fitted to the template's own mesh once
+      static std::map<std::string, PlanarUV> fills;
+      auto fillOf = [&](const char* name, int material, int& base0) -> const PlanarUV& {
+        ObjectObj* o = nullptr;
+        base0 = templateOf(name, &o);
+        auto it = fills.find(name);
+        if (it == fills.end() && o && o->data) it = fills.emplace(name, fitPlanarUV(o->data->mesh, material)).first;
+        static const PlanarUV none;
+        return it == fills.end() ? none : it->second;
+      };
+      for (const CurveJunction& j : junctions) {
+        int fb = -1;
+        if (j.kind == 3) {
+          const PlanarUV& uv = fillOf(curveProfile(3).straight, 0, fb);
+          buildJunctionMesh(j, fb, uv, -1, all);
+        } else {
+          const PlanarUV& uv = fillOf("road_small_basic", 0, fb);
+          buildJunctionMesh(j, fb, uv, base + 2, all);
+        }
+      }
       if (tc.surfaceMap && all.vertexCount()) surfaceMapPaint(*tc.surfaceMap, all, Mat4(), tc.materials, true);
       upload(all, tc.curves, tc.curvesBuilt);
       if (grid->hasCurvePreview) {
         MeshData p;
-        curveMesh(grid->curvePreview, p);
+        curveMesh(grid->curvePreview, p, 0.0f, 0.0f);
         upload(p, tc.curvePreview, tc.curvePreviewBuilt);
       }
     }
