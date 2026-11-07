@@ -157,3 +157,12 @@ past the other junctions and out on the same road. Not checked: a real tram line
 
 Checked: two-lane and one-lane rings of radius 10 with four small roads (20 / 12 turn lanes, all joined); a two-lane
 ring of radius 20 with a large road and three small roads (6 turn lanes at the large road's junction, all joined).
+
+## Toolbar icons (2026-11-08)
+
+The Curve buttons (alley, small road, large road, avenue) and the Roundabout button have icons in the game's style:
+isometric tiles generated with Magnific (Freepik AI) from four of the game's road icons as a style reference, then
+fitted by `tools/make-toolbar-icon.ps1` into the game's own diamond (44x36 at 10,16 in 64x64; hover 49x41) inside the
+border of a game icon of the same kind, with the selected state at 55 % brightness as the game's are. Files:
+`data/regs/ui/toolbar/{curve-small,curve-large,curve-avenue,curve-alley,roundabout}{,_se,_ho}.dds` (uncompressed
+32-bit DDS). The source pictures are in the owner's Magnific library.
