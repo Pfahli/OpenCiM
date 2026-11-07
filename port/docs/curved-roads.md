@@ -121,8 +121,8 @@ arm showed the dead end's missing inner-lane U-turn), trams on a real tram line 
 
 ## Roundabouts (2026-11-07)
 
-Curve panel modes "Kreisel 1" (one lane) and "Kreisel 2" (two lanes): click the centre, then click again to set the
-radius (12–40 units). The ring is four quarter-circle small-road curves (Bézier handles 0.5523·r), one-way (end flag
+The "Kreisel / Round" button in the small-road tab has its own panel (1 lane / 2 lanes): click the centre, then click again
+to set the radius (10–40 units). The ring is four quarter-circle small-road curves (Bézier handles 0.5523·r), one-way (end flag
 bit 5) counter-clockwise as seen from above (right-hand traffic); one-lane rings (bit 6) have a single lane on the
 centre line and no lane divider, two-lane rings both lanes running forward. Roads join the ring like any curve: ending
 on it cuts it there and makes a junction. Junction lanes keep to one-way arms (an incoming ring arm only feeds, an
@@ -144,3 +144,16 @@ tracked road, goes round, and leaves on any tracked road, the one it came from t
 Checked: a two-lane ring with tracks and two tracked roads, all tram turn lanes joined; trams circulating
 counter-clockwise; with `REGS_TEST_CURVE_TURN=1` (test trams sent back the way they came) every trip went in, round
 past the other junctions and out on the same road. Not checked: a real tram line using the ring.
+
+### Sizes and mixed roads (2026-11-07)
+
+- Roundabouts from radius 10: small ones take roads at the four compass points (where the ring's arcs meet). The tool
+  refuses an entry when a road at the point would be used up by the junctions at both its ends.
+- Junctions may mix road kinds (small, large, avenue; footpaths stay among themselves): every arm keeps its own width,
+  lanes, kerbs and zebra, and lanes pair from the right (a large road's two lanes onto a two-lane ring's two). The curve
+  tool snaps across road kinds at joints and in the middle of curves.
+- Two arms whose edges meet only beyond their mouths (a ring on its island side) get a straight side, not a rounded
+  corner.
+
+Checked: two-lane and one-lane rings of radius 10 with four small roads (20 / 12 turn lanes, all joined); a two-lane
+ring of radius 20 with a large road and three small roads (6 turn lanes at the large road's junction, all joined).

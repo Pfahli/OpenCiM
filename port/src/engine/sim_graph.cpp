@@ -869,7 +869,6 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   // junctions: from every arm's incoming lanes into the same lanes of every other arm (Bézier turns; the crossing
   // links below keep crossing turns apart)
   for (const CurveJunction& j : junctions) {
-    const CurveLanes& ln = curveLanes(j.kind);
     for (size_t a = 0; a < j.arms.size(); ++a)
       for (size_t b = 0; b < j.arms.size(); ++b) {
         if (a == b) continue;
@@ -877,7 +876,9 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         Vec3 ra = render::normalize(Vec3{-A.out.z, 0, A.out.x}), rb = render::normalize(Vec3{-B.out.z, 0, B.out.x});
         // an arm's lane ends at its mouth, the rightmost (in the direction of travel) first: two-way arms both ways,
         // a one-way arm (roundabout ring) only its own way, with both lanes (or the single one on the centre line)
+        // (each arm with its own road kind's lanes: a large road meeting a roundabout pairs its two lanes with the ring's)
         auto laneEnds = [&](const CurveArm& X, const Vec3& rx, bool incoming) {
+          const CurveLanes& ln = curveLanes(X.kind);
           std::vector<Vec3> pts;
           if (X.flow == 0) {
             for (int k = ln.count - 1; k >= 0; --k) pts.push_back(X.mouth + rx * (incoming ? -ln.offset[k] : ln.offset[k]));
@@ -891,7 +892,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         std::vector<Vec3> ins = laneEnds(A, ra, true), outs = laneEnds(B, rb, false);
         for (size_t k = 0; k < ins.size() && !outs.empty(); ++k) {  // lane to lane, extra ones into the leftmost
           LaneNode n;
-          n.flags = ln.medium | kPathIntersection;
+          n.flags = curveLanes(A.kind).medium | kPathIntersection;
           n.item = -1;
           n.p0 = ins[k] + Vec3{0, -0.2f, 0};
           n.p1 = outs[std::min(k, outs.size() - 1)] + Vec3{0, -0.2f, 0};

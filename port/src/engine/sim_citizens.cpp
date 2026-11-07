@@ -606,9 +606,8 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
     junctionCells(g, j, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
     if (cx0 > cx1 || cz0 > cz1) continue;
-    const CurveProfile& pf = curveProfile(j.kind);
-    std::vector<Vec3> outer = junctionOutline(j, pf.halfWidth, 6);
-    std::vector<Vec3> inner = pf.carriageway > 0 ? junctionOutline(j, pf.carriageway, 6) : std::vector<Vec3>();
+    std::vector<Vec3> outer = junctionOutline(j, 1, 0.0f, 6);
+    std::vector<Vec3> inner = j.kind != 3 ? junctionOutline(j, 0, 0.0f, 6) : std::vector<Vec3>();
     for (int cz = cz0; cz <= cz1; ++cz)
       for (int cx = cx0; cx <= cx1; ++cx) {
         size_t ci = size_t(cz) * size_t(g.width) + size_t(cx);

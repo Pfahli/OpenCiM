@@ -62,6 +62,8 @@ struct Snap {
   float guard = 0;                // along the new road from the point: what the junction covers (not in the way)
   float radius = 0;               // where the junction will cut its arms (fitJunction)
   float splitS = 0, splitL = 0;   // 2: where on the curve, and its length
+  float otherHalfWidth = 0;       // the widest road already there (road kinds mix at junctions)
+  float armRoom = 1e9f;           // 1, 2: the shortest of the roads there, less what junctions at their other ends take
   bool fits = true;
 };
 
@@ -149,25 +151,38 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   // junction points, in this order: where curve ends meet, the middle of a curve, the middle of a straight block
   const float hw = pf.halfWidth;
   for (const CurveRoad& c : g.curves) {
-    if (c.kind != g_state.kind) continue;
+    if ((c.kind == 3) != (g_state.kind == 3)) continue;  // road kinds mix at junctions (footpaths among themselves)
     for (int end = 0; end < 2; ++end) {
       Vec3 q = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
       float d = len2(q - p);
       if (d > hw * hw || d >= bestD) continue;
       Snap s;
       for (const CurveRoad& k : g.curves) {
-        if (k.kind != c.kind) continue;
+        if ((k.kind == 3) != (c.kind == 3)) continue;
+        if ((std::fabs(k.x0 - q.x) < 0.2f && std::fabs(k.z0 - q.z) < 0.2f) || (std::fabs(k.x1 - q.x) < 0.2f && std::fabs(k.z1 - q.z) < 0.2f))
+          s.otherHalfWidth = std::max(s.otherHalfWidth, curveProfile(k.kind).halfWidth);
         if (std::fabs(k.x0 - q.x) < 0.2f && std::fabs(k.z0 - q.z) < 0.2f) s.arms.push_back(unit(Vec3{k.dx0, 0, k.dz0}));
         if (std::fabs(k.x1 - q.x) < 0.2f && std::fabs(k.z1 - q.z) < 0.2f) s.arms.push_back(unit(Vec3{-k.dx1, 0, -k.dz1}));
       }
       if (s.arms.size() < 2) continue;  // a free end (the snap above) or a single one
+      {
+        std::vector<CurveJunction> js = findCurveJunctions(g);
+        for (size_t ki = 0; ki < g.curves.size(); ++ki) {
+          const CurveRoad& k = g.curves[ki];
+          bool at0 = std::fabs(k.x0 - q.x) < 0.2f && std::fabs(k.z0 - q.z) < 0.2f, at1 = std::fabs(k.x1 - q.x) < 0.2f && std::fabs(k.z1 - q.z) < 0.2f;
+          if (!at0 && !at1) continue;
+          float t0, t1;
+          curveTrims(js, int(ki), t0, t1);
+          s.armRoom = std::min(s.armRoom, curveLength(k) - (at0 ? t1 : t0));
+        }
+      }
       s.ok = true, s.p = q, s.junction = 1;
       bestD = d, best = s;
     }
   }
   if (best.ok) return best;
   for (const CurveRoad& c : g.curves) {
-    if (c.kind != g_state.kind) continue;
+    if ((c.kind == 3) != (g_state.kind == 3)) continue;
     std::vector<CurveSample> shape = curveShape(c);
     float side, s;
     curveNearest(shape, p.x, p.z, side, s);
@@ -177,6 +192,12 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
     Snap sn;
     sn.ok = true, sn.p = k.p, sn.junction = 2;
     sn.splitS = s, sn.splitL = L;
+    sn.otherHalfWidth = curveProfile(c.kind).halfWidth;
+    {
+      float t0, t1;
+      curveTrims(findCurveJunctions(g), int(&c - g.curves.data()), t0, t1);
+      sn.armRoom = std::min(s - t0, L - s - t1);
+    }
     sn.arms = {unit(k.dir), unit(k.dir) * -1.0f};
     bestD = side * side, best = sn;
   }
@@ -225,17 +246,18 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
 void fitJunction(Snap& sn, const Vec3& out) {
   if (!sn.junction) return;
   const CurveProfile& pf = curveProfile(g_state.kind);
-  float R = pf.halfWidth;
+  const float hw = std::max(pf.halfWidth, sn.otherHalfWidth);
+  float R = hw;
   Vec3 o = unit(out);
   for (const Vec3& a : sn.arms) {
     float th = std::acos(std::clamp(dot(o, a), -1.0f, 1.0f));
-    if (th > 0.01f && th < kPi - 0.05f) R = std::max(R, pf.halfWidth / std::tan(th * 0.5f));
+    if (th > 0.01f && th < kPi - 0.05f) R = std::max(R, hw / std::tan(th * 0.5f));
   }
-  R += 1.5f;
+  R += 1.0f;  // the margin findCurveJunctions adds
   sn.guard = R + pf.halfWidth;
   sn.radius = R;
   sn.fits = true;
-  if (sn.junction == 2) sn.fits = sn.splitS >= R + 1.0f && sn.splitL - sn.splitS >= R + 1.0f;  // both halves outlast it
+  if (sn.junction == 1 || sn.junction == 2) sn.fits = sn.armRoom >= R + 1.0f;  // the roads there outlast it
   if (sn.junction != 3) return;
   const float half = pf.piece * 0.5f;
   sn.blocks.resize(1);
@@ -402,7 +424,7 @@ void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
     clearPreview(grid);
     return;
   }
-  float r = std::clamp(std::sqrt(len2(p - st.start)), 12.0f, 40.0f);
+  float r = std::clamp(std::sqrt(len2(p - st.start)), 10.0f, 40.0f);
   std::vector<CurveRoad> arcs = roundaboutArcs(st.start, r, st.mode == 4);
   bool bad = false;
   for (const CurveRoad& c : arcs) {
@@ -421,7 +443,7 @@ void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
 
 void commitRoundabout(VM& vm, ControlObj* player, GridObj* grid) {
   State& st = g_state;
-  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, std::max(12.0f, st.length), st.mode == 4);
+  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, std::max(10.0f, st.length), st.mode == 4);
   Object* tl = playerTimeline(vm, player);
   unselectAll(vm, grid);
   clearPreview(grid);
@@ -543,7 +565,7 @@ Vec3 makeJunction(VM& vm, GridObj* grid, Object* tl, const Snap& sn, int kind) {
     int best = -1;
     float bestD = 0.5f, bestS = 0;
     for (size_t i = 0; i < g.curves.size(); ++i) {
-      if (g.curves[i].kind != kind) continue;
+      if ((g.curves[i].kind == 3) != (kind == 3)) continue;
       float side, s;
       curveNearest(curveShape(g.curves[i]), sn.p.x, sn.p.z, side, s);
       if (std::fabs(side) < bestD) bestD = std::fabs(side), best = int(i), bestS = s;

@@ -73,6 +73,7 @@ std::vector<CurveSample> sampleCurveRange(const CurveRoad& c, float s0, float s1
 // lane from every arm's incoming lanes into every other arm. The trim grows with the narrowest angle between arms.
 struct CurveArm {
   int curve = -1;
+  int kind = 0;             // its road kind (a junction may mix road kinds)
   int end = 0;              // which end of the curve meets the junction
   float trim = 0;           // arc length cut off that end
   render::Vec3 mouth;       // the curve's centre line where the junction begins
@@ -96,7 +97,8 @@ void curveTrims(const std::vector<CurveJunction>& js, int curve, float& trim0, f
 // the junction's outline at `w` right/left of the arms' centre lines: per arm its mouth edge (two points), then
 // `perGap` points of the corner to the next arm (rounded inward, straight on a straight side, around the back of
 // the centre where the gap passes 180°); y = the centre's
-std::vector<render::Vec3> junctionOutline(const CurveJunction& j, float w, int perGap = 12);
+// layer 0: the carriageway's edge (kerb), 1: the outer edge, each arm at its own road kind's width, plus delta
+std::vector<render::Vec3> junctionOutline(const CurveJunction& j, int layer, float delta = 0.0f, int perGap = 12);
 bool insideOutline(const std::vector<render::Vec3>& poly, float x, float z);
 // a planar texture mapping fitted to a submesh: u = a0 + a1·x + a2·z, v = b0 + b1·x + b2·z over the submesh's
 // x / z extents (the tile a junction's fill repeats)

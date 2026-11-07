@@ -289,22 +289,30 @@ foreach ([["/metro/ui/menus/save.dds", regsSaveTemplateTool, $regsRs.$regs_templ
 delete $regsRs;
 
 // ---- curved roads (owner's request 2026-11-07; engine/tool_curves.cpp, like the road tool of Cities: Skylines) ----
-// A "Curve" button in the alley, small-road, large-road and avenue tabs selects the tool for that road; a panel (top right, while the tool is on) offers its
-// modes Straight / Curved / Freeform and shows what the next click does, the road's length and angle.
+// A "Curve" button in the alley, small-road, large-road and avenue tabs selects the tool for that road; a panel (top
+// right, while the tool is on) offers its modes Straight / Curved / Freeform / Remove and shows what the next click
+// does, the road's length and angle. Roundabouts have their own button and panel (small-road tab): one or two lanes,
+// the centre and then the size with two clicks (the same engine tool in its modes 4 and 5).
 $regsCurvePanel = null;
 $regsCurveStrings = null;
 $regsCurveInfo = null;
+$regsCurveUi = "";          // which panel the tool shows: "curve" or "round"
+$regsRoundPanel = null;
+$regsRoundInfo = null;
+$regsRoundLanes = 2;
+$regsRoundStrings = null;
 
 function regsCurveMode($m) {
   regsCurveToolMode($m);
 }
 
 function regsCurveTool() {
+  $regsCurveUi = "curve";
   $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
-  regsCurveToolMode(regsCurveToolMode());   // a fresh start
+  regsCurveToolMode(regsCurveToolMode() >= 4 ? 1 : regsCurveToolMode());   // a fresh start (not a roundabout)
   if ($regsCurvePanel) return;
   $regsCurveStrings = regsStringsNow();
-  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 490, 70, 470, 190, 1 | 2 | 4 | 8);
+  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 190, 1 | 2 | 4 | 8);
   with ($t = new_control($regsCurvePanel.$content)) {
     .setRect(10, 0, 330, 22);
     .text = $regsCurveStrings.$regs_curve_panel_title;
@@ -313,10 +321,9 @@ function regsCurveTool() {
   }
   MAIN.$ui.setTitleFont($t);
   $regsCurveNames = [$regsCurveStrings.$regs_curve_mode_straight, $regsCurveStrings.$regs_curve_mode_curved,
-                     $regsCurveStrings.$regs_curve_mode_freeform, $regsCurveStrings.$regs_curve_mode_remove,
-                     $regsCurveStrings.$regs_curve_mode_round1, $regsCurveStrings.$regs_curve_mode_round2];
-  for ($regsI = 0; $regsI < 6; ++$regsI) {
-    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 76, 28, 70, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+                     $regsCurveStrings.$regs_curve_mode_freeform, $regsCurveStrings.$regs_curve_mode_remove];
+  for ($regsI = 0; $regsI < 4; ++$regsI) {
+    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 88, 28, 84, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
     if ($regsI == regsCurveToolMode()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveModes");
   }
   with ($regsCurveInfo = new_control($regsCurvePanel.$content)) {
@@ -337,14 +344,12 @@ function regsCurveTool() {
       .canActivate = false;
     }
   }
-  thread :: {   // the panel follows the tool and goes with it
-    while ($player.editMode == REGS_GRIDMODE_CURVE_ROAD) {
+  thread :: {   // the panel follows the tool and goes with it (and when the roundabout panel takes over)
+    while ($player.editMode == REGS_GRIDMODE_CURVE_ROAD && $regsCurveUi == "curve") {
       $ci = regsCurveToolInfo();
       $s = $regsCurveStrings;
       if (regsCurveToolMode() == 3) {
         $regsCurveInfo.text = $ci[4] ? $s.$regs_curve_info_remove : $s.$regs_curve_info_pick;
-      } else if (regsCurveToolMode() >= 4) {   // roundabouts: the centre, then the radius
-        $regsCurveInfo.text = $ci[0] == 0 ? $s.$regs_curve_info_centre : expandPattern($s.$regs_curve_info_radius, int($ci[1] + 0.5), regsCurveToolMode() - 3) + ($ci[3] ? "" : "  " + $s.$regs_curve_info_bad);
       } else if ($ci[0] == 0) {
         $regsCurveInfo.text = $s.$regs_curve_info_start;
       } else if (regsCurveToolMode() == 1 && $ci[0] == 1) {
@@ -356,8 +361,6 @@ function regsCurveTool() {
     }
     delete $regsCurvePanel;
     $regsCurvePanel = null;
-    delete $regsCurveStrings;
-    $regsCurveStrings = null;
   };
 }
 
@@ -367,7 +370,59 @@ function regsCurveToolFor($k) {
   regsCurveTool();
 }
 
-// the button after the originals in the alley, small-road, large-road and avenue tabs
+function regsRoundLanesSet($n) {
+  $regsRoundLanes = $n;
+  regsCurveToolMode($n == 1 ? 4 : 5);
+}
+
+function regsRoundaboutTool() {
+  $regsCurveUi = "round";
+  regsCurveToolKind(0);
+  $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
+  regsCurveToolMode($regsRoundLanes == 1 ? 4 : 5);
+  if ($regsRoundPanel) return;
+  $regsRoundStrings = regsStringsNow();
+  $regsRoundPanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 170, 1 | 2 | 4 | 8);
+  with ($t = new_control($regsRoundPanel.$content)) {
+    .setRect(10, 0, 330, 22);
+    .text = $regsRoundStrings.$regs_round_title;
+    .visible = true;
+    .canActivate = false;
+  }
+  MAIN.$ui.setTitleFont($t);
+  $regsRoundNames = [$regsRoundStrings.$regs_round_one, $regsRoundStrings.$regs_round_two];
+  for ($regsI = 0; $regsI < 2; ++$regsI) {
+    $regsB = MAIN.$ui.createChoiceButton($regsRoundPanel.$content, "regsRoundLanes", 10 + $regsI * 128, 28, 120, 25, $regsRoundNames[$regsI], macro($regsI + 1) :: regsRoundLanesSet($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+    if ($regsI + 1 == $regsRoundLanes) MAIN.$ui.selectChoiceButton($regsB, "regsRoundLanes");
+  }
+  with ($regsRoundInfo = new_control($regsRoundPanel.$content)) {
+    .setRect(10, 62, 340, 20);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($h = new_control($regsRoundPanel.$content)) {
+    .setRect(10, 90, 340, 36);
+    MAIN.$ui.setTextFont(current, 0xFFBBBBBB);
+    .textAlign = ALIGN_TOP | ALIGN_LEFT;
+    .text = $regsRoundStrings.$regs_round_hint1;
+    .visible = true;
+    .canActivate = false;
+  }
+  thread :: {
+    while ($player.editMode == REGS_GRIDMODE_CURVE_ROAD && $regsCurveUi == "round") {
+      $ci = regsCurveToolInfo();
+      $regsRoundInfo.text = $ci[0] == 0 ? $regsRoundStrings.$regs_curve_info_centre : expandPattern($regsRoundStrings.$regs_curve_info_radius, int($ci[1] + 0.5), $regsRoundLanes) + ($ci[3] ? "" : "  " + $regsRoundStrings.$regs_curve_info_bad);
+      wait 0.1;
+    }
+    delete $regsRoundPanel;
+    $regsRoundPanel = null;
+  };
+}
+
+// the buttons after the originals: Curve in the alley, small-road, large-road and avenue tabs, Roundabout in the
+// small-road tab
 $regsRs = regsStringsNow();
 $regsCurveTabs = ["alley", "smallroad", "largeroad", "avenue"];
 $regsCurveKinds = [3, 0, 1, 2];
@@ -377,4 +432,8 @@ for ($regsI = 0; $regsI < 4; ++$regsI) {
   $regsB = MAIN.$ui.createChoiceButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, $regsRs.$regs_curve_button, macro($regsCurveKinds[$regsI]) :: regsCurveToolFor($0));
   MAIN.$ui.setTooltip($regsB, $regsRs.$regs_curve_hint, 0, 1);
 }
+$regsRoadTab = $trafficMenu.$tabs["smallroad"];
+$regsN = $regsRoadTab.getChildCount();
+$regsB = MAIN.$ui.createChoiceButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, $regsRs.$regs_round_button, regsRoundaboutTool);
+MAIN.$ui.setTooltip($regsB, $regsRs.$regs_round_tooltip, 0, 1);
 delete $regsRs;

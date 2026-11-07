@@ -303,7 +303,7 @@ float curveTramOffset(int kind) { return kind == 1 ? 4.5f : 1.5f; }
 bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, Vec3& p) {
   Vec3 r = rightOf(a.out);
   if (a.flow == 0) {
-    float off = curveTramOffset(j.kind);
+    float off = curveTramOffset(a.kind);
     p = a.mouth + r * (incoming ? -off : off);
     return true;
   }
@@ -643,7 +643,7 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
     junctionCells(g, j, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
     if (cx0 > cx1 || cz0 > cz1) continue;
-    std::vector<Vec3> outer = junctionOutline(j, curveProfile(j.kind).halfWidth - 0.2f, 6);
+    std::vector<Vec3> outer = junctionOutline(j, 1, -0.2f, 6);
     for (int z = cz0; z <= cz1; ++z)
       for (int x = cx0; x <= cx1; ++x) {
         bool inside = true;
@@ -815,7 +815,7 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
     if (used[a]) continue;
     std::vector<size_t> group{a};
     for (size_t b = a + 1; b < ends.size(); ++b)
-      if (!used[b] && ends[b].kind == ends[a].kind && std::fabs(ends[b].p.x - ends[a].p.x) < 0.2f &&
+      if (!used[b] && (ends[b].kind == 3) == (ends[a].kind == 3) && std::fabs(ends[b].p.x - ends[a].p.x) < 0.2f &&
           std::fabs(ends[b].p.z - ends[a].p.z) < 0.2f)
         group.push_back(b);
     for (size_t k : group) used[k] = 1;
@@ -824,17 +824,22 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
     CurveJunction j;
     j.kind = ends[a].kind;
     for (size_t k : group) j.centre = j.centre + ends[k].p * (1.0f / float(group.size()));
-    // the radius: two neighbouring arms' edges (half a width out) meet hw / tan(angle / 2) from the centre
-    const CurveProfile& pf = curveProfile(j.kind);
-    std::vector<float> ang;
-    for (size_t k : group) ang.push_back(std::atan2(ends[k].out.z, ends[k].out.x));
-    std::sort(ang.begin(), ang.end());
-    float R = pf.halfWidth;
-    for (size_t k = 0; k < ang.size(); ++k) {
-      float gap = k + 1 < ang.size() ? ang[k + 1] - ang[k] : ang[0] + 2 * kPi - ang[k];
-      if (gap < kPi - 0.05f && gap > 0.01f) R = std::max(R, pf.halfWidth / std::tan(gap * 0.5f));
+    // the radius: two neighbouring arms' edges (half a width out, the wider of the two road kinds) meet hw / tan(angle / 2)
+    // from the centre (road kinds may mix: a large road into a roundabout)
+    std::vector<std::pair<float, float>> ang;  // angle, half width
+    float R = 0;
+    for (size_t k : group) {
+      float hw = curveProfile(ends[k].kind).halfWidth;
+      ang.push_back({std::atan2(ends[k].out.z, ends[k].out.x), hw});
+      R = std::max(R, hw);
     }
-    j.radius = std::min(R + (j.kind == 3 ? 0.5f : 1.5f), 40.0f);
+    std::sort(ang.begin(), ang.end());
+    for (size_t k = 0; k < ang.size(); ++k) {
+      const auto &p = ang[k], &q = ang[(k + 1) % ang.size()];
+      float gap = k + 1 < ang.size() ? q.first - p.first : q.first + 2 * kPi - p.first;
+      if (gap < kPi - 0.05f && gap > 0.01f) R = std::max(R, std::max(p.second, q.second) / std::tan(gap * 0.5f));
+    }
+    j.radius = std::min(R + (j.kind == 3 ? 0.5f : 1.0f), 40.0f);
     for (size_t k : group) {
       const CurveRoad& c = g.curves[size_t(ends[k].curve)];
       std::vector<CurveSample> d = denseOf(c);
@@ -843,6 +848,7 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
       arm.curve = ends[k].curve;
       arm.end = ends[k].end;
       arm.tram = (c.ends & 4) != 0;
+      arm.kind = c.kind;
       if (c.ends & 0x20) arm.flow = arm.end ? 1 : 2, arm.single = (c.ends & 0x40) != 0;
       size_t n = d.size(), hit = n;  // the first sample from the junction's end at the radius
       for (size_t i = 0; i < n; ++i) {
@@ -913,7 +919,11 @@ void curveTrims(const std::vector<CurveJunction>& js, int curve, float& trim0, f
       if (a.curve == curve) (a.end ? trim1 : trim0) = a.trim;
 }
 
-std::vector<Vec3> junctionOutline(const CurveJunction& j, float w, int perGap) {
+std::vector<Vec3> junctionOutline(const CurveJunction& j, int layer, float delta, int perGap) {
+  auto widthOf = [&](const CurveArm& a) {
+    const CurveProfile& pf = curveProfile(a.kind);
+    return (layer ? pf.halfWidth : pf.carriageway) + delta;
+  };
   std::vector<Vec3> pts;
   const size_t n = j.arms.size();
   const Vec3 c = j.centre;
@@ -925,20 +935,21 @@ std::vector<Vec3> junctionOutline(const CurveJunction& j, float w, int perGap) {
   for (size_t i = 0; i < n; ++i) {
     const CurveArm &A = j.arms[i], &B = j.arms[(i + 1) % n];
     Vec3 ra = rightOf(A.out), rb = rightOf(B.out);
-    Vec3 Ea = atY(A.mouth + ra * w), Eb = atY(B.mouth - rb * w);
-    pts.push_back(atY(A.mouth - ra * w));  // the mouth edge
+    const float wa = widthOf(A), wb = widthOf(B);
+    Vec3 Ea = atY(A.mouth + ra * wa), Eb = atY(B.mouth - rb * wb);
+    pts.push_back(atY(A.mouth - ra * wa));  // the mouth edge
     pts.push_back(Ea);
     float gap = angleOf(B.mouth) - angleOf(A.mouth);
     while (gap <= 0.0f) gap += 2 * kPi;
     if (gap > kPi + 0.09f) {  // around the back of the centre
       Vec3 ua = render::normalize(Vec3{A.mouth.x - c.x, 0, A.mouth.z - c.z});
       Vec3 ub = render::normalize(Vec3{B.mouth.x - c.x, 0, B.mouth.z - c.z});
-      Vec3 Ba = c + rightOf(ua) * w, Bb = c - rightOf(ub) * w;
+      Vec3 Ba = c + rightOf(ua) * wa, Bb = c - rightOf(ub) * wb;
       float a0 = std::atan2(Ba.z - c.z, Ba.x - c.x), a1 = std::atan2(Bb.z - c.z, Bb.x - c.x);
       while (a1 <= a0) a1 += 2 * kPi;
       pts.push_back(atY(Ba));
       for (int k = 1; k <= perGap - 2; ++k) {
-        float a = a0 + (a1 - a0) * float(k) / float(perGap - 1);
+        float f = float(k) / float(perGap - 1), a = a0 + (a1 - a0) * f, w = wa + (wb - wa) * f;
         pts.push_back(atY(c + Vec3{std::cos(a) * w, 0, std::sin(a) * w}));
       }
       pts.push_back(atY(Bb));
@@ -954,6 +965,9 @@ std::vector<Vec3> junctionOutline(const CurveJunction& j, float w, int perGap) {
         Vec3 dd = Eb - Ea;
         float t = (dd.x * B.out.z - dd.z * B.out.x) / den;
         X = Ea + A.out * t;
+        // edges that meet only beyond the mouths (arms curving toward each other, as a roundabout's ring on its island
+        // side): no rounded corner, a straight side
+        if (t > -0.1f) straight = true;
       }
     }
     Vec3 c1 = Ea + (X - Ea) * 0.55f, c2 = Eb + (X - Eb) * 0.55f;
@@ -1021,8 +1035,8 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   const Vec3 up{0, 1, 0};
   const bool footpath = pf.carriageway <= 0;
   const int perGap = 12;
-  const float fillW = footpath ? pf.halfWidth : pf.carriageway, fillY = footpath ? 0.0f : -0.2f;
-  std::vector<Vec3> inner = junctionOutline(j, fillW, perGap);
+  const float fillY = footpath ? 0.0f : -0.2f;
+  std::vector<Vec3> inner = junctionOutline(j, footpath ? 1 : 0, 0.0f, perGap);
   const size_t N = inner.size();
   if (N < 3) return;
   // the fill: a fan from the centre, cut into the texture's tiles (the template's own UV plane per tile)
@@ -1064,7 +1078,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   }
   if (footpath || matWalk < 0) return;
   // the pavement corners between the arms (the small road's pavement texture region) with their kerbs and outer walls
-  std::vector<Vec3> outer = junctionOutline(j, pf.halfWidth, perGap);
+  std::vector<Vec3> outer = junctionOutline(j, 1, 0.0f, perGap);
   render::Submesh sub;
   sub.material = matWalk;
   sub.firstVertex = uint32_t(out.vertexCount());
@@ -1188,7 +1202,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   for (const CurveArm& A : j.arms) {
     if (A.flow) continue;  // no crossing over a one-way road (a roundabout's ring)
     Vec3 in = A.out * -1.0f, r = rightOf(A.out), m0 = at(A.mouth);
-    int bars = std::max(1, int((2.0f * pf.carriageway - 0.32f) / 0.93f));
+    int bars = std::max(1, int((2.0f * curveProfile(A.kind).carriageway - 0.32f) / 0.93f));
     float first = -(float(bars) * 0.93f - 0.32f) * 0.5f;
     for (int k = 0; k < bars; ++k) {
       float z0 = first + float(k) * 0.93f, z1 = z0 + 0.61f;
@@ -1199,7 +1213,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
     }
   }
   // edge lines along the kerbs (0.19..0.48 inside), the texture repeating every 9 units as on the straight road
-  std::vector<Vec3> e0 = junctionOutline(j, pf.carriageway - 0.19f, perGap), e1 = junctionOutline(j, pf.carriageway - 0.48f, perGap);
+  std::vector<Vec3> e0 = junctionOutline(j, 0, -0.19f, perGap), e1 = junctionOutline(j, 0, -0.48f, perGap);
   const float uA = 0.9916f, uRate = -0.1099f, vOut = 0.0722f, vIn = 0.0401f;
   for (size_t i = 0; i < n; ++i) {
     std::vector<size_t> line;
@@ -1236,7 +1250,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
 
 void junctionCells(const GridData& g, const CurveJunction& j, int& x0, int& z0, int& x1, int& z1) {
   float lx = 1e30f, lz = 1e30f, hx = -1e30f, hz = -1e30f;
-  for (const Vec3& p : junctionOutline(j, curveProfile(j.kind).halfWidth, 4))
+  for (const Vec3& p : junctionOutline(j, 1, 0.0f, 4))
     lx = std::min(lx, p.x), lz = std::min(lz, p.z), hx = std::max(hx, p.x), hz = std::max(hz, p.z);
   const float m = 3.0f, cs = g.cellSize;
   x0 = std::clamp(int(std::floor((lx - m) / cs + float(g.width) * 0.5f)), 0, g.width - 1);
@@ -1250,7 +1264,7 @@ static std::vector<CurveJunction> junctionsAt(const GridData& g, const CurveRoad
   std::vector<CurveJunction> r;
   for (const CurveJunction& j : findCurveJunctions(g))
     for (const Vec3& e : {Vec3{c.x0, 0, c.z0}, Vec3{c.x1, 0, c.z1}})
-      if (j.kind == c.kind && std::fabs(j.centre.x - e.x) < 0.3f && std::fabs(j.centre.z - e.z) < 0.3f) {
+      if ((j.kind == 3) == (c.kind == 3) && std::fabs(j.centre.x - e.x) < 0.3f && std::fabs(j.centre.z - e.z) < 0.3f) {
         r.push_back(j);
         break;
       }
@@ -1262,7 +1276,7 @@ void levelTerrainUnderJunctions(GridObj* grid, const CurveRoad& c) {
   if (g.height.empty()) return;
   const float cs = g.cellSize;
   for (const CurveJunction& j : junctionsAt(g, c)) {
-    std::vector<Vec3> outer = junctionOutline(j, curveProfile(j.kind).halfWidth, 6);
+    std::vector<Vec3> outer = junctionOutline(j, 1, 0.0f, 6);
     int x0, z0, x1, z1;
     junctionCells(g, j, x0, z0, x1, z1);
     int16_t target = int16_t(std::lround((j.centre.y - 0.25f) * 256.0f / cs));
