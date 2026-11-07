@@ -237,6 +237,9 @@ class Renderer3D {
   // resolved into a texture.
   bool makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture = false,
                        TargetFormat format = TargetFormat::Rgba16f);
+  // Additive (ONE, ONE) draw of a mesh with a plain program into a target cleared to 0: no depth, no culling. Ends
+  // with the back buffer bound and the back-buffer viewport.
+  void splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH);
   void resolve(const RenderTarget& t);  // multisample → texture (NEAREST blit, depth too); no-op without MSAA
   // resolves t and copies its bottom-left w×h colour into the back-buffer rect (x, y top-left origin)
   void blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH);

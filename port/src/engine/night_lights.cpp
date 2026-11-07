@@ -431,33 +431,63 @@ void updateBuiltUp(GridObj* grid, BuiltUp& bu) {
   }
 }
 
-// the headlight beam on the ground at (along, across) in the beam's frame: along 0 at the bumper, 1 at the beam's
-// reach; across −1..1 between the cone edges. Rises over the first metres, falls off with distance, soft edges.
-float beamProfile(float along, float across) {
-  float a = std::fabs(across);
-  if (along <= 0 || along >= 1 || a >= 1) return 0;
-  float side = smooth(1.0f, 0.35f, a) * (0.7f + 0.3f * (1 - a * a));
-  return side * smooth(0.0f, 0.1f, along) * std::pow(1.0f - along, 1.6f);
-}
+// the vehicles' light map: headlight beams and the market stands' lamps, drawn each frame on the GPU into a float
+// target around the camera's view centre. Each light is a quad whose fragment shader evaluates its profile from
+// metric local coordinates, so the edges are exact at any angle (a CPU raster at 0.94 m texels left them jagged).
+// Channels: R = light, G = light from the stands' lamps (warm tint), B = light × (its ground height − y0).
+constexpr int kCarMap = 2048;
+constexpr float kCarMapSize = 960.0f;  // metres across: 0.47 m texels; beams fade out before its edge
 
-// the vehicles' light map: headlight beams splatted each frame into a window around the camera's view centre
-constexpr int kCarMap = 1024;
-constexpr float kCarMapSize = 960.0f;  // metres across: 0.94 m texels; beams fade out before its edge
+const char* kSplatVs =
+    "varying vec4 v_a;\n"
+    "varying vec4 v_b;\n"
+    "void main() {\n"
+    "  gl_Position = vec4(gl_Vertex.xy, 0.0, 1.0);\n"
+    "  v_a = vec4(gl_Vertex.z, gl_Normal);\n"
+    "  v_b = vec4(gl_MultiTexCoord0.xy, gl_MultiTexCoord1.xy);\n"
+    "}\n";
+// v_a = (along, across, length, start half width) in metres; v_b = (end half width, gain, height − y0, warm); a length
+// of 0 is a round lamp of radius v_a.w
+const char* kSplatFs =
+    "varying vec4 v_a;\n"
+    "varying vec4 v_b;\n"
+    "void main() {\n"
+    "  float along = v_a.x, across = v_a.y, len = v_a.z, w0 = v_a.w, l = 0.0;\n"
+    "  if (len > 0.0) {\n"
+    "    float al = along / len;\n"
+    "    float half = w0 + (v_b.x - w0) * clamp(al, 0.0, 1.0);\n"
+    "    float a = abs(across) / half;\n"
+    "    if (al > 0.0 && al < 1.0 && a < 1.0)\n"
+    "      l = smoothstep(1.0, 0.35, a) * (0.7 + 0.3 * (1.0 - a * a)) * smoothstep(0.0, 0.1, al) * pow(1.0 - al, 1.6);\n"
+    "  } else {\n"
+    "    float q = 1.0 - (along * along + across * across) / (w0 * w0);\n"
+    "    if (q > 0.0) l = q * q;\n"
+    "  }\n"
+    "  l *= v_b.y;\n"
+    "  gl_FragColor = vec4(l, l * v_b.w, l * v_b.z, 0.0);\n"
+    "}\n";
 
 struct VehicleLightState {
   std::map<const GridObj*, BuiltUp> builtUp;
   std::vector<float> beam;     // per mover: 0 low beam … 1 high beam, eased
   std::vector<float> beamLen;  // per mover: the beam's reach, eased (a building ahead shortens it smoothly)
   std::vector<VehicleLightSource> sources;
-  std::vector<float> light, wy, prov, warm;  // per texel: light, light-weighted ground height, a height for unlit
-                                             // texels, the part of the light from the stands' lamps
-  std::vector<uint8_t> px;
-  uint32_t texture = 0;
+  RenderTarget target;
+  uint32_t program = 0;
+  bool failed = false;
+  GpuMesh mesh;
 };
 VehicleLightState& vehicleState() {
   static VehicleLightState s;
   return s;
 }
+
+struct Splat {
+  Vec3 o, f, s;          // origin, forward and side (horizontal, unit)
+  float len, w0, w1;     // len 0: a round lamp of radius w0
+  float gain, ground;
+  float warm;
+};
 
 void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, SceneView& v, float night01, float hours,
                       uint32_t batch, std::vector<ParticleSprite>& glows) {
@@ -485,13 +515,7 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
   float t = fwd.y < -0.05f ? std::min(800.0f, (v.eye.y - 0.0f) / -fwd.y) : 200.0f;
   Vec3 c = v.eye + fwd * t;
   float ox = std::floor((c.x - kCarMapSize / 2) / texel) * texel, oz = std::floor((c.z - kCarMapSize / 2) / texel) * texel;
-  const size_t N = size_t(kCarMap) * size_t(kCarMap);
-  st.light.assign(N, 0.0f);
-  st.wy.assign(N, 0.0f);
-  st.prov.assign(N, -1e30f);
-  st.warm.assign(N, 0.0f);
-  float yMin = 1e30f, yMax = -1e30f;
-  bool anyBeam = false;
+  std::vector<Splat> splats;
   Vec3 up{0, 1, 0};
   for (const VehicleLightSource& L : src) {
     if (L.mover >= int(st.beam.size())) st.beam.resize(size_t(L.mover) + 1, 0.0f);
@@ -576,29 +600,8 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
     float edge = std::min({L.front.x - ox, ox + kCarMapSize - L.front.x, L.front.z - oz, oz + kCarMapSize - L.front.z});
     float gain = (1.0f + 0.25f * b) * strength * smooth(650.0f, 520.0f, std::sqrt(dot(te, te))) * smooth(40.0f, 90.0f, edge);
     if (gain <= 0) continue;
-    Vec3 o = L.front + f * 0.1f;
-    float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
-    for (const Vec3& q : {o - side * w0, o + side * w0, o + f * len - side * w1, o + f * len + side * w1})
-      x0 = std::min(x0, q.x), x1 = std::max(x1, q.x), z0 = std::min(z0, q.z), z1 = std::max(z1, q.z);
-    int ix0 = std::max(0, int((x0 - ox) / texel) - 2), ix1 = std::min(kCarMap - 1, int((x1 - ox) / texel) + 2);
-    int iz0 = std::max(0, int((z0 - oz) / texel) - 2), iz1 = std::min(kCarMap - 1, int((z1 - oz) / texel) + 2);
-    if (ix0 > ix1 || iz0 > iz1) continue;
-    float g = L.front.y;
-    yMin = std::min(yMin, g), yMax = std::max(yMax, g);
-    anyBeam = true;
     Vec3 f2 = normalize(Vec3{f.x, 0, f.z}), s2 = normalize(Vec3{side.x, 0, side.z});
-    for (int z = iz0; z <= iz1; ++z)
-      for (int x = ix0; x <= ix1; ++x) {
-        Vec3 e{ox + (float(x) + 0.5f) * texel - o.x, 0, oz + (float(z) + 0.5f) * texel - o.z};
-        float al = dot(e, f2) / len;
-        float half = w0 + (w1 - w0) * std::clamp(al, 0.0f, 1.0f);
-        float l = beamProfile(al, dot(e, s2) / half) * gain;
-        size_t k = size_t(z) * size_t(kCarMap) + size_t(x);
-        if (st.prov[k] < -1e29f) st.prov[k] = g;  // the box around the beam carries its height (filtering)
-        if (l <= 0) continue;
-        st.light[k] += l;
-        st.wy[k] += l * g;
-      }
+    splats.push_back({L.front + f * 0.1f, f2, s2, len, w0, w1, gain, L.front.y, 0.0f});
   }
   // market stands: a warm lamp under the canopy, in the evening and early morning, each stand at its own time; it
   // lights the goods and the ground under and around the stand, not the canopy above it (its height lies 0.6 m
@@ -607,48 +610,53 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
     for (const BuiltUp::Tent& t : bu.tents) {
       float open = 0.1f + 0.85f * hash01(t.seed);
       float on = smooth(open - 0.05f, open + 0.05f, share) * smooth(0.1f, 0.4f, night01);
-      if (on <= 0) continue;
-      const float R = t.radius;
-      int ix0 = std::max(0, int((t.pos.x - R - ox) / texel)), ix1 = std::min(kCarMap - 1, int((t.pos.x + R - ox) / texel) + 1);
-      int iz0 = std::max(0, int((t.pos.z - R - oz) / texel)), iz1 = std::min(kCarMap - 1, int((t.pos.z + R - oz) / texel) + 1);
-      if (ix0 > ix1 || iz0 > iz1) continue;
-      float g = t.pos.y - 0.6f;
-      yMin = std::min(yMin, g), yMax = std::max(yMax, g);
-      anyBeam = true;
-      for (int z = iz0; z <= iz1; ++z)
-        for (int x = ix0; x <= ix1; ++x) {
-          float dx = ox + (float(x) + 0.5f) * texel - t.pos.x, dz = oz + (float(z) + 0.5f) * texel - t.pos.z;
-          float q = 1.0f - (dx * dx + dz * dz) / (R * R);
-          size_t k = size_t(z) * size_t(kCarMap) + size_t(x);
-          if (st.prov[k] < -1e29f) st.prov[k] = g;
-          if (q <= 0) continue;
-          float l = q * q * 0.75f * on;
-          st.light[k] += l;
-          st.wy[k] += l * g;
-          st.warm[k] += l;
-        }
+      float edge = std::min({t.pos.x - ox, ox + kCarMapSize - t.pos.x, t.pos.z - oz, oz + kCarMapSize - t.pos.z});
+      if (on <= 0 || edge < t.radius) continue;
+      splats.push_back({t.pos, {1, 0, 0}, {0, 0, 1}, 0.0f, t.radius, 0.0f, 0.75f * on, t.pos.y - 0.6f, 1.0f});
     }
-  if (!anyBeam) return;
-  // pack: rgb = warm white × light (softly limited), a = ground height of the light (or of the box around it)
-  // a height encoding that stays put from frame to frame (whole 16 m steps), so the lit band does not jitter
-  float y0 = std::floor((yMin - 4.0f) / 16.0f) * 16.0f, ys = std::max(32.0f, std::ceil((yMax + 8.0f - y0) / 16.0f) * 16.0f);
-  st.px.assign(N * 4, 0);
-  for (size_t k = 0; k < N; ++k) {
-    float l = st.light[k];
-    float gy = l > 0 ? st.wy[k] / l : st.prov[k];
-    if (gy < -1e29f) continue;
-    float lim = l / (1.0f + 0.4f * l);
-    uint8_t* p = &st.px[k * 4];
-    float wf = l > 0 ? st.warm[k] / l : 0;  // headlights (1, 0.93, 0.8), stand lamps (1, 0.74, 0.45)
-    p[0] = uint8_t(std::lround(255.0f * lim * (0.8f - 0.35f * wf))), p[1] = uint8_t(std::lround(255.0f * lim * (0.93f - 0.19f * wf)));
-    p[2] = uint8_t(std::lround(255.0f * lim));
-    p[3] = uint8_t(std::lround(255.0f * std::clamp((gy - y0) / ys, 0.0f, 1.0f)));
+  if (splats.empty() || st.failed) return;
+  if (!st.program) {
+    std::string err;
+    st.program = d.r3d().buildProgram(kSplatVs, kSplatFs, &err);
+    if (!st.program || !d.r3d().makeTarget(st.target, kCarMap, kCarMap, TargetFormat::Rgba16f, false, true)) {
+      LOG_WARN("night lights: the vehicles' light map pass is not available (%s)", err.c_str());
+      st.failed = true;
+      return;
+    }
   }
-  if (!st.texture) st.texture = d.r2d().createTextureBGRA(st.px.data(), kCarMap, kCarMap);
-  else d.r2d().updateTextureBGRA(st.texture, st.px.data(), kCarMap, kCarMap);
-  v.carMap = st.texture;
+  // a height reference that moves in whole 16 m steps (B holds light × height above it)
+  float yMin = 1e30f;
+  for (const Splat& sp : splats) yMin = std::min(yMin, sp.ground);
+  float y0 = std::floor((yMin - 4.0f) / 16.0f) * 16.0f;
+  MeshData m;
+  auto vert = [&](const Splat& sp, float along, float across) {
+    Vec3 p = sp.o + sp.f * along + sp.s * across;
+    m.positions.insert(m.positions.end(), {(p.x - ox) / kCarMapSize * 2 - 1, (p.z - oz) / kCarMapSize * 2 - 1, along});
+    m.normals.insert(m.normals.end(), {across, sp.len, sp.w0});
+    m.uv0.insert(m.uv0.end(), {sp.w1, sp.gain});
+    m.uv1.insert(m.uv1.end(), {sp.ground - y0, sp.warm});
+  };
+  for (const Splat& sp : splats) {
+    uint32_t base = uint32_t(m.vertexCount());
+    if (sp.len > 0) {  // the beam's trapezoid, half a metre larger all round (the profile ends inside it)
+      vert(sp, -0.5f, -(sp.w0 + 0.5f));
+      vert(sp, -0.5f, sp.w0 + 0.5f);
+      vert(sp, sp.len + 0.5f, sp.w1 + 0.5f);
+      vert(sp, sp.len + 0.5f, -(sp.w1 + 0.5f));
+    } else {
+      float r = sp.w0 + 0.5f;
+      vert(sp, -r, -r), vert(sp, -r, r), vert(sp, r, r), vert(sp, r, -r);
+    }
+    m.indices.insert(m.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+  }
+  m.submeshes.push_back({0, uint32_t(m.vertexCount()), 0, uint32_t(m.indices.size()), 0});
+  if (st.mesh.vao) d.r3d().destroy(st.mesh);
+  st.mesh = d.r3d().upload(m);
+  d.r2d().flushAll();
+  d.r3d().splat(st.target, st.program, st.mesh, d.window().width(), d.window().height());
+  v.carMap = st.target.color;
   v.carMapXf[0] = ox, v.carMapXf[1] = oz, v.carMapXf[2] = v.carMapXf[3] = 1.0f / kCarMapSize;
-  v.carLight[0] = y0, v.carLight[1] = ys, v.carLight[2] = kCarGain;
+  v.carLight[0] = y0, v.carLight[1] = 0, v.carLight[2] = kCarGain;
 }
 
 }  // namespace

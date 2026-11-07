@@ -151,14 +151,18 @@ headlights, its trailing end the tail lights (reversed units use their other end
   material), standing figures between the seats (head at 84-94 %) once the vehicle is over 50-95 % full. Each figure
   has a random rank and shows when the occupancy (line vehicle passengers ÷ capacity) passes it; the occupancy is
   eased per vehicle (0.8/s), so figures fade in and out as people board and leave. Darkens the cabin light by 85 %.
-* **Beam on the road** (headlight light map): each frame the beams are splatted on the CPU into a 1024² map (0.625 m
-  texels) around the point the camera looks at, snapped to whole texels; the default shader samples it like the lamp
+* **Beam on the road** (headlight light map): each frame the beams are drawn on the GPU into a 2048² RGBA16F target
+  (960 m, 0.47 m texels) around the point the camera looks at, snapped to whole texels: one quad per beam (and per
+  market-stand lamp) whose fragment shader evaluates the beam profile from metric local coordinates, so the edges are
+  exact at any angle (a CPU raster at 0.94 m texels left them stepped, and the steps crawled when cars turned).
+  Additive; R = light, G = the stands' share (warm tint), B = light × (ground height − y0), so bilinear filtering
+  keeps the height exact (g = y0 + B/R). The default shader samples it like the lamp
   map (unit 18, `regs_CarMap`) and lights whatever is there between 1.5 m below and ~3 m above the vehicle's ground:
   road, kerbs, cars and walls ahead, with soft edges. (A flat additive quad was tried first; kerbs and raised
   surfaces cut it with a hard line.) Low beam 15 m (buses 17 m), cone 3.4 m half width. A beam stops at the first building
   cell on its centre line (not the walls beside the road), its reach eased per vehicle so it never jumps; beams fade
-  out between 520 and 650 m from the eye and within 90 m of the map window's edge (960 m across, 0.94 m texels), and
-  the height encoding moves in whole 16 m steps, so nothing clips or jitters from frame to frame (measured with
+  out between 520 and 650 m from the eye and within 90 m of the map window's edge, and
+  the height reference y0 moves in whole 16 m steps, so nothing clips or jitters from frame to frame (measured with
   `fl-*.png`, every 2nd frame: the only one-frame changes are the game's ticker, route arrows and walkers).
 * **High beam (Fernlicht)**, road vehicles only: on when no building cell (±6 m) and no lamp-lit street is in the 56 m
   ahead and no other vehicle (front or back point, either direction) is in a cone 90 m ahead; the beam then reaches
