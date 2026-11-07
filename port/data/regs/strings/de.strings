@@ -56,3 +56,8 @@ $regs_category_vehicles = "Fahrzeuge";
 // Kartengrößen über XL hinaus (Port): Kartenattribute und Sandbox-Seite
 $regs_mapSize_extra = ["XXL (1536x1536)", "XXXL (2048x2048)", "Winzig (256x256)", "Mikroskopisch (128x128)"];
 $regs_mapSize_enlarge_hint = "Karte vergrößern: die bisherige Karte bleibt in der Mitte, der neue Rand ist flaches Gras.";
+// Autosave im Karteneditor (extend/metro/scripts/editor.script)
+$regs_autosave_option = "Automatisch speichern (alle 5 Minuten, 5 Versionen)";
+$regs_autosave_status = "Karte automatisch gesichert";
+$regs_autosave_note = "Autosave %0 %1";
+$regs_autosave_unnamed = "Unbenannt";

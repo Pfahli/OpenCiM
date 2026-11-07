@@ -116,3 +116,22 @@ foreach ([128, 256, 512, 768, 1024, 1280, 1536, 2048]) {
   $regsY += 18;
 }
 MAIN.$ui.resetScrollArea($sizeBox);
+
+// autosave in the editor (editor.script extension): the setting, saved at once
+$regsAutosaveOn = MAIN.$settings.$regsEditorAutosave : true;
+$regsAutosaveButton = MAIN.$ui.createChoiceButton($box.$content, "self", 560, 421, 16, 16, "", macro :: regsSetAutosave(!$regsAutosaveOn), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+with ($regsAutosaveLabel = new_control($box.$content)) {
+  .setRect(582, 419, 368, 20);
+  MAIN.$ui.setTextFont(current);
+  .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+  .text = $regsStrings.$regs_autosave_option;
+  .visible = true;
+  .canActivate = false;
+}
+function regsSetAutosave($on) {
+  $regsAutosaveOn = $on;
+  MAIN.$settings.$regsEditorAutosave = $on;
+  MAIN.$settings.exportVariables(["regsEditorAutosave"]);
+  MAIN.$ui.selectChoiceButton($on ? $regsAutosaveButton : null, $regsAutosaveButton);
+}
+MAIN.$ui.selectChoiceButton($regsAutosaveOn ? $regsAutosaveButton : null, $regsAutosaveButton);

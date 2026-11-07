@@ -55,6 +55,17 @@ function showDialog($text, $inputText = false, $default = "", $items = null) {
     foreach (regsOriginalMaps()) {
       $items["~"+current+"|regs-cim:"+current] = changeFileExt(current, "")+" "+$regsStrings.$regs_fromOriginal_note;
     }
+    // the editor's autosaves (editor.script extension), after the maps, greyed, with their time
+    foreach (list_files("userdata/maps/autosave", ".grid")) {
+      $regsLabel = "";
+      $regsScenario = "userdata/maps/autosave/"+changeFileExt(current, ".scenario");
+      if (file_exists($regsScenario)) {
+        $regsS = load "/"+$regsScenario;
+        $regsLabel = $regsS.$regsAutosaveLabel : "";
+        delete $regsS;
+      }
+      $items["~~"+current+"|autosave/"+current] = formatText(escapePattern(changeFileExt(current, "")) + " {0:" + escapePattern($regsLabel) + "}", [0x80FFFFFF]);
+    }
   }
   regsBaseShowDialog($text, $inputText, $default, $items);
 }

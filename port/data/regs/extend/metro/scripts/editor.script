@@ -1,0 +1,86 @@
+// ReGS extension of the map editor (metro/scripts/editor.script, used as installed; see VM::extendSource):
+// autosave (owner's request 2026-11-07). While the setting $regsEditorAutosave is on (default; the map attributes
+// have the checkbox), the editor saves the map every 5 minutes of editing into userdata/maps/autosave/ as
+// "<map> (Autosave n)", n = 1..5 in rotation (the oldest is replaced), so a crash costs at most 5 minutes and the
+// manual saves in userdata/maps are never touched. The files are those of a manual save (.grid, .timeline,
+// .scenario, .dds); the editor's "load map" list shows them with their time (mainmenu.script extension).
+
+//@base
+
+$regsAutosaveSlots = 5;
+$regsAutosaveSeconds = MAIN.$settings.$regsEditorAutosaveSeconds : 300.0;   // tests set it shorter
+
+function regsTwo($n) {
+  if ($n < 10) return "0"+$n;
+  return ""+$n;
+}
+
+// the slot to write: a free one, else the one saved longest ago
+function regsAutosaveSlot($base) {
+  $best = 1;
+  $bestStamp = -1;
+  for ($i = 1; $i <= $regsAutosaveSlots; ++$i) {
+    $file = $base+" (Autosave "+$i+").scenario";
+    if (!file_exists($file)) return $i;
+    $s = load "/"+$file;
+    $stamp = $s.$regsAutosaveStamp : 0;
+    delete $s;
+    if ($bestStamp < 0 || $stamp < $bestStamp) {
+      $best = $i;
+      $bestStamp = $stamp;
+    }
+  }
+  return $best;
+}
+
+function regsAutosave() {
+  $file = "regs/strings/"+MAIN.$language+".strings";
+  if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+  $rs = load "/"+$file;
+  $name = changeFileExt(extractFileName(MAIN.$gridFileName), "");
+  $cut = findstr($name, " (Autosave ");   // an opened autosave saves under its map's name
+  if ($cut > 0) $name = substr($name, 0, $cut);
+  if ($name == "") $name = $rs.$regs_autosave_unnamed;
+  mkdir("userdata/maps/autosave");
+  $base = "userdata/maps/autosave/"+$name;
+  $slot = regsAutosaveSlot($base);
+  $out = $base+" (Autosave "+$slot+")";
+  echo "Autosave \""+$out+"\"";
+  MAIN.$player.resetTool();   // no tool previews in the file (as saveMapData)
+  $startDate = mkdate(1,1,1920);
+  // as saveMapData without touching the editor's state: on the first day the live map holds the day's actions,
+  // later days the base grid and the timeline rebuild the map
+  if (MAIN.$mainClock.date == $startDate || !file_exists("memory/base.grid")) {
+    MAIN.$grid.saveToFile($out+".grid");
+  } else {
+    copy_file("memory/base.grid", $out+".grid");
+  }
+  $day = MAIN.$timeline.currentDay;
+  MAIN.$timeline.currentDay = 0;
+  MAIN.$timeline.saveToFile($out+".timeline");
+  MAIN.$timeline.currentDay = $day;
+  MAIN.$minimap.$texture.saveToFile($out+".dds");
+  $s = load "/metro/scenarios/location.scenario";
+  $s.$locationSetup = MAIN.$gridLocation;
+  $s.$currentDate = MAIN.$gridStartingDate;
+  $s.$cellSize = MAIN.$gridCellSize;
+  $s.$cityDescriptionShort = MAIN.$gridDescription;
+  $s.$regsPackages = MAIN.$main.regsRequiredPackages();
+  $s.$regsSelectedPackages = MAIN.$regsSelectedPackages : [];
+  $c = clock(current_time(), current_date());
+  $s.$regsAutosaveStamp = $c.date * 1440 + $c.hours * 60 + $c.minutes;
+  $s.$regsAutosaveLabel = regsTwo($c.days)+"."+regsTwo($c.months)+". "+regsTwo($c.hours)+":"+regsTwo($c.minutes);
+  delete $c;
+  $s.exportVariablesTo($out+".scenario", "locationSetup", "currentDate", "cellSize", "cityDescriptionShort", "regsPackages",
+                       "regsSelectedPackages", "regsAutosaveStamp", "regsAutosaveLabel");
+  delete $s;
+  MAIN.$ui.showStatusMessage($rs.$regs_autosave_status);
+  delete $rs;
+}
+
+$regsAutosaveThread = thread :: {
+  loop {
+    wait $regsAutosaveSeconds;
+    if (MAIN.$settings.$regsEditorAutosave : true) regsAutosave();
+  }
+};

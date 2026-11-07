@@ -56,3 +56,8 @@ $regs_category_vehicles = "Vehicles";
 // map sizes beyond XL (port): map attributes and the sandbox page
 $regs_mapSize_extra = ["XXL (1536x1536)", "XXXL (2048x2048)", "Tiny (256x256)", "Microscopic (128x128)"];
 $regs_mapSize_enlarge_hint = "Enlarge the map: the current map stays in the middle, the new border is flat grass.";
+// map editor autosave (extend/metro/scripts/editor.script)
+$regs_autosave_option = "Autosave (every 5 minutes, 5 versions)";
+$regs_autosave_status = "Map autosaved";
+$regs_autosave_note = "Autosave %0 %1";
+$regs_autosave_unnamed = "Unnamed";
