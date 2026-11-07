@@ -416,11 +416,24 @@ Wrap g_tram, g_stop;
 
 const char16_t kHover[] = u"onHoverConstruct";
 
-void wrapClear(VM& vm, ControlObj* player, GridObj* grid, Wrap& w) {
-  if (w.curve >= 0 || w.stopAnchor >= 0) {
-    for (uint32_t i : toolState(player).newItems) grid->data->curveAnchors.erase(i);
-    toolClearPreview(vm, player, grid);
+// the tool's whole preview (the game tool's own too, when the cursor comes onto a curve from the road or the grass)
+// with its highlighted cells, which toolClearPreview leaves behind (owner's report 2026-11-07: a green marker beside
+// the street that stayed after laying tracks on a curve)
+void clearToolPreview(VM& vm, ControlObj* player, GridObj* grid) {
+  GridData& g = *grid->data;
+  for (uint32_t i : toolState(player).newItems) {
+    g.curveAnchors.erase(i);
+    if (i >= g.items.size() || g.items[i].removed) continue;
+    int x, z, w, l;
+    gridItemRect(vm, grid, i, x, z, w, l);
+    gridUnselectArea(vm, grid, x, z, w, l);
   }
+  for (uint32_t r : toolState(player).replaced) gridSetSelected(vm, grid, r, false, false);
+  toolClearPreview(vm, player, grid);
+}
+
+void wrapClear(VM& vm, ControlObj* player, GridObj* grid, Wrap& w) {
+  clearToolPreview(vm, player, grid);
   if (w.stopAnchor >= 0) grid->data->curveAnchors.erase(uint32_t(w.stopAnchor));
   w.curve = -1;
   w.stopAnchor = -1;
@@ -592,7 +605,7 @@ bool wrapFinish(VM& vm, ControlObj* player, GridObj* grid, Wrap& w) {
   bool go = true;
   if (w.mode == 0x11) {
     for (uint32_t i : toolState(player).newItems) grid->data->curveAnchors.erase(i);
-    toolClearPreview(vm, player, grid);  // the price carriers go
+    clearToolPreview(vm, player, grid);  // the price carriers go
   } else {
     int mounted = 0;
     toolCommit(vm, player, grid, [&](uint32_t, uint32_t) { ++mounted; });  // the anchor stop item, named by the script
