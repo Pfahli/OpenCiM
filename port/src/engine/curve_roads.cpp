@@ -300,6 +300,18 @@ float curveLength(const CurveRoad& c) { return denseOf(c).back().s; }
 
 float curveTramOffset(int kind) { return kind == 1 ? 4.5f : 1.5f; }
 
+bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, Vec3& p) {
+  Vec3 r = rightOf(a.out);
+  if (a.flow == 0) {
+    float off = curveTramOffset(j.kind);
+    p = a.mouth + r * (incoming ? -off : off);
+    return true;
+  }
+  if ((a.flow == 1) != incoming) return false;
+  p = a.single ? a.mouth : a.mouth + r * (incoming ? -1.5f : 1.5f);
+  return true;
+}
+
 const CurveLanes& curveLanes(int kind) {
   static const CurveLanes k[kCurveKinds] = {
       {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0}};
@@ -381,9 +393,14 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
     // the curve itself, not its turning circles' reach (a grass track's own rails run on from an end on its block)
     b.from = caps.free0 ? kCurveCapReach : keep0;
     b.to = caps.free1 ? d.back().s - kCurveCapReach : keep1;
-    b.band(-2.2f, -0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
-    b.band(-0.8f, 0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.0625f);
-    b.band(0.8f, 2.2f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.1875f);
+    if (c.ends & 0x20) {  // one-way (a roundabout): one track, in the outer lane or (one lane) on the centre line
+      if (c.ends & 0x40) b.band(-0.7f, 0.7f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
+      else b.band(0.8f, 2.2f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.1875f);
+    } else {
+      b.band(-2.2f, -0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
+      b.band(-0.8f, 0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.0625f);
+      b.band(0.8f, 2.2f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.1875f);
+    }
     b.end();
   }
 }
@@ -1107,11 +1124,11 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
     tr.material = matTram;
     tr.firstVertex = uint32_t(out.vertexCount());
     tr.firstIndex = uint32_t(out.indices.size());
-    const float off = curveTramOffset(j.kind), ry = j.centre.y - 0.18f;
+    const float ry = j.centre.y - 0.18f;
     for (const CurveArm& A : j.arms)
       for (const CurveArm& B : j.arms) {
-        if (&A == &B || !A.tram || !B.tram) continue;
-        Vec3 p0 = A.mouth - rightOf(A.out) * off, p3 = B.mouth + rightOf(B.out) * off;
+        Vec3 p0, p3;
+        if (&A == &B || !A.tram || !B.tram || !junctionTramEnd(j, A, true, p0) || !junctionTramEnd(j, B, false, p3)) continue;
         Vec3 f0 = A.out * -1.0f, f1 = B.out, e = p3 - p0;
         float L = std::sqrt(dot(e, e));
         Vec3 p1 = p0 + f0 * (L / 3), p2 = p3 - f1 * (L / 3);

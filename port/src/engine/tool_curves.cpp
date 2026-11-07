@@ -723,6 +723,29 @@ void right(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
 // go the game's way, and the click adds the curve's stop record with it. Tram stops need tracks on the curve; stops
 // keep 7 units from the curve's ends and 14 from another stop on the same side.
 
+// the other one-way curves of k's ring (a roundabout, cut by its junctions): followed end to start both ways
+std::vector<int> ringOf(const GridData& g, int k) {
+  std::vector<int> out;
+  const CurveRoad& c0 = g.curves[size_t(k)];
+  auto near = [](float x0, float z0, float x1, float z1) { return std::fabs(x0 - x1) < 0.2f && std::fabs(z0 - z1) < 0.2f; };
+  for (int dir = 0; dir < 2; ++dir) {  // 0: onward from the end, 1: back from the start
+    int at = k;
+    for (size_t guard = 0; guard < g.curves.size(); ++guard) {
+      const CurveRoad& a = g.curves[size_t(at)];
+      int next = -1;
+      for (size_t i = 0; i < g.curves.size() && next < 0; ++i) {
+        const CurveRoad& b = g.curves[i];
+        if (int(i) == at || !(b.ends & 0x20) || b.kind != c0.kind) continue;
+        if (dir == 0 ? near(a.x1, a.z1, b.x0, b.z0) : near(a.x0, a.z0, b.x1, b.z1)) next = int(i);
+      }
+      if (next < 0 || next == k || std::find(out.begin(), out.end(), next) != out.end()) break;
+      out.push_back(next);
+      at = next;
+    }
+  }
+  return out;
+}
+
 struct Wrap {
   ToolMode orig;
   int mode = 0;
@@ -733,6 +756,7 @@ struct Wrap {
   int stopAnchor = -1;  // the stop tool's preview anchor
   float lastS = -1;     // the stop preview's place (rebuilt only when it moves)
   int lastSide = 0;
+  std::vector<int> ring;  // tram tracks on a roundabout: the ring's other curves (they get tracks with it)
 };
 Wrap g_tram, g_stop;
 
@@ -829,9 +853,14 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
       const float cs = g.cellSize;
       if (w.mode == 0x11) {
         const CurveProfile& pf = curveProfile(c.kind);
-        w.ok = !(c.ends & 4) && pf.tram[0];  // footpaths take none
+        // a roundabout's ring takes tracks all round (trams turn on it): priced for the whole ring
+        w.ring = (c.ends & 0x20) ? ringOf(g, k) : std::vector<int>();
+        bool missing = !(c.ends & 4);
+        float total = curveLength(c);
+        for (int r : w.ring) missing = missing || !(g.curves[size_t(r)].ends & 4), total += curveLength(g.curves[size_t(r)]);
+        w.ok = missing && pf.tram[0];  // footpaths take none
         w.after.ends |= 4;
-        int n = std::max(1, int(std::ceil(curveLength(c) / pf.piece)));
+        int n = std::max(1, int(std::ceil(total / pf.piece)));
         int cx = int(c.x0 / cs + float(g.width) * 0.5f), cz = int(c.z0 / cs + float(g.length) * 0.5f);
         for (int i = 0; i < n && w.ok; ++i)
           invisiblePreview(vm, player, grid, pf.tram, cx, int(c.y0 * 256.0f / cs), cz, 0, false);
@@ -860,6 +889,12 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
                    int(st.design), s, L, int(st.side), w.stopAnchor, stopTemplateName(st).c_str(), w.ok ? "fits" : "refused");
       }
       showAfter(grid, w.after, !w.ok);
+      if (w.mode == 0x11)
+        for (int r : w.ring) {
+          CurveRoad more = g.curves[size_t(r)];
+          more.ends |= 4;
+          grid->curvePreviewMore.push_back(more);
+        }
       vm.fireEvent(player, kHover, {});
       return;
     }
@@ -935,10 +970,20 @@ bool wrapFinish(VM& vm, ControlObj* player, GridObj* grid, Wrap& w) {
     go = mounted > 0;
   }
   if (go) {
-    applyCurveEdit(vm, grid, before, false);
-    timelineRecordCurve(vm, tl, before, false);
-    applyCurveEdit(vm, grid, after, true);
-    timelineRecordCurve(vm, tl, after, true);
+    std::vector<CurveRoad> befores{before}, afters{after};
+    if (w.mode == 0x11)
+      for (int r : w.ring)
+        if (size_t(r) < grid->data->curves.size()) {
+          befores.push_back(grid->data->curves[size_t(r)]);
+          afters.push_back(befores.back());
+          afters.back().ends |= 4;
+        }
+    for (size_t i = 0; i < befores.size(); ++i) {
+      applyCurveEdit(vm, grid, befores[i], false);
+      timelineRecordCurve(vm, tl, befores[i], false);
+      applyCurveEdit(vm, grid, afters[i], true);
+      timelineRecordCurve(vm, tl, afters[i], true);
+    }
     if (w.mode == 0x11) openTramJoins(vm, player, grid, tl);  // the blocks' tram dead ends at its ends
   }
   if (tl) timelineEndGroup(vm, tl);

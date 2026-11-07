@@ -264,7 +264,22 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
       float best = 0;
       std::vector<int> path;
       float cost = 0;
-      for (int k = 0; k < 24; ++k) {  // the farthest of a few reachable ones
+      // REGS_TEST_CURVE_TURN=1: back the way it came instead, to the lane beside the start running the other way (trams
+      // turning on a roundabout)
+      const bool turn = std::getenv("REGS_TEST_CURVE_TURN") != nullptr;
+      if (turn) {
+        const LaneNode& f = s.graph.nodes[size_t(from)];
+        for (int e : lanes) {
+          const LaneNode& n = s.graph.nodes[size_t(e)];
+          Vec3 d = n.p1 - f.p0;
+          std::vector<int> p;
+          if (d.x * d.x + d.z * d.z < 16.0f && dot(n.f1, f.f0) < -0.5f && s.graph.search(from, e, false, p, cost) && !p.empty()) {
+            to = e, path = p, best = 1.0f;
+            break;
+          }
+        }
+      }
+      for (int k = 0; k < 24 && !turn; ++k) {  // the farthest of a few reachable ones
         int e = lanes[plowRandom() % lanes.size()];
         Vec3 d = s.graph.nodes[size_t(e)].p1 - s.graph.nodes[size_t(from)].p0;
         std::vector<int> p;

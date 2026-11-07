@@ -115,6 +115,9 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& fill
 // the tram lanes' offset right of the centre line on a curve of the kind (the outer lanes of large roads, the median of
 // avenues)
 float curveTramOffset(int kind);
+// where a tram lane meets a junction at an arm's mouth, toward the centre (incoming) or away from it; false when the
+// arm has none that way (a one-way arm: only its own way, in the outer lane or on the centre line)
+bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, render::Vec3& p);
 // levels the unlocked terrain corners under the junctions at a curve's ends; the cells their outlines cover
 void levelTerrainUnderJunctions(GridObj* grid, const CurveRoad& c);
 void junctionCells(const GridData& g, const CurveJunction& j, int& x0, int& z0, int& x1, int& z1);

@@ -839,9 +839,10 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     // one-way (ends bit 5, roundabouts): both lanes from the start to the end, or (bit 6) a single lane on the centre line
     const bool oneWay = (c.ends & 0x20) != 0, single = oneWay && (c.ends & 0x40);
     for (int medium = 0; medium < ((c.ends & 4) ? 2 : 1); ++medium) {  // 0 road, 1 tram
-      for (int side = 0; side < (single && !medium ? 1 : 2); ++side) {  // 0: start → end on the right, 1: end → start
+      // one-way trams: a single track with the traffic, in the outer lane (two lanes) or on the centre line (one lane)
+      for (int side = 0; side < ((single && !medium) || (oneWay && medium) ? 1 : 2); ++side) {  // 0: start → end on the right, 1: end → start
         const bool back = side && !(oneWay && !medium);  // a one-way road's second lane runs forward on the left
-        const float across = single && !medium ? 0.0f : side ? -1.5f : 1.5f;
+        const float across = single ? 0.0f : side ? -1.5f : 1.5f;
         for (size_t k = 0; k + 1 < s.size(); ++k) {
           const CurveSample &a = back ? s[s.size() - 1 - k] : s[k], &b = back ? s[s.size() - 2 - k] : s[k + 1];
           float sign = back ? -1.0f : 1.0f;
@@ -898,13 +899,13 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
           n.f1 = B.out;
           add(n);
         }
-        if (A.tram && B.tram) {  // trams between two tracked arms (at the item height, as on the curves)
-          const float off = curveTramOffset(j.kind);
+        Vec3 tin, tout;  // trams between two tracked arms (at the item height, as on the curves), one-way arms their way
+        if (A.tram && B.tram && junctionTramEnd(j, A, true, tin) && junctionTramEnd(j, B, false, tout)) {
           LaneNode n;
           n.flags = 0x800u | kPathIntersection;
           n.item = -1;
-          n.p0 = A.mouth - ra * off;
-          n.p1 = B.mouth + rb * off;
+          n.p0 = tin;
+          n.p1 = tout;
           n.f0 = A.out * -1.0f;
           n.f1 = B.out;
           add(n);

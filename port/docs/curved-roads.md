@@ -133,3 +133,14 @@ Checked: one- and two-lane roundabouts with three roads each, all junction lanes
 with one), cars circulating counter-clockwise through them (REGS_TEST_CURVE_CARS). Not done: roundabouts of large roads
 or avenues (the modes always build small-road rings), yielding to traffic on the ring beyond the simulation's own
 crossing rules.
+
+### Trams on roundabouts
+
+The tram track tool on any piece of a roundabout lays tracks on the whole ring (priced for its length, the preview
+shows all of it). On a one-way curve the track runs with the traffic only: in the outer lane of a two-lane ring, on the
+centre line of a one-lane ring. Junction tram lanes keep to one-way arms (`junctionTramEnd`), so a tram enters from a
+tracked road, goes round, and leaves on any tracked road, the one it came from too: trams turn around on the ring.
+
+Checked: a two-lane ring with tracks and two tracked roads, all tram turn lanes joined; trams circulating
+counter-clockwise; with `REGS_TEST_CURVE_TURN=1` (test trams sent back the way they came) every trip went in, round
+past the other junctions and out on the same road. Not checked: a real tram line using the ring.
