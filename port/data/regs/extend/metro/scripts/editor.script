@@ -81,7 +81,8 @@ function regsAutosave() {
 $regsAutosaveThread = thread :: {
   loop {
     wait $regsAutosaveSeconds;
-    if (MAIN.$settings.$regsEditorAutosave : true) regsAutosave();
+    // not while the OpenStreetMap import builds the new map
+    if ((MAIN.$settings.$regsEditorAutosave : true) && !(MAIN.$regsOsmBusy : false)) regsAutosave();
   }
 };
 
@@ -287,3 +288,15 @@ foreach ([["/metro/ui/menus/save.dds", regsSaveTemplateTool, $regsRs.$regs_templ
   MAIN.$ui.setTooltip($regsB, current[2], 0, 1);
 }
 delete $regsRs;
+
+// OpenStreetMap import (port/src/engine/osm.cpp, regs/ui/osmwindow.script): a new map whose dialog chose an area
+// (MAIN.$regsOsmPending) gets it built once the editor stands
+if (MAIN.$regsOsmPending : false) {
+  thread :: {
+    skip_frame;
+    skip_frame;
+    $regsOsm = load "/regs/ui/osmwindow.script";
+    $regsOsm.runImport();
+    delete $regsOsm;
+  };
+}

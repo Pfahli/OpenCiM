@@ -229,6 +229,20 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   their own file format .cimtpl (GS10 package with template.grid, template.dds, template.info listing the DLCs of its
   objects) with export (Explorer) and import (drop into the folder), the missing-DLC check before placing, and the
   DLCs a template needs loaded when placing it. Still no rotation.
+- [~] OpenStreetMap import for a new map (owner's request 2026-11-07; engine/osm.cpp, regs/ui/osmwindow.script): the
+  new-map dialog has "Aus OpenStreetMap …" (a window with Esri satellite / OSM map tiles, Nominatim search, start
+  view at the chosen location's city, the area as a rectangle of the map size × a scale 1-15, options terrain,
+  water, trees, streets, buildings, satellite picture); the import runs when the new map stands, with a progress
+  window, as one timeline group (one undo). Done: downloads with disk cache (tiles, Overpass answers for a week),
+  terrain from AWS Terrarium heights, sea (coastline flood), lakes and rivers, trees (woods, parks, tree rows, single
+  trees), road kinds from the tags (express, avenue for tree-lined or divided roads with a tree row, large for
+  multi-lane/12 m+/primary/secondary, small, alleys for pedestrian streets; divided roads merged to one), the
+  street network built at once on the block grid (shared nodes, map-edge pieces, colliding blocks removed,
+  floating parts dropped), the ground levelled under each street network, buildings fitted to footprints by
+  category. Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap);
+  bridges (the bridge tool is not ported); ramps instead of levelling in hilly places; streets with gaps and stair
+  steps where OSM geometry is dense; buildings aligned to the streets and blocks (they look scattered); tiny water
+  areas (fountains) left out.
 - [ ] Open: bridges, tunnels, ramps and map-edge road pieces; the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 

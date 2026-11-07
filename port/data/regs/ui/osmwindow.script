@@ -1,0 +1,446 @@
+// OpenCiM OpenStreetMap import (owner's request 2026-11-07): a window in the game's style with a satellite view (Esri
+// World Imagery) or the OpenStreetMap map, a place search, the area to import as a rectangle the size of the map
+// times a scale factor and the import's options. It belongs to a new map (owner's decision 2026-11-07: the import
+// happens when a map is created, not on an open map): the new-map dialog (ui/menus/editor.script extension) calls
+// choose() with the chosen map size; when the player takes an area, MAIN.$regsOsmPending is set, and the editor
+// (scripts/editor.script extension) calls runImport() once the new map stands, which downloads and builds with a
+// progress window. The engine side is port/src/engine/osm.cpp (natives regsOsm*, gsGrid.regsOsmApply).
+
+$desktop = MAIN.$desktop;
+$strings = MAIN.$strings;
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $rs = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $rs = load "/regs/strings/en_US.strings";
+}
+$result = 0;
+$busy = false;          // importing: the controls rest
+$dirty = true;          // the view must be drawn again
+$tilesSeen = -1;
+$loading = false;
+$dragArea = false;
+$searching = false;
+$cellsW = 256;          // the map's size in cells (set by the caller)
+$cellsL = 256;
+$scales = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0];
+// the options stay for the session
+if (!(defined MAIN.$regsOsmOptions)) {
+  MAIN.$regsOsmOptions = map ["terrain", true, "water", true, "trees", true, "streets", true, "buildings", true,
+                              "satellite", true, "scale", 0];
+}
+$opt = MAIN.$regsOsmOptions;
+// controls (declared here: a variable first set inside a function would be local to it)
+$box = null;
+$modal = null;
+$view = null;
+$texture = null;
+$searchInput = null;
+$searchHint = null;
+$searchButton = null;
+$results = null;
+$satButton = null;
+$mapButton = null;
+$areaLabel = null;
+$scaleLabel = null;
+$statusLabel = null;
+$importButton = null;
+$cancelButton = null;
+$centerButton = null;
+$checks = map [];
+$hits = [];
+
+function fmt($v, $digits) {
+  $m = 1.0;
+  for ($i = 0; $i < $digits; ++$i) $m = $m * 10.0;
+  $n = int($v * $m + 0.5);
+  $whole = $n / int($m);
+  $frac = $n - $whole * int($m);
+  if ($digits == 0) return ""+$whole;
+  $f = ""+$frac;
+  while (#$f < $digits) $f = "0"+$f;
+  return (""+$whole)+","+$f;
+}
+
+function scaleValue() {
+  return $scales[$opt["scale"]];
+}
+
+function updateArea() {
+  regsOsmAreaSize($cellsW, $cellsL, scaleValue());
+  $s = scaleValue();
+  $scaleLabel.text = expandPattern($rs.$regs_osm_scale, $s == float(int($s)) ? ""+int($s) : fmt($s, 1));
+  $a = regsOsmArea();
+  if ($a == null) {
+    $areaLabel.text = $rs.$regs_osm_no_area;
+  } else {
+    $areaLabel.text = expandPattern($rs.$regs_osm_area, fmt($a[2], 2), fmt($a[3], 2), $cellsW, $cellsL);
+  }
+  enable($importButton, $a != null && !$busy && anyOption());
+  $dirty = true;
+}
+
+function anyOption() {
+  return $opt["terrain"] || $opt["water"] || $opt["trees"] || $opt["streets"] || $opt["buildings"] || $opt["satellite"];
+}
+
+function enable($button, $on) {
+  $button.enabled = $on;
+  $button.visibility = $on ? 1.0 : 0.3;
+}
+
+function setLayer($n) {
+  regsOsmLayer($n);
+  MAIN.$ui.selectChoiceButton($n == 1 ? $satButton : $mapButton, "layer");
+  $dirty = true;
+}
+
+function changeScale($d) {
+  if ($busy) return;
+  $opt["scale"] = max(0, min(#$scales - 1, $opt["scale"] + $d));
+  updateArea();
+}
+
+function check($key) {
+  if ($busy) return;
+  $opt[$key] = !$opt[$key];
+  showCheck($key);
+  updateArea();
+}
+
+function showCheck($key) {
+  MAIN.$ui.selectChoiceButton($opt[$key] ? $checks[$key] : null, $checks[$key]);
+}
+
+function search() {
+  if ($busy || $searchInput.text == "") return;
+  regsOsmSearch($searchInput.text, MAIN.$language);
+  $searching = true;
+  $statusLabel.text = $rs.$regs_osm_searching;
+  $results.visible = false;
+}
+
+function showResults() {
+  $state = regsOsmSearchState();
+  if ($state == 1) return;
+  $searching = false;
+  $statusLabel.text = "";
+  $r = regsOsmSearchResult();
+  if ($state == 3) {
+    $statusLabel.text = $rs.$regs_osm_search_failed;
+    return;
+  }
+  $hits = $r;
+  $results.clear();
+  if (#$hits == 0) {
+    $statusLabel.text = $rs.$regs_osm_search_none;
+    return;
+  }
+  if (#$hits == 1) {
+    pick(0);
+    return;
+  }
+  for ($i = 0; $i < #$hits; ++$i) {
+    with ($b = MAIN.$ui.createButton($results, 0, $i * 24, $results.width, 24, $hits[$i][0], macro($i) :: pick($0))) {
+      .background = 0xE0202020;
+      .hotBackground = 0xE0505050;
+      .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+      .setMargins(8, 0, 4, 0);
+    }
+    MAIN.$ui.setTextFont($b);
+  }
+  $results.height = #$hits * 24;
+  $results.visible = true;
+}
+
+function pick($i) {
+  $results.visible = false;
+  regsOsmGoto($hits[$i][1], $hits[$i][2], $hits[$i][3]);
+  if (regsOsmArea() == null) regsOsmSetArea($view.width * 0.5, $view.height * 0.5);
+  updateArea();
+}
+
+function centerArea() {
+  if ($busy) return;
+  regsOsmSetArea($view.width * 0.5, $view.height * 0.5);
+  updateArea();
+}
+
+function flags() {
+  $f = 0;
+  if ($opt["terrain"]) $f = $f + 1;
+  if ($opt["water"]) $f = $f + 2;
+  if ($opt["trees"]) $f = $f + 4;
+  if ($opt["streets"]) $f = $f + 8;
+  if ($opt["buildings"]) $f = $f + 16;
+  if ($opt["satellite"]) $f = $f + 32;
+  return $f;
+}
+
+// choose(): the area and the options are taken for the new map
+function take() {
+  if (regsOsmArea() == null || !anyOption()) return;
+  MAIN.$regsOsmPending = true;
+  $result = 1;
+}
+
+function cancel() {
+  if ($box.$progressOnly : false) {
+    $s = regsOsmImportStatus();
+    if ($s[0] == 1) regsOsmImportCancel();
+    return;
+  }
+  $s = regsOsmImportStatus();
+  if ($s[0] == 4) return;   // building on the map: it finishes
+  if ($s[0] == 1) {
+    regsOsmImportCancel();
+    return;
+  }
+  $result = -1;
+}
+
+function checkbox($y, $key, $text) {
+  $checks[$key] = MAIN.$ui.createChoiceButton($box.$content, "self", 712, $y + 2, 16, 16, "", macro($key) :: check($0), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+  with ($l = MAIN.$ui.createLabel($box.$content, 736, $y, 230, 20, $text)) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+  }
+  showCheck($key);
+}
+
+function plainButton($x, $y, $w, $text, $action) {
+  with ($b = MAIN.$ui.createButton($box.$content, $x, $y, $w, 26, $text, $action)) {
+    .background = 0x60777777;
+    .setBorder(0xFF777777, 2);
+  }
+  return $b;
+}
+
+function build() {
+  with ($modal = new_control($desktop)) {
+    .setRect(0, 0, $desktop.width, $desktop.height);
+    .background = 0xA0000000;
+    .visible = true;
+    .canActivate = false;
+  }
+  $box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - 660) * 0.5), 1000, 660, 1 | 2 | 4 | 8, $desktop);
+  $box.canActivate = true;
+  $box.active = true;
+  $box.$content.canActivate = true;
+  $box.$content.active = true;
+  event $box.keyDown::["Esc"]() cancel();
+  MAIN.$ui.createHeadingBar($box, $rs.$regs_osm_title);
+  // the search
+  with ($searchHint = new_control($box.$content)) {
+    .setRect(40, 58, 420, 28);
+    .setMargins(6, 0, 2, 0);
+    MAIN.$ui.setTextFont(current, 0x80FFFFFF);
+    .textAlign = ALIGN_LEFT | ALIGN_MIDDLE;
+    .text = $rs.$regs_osm_search_hint;
+    .visible = true;
+    .canActivate = false;
+    .clickThrough = true;
+  }
+  with ($searchInput = new_editControl($box.$content)) {
+    .setBorder(0xFF777777, 1);
+    .setRect(40, 58, 420, 28);
+    .background = 0x60000000;
+    .setMargins(6, 6, 2, 2);
+    MAIN.$ui.setTextFont(current);
+    .caretColor = 0xFFFFFFFF;
+    .maxLength = 80;
+    .text = "";
+    .visible = true;
+    event .onCheckInput::($key) {
+      .rejectInput = $key < 32;
+    }
+    event .onChange::() {
+      $searchHint.visible = .text == "";
+    }
+    event .keyDown::["Enter"]() search();
+  }
+  $searchButton = plainButton(470, 59, 100, $rs.$regs_osm_search, search);
+  $satButton = MAIN.$ui.createChoiceButton($box.$content, "layer", 580, 59, 50, 26, $rs.$regs_osm_layer_satellite, macro :: setLayer(1));
+  $mapButton = MAIN.$ui.createChoiceButton($box.$content, "layer", 632, 59, 48, 26, $rs.$regs_osm_layer_map, macro :: setLayer(0));
+  foreach ([$satButton, $mapButton]) {
+    current.background = 0x60777777;
+    current.setBorder(0xFF777777, 1);
+    current.width = max(current.width, current.getTextWidth() + 16);
+  }
+  $mapButton.left = $satButton.left + $satButton.width + 4;
+  // the map view
+  with ($frame = new_control($box.$content)) {
+    .setRect(38, 94, 644, 414);
+    .setBorder(0xFF777777, 2);
+    .visible = true;
+    .canActivate = false;
+  }
+  $texture = regsOsmTexture();
+  with ($view = new_control($box.$content)) {
+    .setRect(40, 96, 640, 410);
+    .visible = true;
+    .canActivate = false;
+    .setImage($texture);
+    event .mouseDown::["MouseLeft"]($x, $y) {
+      $results.visible = false;
+      $dragArea = regsOsmHitArea($x, $y) && !$busy;
+    }
+    event .mouseDown::["MouseRight"]($x, $y) {
+      if ($busy) return;
+      regsOsmSetArea($x, $y);
+      updateArea();
+    }
+    event .mouseDown::["MouseWheelUp"]($x, $y) {
+      regsOsmZoom(1, $x, $y);
+      $dirty = true;
+    }
+    event .mouseDown::["MouseWheelDown"]($x, $y) {
+      regsOsmZoom(-1, $x, $y);
+      $dirty = true;
+    }
+    event .onMouseDrag::($x, $y, $dx, $dy) {
+      if ($dragArea) regsOsmMoveArea($dx, $dy);
+      else regsOsmPan($dx, $dy);
+      $dirty = true;
+      if ($dragArea) updateArea();
+    }
+  }
+  with ($results = new_control($box.$content)) {
+    .setRect(40, 88, 530, 24);
+    .background = 0xF0181818;
+    .setBorder(0xFF777777, 1);
+    .visible = false;
+    .canActivate = false;
+  }
+  with ($l = MAIN.$ui.createLabel($box.$content, 40, 512, 640, 34, $rs.$regs_osm_attribution)) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    MAIN.$ui.setTextFont(current, 0x90FFFFFF);
+  }
+  with ($l = MAIN.$ui.createLabel($box.$content, 40, 548, 640, 18, $rs.$regs_osm_help)) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    MAIN.$ui.setTextFont(current, 0xB0FFFFFF);
+  }
+  // the area and the options
+  with ($areaLabel = MAIN.$ui.createLabel($box.$content, 708, 94, 260, 40, "")) {
+    .textAlign = ALIGN_TOP | ALIGN_LEFT;
+  }
+  $centerButton = plainButton(708, 138, 252, $rs.$regs_osm_center_area, centerArea);
+  plainButton(708, 178, 30, "-", macro :: changeScale(-1));
+  with ($scaleLabel = MAIN.$ui.createLabel($box.$content, 742, 178, 184, 26, "")) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  plainButton(930, 178, 30, "+", macro :: changeScale(1));
+  with ($l = MAIN.$ui.createLabel($box.$content, 708, 206, 256, 34, $rs.$regs_osm_scale_hint)) {
+    .textAlign = ALIGN_TOP | ALIGN_LEFT;
+    MAIN.$ui.setTextFont(current, 0xA0FFFFFF);
+  }
+  checkbox(252, "terrain", $rs.$regs_osm_terrain);
+  checkbox(280, "water", $rs.$regs_osm_water);
+  checkbox(308, "trees", $rs.$regs_osm_trees);
+  checkbox(336, "streets", $rs.$regs_osm_streets);
+  checkbox(364, "buildings", $rs.$regs_osm_buildings);
+  checkbox(392, "satellite", $rs.$regs_osm_satellite);
+  with ($statusLabel = MAIN.$ui.createLabel($box.$content, 170, $box.$content.height - 45, 650, 25, "")) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  with ($importButton = MAIN.$ui.createButton($box.$content, 40, $box.$content.height - 45, 112, 25, $rs.$regs_osm_take, take, "/metro/ui/ok.dds", "/metro/ui/ok.dds", "/metro/ui/ok.dds")) {
+    .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
+    .setMargins(14, 0, 0, 0);
+  }
+  MAIN.$ui.setTitleFont($importButton);
+  with ($cancelButton = MAIN.$ui.createButton($box.$content, $box.$content.width - 152, $box.$content.height - 45, 112, 25, $strings.$menu_cancel_button, cancel, "/metro/ui/cancel.dds", "/metro/ui/cancel.dds", "/metro/ui/cancel.dds")) {
+    .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
+    .setMargins(14, 0, 0, 0);
+  }
+  MAIN.$ui.setTitleFont($cancelButton);
+  setLayer(regsOsmLayer());
+  updateArea();
+}
+
+// the import for the new map with a small progress window (call in a thread, the map standing); true when done
+function runImport() {
+  if (!(MAIN.$regsOsmPending : false)) return false;
+  MAIN.$regsOsmPending = false;
+  $cellsW = MAIN.$grid.width;
+  $cellsL = MAIN.$grid.length;
+  regsOsmAreaSize($cellsW, $cellsL, scaleValue());
+  if (regsOsmArea() == null) return false;
+  with ($modal = new_control($desktop)) {
+    .setRect(0, 0, $desktop.width, $desktop.height);
+    .background = 0x80000000;
+    .visible = true;
+    .canActivate = false;
+  }
+  $box = MAIN.$ui.createHudElement(int(($desktop.width - 560) * 0.5), int(($desktop.height - 190) * 0.5), 560, 190, 1 | 2 | 4 | 8, $desktop);
+  $box.$progressOnly = true;
+  $box.canActivate = true;
+  $box.active = true;
+  event $box.keyDown::["Esc"]() cancel();
+  MAIN.$ui.createHeadingBar($box, $rs.$regs_osm_title);
+  with ($statusLabel = MAIN.$ui.createLabel($box.$content, 30, 60, $box.$content.width - 60, 30, "")) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  with ($cancelButton = MAIN.$ui.createButton($box.$content, int(($box.$content.width - 112) * 0.5), $box.$content.height - 45, 112, 25, $strings.$menu_cancel_button, cancel, "/metro/ui/cancel.dds", "/metro/ui/cancel.dds", "/metro/ui/cancel.dds")) {
+    .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
+    .setMargins(14, 0, 0, 0);
+  }
+  MAIN.$ui.setTitleFont($cancelButton);
+  $ok = false;
+  MAIN.$regsOsmBusy = true;
+  if (regsOsmImportStart($cellsW, $cellsL, flags())) {
+    loop {
+      $s = regsOsmImportStatus();
+      if ($s[0] == 0) break;   // cancelled
+      if ($s[0] == 3) {
+        MAIN.$ui.showErrorDialog(expandPattern($rs.$regs_osm_failed, $s[3]));
+        break;
+      }
+      $statusLabel.text = $rs.$regs_osm_steps[$s[1]] + " " + (""+int($s[2] * 100.0)) + " %";
+      if ($s[0] == 2 || $s[0] == 4) {
+        enable($cancelButton, false);   // building on the map: it finishes
+        $done = MAIN.$grid.regsOsmApply(MAIN.$player, MAIN.$level.$buildings, MAIN.$level.$trees, 0.04);
+        $s = regsOsmImportStatus();
+        if ($done && $s[0] == 5) {
+          $ok = true;
+          break;
+        }
+        if ($done && $s[0] == 3) {
+          MAIN.$ui.showErrorDialog(expandPattern($rs.$regs_osm_failed, $s[3]));
+          break;
+        }
+      }
+      skip_frame;
+    }
+  }
+  MAIN.$regsOsmBusy = false;
+  delete $box;
+  delete $modal;
+  return $ok;
+}
+
+// the window for the new-map dialog: the area and the options for a map of w × l cells, the view starting at the
+// game location's main city (its folder name); true when taken
+function choose($w, $l, $location = "") {
+  $cellsW = $w;
+  $cellsL = $l;
+  regsOsmStartView($location);
+  return run();
+}
+
+// shows the window and waits (call in a thread)
+function run() {
+  $desktop.resetMouseDown();
+  build();
+  $result = 0;
+  while ($result == 0) {
+    if ($searching) showResults();
+    $v = regsOsmTilesVersion();
+    if ($dirty || $v != $tilesSeen || $loading) {
+      $dirty = false;
+      $tilesSeen = $v;
+      $loading = regsOsmView($texture, int($view.width), int($view.height));
+    }
+    skip_frame;
+  }
+  delete $box;
+  delete $modal;
+  return $result == 1;
+}

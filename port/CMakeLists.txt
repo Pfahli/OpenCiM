@@ -61,6 +61,7 @@ add_library(regs_engine STATIC
   src/engine/tools.cpp
   src/engine/tool_objects.cpp
   src/engine/tool_templates.cpp
+  src/engine/osm.cpp
   src/engine/tool_terrain.cpp
   src/engine/tool_tracks.cpp
   src/engine/grid_save.cpp
@@ -117,6 +118,6 @@ add_custom_target(regs_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data)
 add_dependencies(regs_data regs)
 if(WIN32)
-  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32)
+  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32)
 endif()
 

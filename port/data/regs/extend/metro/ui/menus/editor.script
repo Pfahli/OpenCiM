@@ -135,3 +135,33 @@ function regsSetAutosave($on) {
   MAIN.$ui.selectChoiceButton($on ? $regsAutosaveButton : null, $regsAutosaveButton);
 }
 MAIN.$ui.selectChoiceButton($regsAutosaveOn ? $regsAutosaveButton : null, $regsAutosaveButton);
+
+// OpenStreetMap (owner's decision 2026-11-07: the import belongs to a new map): a button beside "Alle DLCs
+// aktivieren" opens the OSM window for the chosen size; the area and options it takes are built when the new map stands
+// (scripts/editor.script). The button shows the chosen area.
+if ($regsCurrentSize == 0) {
+  MAIN.$regsOsmPending = false;
+  with ($regsOsmButton = MAIN.$ui.createButton($box.$content, 770, 376, 180, 22, $regsStrings.$regs_osm_newmap, regsChooseOsm)) {
+    .background = 0x60777777;
+    .setBorder(0xFF777777, 2);
+  }
+  MAIN.$ui.setTooltip($regsOsmButton, $regsStrings.$regs_osm_newmap_hint, 0, -1);
+}
+function regsChooseOsm() {
+  thread :: {
+    $w = load "/regs/ui/osmwindow.script";
+    $w.choose($cellsize, $cellsize, $citylocation);
+    delete $w;
+    $a = regsOsmArea();
+    if ((MAIN.$regsOsmPending : false) && $a != null) {
+      $regsOsmButton.text = expandPattern($regsStrings.$regs_osm_chosen, regsKm($a[2]), regsKm($a[3]));
+    } else {
+      MAIN.$regsOsmPending = false;
+      $regsOsmButton.text = $regsStrings.$regs_osm_newmap;
+    }
+  };
+}
+function regsKm($v) {
+  $n = int($v * 10.0 + 0.5);
+  return (""+($n / 10))+","+($n - $n / 10 * 10);
+}
