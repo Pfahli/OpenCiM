@@ -14,6 +14,7 @@
 #include "engine/grid_render.h"
 #include "engine/gui.h"
 #include "engine/interaction.h"
+#include "engine/timeline.h"
 
 namespace regs::engine {
 
@@ -404,9 +405,17 @@ bool toolCommit(VM& vm, Object* player, GridObj* grid,
     if (k > 0 && gridItemsConflict(vm, grid, t.newItems[k - 1], t.newItems[k])) conflict = true;
   }
   std::vector<uint32_t> mounted;
+  // the editor records the change as one group (finishTool L:0x0819a3e0.c:146-296): its deletions, then the new items
+  Object* tl = conflict ? nullptr : playerTimeline(vm, player);
+  if (tl) {
+    int mode = editMode(vm, player);
+    timelineBeginGroup(vm, tl, mode == kGridModeLayTrack ? "%3" : mode == kGridModeLayBridge ? "%4" : mode == kGridModeLayTunnel ? "%5"
+                               : mode == kGridModeLayTramTrack ? "%6" : mode == kGridModeLayAlley ? "%7" : "%8");
+  }
   if (!conflict)
     for (uint32_t r : t.replaced) {
       gridSetSelected(vm, grid, r, false, false);
+      timelineRecordDelete(vm, tl, grid, r);
       gridEditRemoveItem(vm, grid, r);
     }
   grid->mountedCopies.clear();
@@ -419,6 +428,7 @@ bool toolCommit(VM& vm, Object* player, GridObj* grid,
       int m = gridMountObject(vm, grid, i);
       if (m >= 0) mounted.push_back(uint32_t(m));
       if (m >= 0 && onMounted) onMounted(i, uint32_t(m));
+      if (m >= 0) timelineRecordCreate(vm, tl, grid, uint32_t(m));
     }
   }
   for (auto i = t.newItems.rbegin(); i != t.newItems.rend(); ++i) gridEditRemoveItem(vm, grid, *i);
@@ -427,6 +437,7 @@ bool toolCommit(VM& vm, Object* player, GridObj* grid,
     for (uint32_t r : t.replaced) gridSetSelected(vm, grid, r, false, false);
   t.newItems.clear();
   t.replaced.clear();
+  if (tl) timelineEndGroup(vm, tl);
   gridEditEnd(vm, grid);
   (void)g;
   fireInstanceEvents(vm, grid, mounted);
