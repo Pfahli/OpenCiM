@@ -259,9 +259,11 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
     if (!c->visible()) continue;
     if (auto* g = dynamic_cast<GridObj*>(c)) grids.push_back(g);
     if (auto* o = dynamic_cast<ObjectObj*>(c); o && o->data && isSkinnedModel(vm, o)) {
-      // a skinned model (vehicle templates in the vehicle shop's preview scene): the skinning variant, bind pose
+      // a skinned model (vehicle templates in the vehicle shop's preview scene): the skinning variant, posed as a line
+      // vehicle with closed doors (its first animation at 0, as sim.cpp draws them); the bind pose has some trams' doors
+      // elsewhere (owner's report 2026-11-07: odd tram models in the shop)
       size_t first = items.size();
-      collectSkinned(d, vm, o, worldOf(vm, o), Pose(), items);
+      collectSkinned(d, vm, o, worldOf(vm, o), poseFirstAnimation(vm, o, 0.0f), items);
       for (size_t i = first; i < items.size(); ++i) {
         argbToFloats(o->colorizeArgb, items[i].colorize);
         items[i].surfaceClass = kSurfaceOverlay;  // scene objects (previews, markers, cursors): not a surface
