@@ -38,3 +38,18 @@ $regs_menu_info = "Inoffizielle Portierung, benötigt Cities in Motion";
 $regs_newsticker_jamMoved_text = ["Ein festsitzender Bus der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Eine festsitzende Straßenbahn der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Ein festsitzender U-Bahnzug der Linie %0 wurde zwei Stationen weiter gesetzt.", "Ein festsitzendes Wassertaxi der Linie %0 wurde zwei Anlegestellen weiter gesetzt.", "Ein festsitzender Hubschrauber der Linie %0 wurde zwei Landeplätze weiter gesetzt."];
 // Spielstände und Karten aus dem Ordner des Originals (Dokumente\Cities In Motion), hinter dem Namen in den Ladelisten
 $regs_fromOriginal_note = "(aus Cities in Motion)";
+// Spielstand-Ordner in den Speichern- und Laden-Listen (main.script-Erweiterung)
+$regs_saves_up = "eine Ebene höher";
+$regs_saves_newFolder_item = "Neuer Ordner";
+$regs_saves_newFolder_dialog = "Name des neuen Ordners:";
+// Seite „Spiel" im Einstellungsmenü (regs/ui/game.script): automatisches Speichern
+$regs_game_button = "Spiel";
+$regs_game_title = "Spiel";
+$regs_autosave_heading = "Automatisch speichern";
+$regs_autosave_interval_label = "Speichern alle";
+$regs_autosave_off_item = "Aus";
+$regs_autosave_minutes_item = "%0 Min.";
+$regs_autosave_keep_label = "Behalten";
+$regs_autosave_keep_item = "die letzten %0";
+$regs_autosave_note1 = "Die automatischen Spielstände liegen im Ordner Autosave der Spielstandliste.";
+$regs_autosave_note2 = "Gespeichert wird nur, wenn kein Bauwerkzeug und kein Dialog offen ist.";

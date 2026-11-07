@@ -45,6 +45,20 @@ in OpenCiM (same size and content hash, or an unchanged copy recorded in `OpenCi
 once, as the OpenCiM file. Disk changes by scripts (`write`, `delete_file`, `mkdir`, `fappend`, `freset`) are refused
 outside the OpenCiM folder.
 
+Saves can be sorted into folders below `saves\` (`saves\<folder>\<name>.gs`, folders inside folders too). The save
+and load dialogs list the open folder's folders first (`[ name ]`, a click opens it; `..` goes up), then its saves;
+the save dialog also offers "New folder" and saves a typed name into the open folder. The dialogs open in the folder
+of the save last loaded or saved. The original's saves are listed in `saves\` itself only. Folders are made and
+listed on disk (`regsSaveEntries`, `engine/user_folders.cpp`); the dialogs are the original's, run by the main.script
+extension (`regsRunSaveDialog`) through the main and pause menus' `showDialog`. Moving a save to another folder outside
+the game breaks it, as renaming one did in the original: its `level.scenario` names its own path.
+
+Autosave (settings menu > Game, `regs/ui/game.script`): every 5, 10 (default), 15 or 30 minutes of real time in the
+game, or off (`$regsAutosaveMinutes`), the game is saved to `saves\Autosave\Autosave <n>.gs`, replacing the oldest of
+the last 3, 5 or 10 (`$regsAutosaveKeep`). It waits while a construction tool or a dialog is open (saving resets the
+tool) and leaves the player's own save name, folder and unsaved-progress state alone. `REGS_TEST_AUTOSAVE=<seconds>`
+sets a short interval for tests.
+
 `--documents <dir>` stands in for the Documents folder (tests): the same layout lives under it, `<dir>\OpenCiM` and
 `<dir>\Cities In Motion`, so test runs never touch the real folders. Without it the real Documents folder is used.
 `--print-paths` prints the resolved folders and quits without creating or reading anything. Stand-in folders made

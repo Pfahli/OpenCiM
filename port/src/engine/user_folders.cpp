@@ -14,6 +14,7 @@
 #include "engine/user_folders.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cwctype>
 #include <map>
@@ -395,6 +396,40 @@ void registerUserFolderNatives(VM& vm) {
     if (kind == "map" && name.size() > 5 && name.compare(name.size() - 5, 5, ".grid") == 0) name.resize(name.size() - 5);
     return Value::string(utf8ToUtf16(importOriginal(v.vfs(), kind == "map" ? Kind::Map : Kind::Save, name)));
   }, 2, 2);
+  // regsSaveEntries("userdata/saves[/<folder>]"): what lies directly in that disk folder, for the save dialogs'
+  // folders and the autosave's rotation: [[name, isFolder, age in seconds], ...], sub-folders by name and saves (*.gs,
+  // the name without .gs). The VFS cannot tell an empty folder (no records) from none, so this reads the disk. Only
+  // below userdata/ (Vfs::writableDiskPath); [] otherwise.
+  implementGlobal(vm, u"regsSaveEntries", [](VM& v, Object*, int, const Value* a) {
+    auto out = make<ArrayObj>();
+    fs::path dir;
+    std::string path = utf16ToUtf8(deref(a[0]).toString());
+    std::error_code ec;
+    if (path.rfind("userdata/", 0) == 0 && v.vfs().writableDiskPath(path, dir) && fs::is_directory(dir, ec)) {
+      std::vector<std::tuple<bool, std::string, int32_t>> found;
+      auto now = fs::file_time_type::clock::now();
+      for (auto& e : fs::directory_iterator(dir, ec)) {
+        std::error_code ec2;
+        bool folder = e.is_directory(ec2);
+        std::wstring ext = e.path().extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return wchar_t(std::towlower(c)); });
+        if (!folder && (!e.is_regular_file(ec2) || ext != L".gs")) continue;
+        std::string name = u8(folder ? e.path().filename() : e.path().stem());
+        if (name.empty() || name[0] == '.') continue;
+        auto age = std::chrono::duration_cast<std::chrono::seconds>(now - e.last_write_time(ec2)).count();
+        found.emplace_back(!folder, name, int32_t(std::clamp<long long>(age, 0, 0x7fffffff)));
+      }
+      std::sort(found.begin(), found.end());
+      for (auto& [isSave, name, age] : found) {
+        auto row = make<ArrayObj>();
+        row->items.push_back(Value::string(utf8ToUtf16(name)));
+        row->items.push_back(Value::boolean(!isSave));
+        row->items.push_back(Value::integer(age));
+        out->items.push_back(Value::heap(VT::Array, row.get()));
+      }
+    }
+    return Value::heap(VT::Array, out.get());
+  }, 1, 1);
 }
 
 }  // namespace regs::engine

@@ -1,0 +1,20 @@
+// ReGS extension of the pause menu (metro/ui/menus/pausemenu.script, used as installed; see VM::extendSource).
+// * Save and load lists (main.script's getSaveGamesList) open with save folders: main.script's regsRunSaveDialog runs
+//   the dialog (folder clicks reopen it in that folder, "New folder", the typed name saved into the open folder) and
+//   the result goes on to the state machine as the original's showDialog would send it.
+//@rename showDialog regsBaseShowDialog
+
+//@base
+
+function showDialog($text, $inputText = false, $default = "", $items = null) {
+  if ($items != null && MAIN.$main.$regsSaveDialog) {
+    MAIN.$main.$regsSaveDialog = false;
+    $inDialog = true;
+    $regsResult = MAIN.$main.regsRunSaveDialog($text, $inputText, $default, $items, checkInputKey);
+    buttonClick($regsResult[1], $regsResult[0] ? "ok" : "cancel");
+    $inDialog = false;
+    return;
+  }
+  MAIN.$main.$regsSaveDialog = false;
+  regsBaseShowDialog($text, $inputText, $default, $items);
+}

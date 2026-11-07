@@ -38,3 +38,18 @@ $regs_menu_info = "Unofficial source port, requires Cities in Motion";
 $regs_newsticker_jamMoved_text = ["A stuck bus on line %0 was moved on two stops.", "A stuck tram on line %0 was moved on two stops.", "A stuck metro train on line %0 was moved on two stops.", "A stuck waterbus on line %0 was moved on two stops.", "A stuck helicopter on line %0 was moved on two stops."];
 // saves and maps from the original game's folder (Documents\Cities In Motion), after the name in the load lists
 $regs_fromOriginal_note = "(from Cities in Motion)";
+// save folders in the save and load lists (main.script extension)
+$regs_saves_up = "up one level";
+$regs_saves_newFolder_item = "New folder";
+$regs_saves_newFolder_dialog = "Name of the new folder:";
+// the settings menu's Game page (regs/ui/game.script): autosave
+$regs_game_button = "Game";
+$regs_game_title = "Game";
+$regs_autosave_heading = "Autosave";
+$regs_autosave_interval_label = "Save every";
+$regs_autosave_off_item = "Off";
+$regs_autosave_minutes_item = "%0 min";
+$regs_autosave_keep_label = "Keep";
+$regs_autosave_keep_item = "the last %0";
+$regs_autosave_note1 = "Autosaves go to the folder Autosave in the save list.";
+$regs_autosave_note2 = "The game is only saved while no construction tool and no dialog is open.";

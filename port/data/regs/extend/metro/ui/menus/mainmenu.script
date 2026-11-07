@@ -48,6 +48,16 @@ $regsInfoLine = regsCornerLine(26, $regsStrings.$regs_menu_info, 0xB0C8C8C8);
 // main.script's LoadMapMenu passes the OpenCiM maps (key = file name); the original's maps without a copy in OpenCiM
 // follow them, keyed "~<name>|regs-cim:<file>" so they sort last and the dialog returns the part after the bar
 function showDialog($text, $inputText = false, $default = "", $items = null) {
+  // a save list (main.script's getSaveGamesList): with folders (main.script's regsRunSaveDialog)
+  if ($items != null && MAIN.$main.$regsSaveDialog) {
+    MAIN.$main.$regsSaveDialog = false;
+    $inDialog = true;
+    $regsResult = MAIN.$main.regsRunSaveDialog($text, $inputText, $default, $items, checkInputKey);
+    buttonClick($regsResult[1], $regsResult[0] ? "ok" : "cancel");
+    $inDialog = false;
+    return;
+  }
+  MAIN.$main.$regsSaveDialog = false;
   if (!$inputText && $items != null && $text == $strings.$menu_loadMap_dialog) {
     foreach (regsOriginalMaps()) {
       $items["~"+current+"|regs-cim:"+current] = changeFileExt(current, "")+" "+$regsStrings.$regs_fromOriginal_note;

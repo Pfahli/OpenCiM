@@ -7,6 +7,7 @@
 //@rename loadSandboxScenario regsBaseLoadSandboxScenario
 //@rename getSaveGamesList regsBaseGetSaveGamesList
 //@rename loadSavedCampaign regsBaseLoadSavedCampaign
+//@rename saveGameData regsBaseSaveGameData
 //@rename startEditor regsBaseStartEditor
 
 //@base
@@ -33,10 +34,192 @@ function regsOriginalNote() {
   return $note;
 }
 
-// the load list (main menu and pause menu): the OpenCiM saves, then the original's saves that have no copy in OpenCiM,
-// all sorted by save date as the game does
+// ---- save folders (the save and load dialogs) ----
+// Saves may lie in folders below saves\ (a save "<folder>/<name>" is saves\<folder>\<name>.gs; the file system mounts
+// it as userdata/saves/<folder>/<name>/, so the game's own paths work with the slash in the name). The dialogs show
+// the folder they are in ($regsSaveFolder, "" = saves\ itself): first ".." (up) and "New folder" (save dialog only),
+// then its folders, then its saves by save date. A click on a folder or ".." opens it at once (the menus' showDialog,
+// pausemenu/mainmenu extensions, run regsRunSaveDialog). A typed name is saved into the open folder.
+$regsSaveFolder = "";
+$regsSaveDialog = false;   // set by getSaveGamesList: the menu's next dialog is a save list
+$regsNav = "";
+$regsNavTyped = "";
+$regsDlgValue = "";
+$regsAutosaving = false;   // saveGameData leaves the dialogs' folder alone during an autosave (declared above its use)
+
+function regsText($name) {
+  $file = "regs/strings/"+MAIN.$language+".strings";
+  if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+  $s = load "/"+$file;
+  $t = $s.getVariable($name);
+  delete $s;
+  return $t;
+}
+
+// the folder part of a save name ("a/b/name" -> "a/b", "name" -> "")
+function regsFolderOf($saveName) {
+  $p = extractFilePath($saveName);
+  if ($p == "") return "";
+  return substr($p, 0, #$p - 1);
+}
+
+// the saves and folders of one folder as dialog items (keys "<sort>|<value>"); values are full save names or
+// "regs-dir:<folder>" / "regs-newdir:"
+function regsSavesIn($folder) {
+  $items = map [];
+  $dir = $folder != "" ? "userdata/saves/"+$folder : "userdata/saves";
+  $prefix = $folder != "" ? $folder+"/" : "";
+  if ($folder != "") $items["!0|regs-dir:"+regsFolderOf($folder)] = escapePattern(".. ("+regsText("regs_saves_up")+")");
+  $items["!1|regs-newdir:"] = escapePattern("+ "+regsText("regs_saves_newFolder_item"));
+  foreach (regsSaveEntries($dir)) {
+    if (current[1]) $items["!2"+current[0]+"|regs-dir:"+$prefix+current[0]] = escapePattern("[ "+current[0]+" ]");
+  }
+  $clock = clock();
+  foreach (list_dirs($dir)) {
+    $filename = $dir+"/"+current+"/game.campaign";
+    if (file_exists($filename)) {
+      $campaign = load "/"+$filename;
+      $clock.date = $campaign.$saveDate : 0;
+      $clock.time = $campaign.$saveTime : 0;
+      delete $campaign;
+      $items[expandPattern("%0%1|%2", 2147483647 - $clock.date, 2147483647 - $clock.time, $prefix+current)] = formatText(escapePattern(expandPattern($strings.$menu_loadGame_pattern, current, $clock.days, $clock.months, $clock.years, $clock.hours, $clock.minutes)), [0x80FFFFFF]);
+    }
+  }
+  delete $clock;
+  return $items;
+}
+
+// the menus' showDialog for a save list: [ok, value]. Folder clicks reopen the dialog in that folder; "New folder"
+// asks for a name and opens the new folder.
+function regsRunSaveDialog($text, $inputText, $default, $items, $checkKeys) {
+  $regsDlgValue = $default;
+  $result = false;
+  loop {
+    if (!$inputText) map_erase($items, "!1|regs-newdir:");
+    $regsNav = "";
+    $result = MAIN.$ui.showDialog($text, true, true, $inputText, @$regsDlgValue, $checkKeys, $items, regsDialogPick);
+    if ($regsNav != "") {
+      if ($regsNav == "regs-newdir:") regsNewFolder($checkKeys);
+      else $regsSaveFolder = substr($regsNav, 9);
+      $regsDlgValue = extractFileName($regsNavTyped);
+      $items = getSaveGamesList();
+      $regsSaveDialog = false;
+      continue;
+    }
+    if (!$inputText || !$result || $regsDlgValue != "") break;
+    MAIN.$ui.showDialog($strings.$menu_input_error, true, false);
+  }
+  $v = $regsDlgValue;
+  if ($result && $inputText && findstr($v, "/") < 0 && $regsSaveFolder != "") $v = $regsSaveFolder+"/"+$v;
+  return [$result, $v];
+}
+
+// the dialog's select action: a folder entry closes the dialog (regsRunSaveDialog opens the folder)
+function regsDialogPick($dialog, $item) {
+  if (findstr($item, "regs-dir:") != 0 && findstr($item, "regs-newdir:") != 0) return;
+  $regsNav = $item;
+  $regsNavTyped = "";
+  if ($dialog.$input) $regsNavTyped = $dialog.$input.text;
+  if (findstr($regsNavTyped, "regs-") == 0) $regsNavTyped = "";
+  MAIN.$ui.$dialogResult = -1;
+}
+
+function regsNewFolder($checkKeys) {
+  $name = "";
+  if (!MAIN.$ui.showDialog(regsText("regs_saves_newFolder_dialog"), true, true, true, @$name, $checkKeys)) return;
+  if ($name == "" || findstr($name, ".") == 0) return;
+  $path = $regsSaveFolder != "" ? $regsSaveFolder+"/"+$name : $name;
+  regsMakeFolders($path);
+  $regsSaveFolder = $path;
+}
+
+// creates saves\ and every folder of a path below it
+function regsMakeFolders($folder) {
+  mkdir("userdata/saves");
+  $at = "userdata/saves";
+  $rest = $folder;
+  while ($rest != "") {
+    $slash = findstr($rest, "/");
+    if ($slash < 0) { $at = $at+"/"+$rest; $rest = ""; }
+    else { $at = $at+"/"+substr($rest, 0, $slash); $rest = substr($rest, $slash + 1, 1000); }
+    mkdir($at);
+  }
+}
+
+function saveGameData($saveName) {
+  $folder = regsFolderOf($saveName);
+  if ($folder != "") regsMakeFolders($folder);
+  regsBaseSaveGameData($saveName);
+  if (!$regsAutosaving) $regsSaveFolder = $folder;
+}
+
+// ---- autosave ----
+// Every $regsAutosaveMinutes minutes of real time in the game ($settings, default 10; 0 = off; the Game page of the
+// settings menu), the game is saved as saves\Autosave\Autosave <n>.gs, the oldest of $regsAutosaveKeep slots
+// (default 3) replaced. It waits while a construction tool or a dialog is open (saving resets the tool), and it
+// leaves the player's own save name, folder and "unsaved progress" as they were.
+$regsPlaying = false;
+$regsAutosaveClock = 0.0;
+event this.enter::["Game"]() {
+  $regsPlaying = true;
+}
+event this.exit::["Game"]() {
+  $regsPlaying = false;
+}
+
+function regsAutosaveTick($dt) {
+  $mins = float(MAIN.$settings.$regsAutosaveMinutes : 10);
+  if (getenv("REGS_TEST_AUTOSAVE") != "") $mins = float(getenv("REGS_TEST_AUTOSAVE")) / 60.0;   // seconds (tests)
+  if ($mins <= 0.0 || !$regsPlaying) return;
+  if (!MAIN.$campaign) return;
+  if (!MAIN.$campaign.$campaign) return;
+  if (!(MAIN.$campaign.$campaign.$ingame : false)) return;
+  $regsAutosaveClock += $dt;
+  if ($regsAutosaveClock < $mins * 60.0) return;
+  if (MAIN.$ui.$currentDialog : null) return;
+  $mode = MAIN.$player.editMode;
+  if ($mode != GRIDMODE_SELECT_OBJECT && $mode != GRIDMODE_NONE) return;
+  $regsAutosaveClock = 0.0;
+  regsAutosave();
+}
+
+function regsAutosave() {
+  $keep = max(1, int(MAIN.$settings.$regsAutosaveKeep : 3));
+  // the slot: the first missing one, else the one written longest ago
+  $slot = 1;
+  $oldest = -1;
+  $have = map [];
+  foreach (regsSaveEntries("userdata/saves/Autosave")) {
+    if (!current[1]) $have[current[0]] = current[2];
+  }
+  for ($i = $keep; $i >= 1; --$i) {
+    $n = "Autosave "+string($i);
+    if (!(defined $have[$n])) { $slot = $i; $oldest = 2147483647; }
+    else if ($have[$n] > $oldest) { $slot = $i; $oldest = $have[$n]; }
+  }
+  $keepName = MAIN.$saveGameName;
+  $keepGrid = MAIN.$gridFileName;
+  $keepUnsaved = $unsavedProgress;
+  $regsAutosaving = true;
+  echo "autosave: slot "+string($slot)+" of "+string($keep);
+  saveGameData("Autosave/Autosave "+string($slot));
+  $regsAutosaving = false;
+  MAIN.$saveGameName = $keepName;
+  MAIN.$gridFileName = $keepGrid;
+  $unsavedProgress = $keepUnsaved;
+}
+
+$regsAutosaveThread = thread :: loop {
+  $regsAutosaveDt = skip_frame;
+  regsAutosaveTick($regsAutosaveDt);
+};
+
+// the load list (main menu and pause menu) and the save dialog's list: the open folder's folders and saves; in
+// saves\ itself also the original's saves that have no copy in OpenCiM, all sorted by save date as the game does
 function getSaveGamesList() {
-  $items = regsBaseGetSaveGamesList();
+  $regsSaveDialog = true;
+  $items = regsSavesIn($regsSaveFolder);
+  if ($regsSaveFolder != "") return $items;
   $note = regsOriginalNote();
   $clock = clock();
   foreach (regsOriginalSaves()) {
@@ -66,6 +249,7 @@ function loadSavedCampaign($saveName) {
     $regsImported = regsImportOriginal("save", substr($saveName, 9));
     if ($regsImported != "") $saveName = $regsImported;
   }
+  $regsSaveFolder = regsFolderOf($saveName);   // the dialogs open in the loaded save's folder
   regsBaseLoadSavedCampaign($saveName);
 }
 
@@ -94,4 +278,36 @@ function regsRelayoutMenus() {
   this.perform("back");
   this.perform("settings");
   this.perform("graphics");
+}
+
+// Settings menu (main and pause menu): a "Game" entry above Back, opening the port's game options page
+// (regs/ui/game.script: autosave). The page shows while the machine stays in SettingsMenu (main.states is not
+// changed), so it closes itself (regsCloseGamePage) and the settings buttons come back. Back is the lowest button
+// (other port entries may have been added above it already).
+$regsGamePage = null;
+event this.enter::["SettingsMenu"]() {
+  $regsGameText = regsText("regs_game_button");
+  with (MAIN.$ui.createButton($menu.$buttonArea, 4, 0, 322, 32, $regsGameText, macro :: MAIN.$main.regsOpenGamePage(), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+    .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+    MAIN.$ui.setTitleFont(current);
+    $regsBack = $menu.$buttons[0];
+    foreach ($menu.$buttons) {
+      if (current.top > $regsBack.top) $regsBack = current;
+    }
+    .setRect(4, $regsBack.top, 322, 32);
+    $regsBack.setRect(4, $regsBack.top + 38, 322, 32);
+    $menu.$buttons[] = current;
+  }
+}
+function regsOpenGamePage() {
+  if ($regsGamePage) return;
+  $menu.$menuArea.visible = false;
+  $regsGamePage = load "/regs/ui/game.script";
+}
+function regsCloseGamePage() {
+  if (!$regsGamePage) return;
+  delete $regsGamePage;
+  $regsGamePage = null;
+  $menu.$menuArea.visible = true;
 }
