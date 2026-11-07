@@ -7,6 +7,7 @@
 // (GridData::Item::removed) until the map is saved and reloaded.
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "script/vm.h"
@@ -35,6 +36,16 @@ void gridEditCellsChanged(GridObj* grid, int x0, int z0, int x1, int z1, bool he
 // 4-connected cells that differ and have a corner below the water line (−0x140): the whole basin fills or drains.
 // Returns true when a cell changed (the cells are queued as changed with heights, which rebuilds the water).
 bool gridSetWaterFlag(GridObj* grid, int x, int z, bool on);
+// port: the round brush (owner's request 2026-11-07: the original's brushes work a disc of whole cells around a cell
+// corner with a clipped rim, which leaves jagged edges). Centre (cx, cz) in corner coordinates (fractional; corner i
+// lies at x = i), radius R in cells; each corner's weight is smootherstep(1 − d/R), so the edit eases out to nothing
+// at the rim. type is the original's brush type (1-8 pavement, 9 no pavement, 10-17 field, 18 no field, 19 level to
+// `strength`, 20 shift by `strength`, 21 soften, 22 ruin); paints take the cells whose centre is inside the circle.
+// Heights skip locked corners (0x1000); water stays only where a corner is still below the water line. preview: only
+// the pavement paints mark their cells (0x40), as the timeline's previews. The cells are queued as changed.
+void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int strength, bool preview);
+// the cells whose centre lies inside the round brush (for the highlight)
+std::vector<std::pair<int, int>> gridRoundBrushCells(GridObj* grid, float R, float cx, float cz);
 // the live items whose footprint corner is cell (x, z) (gsGrid::getObjects slot search for ObjRef matching)
 std::vector<uint32_t> gridItemsAt(script::VM& vm, GridObj* grid, int x, int z);
 // the live items whose footprint corner lies in the divisions around [x0, x1] × [z0, z1], grown by one division (the

@@ -407,6 +407,100 @@ bool gridSetWaterFlag(GridObj* grid, int x, int z, bool on) {
   return changed;
 }
 
+std::vector<std::pair<int, int>> gridRoundBrushCells(GridObj* grid, float R, float cx, float cz) {
+  std::vector<std::pair<int, int>> out;
+  if (!grid->data) return out;
+  const GridData& g = *grid->data;
+  int x0 = std::max(0, int(std::floor(cx - R - 1))), x1 = std::min(g.width - 1, int(std::ceil(cx + R)));
+  int z0 = std::max(0, int(std::floor(cz - R - 1))), z1 = std::min(g.length - 1, int(std::ceil(cz + R)));
+  for (int z = z0; z <= z1; ++z)
+    for (int x = x0; x <= x1; ++x) {
+      float dx = float(x) + 0.5f - cx, dz = float(z) + 0.5f - cz;
+      if (dx * dx + dz * dz <= R * R) out.emplace_back(x, z);
+    }
+  return out;
+}
+
+void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int strength, bool preview) {
+  if (!grid->data || R <= 0) return;
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  if (preview && !(type >= 1 && type <= 8)) return;
+  int x0 = std::max(0, int(std::floor(cx - R - 1))), x1 = std::min(W - 1, int(std::ceil(cx + R + 1)));
+  int z0 = std::max(0, int(std::floor(cz - R - 1))), z1 = std::min(L - 1, int(std::ceil(cz + R + 1)));
+  if (x0 > x1 || z0 > z1) return;
+  auto idx = [&](int x, int z) { return size_t(z) * size_t(W) + size_t(x); };
+  auto weight = [&](int x, int z) {
+    float dx = float(x) - cx, dz = float(z) - cz, d = std::sqrt(dx * dx + dz * dz);
+    if (d >= R) return 0.0f;
+    float t = 1.0f - d / R;
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+  };
+  bool heights = type >= 19 && type <= 21;
+  if (heights) {
+    std::vector<int16_t> before;  // soften reads the heights as they were
+    if (type == 21)
+      for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) before.push_back(g.height[idx(x, z)]);
+    auto old = [&](int x, int z, int& v) {
+      if (x < x0 || z < z0 || x > x1 || z > z1) return false;
+      v = before[size_t(z - z0) * size_t(x1 - x0 + 1) + size_t(x - x0)];
+      return true;
+    };
+    for (int z = z0; z <= z1; ++z)
+      for (int x = x0; x <= x1; ++x) {
+        float w = weight(x, z);
+        size_t c = idx(x, z);
+        if (w <= 0 || (g.flags[c] & 0x1000)) continue;
+        int h = g.height[c];
+        if (type == 20) {
+          h = std::max(-0x600, h + int(std::lrint(float(strength) * w)));
+        } else if (type == 19) {
+          h += int(std::lrint(w * float(strength - h)));
+        } else {
+          int sum = 0, n = 0, v;
+          for (auto [ox, oz] : {std::pair{0, 0}, {-1, 0}, {1, 0}, {0, -1}, {0, 1}})
+            if (old(x + ox, z + oz, v)) sum += v, ++n;
+          if (n) h += int(std::lrint(w * float(sum / n - h)));
+        }
+        g.height[c] = int16_t(h);
+      }
+    for (int z = z0; z <= z1; ++z)  // water stays only where a corner is below the water level
+      for (int x = x0; x <= x1; ++x) {
+        size_t c = idx(x, z);
+        if (!(g.flags[c] & 0x2000) || g.height[c] <= -0x141) continue;
+        int16_t h1 = x < W - 1 ? g.height[c + 1] : g.height[c];
+        int16_t h2 = z < L - 1 ? g.height[c + size_t(W)] : g.height[c];
+        int16_t h3 = x < W - 1 && z < L - 1 ? g.height[c + size_t(W) + 1] : g.height[c];
+        if (h1 > -0x141 && h2 > -0x141 && h3 > -0x141) g.flags[c] &= 0xDFFF;
+      }
+  } else if (type == 22) {  // ruin: the worn variant grows with the weight at the cell's centre
+    for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz)) {
+      uint16_t& f = g.flags[idx(x, z)];
+      if (f & 0x1028) continue;
+      float dx = float(x) + 0.5f - cx, dz = float(z) + 0.5f - cz, t = 1.0f - std::sqrt(dx * dx + dz * dz) / R;
+      float w = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+      int wear = int(std::lrint(float(strength) * w * 0.0001f * float((std::rand() & 0x1f) + 0x44))) + (f & 7);
+      f = uint16_t((f & 0xFFF8) | std::clamp(wear, 0, 7));
+    }
+  } else {
+    for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz)) {
+      uint16_t& f = g.flags[idx(x, z)];
+      if (type >= 1 && type <= 8) {
+        if (!preview) f = uint16_t((f & 0xFF98) | 0x8 | (type - 1));
+        else if (!(f & 0x8)) f = uint16_t((f & 0xFFD0) | 0x40);
+      } else if (type == 9) {
+        f &= 0xFFF0;
+      } else if (type >= 10 && type <= 17) {
+        f = uint16_t((f & 0xFFF0) | 0x20 | (type - 10));
+      } else if (type == 18) {
+        f &= 0xFFD8;
+      }
+    }
+  }
+  gridEditCellsChanged(grid, x0 - 1, z0 - 1, x1 + 1, z1 + 1, heights);
+}
+
 std::vector<uint32_t> gridItemsAt(VM& vm, GridObj* grid, int x, int z) {
   std::vector<uint32_t> out;
   if (!grid->data) return out;

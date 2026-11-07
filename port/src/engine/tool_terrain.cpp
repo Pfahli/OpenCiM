@@ -17,6 +17,7 @@
 #include "engine/api.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
+#include "engine/settings.h"
 #include "engine/gui.h"
 #include "engine/timeline.h"
 #include "engine/tools.h"
@@ -103,10 +104,93 @@ void highlightCell(GridObj* grid, int x, int z) {
   grid->highlightCells.insert(uint32_t(size_t(z) * size_t(g.width) + size_t(x)));
 }
 
+// ---- port: the round brushes (owner's request 2026-11-07; setting regsRoundBrushes, on unless 0) ----
+// The original works whole cells around the cell corner under the cursor with a clipped rim, which leaves jagged
+// edges. Round: the centre is the exact point under the cursor, the radius toolSize + 0.5 cells, the weight eases out
+// to the rim (gridRoundBrush, engine/grid_edit.h). The timeline records them as brush type | 0x40 with the centres in
+// 1/8 cell, so undo and replays give the same shape.
+struct Round {
+  float fx = -1e9f, fz = -1e9f;  // the centre last worked or highlighted (corner coordinates)
+  float sx = 0, sz = 0;          // the press point of a shift / ruin drag
+};
+std::unordered_map<const Object*, Round> g_round;
+
+bool roundBrushes(VM& vm) { return settingNumber(vm, u"regsRoundBrushes", 1) != 0; }
+
+// the corner coordinates of the point under the cursor
+bool pickCentre(VM& vm, ControlObj* player, GridObj* grid, float x, float y, float& fx, float& fz) {
+  ToolPick p = toolPick(vm, player, x, y, false);
+  if (!p.hit) return false;
+  const GridData& g = *grid->data;
+  fx = p.point.x / g.cellSize + float(g.width) * 0.5f;
+  fz = p.point.z / g.cellSize + float(g.length) * 0.5f;
+  return true;
+}
+
+void unselectRound(VM& vm, GridObj* grid, const Round& rs, float R) {
+  if (rs.fx < -1e8f) return;
+  int x0 = int(std::floor(rs.fx - R - 1)), z0 = int(std::floor(rs.fz - R - 1)), n = int(std::ceil(2 * R)) + 3;
+  gridUnselectArea(vm, grid, x0, z0, n, n);
+}
+
+void recordRound(VM& vm, Object* tl, int type, int r, float fx, float fz, int strength) {
+  timelineRecordBrush(vm, tl, type | 0x40, r, int(std::lrint(fx * 8.0f)), strength, int(std::lrint(fz * 8.0f)));
+}
+
+void moveBrushRound(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
+  ToolState& t = toolState(player);
+  Round& rs = g_round[player];
+  float fx, fz;
+  if (!pickCentre(vm, player, grid, x, y, fx, fz)) return;
+  // a new dab once the cursor moved a quarter cell (the original: a new cell)
+  if (std::fabs(fx - rs.fx) < 0.25f && std::fabs(fz - rs.fz) < 0.25f && t.cellX != -1) return;
+  const int mode = editMode(vm, player), r = brushRadius(vm, player), toolMode = intField(vm, player, u"toolMode", 0);
+  const float R = float(r) + 0.5f;
+  gridEditBegin(vm, grid);
+  unselectRound(vm, grid, rs, R);
+  int type = 0, strength = 0;
+  if (mode == kGridModeSetPavement) type = t.inProgress ? (toolMode & 7) + 1 : t.right ? 9 : 0;
+  else if (mode == kGridModeSetField) type = t.inProgress ? (toolMode & 7) + 10 : t.right ? 0x12 : 0;
+  else if (mode == kGridModeLevelTerrain && t.inProgress) type = 0x13, strength = t.cellY;
+  else if (mode == kGridModeSoftenTerrain && t.inProgress) type = 0x15;
+  if (type) {
+    gridRoundBrush(grid, type, R, fx, fz, strength, false);
+    if (Object* tl = playerTimeline(vm, player)) recordRound(vm, tl, type, r, fx, fz, strength);
+  }
+  for (auto [cx, cz] : gridRoundBrushCells(grid, R, fx, fz)) highlightCell(grid, cx, cz);
+  ++grid->highlightVersion;
+  gridEditEnd(vm, grid);
+  rs.fx = fx, rs.fz = fz;
+  t.cellX = int(std::floor(fx)), t.cellZ = int(std::floor(fz));
+  if (!t.inProgress) {  // the height the level brush will pull to: the nearest corner's, rounded to half a cell
+    GridData& g = *grid->data;
+    if (int16_t* h = heightAt(g, std::clamp(int(std::lrint(fx)), 0, g.width - 1), std::clamp(int(std::lrint(fz)), 0, g.length - 1)))
+      t.cellY = (int(*h) + 0x40) & ~0x7f;
+  }
+}
+
+// shift and ruin while dragging: from the undo copy, the brush at the press point with the mouse's strength
+void moveDragRound(VM& vm, ControlObj* player, GridObj* grid, float y) {
+  ToolState& t = toolState(player);
+  Round& rs = g_round[player];
+  const int mode = editMode(vm, player), r = brushRadius(vm, player);
+  t.cellY = int(std::lrint((t.toolY - y) * 16.384f + 64.0f)) & ~0x7f;
+  gridEditBegin(vm, grid);
+  auto& undo = g_undo[player];
+  if (!undo.empty()) restoreCells(grid, undo.back());
+  gridRoundBrush(grid, mode == kGridModeShiftTerrain ? 0x14 : 0x16, float(r) + 0.5f, rs.sx, rs.sz, t.cellY, false);
+  gridEditEnd(vm, grid);
+  t.cellX = int(std::floor(rs.sx)), t.cellZ = int(std::floor(rs.sz));
+}
+
 // ---- hover and the click brushes: modes 3, 4, 0xf, 0x10 (and 2, 0xe, 0x13 while no drag runs) ----
 // L:0x0819f2a0.c:343-506: pick the cell; when it changed, the old highlight goes, a held tool works the disc (level,
 // soften, paint), the timeline gets the dab, and the disc (radius r + 1, clipped to r) is highlighted.
 void moveBrush(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
+  if (roundBrushes(vm)) {
+    moveBrushRound(vm, player, grid, x, y);
+    return;
+  }
   ToolState& t = toolState(player);
   ToolPick p = toolPick(vm, player, x, y, false);
   if (!p.hit || (p.cellX == t.cellX && p.cellZ == t.cellZ)) return;
@@ -172,8 +256,12 @@ void moveDrag(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     moveBrush(vm, player, grid, x, y);
     return;
   }
-  GridData& g = *grid->data;
   const int mode = editMode(vm, player), r = brushRadius(vm, player);
+  if (mode != kGridModeGrowTrees && roundBrushes(vm)) {
+    moveDragRound(vm, player, grid, y);
+    return;
+  }
+  GridData& g = *grid->data;
   t.cellY = int(std::lrint((t.toolY - y) * 16.384f + 64.0f)) & ~0x7f;
   const int sx = t.startX, sz = t.startZ;
   gridEditBegin(vm, grid);
@@ -265,7 +353,15 @@ void downCopy(VM& vm, ControlObj* player, GridObj* grid) {
   t.cellY = 0;
   int r = brushRadius(vm, player);
   auto& undo = g_undo[player];
-  undo.push_back(copyCells(*grid->data, t.cellX - r, t.cellZ - r, 2 * r + 2, 2 * r + 2));
+  if (roundBrushes(vm)) {  // the round brush works around the hovered point
+    Round& rs = g_round[player];
+    rs.sx = rs.fx, rs.sz = rs.fz;
+    float R = float(r) + 0.5f;
+    int x0 = int(std::floor(rs.sx - R - 2)), z0 = int(std::floor(rs.sz - R - 2)), n = int(std::ceil(2 * R)) + 5;
+    undo.push_back(copyCells(*grid->data, x0, z0, n, n));
+  } else {
+    undo.push_back(copyCells(*grid->data, t.cellX - r, t.cellZ - r, 2 * r + 2, 2 * r + 2));
+  }
   if (undo.size() > 32) undo.pop_front();
 }
 
@@ -275,6 +371,17 @@ bool finishDrag(VM& vm, ControlObj* player, GridObj* grid) {
   if (!grid) return true;
   ToolState& t = toolState(player);
   int mode = editMode(vm, player), r = brushRadius(vm, player);
+  if (roundBrushes(vm)) {
+    Round& rs = g_round[player];
+    if (t.cellY != 0)
+      if (Object* tl = playerTimeline(vm, player))
+        recordRound(vm, tl, mode == kGridModeShiftTerrain ? 0x14 : 0x16, r, rs.sx, rs.sz, t.cellY);
+    gridEditBegin(vm, grid);
+    unselectRound(vm, grid, rs, float(r) + 0.5f);
+    gridEditEnd(vm, grid);
+    rs.fx = rs.fz = -1e9f;
+    return true;
+  }
   if (t.cellY != 0)
     if (Object* tl = playerTimeline(vm, player))
       timelineRecordBrush(vm, tl, mode == kGridModeShiftTerrain ? 0x14 : 0x16, r, t.cellX, t.cellY, t.cellZ);
@@ -303,7 +410,13 @@ bool finishBrush(VM& vm, ControlObj* player, GridObj* grid) {
   ToolState& t = toolState(player);
   int r = brushRadius(vm, player);
   gridEditBegin(vm, grid);
-  gridUnselectArea(vm, grid, t.cellX - r, t.cellZ - r, 2 * r + 2, 2 * r + 2);
+  if (roundBrushes(vm)) {
+    Round& rs = g_round[player];
+    unselectRound(vm, grid, rs, float(r) + 0.5f);
+    rs.fx = rs.fz = -1e9f;
+  } else {
+    gridUnselectArea(vm, grid, t.cellX - r, t.cellZ - r, 2 * r + 2, 2 * r + 2);
+  }
   gridEditEnd(vm, grid);
   return true;
 }

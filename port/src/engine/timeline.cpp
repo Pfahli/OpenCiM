@@ -372,6 +372,10 @@ void applyCreate(Apply& ap, const Action& a, bool preview) {
 void applyBrush(Apply& ap, const Action& a, bool preview) {
   GridData& g = *ap.grid->data;
   int type = a.brushType, r = a.radius;
+  if (type & 0x40) {  // port: the round brush (grid_edit.h), its centres in 1/8 cell, radius r + 0.5
+    for (auto [px, pz] : a.points) gridRoundBrush(ap.grid, type & 0x3f, float(r) + 0.5f, float(px) / 8.0f, float(pz) / 8.0f, a.strength, preview);
+    return;
+  }
   if (preview && !(type >= 1 && type <= 8)) return;
   auto cell = [&](int x, int z) -> size_t {
     return x < 0 || z < 0 || x >= g.width || z >= g.length ? SIZE_MAX : size_t(z) * size_t(g.width) + size_t(x);
@@ -528,7 +532,7 @@ std::u16string labelOf(const Action& a) {
     case kDelete: return u"%!12";
     case kBrush: {
       static const char16_t* names[] = {u"%!13", u"%!14", u"%!15", u"%!16", u"%!17", u"%!18", u"%!19", u"%!20"};
-      int t = a.brushType;
+      int t = a.brushType & 0x3f;  // 0x40: the port's round brush (gridRoundBrush)
       int k = t >= 1 && t <= 8 ? 0 : t == 9 ? 1 : t >= 10 && t <= 17 ? 2 : t == 18 ? 3 : t >= 19 && t <= 22 ? t - 15 : -1;
       return k >= 0 ? names[k] : u"%!21";
     }
