@@ -1,0 +1,9 @@
+﻿// Weather mod (opencim.weather): texts (English, the fallback for every language without its own file)
+$weather_options_heading = "Weather and seasons";
+$weather_slowTraffic_item = "Slow traffic in snow and heavy rain";
+$weather_snowSlow_ticker = "Snow and ice: traffic and public transport are slower.";
+$weather_rainSlow_ticker = "Heavy rain: traffic and public transport are slower.";
+$weather_slowOver_ticker = "The roads are clear again: traffic is back to normal.";
+$weather_enabled_item = "Enable weather (rain, thunderstorms, snow)";
+$weather_seasons_item = "Enable seasons (winters with snow, rain and temperature by month)";
+$weather_dayNight_item = "Enable day/night cycle";

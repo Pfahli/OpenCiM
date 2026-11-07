@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <utility>
 
 namespace regs::render {
 
@@ -99,6 +100,32 @@ inline Mat4 inverseRigid(const Mat4& a) {
     for (int j = 0; j < 3; ++j) r.at(i, j) = a.at(j, i);
   for (int i = 0; i < 3; ++i) r.at(i, 3) = -(r.at(i, 0) * a.at(0, 3) + r.at(i, 1) * a.at(1, 3) + r.at(i, 2) * a.at(2, 3));
   return r;
+}
+
+// general inverse (Gauss-Jordan in double precision; identity when singular)
+inline Mat4 inverse(const Mat4& a) {
+  double m[4][8];
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 8; ++c) m[r][c] = c < 4 ? a.at(r, c) : (c - 4 == r ? 1.0 : 0.0);
+  for (int c = 0; c < 4; ++c) {
+    int p = c;
+    for (int r = c + 1; r < 4; ++r)
+      if (std::fabs(m[r][c]) > std::fabs(m[p][c])) p = r;
+    if (std::fabs(m[p][c]) < 1e-30) return Mat4{};
+    if (p != c)
+      for (int k = 0; k < 8; ++k) std::swap(m[p][k], m[c][k]);
+    double inv = 1.0 / m[c][c];
+    for (int k = 0; k < 8; ++k) m[c][k] *= inv;
+    for (int r = 0; r < 4; ++r)
+      if (r != c) {
+        double f = m[r][c];
+        for (int k = 0; k < 8; ++k) m[r][k] -= f * m[c][k];
+      }
+  }
+  Mat4 out;
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c) out.at(r, c) = float(m[r][c + 4]);
+  return out;
 }
 
 inline Vec3 transformPoint(const Mat4& a, const Vec3& p) {

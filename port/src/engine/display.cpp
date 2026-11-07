@@ -418,6 +418,26 @@ struct GuiPass {
 }  // namespace
 
 void Display::renderFrame(VM& vm, Object* win, Object* video) {
+  // REGS_LOG_TIME: frames over 250 ms are logged with the shader programs linked in them
+  static const bool logTime = std::getenv("REGS_LOG_TIME") != nullptr;
+  const auto frameStart = std::chrono::steady_clock::now();
+  const int linkedBefore = render::gProgramsLinked;
+  const double linkBefore = render::gLinkSeconds;
+  for (double& p : gPhaseSeconds) p = 0;
+  struct SlowFrame {
+    bool on;
+    std::chrono::steady_clock::time_point t0;
+    int linked;
+    double link;
+    ~SlowFrame() {
+      double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      if (on && ms > 250)
+        LOG_INFO("slow frame: %.0f ms (%d shader programs linked in %.0f ms; scene %.0f, grid %.0f, vehicles %.0f, particles %.0f, night %.0f, programs %.0f ms)",
+                 ms, render::gProgramsLinked - linked, (render::gLinkSeconds - link) * 1000, gPhaseSeconds[1] * 1000,
+                 gPhaseSeconds[2] * 1000, gPhaseSeconds[3] * 1000, gPhaseSeconds[4] * 1000, gPhaseSeconds[5] * 1000,
+                 gPhaseSeconds[6] * 1000);
+    }
+  } slowFrame{logTime, frameStart, linkedBefore, linkBefore};
   syncRenderSettings(vm);
   sweepEffects(*this);
   int w = window_->width(), h = window_->height();

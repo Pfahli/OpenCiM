@@ -10,6 +10,43 @@
 
 namespace regs::render {
 
+// Texture units: all fits the 16 GL 3.3 guarantees (Macs, Raspberry Pi and many ARM GPUs have no more).
+// 0-5: the material's own textures (up to 6: the New York and Tokyo buildings have diffuse, specular, normal,
+//      illumination, ambient occlusion and the environment cube; `regs-tool materials` counts them); a material's
+//      night-light window mask goes to the first unit after its textures
+// 6:   the night lights' light map (lamp map and headlight map in one texture, engine/night_lights.cpp)
+// 7:   the shadow map (the game's shaders: sampler2DShadow texture7)
+// 8-12: the shader hooks' maps (render/glsl.h)
+// 13-15: free for the mods' own textures (engine/mods.h, regsShaderTexture)
+constexpr int kMaterialUnits = 6;
+constexpr int kNightMapUnit = 6;
+constexpr int kHookEnvUnit = 8;           // the environment cube (regs_EnvMap)
+constexpr int kHookSurfaceUnit = 9;       // the map's surface classes (regs_SurfaceMap)
+constexpr int kHookLaneTrafficUnit = 10;  // the lanes, their lists and cells (regs_LaneTraffic)
+constexpr int kHookTopUnit = 11;          // the top map and the trodden map (regs_TopMap: r top, g trodden)
+constexpr int kHookFootAtlasUnit = 12;    // the footprint map, atlas and tile index in one (regs_footprintAt)
+constexpr int kModUnitFirst = 13, kModUnitCount = 3;  // the mods' texture units
+
+// shader programs linked so far and the seconds spent (load-time measurements, REGS_LOG_TIME)
+extern int gProgramsLinked;
+extern double gLinkSeconds;
+
+// GpuMaterial::surfaceClass: the map surfaces a shader hook can tell apart (mod-manager.md §4.3)
+enum : uint8_t {
+  kSurfaceOther = 0,     // buildings, props, vehicles, people, menus
+  kSurfaceTerrain = 1,   // the terrain group: grass, earth, sea floor, cliffs (terrain.md §5)
+  kSurfaceField = 2,     // field cells
+  kSurfacePavement = 3,  // yard (pavement) cells: paved squares and yards
+  kSurfaceRoad = 4,      // road, alley and street-tram items (types 1-7, 10-12) and their texture variations
+  kSurfacePlatform = 5,  // stations, docks, heliports (types 0x10-0x12) and PAVEMENT-flagged items
+  kSurfaceWater = 6,     // the water surface
+  kSurfaceVehicle = 7,   // simulated vehicles (per draw: DrawItem::surfaceClass; hookValue 1 = parked)
+  kSurfaceOverlay = 8,   // not a surface: route strips, highlights, previews, markers, the data layer, the sky,
+                         // people: the hooks never run on it
+  kSurfaceFoliage = 9,   // tree and bush foliage: the materials drawn with the trees' wind shader
+                         // (metro/shaders/trees/trees.shader), leaves, needles, twigs and bark of one atlas
+};
+
 // A material as the renderer binds it: flags, textures in unit order and the fixed-function colours the engine
 // sets with glMaterial (docs/renderer/interfaces-3d.md §2.10).
 struct GpuMaterial {
@@ -19,12 +56,17 @@ struct GpuMaterial {
   float specular[4] = {0, 0, 0, 1}, emission[4] = {0, 0, 0, 1};
   float shininess = 1;
   float reflection = 0;   // header byte 0x27 / 255
+  uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
+  float cabinY[2] = {0, 0};  // vehicles: the window band's model height (passenger silhouettes)
+  uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign, 5: clock face
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
   float custom[8][4] = {};    // shader parameters custom0..7
   float depthOffset = 0;      // glPolygonOffset(2d, 2d) when non-zero
   std::string shader;         // combiner .shader path (empty: the default shader)
   uint32_t meshFlags = 0;     // combiner mesh flags of the meshes using it (MESH_SKINNED 0x100)
+  // port: what the surface is, for the mods' shader hooks (render/glsl.h, mod-manager.md §4.3)
+  uint8_t surfaceClass = kSurfaceOther;
   // combiner variants per pass environment (env flags of the pass | light count << 12); program 0 = none (the
   // built-in default shader in normal passes, not drawn in shadow passes)
   struct Variant {
@@ -93,6 +135,7 @@ struct ParticleSprite {
   float size = 1, angle = 0;  // half extent, rotation in the view plane
   uint32_t argb = 0;          // colour over life with the distance fade in alpha
   uint32_t batch = 0;         // index into ParticleDrawList::batches
+  Vec3 axis;                  // port streaks (emitter regsStretch): half length along this world vector; 0 = billboard
 };
 struct ParticleBatch {
   GpuMaterial* material = nullptr;  // particles.shader variants per pass env, texture unit 0, two-sided
@@ -114,6 +157,30 @@ struct SceneView {
   float fogStart = 0, fogEnd = 1, fogColor[4] = {0, 0, 0, 1};
   float timer = 0;  // the effect timer (uniform timer)
   float emissionScale = 1;  // material emission × this (port day/night cycle: brighter illumination maps at night)
+  // material ambient and diffuse × surfaceDiffuse, specular × surfaceSpecular (the scene's port atmosphere fields,
+  // engine/scene3d.cpp: wet surfaces in the weather mod)
+  float surfaceDiffuse = 1, surfaceSpecular = 1;
+  // shader hooks (render/glsl.h): run in this view's colour passes; the environment cube they see on unit 8
+  bool hooks = false;
+  uint32_t hookEnvCube = 0;
+  uint32_t hookSurfaceMap = 0;  // the map's surface classes (engine/surface_map.h) on unit 9
+  uint32_t hookTopMap = 0;      // and its top map (overhead heights) on unit 13
+  float hookSurfaceRect[4] = {0, 0, 0, 0};
+  uint32_t hookLaneTraffic = 0;                   // engine/traffic_maps.h: the lanes, their lists and cells
+  float hookLaneCells[4] = {0, 0, 0, 0};          // the lane cells: count x, z, first texel in the lane texture
+  float hookTrafficRect[4] = {0, 0, 0, 0};
+  uint32_t hookFootAtlas = 0;  // engine/traffic_maps.h footprints (atlas and tile index), unit 14
+  float hookFootRect[4] = {0, 0, 0, 0};
+  // port night lights (engine/night_lights.h, docs/renderer/night-lights.md): x = window light, y = share of the window
+  // groups lit, z = street-lamp light, w = night01 of the cycle; x and z are 0 by day and without the cycle
+  float night[4] = {0, 0, 0, 0};
+  float shopShare = 0;  // share of the shop windows lit (their own schedule)
+  uint32_t lampMap = 0;               // the light map (kNightMapUnit): lamp light over the map, rgb, a = head height
+  float lampMapXf[4] = {0, 0, 0, 0};  // uv = (world.xz − (x, y)) · (z, w)
+  float lampHeight[4] = {0, 1, 0, 0};  // head height = [0] + a · [1]; [2], [3] the lamp map's size in the light map
+  uint32_t carMap = 0;                // the same light map's other half: headlights around the view
+  float carMapXf[4] = {0, 0, 0, 0};   // uv = (world.xz − (x, y)) · (z, w)
+  float carLight[4] = {0, 1, 0, 0};   // ground height = [0] + a · [1]; [2] = strength (0: none)
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms
@@ -132,7 +199,10 @@ struct DrawItem {
   Mat4 world;
   float colorize[4] = {1, 1, 1, 1};
   float alpha = 1;
-  bool shadowOnly = false;  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
+  bool shadowOnly = false;
+  float lampCode = 0;
+  float cabinLight = 0;  // port night lights: the cabin light's strength (line vehicles: 0.5 by day, 1 at night)
+  float passengers = 0;  // port night lights: the vehicle's shown occupancy 0..1 (silhouettes in the windows)  // port night lights: vehicle lamps (engine/night_lights.h vehicleLampCode), 0 = off  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
   // a per-instance custom4.xy over the material's (vehicles' animated parts: rotor angle and spin-up, which the engine
   // writes into each vehicle's own material copy, L:0x081adca0.c:604-690); z and w stay the material's
   bool hasCustom4 = false;
@@ -144,6 +214,10 @@ struct DrawItem {
   // custom0..7 instead of the material's
   int layerMaterial = -1;
   const float (*layerCustom)[4] = nullptr;
+  // the mods' shader hooks (render/glsl.h): a surface class for this draw over the materials' (-1 = theirs) and a
+  // per-draw value (RegsSurface.item; vehicles: 1 parked, 0 moving)
+  int surfaceClass = -1;
+  float hookValue = 0;
 };
 
 // how skinned meshes are laid out for the combiner's skinning variant (default.shader: $indexingInShaders)
@@ -159,7 +233,13 @@ class Renderer3D {
   bool init(std::string* error);
   // A combiner variant: GLSL 1.10 as generated, translated to 3.30 (render/glsl.h) and linked with the attribute
   // slots of upload(). 0 on failure (error set).
-  uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error);
+  // hooks: add the mods' shader hooks (render/glsl.h; the scene combiner variants).
+  uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false);
+  // The mods' post hooks (render/glsl.h): a program from the post vertex shader (GLSL 1.10) and postHookFragment();
+  // postHookState puts it in use with the view's hook uniforms and maps, ready for drawQuad (scene colour on unit 0,
+  // its depth on unit 1, custom0 = one texel).
+  uint32_t buildPostHookProgram(const std::string& vs110, std::string* error);
+  void postHookState(const SceneView& v, uint32_t prog);
   GpuMesh upload(const MeshData& m, const SkinLayout& skin = {});
   void destroy(GpuMesh& m);
   bool makeTarget(RenderTarget& t, int w, int h, TargetFormat format = TargetFormat::Rgba8, bool withDepth = true,
@@ -170,6 +250,10 @@ class Renderer3D {
   // resolved into a texture.
   bool makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture = false,
                        TargetFormat format = TargetFormat::Rgba16f);
+  // Additive (ONE, ONE) draw of a mesh with a plain program into a target cleared to 0: no depth, no culling. Ends
+  // with the back buffer bound and the back-buffer viewport.
+  // regionH > 0: only the target's rows 0..regionH-1 are cleared and drawn into
+  void splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH, int regionH = 0);
   void resolve(const RenderTarget& t);  // multisample → texture (NEAREST blit, depth too); no-op without MSAA
   // resolves t and copies its bottom-left w×h colour into the back-buffer rect (x, y top-left origin)
   void blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH);
@@ -206,10 +290,18 @@ class Renderer3D {
     int productAmbient[8], productDiffuse[8], productSpecular[8], texture[8], custom[8];
     int matrix = -1, eyepos = -1, timer = -1, reflection = -1, worldup = -1, colorize = -1, vieworient = -1, alphaRef = -1;
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
+    // shader hooks (render/glsl.h): -1 in programs without them
+    int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1,
+        hookItem = -1, hookTrafficRect = -1, hookFootRect = -1, hookNight = -1, hookLaneCells = -1;
+    std::map<std::string, int> hookUniforms;
+    int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
+        lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
   };
   std::map<uint32_t, ProgramLocs> locs_;
   const ProgramLocs& locs(uint32_t prog);
   void setupProgram(const SceneView& v, uint32_t prog);
+  void hookState(const SceneView& v, uint32_t prog);
+  uint32_t linkProgram(const std::string& vs, const std::string& fs, std::string* error);
   void setupFallback(const SceneView& v);
   void drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m, uint32_t prog,
                     float alphaRef);

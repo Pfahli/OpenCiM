@@ -15,6 +15,7 @@
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "render/gl.h"
+#include "render/glsl.h"
 #include "vfs/vfs.h"
 
 namespace regs::engine {
@@ -107,9 +108,9 @@ void initEffectFields(Object* e) {
 namespace {
 
 struct StyleState {
-  bool failed = false;
-  uint32_t grade = 0, tilt = 0, dof = 0;
-  RenderTarget input, blurA, blurB;
+  bool failed = false, postFailed = false;
+  uint32_t grade = 0, tilt = 0, dof = 0, post = 0;
+  RenderTarget input, blurA, blurB, postOut;
 };
 
 StyleState& styleState() {
@@ -156,6 +157,13 @@ bool ensureTarget(Display& d, RenderTarget& t, int w, int h, int samples, bool d
 
 bool styleActive(VM& vm) { return colorStyle(vm) != 0 || lensBlur(vm) != 0; }
 
+bool postHooksWanted(VM& vm, Object* scene) {
+  static const bool registered = render::postHooksRegistered();
+  if (!registered || !scene || styleState().postFailed) return false;
+  auto it = scene->fieldValues.find(u"regsPostHooks");
+  return it != scene->fieldValues.end() && vm.toFloat(vm.resolve(it->second)) > 0.0f;
+}
+
 const RenderTarget* styleTarget(Display& d, VM& vm, int w, int h, int samples) {
   StyleState& s = styleState();
   if (s.failed) return nullptr;
@@ -176,12 +184,33 @@ const RenderTarget* styleTarget(Display& d, VM& vm, int w, int h, int samples) {
   return nullptr;
 }
 
-void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int backH, float nearZ, float farZ, float focus) {
+void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int backH, float nearZ, float farZ, float focus,
+                 const render::SceneView* post) {
   StyleState& s = styleState();
   Renderer3D& r = d.r3d();
   r.resolve(s.input);
   const float uv[4][4] = {{0, 1, 0, 0}, {1, 1, 0, 0}, {1, 0, 0, 0}, {0, 0, 0, 0}};  // TL, TR, BR, BL
   uint32_t image = s.input.color;
+  // the mods' post hooks (render/glsl.h): the scene and its depth through the hooks into their own target
+  if (post && !s.postFailed && !s.post) {
+    std::vector<uint8_t> vs;
+    std::string err;
+    if (vm.vfs().read("regs/shaders/post.vertex", vs)) s.post = r.buildPostHookProgram(std::string(vs.begin(), vs.end()), &err);
+    if (!s.post) {
+      LOG_ERROR("post hooks: the program does not build: %s", err.c_str());
+      s.postFailed = true;
+    }
+  }
+  if (post && s.post && ensureTarget(d, s.postOut, w, h, 0)) {
+    gl::Disable(gl::SCISSOR_TEST);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, s.postOut.fbo);
+    gl::Viewport(0, 0, w, h);
+    r.postHookState(*post, s.post);
+    const float texel[4] = {1.0f / float(w), 1.0f / float(h), 0, 0};
+    const uint32_t in[2] = {image, s.input.depthTex};
+    r.drawQuad(s.post, in, 2, texel, uv);
+    image = s.postOut.color;
+  }
   if (int blur = lensBlur(vm); blur > 0 && ensureTarget(d, s.blurA, w, h, 0) && ensureTarget(d, s.blurB, w, h, 0)) {
     const float ch[4] = {1.0f / float(w), 0, kLensBlurRadius[blur], 0}, cv[4] = {0, 1.0f / float(h), kLensBlurRadius[blur], 0};
     // distance blur: thin lens focused on the camera target; tilt-shift: a sharp band at the screen centre
@@ -583,6 +612,7 @@ void resetSizedEffects(Display& d) {
   d.r3d().destroyTarget(st.input);
   d.r3d().destroyTarget(st.blurA);
   d.r3d().destroyTarget(st.blurB);
+  d.r3d().destroyTarget(st.postOut);
   d.r3d().destroyTarget(msaaScene());
 }
 

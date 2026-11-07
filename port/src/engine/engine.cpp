@@ -8,6 +8,8 @@
 #include "engine/sky.h"
 #include "engine/sim.h"
 #include "engine/particles.h"
+#include "engine/traffic_maps.h"
+#include "engine/snowplows.h"
 #include "engine/sound.h"
 
 #include <cstdio>
@@ -29,6 +31,8 @@
 #include "engine/grid.h"
 #include "engine/host.h"
 #include "engine/user_folders.h"
+#include "engine/mods.h"
+#include "engine/terrain.h"
 
 namespace regs::engine {
 
@@ -44,8 +48,9 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   vfs_.setInstallRoot(gameDir);
   if (!host().dataDir.empty()) vfs_.setOverlayRoot(host().dataDir);
   vfs_.setCommunityContent(host().communityAddons);
-  vfs_.rescan();
   vm_ = std::make_unique<VM>(vfs_);
+  loadMods(vfs_, *vm_);  // enabled mods: VFS layers and script extensions (engine/mods.cpp)
+  vfs_.rescan();
   registerGeneratedApi(*vm_);
   registerCoreNatives(*vm_);
   registerObjectNatives(*vm_);
@@ -57,6 +62,8 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerSceneNatives(*vm_);
   registerSkyNatives(*vm_);
   registerParticleNatives(*vm_);
+  registerTrafficMapNatives(*vm_);
+  registerSnowplowNatives(*vm_);
   registerSkinningNatives(*vm_);
   registerShaderNatives(*vm_);
   registerGridNatives(*vm_);
@@ -73,6 +80,8 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerGridEditNatives(*vm_);
   registerSimNatives(*vm_);
   registerUserFolderNatives(*vm_);
+  registerModNatives(*vm_);
+  registerTerrainNatives(*vm_);
   // MAIN: the root gsMain object, registered as a global when it is attached (gsMain setParent, 0x100a15c0)
   main_ = vm_->newObject(vm_->findClass("gsMain"), nullptr);
   vm_->setGlobal(u"MAIN", Value::heap(VT::Object, main_.get()));

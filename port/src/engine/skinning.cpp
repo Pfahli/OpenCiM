@@ -1,4 +1,5 @@
 #include "engine/skinning.h"
+#include "engine/night_lights.h"
 
 #include <algorithm>
 #include <cmath>
@@ -226,9 +227,16 @@ void collectSkinned(Display& d, VM& vm, ObjectObj* model, const Mat4& world, con
     sm = SkinnedModel();
     sm.data = model->data;
     bool skinned = !model->data->mesh.skinBones.empty();
+    const bool vehicle = model->pendingPath.find("/vehicles/") != std::string::npos;
     for (const MaterialDef& m : model->data->materials) {
       GpuMaterial g = objectMaterial(d, vm, model, m);
       if (skinned) g.meshFlags = kMeshSkinned;
+      if (vehicle) {  // port night lights: the vehicle's own lamps
+        VehicleLampInfo li;
+        g.windowMask = vehicleLampMask(d, vm, *model->data, int(&m - model->data->materials.data()), &li);
+        g.cabinY[0] = li.windowY0, g.cabinY[1] = li.windowY1;
+        g.windowKind = 1;
+      }
       sm.materials.push_back(g);
     }
   }

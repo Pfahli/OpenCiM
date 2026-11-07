@@ -81,6 +81,158 @@ void runProgram(VM& vm, ShaderCombiner* c, uint32_t mat, uint32_t mesh, uint32_t
 // division meshes (grid_items.cpp), where pos is division space and the terrain height would join the square. The
 // merged tree vertices carry their base height in uv1.x, as the engine's own merged trees do (§3.2.3), and the
 // subtraction the shipped line has commented out is switched on.
+//
+// Night lights (docs/renderer/night-lights.md, engine/night_lights.cpp): the default shader's maps component adds the
+// lit windows of building materials (their window-group mask on unit 16, the building's seed in regs_Seed) and its
+// colour component adds the street-lamp light (the lamp map on unit 17, sampled at the world position) times the
+// surface colour, plus the window glow, before fog. Both are zero by day and without the day/night cycle, and
+// shadow passes and additive materials leave them out.
+namespace {
+
+const char16_t* kNightMapsDecl =
+    u"#$regsNight = $diffusemap && !bool($envFlags & (ENVIROMENT_SHADOWMAP_RENDER | ENVIROMENT_SHADOW_RENDER)) && "
+    u"!bool($matFlags & (MATERIAL_ADDITIVE | MATERIAL_ADDITIVE_A));\n"
+    u"#once# vec3 regs_windowGlow = vec3(0.0);\n"
+    u"#if ($regsNight) {\n"
+    u"#once# uniform vec4 regs_Night;\n"
+    u"uniform sampler2D regs_WindowMask;\n"
+    u"uniform float regs_WindowOn;\n"
+    u"uniform float regs_Shop;\n"
+    u"vec4 regs_hash4(float s, float k) {\n"
+    u"  return fract(sin(vec4(s * 12.9898 + k * 4.1, s * 78.233 + k * 1.3, s * 37.719 + k * 2.9, s * 93.989 + k * 0.7)) * 43758.5453);\n"
+    u"}\n"
+    u"uniform vec4 regs_Cabin;\n"
+    u"float regs_passengers() {\n"
+    u"  float H = regs_Cabin.y - regs_Cabin.x;\n"
+    u"  if (H < 0.3) return 0.0;\n"
+    u"  vec3 p = regs_ModelPos;\n"
+    u"  float side = p.x < 0.0 ? 1.0 : 2.0, occ = regs_Cabin.z;\n"
+    // figures at the game's character scale (its people are drawn ~1.6x life size): a seat every 1.3 m per side
+    u"  float slot = floor(p.z / 1.3);\n"
+    u"  vec4 h = regs_hash4(slot * 3.0 + side, 7.0);\n"
+    u"  float ux = p.z - (slot + 0.5) * 1.3 - (h.y - 0.5) * 0.25;\n"
+    u"  float headY = regs_Cabin.x + H * (0.48 + 0.1 * h.z), r = 0.15 + 0.03 * h.w;\n"
+    u"  float head = 1.0 - smoothstep(r - 0.03, r + 0.01, length(vec2(ux, (p.y - headY) * 0.9)));\n"
+    u"  float body = (1.0 - smoothstep(0.26, 0.31, abs(ux))) * (1.0 - smoothstep(headY - r - 0.12, headY - r - 0.03, p.y));\n"
+    u"  float seated = max(head, body) * smoothstep(h.x - 0.05, h.x + 0.05, occ * 1.35);\n"
+    u"  float slotS = floor(p.z / 1.3 + 0.5);\n"
+    u"  vec4 g = regs_hash4(slotS * 5.0 + side, 9.0);\n"
+    u"  float us = p.z - slotS * 1.3 - (g.y - 0.5) * 0.25;\n"
+    u"  float headS = regs_Cabin.x + H * (0.84 + 0.1 * g.z), rs = 0.16 + 0.03 * g.w;\n"
+    u"  float headSt = 1.0 - smoothstep(rs - 0.03, rs + 0.01, length(vec2(us, (p.y - headS) * 0.9)));\n"
+    u"  float bodySt = (1.0 - smoothstep(0.24, 0.29, abs(us))) * (1.0 - smoothstep(headS - rs - 0.12, headS - rs - 0.03, p.y));\n"
+    u"  float standing = max(headSt, bodySt) * smoothstep(0.5 + 0.45 * g.x - 0.05, 0.5 + 0.45 * g.x + 0.05, occ);\n"
+    u"  return max(seated, standing);\n"
+    u"}\n"
+    u"vec3 regs_windows(vec2 uv, vec3 albedo) {\n"
+    u"  if (regs_WindowOn < 0.5) return vec3(0.0);\n"
+    u"  vec4 m = texture2D(regs_WindowMask, uv);\n"
+    u"  if (regs_WindowOn > 1.5 && regs_WindowOn < 2.5) {\n"
+    u"    float ls = floor(regs_Seed * 255.0 + 0.5);\n"
+    u"    float onAt = 0.36 + 0.14 * fract(sin(ls * 12.9898 + 4.1) * 43758.5453);\n"
+    u"    float lit = smoothstep(onAt, onAt + 0.04, regs_Night.w);\n"
+    u"    return m.r * vec3(2.6, 2.15, 1.5) * lit * (0.65 + 0.7 * dot(albedo, vec3(0.3, 0.59, 0.11)));\n"
+    u"  }\n"
+    u"  if (regs_WindowOn > 4.5 && regs_WindowOn < 5.5) {\n"
+    u"    return m.r * albedo * vec3(1.3, 1.2, 0.95) * smoothstep(0.3, 0.5, regs_Night.w);\n"
+    u"  }\n"
+    u"  if (regs_WindowOn > 2.5 && regs_WindowOn < 3.5) {\n"
+    u"    float ss = floor(regs_Seed * 255.0 + 0.5);\n"
+    u"    float pick = fract(sin(ss * 78.233 + 1.7) * 43758.5453), onAt = 0.3 + 0.2 * fract(sin(ss * 37.719) * 43758.5453);\n"
+    u"    float lit = pick < 0.6 ? smoothstep(onAt, onAt + 0.04, regs_Night.w) : 0.0;\n"
+    u"    return m.r * albedo * 1.7 * lit;\n"
+    u"  }\n"
+    u"  if (regs_WindowOn > 9.5) {\n"
+    u"    float code = floor(regs_WindowOn), on = fract(regs_WindowOn) / 0.9;\n"
+    u"    float inside = code > 99.5 ? 1.0 : 0.0;\n"
+    u"    code -= 100.0 * inside;\n"
+    u"    float fm = floor((code - 10.0) / 4.0), rm = code - 10.0 - fm * 4.0;\n"
+    u"    vec3 head = vec3(2.3, 2.15, 1.85), tail = vec3(1.5, 0.1, 0.05);\n"
+    u"    vec3 fc = fm < 0.5 ? vec3(0.0) : fm < 1.5 ? head : fm < 2.5 ? tail : tail * 1.8;\n"
+    u"    vec3 rc = rm < 0.5 ? vec3(0.0) : rm < 1.5 ? head : rm < 2.5 ? tail : tail * 1.8;\n"
+    u"    vec3 cabin = m.b * inside * vec3(0.78, 0.7, 0.56) * (0.55 + 1.2 * dot(albedo, vec3(0.3, 0.59, 0.11)));\n"
+    u"    if (inside > 0.5 && m.b > 0.0) cabin *= 1.0 - 0.85 * regs_passengers();\n"
+    // a lamp smaller than a pixel keeps its light (the mip averages it away otherwise), so it does not flicker
+    u"    vec2 foot = max(abs(dFdx(uv)), abs(dFdy(uv))) * vec2(textureSize(regs_WindowMask, 0));\n"
+    u"    float boost = clamp(max(foot.x, foot.y), 1.0, 4.0);\n"
+    u"    boost *= boost;\n"
+    u"    return (m.r * fc + m.g * rc) * boost * (0.75 + 0.5 * dot(albedo, vec3(0.3, 0.59, 0.11))) * on + cabin * regs_Cabin.w;\n"
+    u"  }\n"
+    u"  float s = floor(regs_Seed * 255.0 + 0.5);\n"
+    u"  vec4 r = regs_hash4(s, 1.0), t = regs_hash4(s, 2.0), b = regs_hash4(s, 3.0);\n"
+    u"  vec4 on = smoothstep(r - 0.03, r + 0.03, vec4(regs_Night.y));\n"
+    u"  vec3 sum = vec3(0.0);\n"
+    u"  for (int k = 0; k < 3; ++k) {\n"
+    u"    vec3 tint = t[k] < 0.06 ? vec3(0.55, 0.64, 0.82) : mix(vec3(1.0, 0.6, 0.3), vec3(1.0, 0.84, 0.62), (t[k] - 0.06) / 0.94);\n"
+    u"    sum += m[k] * on[k] * (0.7 + 0.6 * b[k]) * tint;\n"
+    u"  }\n"
+    u"  float shopOn = smoothstep(r.w - 0.03, r.w + 0.03, regs_Shop);\n"
+    u"  sum += m.a * shopOn * 1.6 * mix(vec3(1.0, 0.82, 0.6), vec3(1.0, 0.95, 0.88), t.w);\n"
+    u"  return sum * (0.6 + 1.5 * dot(albedo, vec3(0.3, 0.59, 0.11))) * regs_Night.x;\n"
+    u"}\n"
+    u"#}\n";
+const char16_t* kNightMapsCall =
+    u"  #if ($regsNight) {\n"
+    u"  regs_windowGlow = regs_windows(v_texCoord.xy, diffusemap.rgb);\n"
+    u"  #}\n";
+const char16_t* kNightColorDecl =
+    u"#$regsLamp = !bool($envFlags & (ENVIROMENT_SHADOWMAP_RENDER | ENVIROMENT_SHADOW_RENDER)) && "
+    u"!bool($matFlags & (MATERIAL_ADDITIVE | MATERIAL_ADDITIVE_A));\n"
+    u"#once# vec3 regs_windowGlow = vec3(0.0);\n"
+    u"#if ($regsLamp) {\n"
+    u"#once# uniform vec4 regs_Night;\n"
+    u"uniform sampler2D regs_LampMap;\n"
+    u"uniform vec4 regs_LampMapXf;\n"
+    u"uniform vec4 regs_LampHeight;\n"
+    u"uniform sampler2D regs_CarMap;\n"
+    u"uniform vec4 regs_CarMapXf;\n"
+    u"uniform vec4 regs_CarLight;\n"
+    u"vec3 regs_carLight() {\n"
+    u"  if (regs_CarLight.z <= 0.0) return vec3(0.0);\n"
+    u"  vec2 uv = (regs_WorldPos.xz - regs_CarMapXf.xy) * regs_CarMapXf.zw;\n"
+    u"  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec3(0.0);\n"
+    u"  vec4 l = texture2D(regs_CarMap, vec2(uv.x, min(uv.y * 0.5, 0.5 - 0.5 / 4096.0)));\n"  // the light map's lower half
+    u"  if (l.r <= 0.0005) return vec3(0.0);\n"
+    u"  float g = regs_CarLight.x + l.b / l.r;\n"
+    u"  vec3 tint = mix(vec3(1.0, 0.93, 0.8), vec3(1.0, 0.74, 0.45), clamp(l.g / l.r, 0.0, 1.0));\n"
+    u"  float y = regs_WorldPos.y;\n"
+    u"  return tint * (l.r / (1.0 + 0.4 * l.r)) * (smoothstep(g + 3.2, g + 1.0, y) * smoothstep(g - 1.5, g - 0.3, y) * regs_CarLight.z);\n"
+    u"}\n"
+    u"vec3 regs_lampLight() {\n"
+    u"  if (regs_Night.z <= 0.0) return regs_carLight();\n"
+    u"  vec2 uv = (regs_WorldPos.xz - regs_LampMapXf.xy) * regs_LampMapXf.zw;\n"
+    u"  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return regs_carLight();\n"
+    u"  vec4 l = texture2D(regs_LampMap, vec2(uv.x * regs_LampHeight.z, 0.5 + max(uv.y * regs_LampHeight.w, 0.5 / 4096.0)));\n"  // upper half
+    u"  float head = regs_LampHeight.x + l.a * regs_LampHeight.y;\n"
+    u"  float y = regs_WorldPos.y;\n"
+    u"  return l.rgb * (smoothstep(head + 0.5, head - 1.0, y) * smoothstep(head - 18.0, head - 11.0, y) * regs_Night.z) + regs_carLight();\n"
+    u"}\n"
+    u"#}\n";
+const char16_t* kNightColorStart =
+    u"  #if ($regsLamp) {\n"
+    u"  vec3 regs_albedo = color.rgb * diffusemap.rgb;\n"
+    u"  #}\n";
+const char16_t* kNightColorEnd =
+    u"  #if ($regsLamp) {\n"
+    u"  color.rgb += regs_albedo * regs_lampLight() + regs_windowGlow;\n"
+    u"  #}\n";
+
+bool insertBefore(std::u16string& text, const std::u16string& anchor, const std::u16string& what) {
+  size_t at = text.find(anchor);
+  if (at == std::u16string::npos) return false;
+  text.insert(at, what);
+  return true;
+}
+bool insertAfterLine(std::u16string& text, const std::u16string& anchor, const std::u16string& what) {
+  size_t at = text.find(anchor);
+  if (at == std::u16string::npos) return false;
+  size_t eol = text.find(u'\n', at);
+  text.insert(eol == std::u16string::npos ? text.size() : eol + 1, what);
+  return true;
+}
+
+}  // namespace
+
 std::u16string portShaderPatch(const std::u16string& path, std::u16string text) {
   static const std::u16string kFrom = u"float y = pos.y;// - gl_MultiTexCoord1.x;";
   static const std::u16string kTo = u"float y = pos.y - gl_MultiTexCoord1.x;";
@@ -88,6 +240,23 @@ std::u16string portShaderPatch(const std::u16string& path, std::u16string text) 
     if (size_t at = text.find(kFrom); at != std::u16string::npos) text.replace(at, kFrom.size(), kTo);
     else LOG_WARN("shader component %s: the tree wind line was not found, trees sway in division space",
                   utf16ToUtf8(path).c_str());
+  }
+  if (path.ends_with(u"shaders/default/maps.fragment")) {
+    std::u16string t = text;
+    if (insertBefore(t, u"void maps_input() {", kNightMapsDecl) && insertBefore(t, u"  geometry_input();", kNightMapsCall))
+      text = t;
+    else
+      LOG_WARN("shader component %s: no anchor for the lit windows", utf16ToUtf8(path).c_str());
+  }
+  if (path.ends_with(u"shaders/default/color.fragment")) {
+    std::u16string t = text;
+    size_t last = t.rfind(u'}');
+    bool ok = last != std::u16string::npos;
+    if (ok) t.insert(last, kNightColorEnd);
+    ok = ok && insertAfterLine(t, u"void color_output() {", kNightColorStart) &&
+         insertBefore(t, u"void color_input() {", kNightColorDecl);
+    if (ok) text = t;
+    else LOG_WARN("shader component %s: no anchor for the night lights", utf16ToUtf8(path).c_str());
   }
   return text;
 }

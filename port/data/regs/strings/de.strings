@@ -119,3 +119,7 @@ $regs_template_export_hint = "Zeigt die Vorlagendatei (.cimtpl) im Explorer, zum
 $regs_template_import_hint = "Öffnet den Vorlagenordner: .cimtpl-Dateien hier hineinlegen, dann dieses Fenster neu öffnen.";
 $regs_template_needs_dlc = "(DLC fehlt)";
 $regs_template_missing_dialog = "Diese Vorlage braucht nicht installierte Inhalte, um so auszusehen, wie der Autor sie gedacht hat:";
+// die Seite Mods im Einstellungsmenü (regs/ui/mods.script): die Einstellungen der aktivierten Mods
+$regs_mods_button = "Mods";
+$regs_mods_title = "Mods";
+$regs_mods_none = "Die aktivierten Mods haben keine Einstellungen.";

@@ -57,6 +57,7 @@ add_library(regs_engine STATIC
   src/engine/minimap.cpp
   src/engine/skinning.cpp
   src/engine/sky.cpp
+  src/engine/night_lights.cpp
   src/engine/interaction.cpp
   src/engine/tools.cpp
   src/engine/tool_objects.cpp
@@ -81,6 +82,10 @@ add_library(regs_engine STATIC
   src/engine/sim_doors.cpp
   src/engine/sim_jams.cpp
   src/engine/particles.cpp
+  src/engine/mods.cpp
+  src/engine/surface_map.cpp
+  src/engine/traffic_maps.cpp
+  src/engine/snowplows.cpp
   src/engine/user_folders.cpp
   src/engine/debug_economy.cpp
   src/platform/window_win32.cpp
@@ -105,7 +110,8 @@ else()
   set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
-add_executable(regs-tool src/tools/regs_tool.cpp src/tools/crash_win32.cpp)
+add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/crash_win32.cpp)
+target_include_directories(regs-tool PRIVATE third_party/miniaudio)
 target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
 
 # the game
@@ -113,9 +119,20 @@ add_executable(regs src/app/main.cpp src/tools/crash_win32.cpp)
 target_link_libraries(regs PRIVATE regs_engine dbghelp)
 # the port's own game files (menu pages, strings, script extensions), mounted over the install from data/ next to the
 # executable; copied on every build (also when only data/ changed and nothing relinks)
+# Built-in mods (data/mods, disabled until listed in the user's mods.json) come along; the weather mod's seamless loops
+# are cut here from its CC0 recordings by regs-tool cut (data/mods/weather/sounds/LICENSES.txt), its soft particle
+# sprite drawn by regs-tool softdot, its falling-leaf sprite by regs-tool leaf
+set(WEATHER_SOUNDS $<TARGET_FILE_DIR:regs>/data/mods/weather/sounds)
 add_custom_target(regs_data ALL
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data)
-add_dependencies(regs_data regs)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data
+  COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/light-rain.mp3 ${WEATHER_SOUNDS}/rain-light.wav 2 20 2 loop
+  COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/slowly-raining-loop.mp3 ${WEATHER_SOUNDS}/rain-normal.wav 5 30 3 loop
+  COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/heavy-rain-roof.mp3 ${WEATHER_SOUNDS}/rain-heavy.wav 10 30 3 loop
+  COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/cars-rainy-street.mp3 ${WEATHER_SOUNDS}/wet-traffic.wav 2 30 3 loop
+  COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/thunder-clap.mp3 ${WEATHER_SOUNDS}/thunder-mid.wav 0 14 4
+  COMMAND $<TARGET_FILE:regs-tool> softdot $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/softdot.dds 32
+  COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32)
+add_dependencies(regs_data regs regs-tool)
 if(WIN32)
   target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32)
 endif()

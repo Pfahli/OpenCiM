@@ -484,18 +484,17 @@ function regsRelayoutMenus() {
   this.perform("graphics");
 }
 
-// Settings menu (main and pause menu): a "Game" entry above Back, opening the port's game options page
-// (regs/ui/game.script: autosave). The page shows while the machine stays in SettingsMenu (main.states is not
-// changed), so it closes itself (regsCloseGamePage) and the settings buttons come back. Back is the lowest button
-// (other port entries may have been added above it already).
+// Settings menu (main and pause menu): the port's entries "Mods" (regs/ui/mods.script, the mods' options) and "Game"
+// (regs/ui/game.script, autosave) above Back. The pages show while the machine stays in SettingsMenu (main.states is
+// not changed), so they close themselves (regsCloseModsPage, regsCloseGamePage) and the settings buttons come back.
+$regsModsPage = null;
 $regsGamePage = null;
-event this.enter::["SettingsMenu"]() {
-  $regsGameText = regsText("regs_game_button");
-  with (MAIN.$ui.createButton($menu.$buttonArea, 4, 0, 322, 32, $regsGameText, macro :: MAIN.$main.regsOpenGamePage(), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+function regsSettingsButton($regsSbText, $regsSbAction) {
+  with (MAIN.$ui.createButton($menu.$buttonArea, 4, 0, 322, 32, $regsSbText, $regsSbAction, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
     .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
     .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
     MAIN.$ui.setTitleFont(current);
-    $regsBack = $menu.$buttons[0];
+    $regsBack = $menu.$buttons[0];   // Back: the lowest button
     foreach ($menu.$buttons) {
       if (current.top > $regsBack.top) $regsBack = current;
     }
@@ -503,6 +502,21 @@ event this.enter::["SettingsMenu"]() {
     $regsBack.setRect(4, $regsBack.top + 38, 322, 32);
     $menu.$buttons[] = current;
   }
+}
+event this.enter::["SettingsMenu"]() {
+  regsSettingsButton(regsText("regs_mods_button"), macro :: MAIN.$main.regsOpenModsPage());
+  regsSettingsButton(regsText("regs_game_button"), macro :: MAIN.$main.regsOpenGamePage());
+}
+function regsOpenModsPage() {
+  if ($regsModsPage) return;
+  $menu.$menuArea.visible = false;
+  $regsModsPage = load "/regs/ui/mods.script";
+}
+function regsCloseModsPage() {
+  if (!$regsModsPage) return;
+  delete $regsModsPage;
+  $regsModsPage = null;
+  $menu.$menuArea.visible = true;
 }
 function regsOpenGamePage() {
   if ($regsGamePage) return;

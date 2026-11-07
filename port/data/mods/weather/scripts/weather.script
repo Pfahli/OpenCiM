@@ -1,0 +1,856 @@
+// Weather mod (opencim.weather): rain, heavy rain and thunderstorms by game date, wet ground that dries after the
+// rain, puddles, vehicle spray. Loaded with the game (extend/metro/scripts/game.script) and deleted with it.
+// Everything here uses generic port hooks (port/docs/mod-manager.md §4.2, §4.3):
+//   rain      a gsParticleEmitter under the scene with regsEmitBox (a box around the view) and regsStretch (fine
+//             streaks along the fall), placed every frame from the camera's regsEyePosition / regsLookPosition;
+//   light     the scene's atmosphere fields (overcast, fog, lightning flashes);
+//   ground    the shader hook weather_wet_surface (shaders/wet.glsl, declared in mod.json): darker wet surfaces,
+//             puddles with reflections and ripples on roads, pavement and platforms; driven by regsShaderUniform;
+//   spray     a mist emitter in gsGrid.regsVehicleEmitters (emitted behind moving vehicles near the camera);
+//   sound     CC0 recordings (sounds/LICENSES.txt): rain loops and thunder through new_music (Ambience group), the
+//             wet tyre hiss through gsGrid.regsVehicleSound (Effects group, near moving vehicles).
+// Debug switch REGS_TEST_WEATHER: rain (normal rain all the time), heavy (heavy rain), storm (heavy rain with
+// thunder and lightning), dry (never), cycle (12 game hours from 06:00 every second day, alternating rain and storm:
+// start, stop and drying tests). REGS_DEBUG_WEATHER=1 echoes the state every game hour.
+// Seasons come later in this mod: $season would sit next to the rain state here (updateERA / the month).
+// Gameplay hook (off for now): MAIN.$weather.$rain (0..1) and $wet are where a later option could raise transit
+// ridership in rain.
+
+$root = "/regs/mods/opencim.weather/";
+$scene = MAIN.$scene;
+$camera = MAIN.$camera;
+$clock = MAIN.$mainClock;
+
+MAIN.$weather = this;
+$rain = 0.0;          // shown rain intensity 0..1 (eased in real time)
+$heavy = 0.0;         // shown heavy-rain share 0..1 (eased)
+$target = 0.0;        // the schedule's intensity now
+$kindNow = 0;         // the current spell: 0 rain, 1 heavy rain, 2 thunderstorm
+$wet = 0.0;           // shown water film 0..1 (the darkening)
+$puddles = 0.0;       // shown puddle amount 0..1
+$film = 0.0;          // the ground model (updateGround): water film 0..1 and standing water (about mm)
+$water = 0.0;
+$flash = 0.0;         // the lightning flash 0..1 now
+$flashAge = 99.0;     // real seconds since the last flash
+$flashPeak = 0.0;
+$flashWait = 8.0;     // real seconds to the next flash (the first one sooner in the storm test)
+$flashCount = 0;
+$thunders = [];       // pending thunders: [seconds left, closeness, delay]
+$raining = false;     // for the start/stop messages
+$lastHour = -1;
+$lastDate = -1;
+$lastClockHour = 0.0;
+$frameThread = null;
+
+// snow (the ground model below): the cover (0..2, 1 = full), the shown cover, falling snow and thaw, the temperature
+$snow = 0.0;
+$snowShown = 0.0;
+$snowFall = 0.0;
+$thaw = 0.0;
+$temp = 10.0;
+$plowCount = 6;       // snowplows on the streets in winter (REGS_TEST_PLOWS=<n> overrides it in the engine)
+// the settings menu's Mods page (options.script), read every frame: weather off clears rain, storms and snow within
+// seconds; seasons off gives a year without seasons (no winter cold spells and snow, the year's mean rain and
+// temperature every month; later also no autumn colours, bare winter trees or summer heat)
+$weatherOn = MAIN.$settings.$regsWeatherEnabled : true;
+$seasonsOn = MAIN.$settings.$regsSeasonsEnabled : true;
+// the mod's texts (strings/<language>.strings, English for every language without its own file)
+$textFile = "regs/mods/opencim.weather/strings/" + MAIN.$language + ".strings";
+if (!file_exists($textFile)) $textFile = "regs/mods/opencim.weather/strings/en_US.strings";
+$texts = load "/" + $textFile;
+$testDay = $clock.date;   // REGS_TEST_WEATHER=snowmelt: the day the test snowfall starts
+$mode = getenv("REGS_TEST_WEATHER");
+$debug = getenv("REGS_DEBUG_WEATHER") != "";
+$debugMap = getenv("REGS_DEBUG_WEATHER") == "2" || getenv("REGS_DEBUG_WEATHER") == "3";   // the ground shader shows the surface map and edges (3: the lane map)
+$holdFlash = getenv("REGS_DEBUG_WEATHER") == "flash";  // each flash held at its peak for 3 s (screenshots only)
+if ($mode == "storm") $flashWait = 3.0;
+
+// The schedule: per game day a chance of a spell starting at a random hour, fading in and out over 1.5 game hours.
+// The chance, the length and the share of heavy rain (most heavy spells are thunderstorms) follow the month (the
+// table below: most rain in spring and autumn, about half as many and shorter spells in summer, where heavy rain and
+// storms are commonest). Winter has cold spells (planned per winter, below): inside them it snows instead of rains.
+// Deterministic for a game: the seed comes from the campaign's start date (saved with the game).
+//                 (year) Jan   Feb   Mar   Apr   May   Jun   Jul   Aug   Sep   Oct   Nov   Dec
+$rainChance  = [0.105, 0.09, 0.09, 0.13, 0.14, 0.13, 0.07, 0.06, 0.065, 0.13, 0.14, 0.13, 0.09];  // spells per day
+$rainHoursMin = [7.0, 8.0, 8.0, 8.0, 8.0, 6.0, 4.0, 4.0, 4.0, 8.0, 8.0, 8.0, 8.0];            // normal rain, game hours
+$rainHoursMax = [30.0, 36.0, 36.0, 40.0, 36.0, 24.0, 16.0, 14.0, 16.0, 30.0, 40.0, 40.0, 36.0];
+$heavyShare  = [0.165, 0.03, 0.03, 0.08, 0.15, 0.25, 0.35, 0.35, 0.35, 0.2, 0.1, 0.05, 0.03];      // of the spells
+$fadeHours = 1.5;
+$fadeSeconds = 1.5;     // the shown intensity follows the schedule over at least this many real seconds
+$seed = 1;
+if (defined MAIN.$campaign) {
+  if (MAIN.$campaign) {
+    if (MAIN.$campaign.$campaign) $seed = ((MAIN.$campaign.$campaign.$startDate : 0) % 9973) + 1;
+  }
+}
+
+// a pseudo-random number in [0, 1) from a day and a channel (no rand(): the simulation's stream stays untouched)
+function hash01($day, $k) {
+  $hx = sin(float($day % 10007) * 12.9898 + float($seed) * 0.3711 + float($k) * 78.233) * 43758.5453;
+  return abs($hx - float(int($hx)));
+}
+
+// ---- calendar: day numbers (the clock's date, mkdate) to month and text ----
+function monthOf($d) {
+  $y = $clock.years;
+  for ($yy = $y + 1; $yy >= $y - 1; --$yy)
+    for ($m = 12; $m >= 1; --$m)
+      if ($d >= mkdate(1, $m, $yy)) return $m;
+  return 1;
+}
+
+function dayText($d) {
+  $y = $clock.years;
+  for ($yy = $y + 1; $yy >= $y - 1; --$yy)
+    for ($m = 12; $m >= 1; --$m) {
+      $first = mkdate(1, $m, $yy);
+      if ($d >= $first) return string($d - $first + 1) + "." + string($m) + "." + string($yy);
+    }
+  return string($d);
+}
+
+// ---- winter: cold spells ----
+// Per winter (December of year Y to February of Y + 1) one to three cold spells of 1-4 weeks, placed in that window;
+// rarely a short one (3-6 days) in late November or early March. Inside a cold spell it snows instead of rains (several
+// snowfalls, the first on its first day), it freezes and the snow stays; after it a thaw melts the snow within a day
+// or two. Plans are cached per winter: [[first day, end day (exclusive)], ...].
+$planYears = [];
+$planList = [];
+function winterPlan($y) {
+  for ($i = 0; $i < #$planYears; ++$i)
+    if ($planYears[$i] == $y) return $planList[$i];
+  $plan = [];
+  if ($mode == "snow") {
+    $plan[] = [mkdate(1, 7, $y), mkdate(1, 7, $y + 1)];   // the test: cold all year
+  } else if ($mode == "snowmelt") {
+    $plan[] = [$testDay, $testDay + 2];                 // the test: two cold days from the start, then the thaw
+  } else if ($mode == "") {
+    $from = mkdate(1, 12, $y);
+    $span = mkdate(1, 3, $y + 1) - $from;
+    $n = 1 + int(hash01($y, 30) * 2.4);               // 1-3, mostly 1 or 2
+    $seg = int($span / $n);
+    for ($k = 0; $k < $n; ++$k) {
+      $len = min($seg - 2, 7 + int(hash01($y, 31 + $k) * 22.0));
+      $start = $from + $k * $seg + int(hash01($y, 35 + $k) * float($seg - $len));
+      $plan[] = [$start, $start + $len];
+    }
+    if (hash01($y, 40) < 0.15) {                        // late November
+      $s = mkdate(20, 11, $y) + int(hash01($y, 41) * 5.0);
+      $plan[] = [$s, $s + 3 + int(hash01($y, 42) * 4.0)];
+    }
+    if (hash01($y, 43) < 0.1) {                         // early March
+      $s = mkdate(1, 3, $y + 1) + int(hash01($y, 44) * 7.0);
+      $plan[] = [$s, $s + 3 + int(hash01($y, 45) * 4.0)];
+    }
+  }
+  $planYears[] = $y;
+  $planList[] = $plan;
+  return $plan;
+}
+
+// the cold spell [first, end] holding day $d, or null
+function coldSpellOf($d) {
+  if (!$seasonsOn) return null;   // seasons off: no winter
+  $y = $clock.years;
+  for ($yy = $y - 1; $yy <= $y; ++$yy)
+    foreach (winterPlan($yy)) {
+      if ($d >= current[0] && $d < current[1]) return current;
+    }
+  return null;
+}
+
+// ---- summer: heat spells ----
+// Per summer (10 June to 31 August of year Y) one to three hot spells of 3-9 days, planned like the cold spells and
+// cached per year: [[first day, end day (exclusive)], ...]. Inside them the afternoons reach about 30-35 °C (the heat
+// shimmer over the asphalt, a warm light); no rain falls on their days.
+$heatYears = [];
+$heatList = [];
+function heatPlan($y) {
+  for ($i = 0; $i < #$heatYears; ++$i)
+    if ($heatYears[$i] == $y) return $heatList[$i];
+  $plan = [];
+  if ($mode == "heat") {
+    $plan[] = [mkdate(1, 1, $y), mkdate(1, 1, $y + 1)];   // the test: hot all year
+  } else if ($mode == "") {
+    $from = mkdate(10, 6, $y);
+    $span = mkdate(1, 9, $y) - $from;
+    $n = 1 + int(hash01($y, 70) * 2.4);
+    $seg = int($span / $n);
+    for ($k = 0; $k < $n; ++$k) {
+      $len = min($seg - 2, 3 + int(hash01($y, 71 + $k) * 7.0));
+      $start = $from + $k * $seg + int(hash01($y, 75 + $k) * float($seg - $len));
+      $plan[] = [$start, $start + $len];
+    }
+  }
+  $heatYears[] = $y;
+  $heatList[] = $plan;
+  return $plan;
+}
+
+// the heat spell [first, end] holding day $d, or null
+function heatSpellOf($d) {
+  if (!$seasonsOn) return null;   // seasons off: no summer heat
+  foreach (heatPlan($clock.years)) {
+    if ($d >= current[0] && $d < current[1]) return current;
+  }
+  return null;
+}
+
+// the air temperature now, roughly (°C): -6..-2 in a cold spell, 22..35 in a heat spell (hottest at 15:00), else the
+// month's mean with a little day-to-day change
+$monthTemp = [11.4, 3.0, 4.0, 6.0, 11.0, 15.5, 19.0, 21.0, 20.5, 16.0, 10.5, 6.0, 4.0];
+function temperature($d, $h) {
+  if (coldSpellOf($d)) return -4.0 + 2.0 * sin(($h - 9.0) * 0.2618);
+  if (heatSpellOf($d)) return 28.0 + 3.0 * hash01($d, 51) + 5.5 * sin(($h - 9.0) * 0.2618);
+  return $monthTemp[$seasonsOn ? monthOf($d) : 0] + 3.0 * (hash01($d, 50) - 0.5) + 3.0 * sin(($h - 9.0) * 0.2618);
+}
+
+// the spell that starts on day $d: [start hour, end hour, intensity, kind] relative to that day's midnight, or null.
+// kind: 0 rain, 1 heavy rain, 2 thunderstorm, 3 snow, 4 heavy snow
+function spellOf($d) {
+  if ($mode == "cycle") {
+    if ($d % 2 != 0) return null;
+    return [6.0, 18.0, 1.0, ($d % 4 == 0) ? 0 : 2];
+  }
+  if ($mode == "snowmelt") {
+    if ($d != $testDay) return null;
+    return [6.0, 30.0, 1.0, 3];
+  }
+  if (heatSpellOf($d)) return null;   // hot and dry
+  $cold = coldSpellOf($d);
+  if ($cold) {  // snowfalls: hours to a day or two, the first on the spell's first day
+    if ($d != $cold[0] && hash01($d, 60) >= 0.35) return null;
+    $sStart = hash01($d, 61) * 20.0;
+    return [$sStart, $sStart + 4.0 + hash01($d, 62) * 32.0, 0.4 + 0.6 * hash01($d, 63), hash01($d, 64) < 0.2 ? 4 : 3];
+  }
+  $m = $seasonsOn ? monthOf($d) : 0;   // seasons off: the year's mean (index 0 of the tables)
+  if (hash01($d, 0) >= $rainChance[$m]) return null;
+  $sStart = hash01($d, 1) * 24.0;
+  if (hash01($d, 5) < $heavyShare[$m]) {   // heavy rain: shorter, mostly with thunder
+    return [$sStart, $sStart + 3.0 + hash01($d, 2) * 7.0, 1.0, hash01($d, 4) < 0.7 ? 2 : 1];
+  }
+  return [$sStart, $sStart + $rainHoursMin[$m] + hash01($d, 2) * ($rainHoursMax[$m] - $rainHoursMin[$m]),
+          0.35 + 0.65 * hash01($d, 3), 0];
+}
+
+// REGS_DEBUG_WEATHER: the plan of the winter around a date and the rain spells of its year, month by month
+function logPlan($d) {
+  $y = $clock.years;
+  if ($seasonsOn) for ($yy = $y - 1; $yy <= $y; ++$yy)
+    foreach (winterPlan($yy)) {
+      $cs = current;
+      $falls = "";
+      for ($k = $cs[0]; $k < $cs[1]; ++$k) {
+        $sp = spellOf($k);
+        if ($sp) $falls = $falls + " " + dayText($k) + " " + string(int($sp[0])) + "h+" + string(int($sp[1] - $sp[0])) +
+                          "h" + ($sp[3] == 4 ? " heavy" : "");
+      }
+      echo "weather: cold spell " + dayText($cs[0]) + " - " + dayText($cs[1] - 1) + " (" + string($cs[1] - $cs[0]) +
+           " days), snowfalls:" + $falls;
+    }
+  if ($seasonsOn)
+    foreach (heatPlan($y)) {
+      echo "weather: heat spell " + dayText(current[0]) + " - " + dayText(current[1] - 1) + " (" + string(current[1] - current[0]) + " days)";
+    }
+  for ($m = 1; $m <= 12; ++$m) {
+    $first = mkdate(1, $m, $y);
+    $last = $m == 12 ? mkdate(1, 1, $y + 1) : mkdate(1, $m + 1, $y);
+    $nRain = 0; $nHeavy = 0; $nStorms = 0; $nSnows = 0; $nHours = 0.0;
+    for ($k = $first; $k < $last; ++$k) {
+      $sp = spellOf($k);
+      if (!$sp) continue;
+      if ($sp[3] >= 3) { $nSnows++; continue; }
+      $nRain++;
+      $nHours += $sp[1] - $sp[0];
+      if ($sp[3] == 1) $nHeavy++;
+      if ($sp[3] == 2) $nStorms++;
+    }
+    echo "weather: plan " + string($m) + "/" + string($y) + ": " + string($nRain) + " rain spells (" + string(int($nHours)) +
+         " h; " + string($nHeavy) + " heavy, " + string($nStorms) + " storms), " + string($nSnows) + " snowfalls";
+  }
+}
+
+// the scheduled intensity at day $d, hour $h (spells of the two days before can still run); sets $kindNow
+function scheduled($d, $h) {
+  $kindNow = 0;
+  if ($mode == "rain") return 1.0;
+  if ($mode == "heavy") { $kindNow = 1; return 1.0; }
+  if ($mode == "storm") { $kindNow = 2; return 1.0; }
+  if ($mode == "snow") { $kindNow = 3; return 1.0; }
+  if ($mode == "dry" || $mode == "heat") return 0.0;
+  $best = 0.0;
+  for ($back = 0; $back <= 2; ++$back) {
+    $sp = spellOf($d - $back);
+    if (!$sp) continue;
+    $th = $h + 24.0 * $back;
+    if ($th < $sp[0] || $th >= $sp[1]) continue;
+    if ($sp[3] >= 3 && !coldSpellOf($d)) continue;   // a snowfall ends with its cold spell
+    $ramp = min(1.0, min(($th - $sp[0]) / $fadeHours, ($sp[1] - $th) / $fadeHours));
+    if ($sp[2] * $ramp > $best) {
+      $best = $sp[2] * $ramp;
+      $kindNow = $sp[3];
+    }
+  }
+  return $best;
+}
+
+// game.script calls updateERA(year) on every one of its $gameScripts at each new year (an addon game script's
+// interface); the weather has nothing to do there yet (seasons may)
+function updateERA($year) {
+}
+
+function dateText() {
+  $hh = int(float($clock.time) / 3600000.0);
+  return string($clock.days) + "." + string($clock.months) + "." + string($clock.years) + " " + string($hh) + ":00";
+}
+
+function kindName($k) {
+  if ($k == 4) return "heavy snow";
+  if ($k == 3) return "snow";
+  if ($k == 2) return "thunderstorm";
+  if ($k == 1) return "heavy rain";
+  return "rain";
+}
+
+// the game speed (1 normal, 0 paused)
+function gameSpeed() {
+  if ($clock.paused) return 0.0;
+  return $clock.speed / 10000.0;
+}
+
+// ---- rain: very fine streaks in a box around the view, falling straight down with a little wind ----
+with ($emitter = new_particleEmitter($scene)) {
+  .setTexture("regs/mods/opencim.weather/textures/softdot.dds");   // made by the build (regs-tool softdot)
+  .particleBlend = 4;            // BLEND_ADDITIVE_ALPHA: light streaks, no shadows
+  .autoemit = false;
+  .density = 0.0;
+  .direction = vector(0.10, -1.0, 0.06);
+  .minParticleAngle = 0.0;
+  .maxParticleAngle = 0.03;
+  .gravitation = vector(0.0, 0.0, 0.0);
+  .particleAirResist = 0.0;
+  .ownerVelocity = 0.0;
+  .minParticleOrient = 0.0;
+  .maxParticleOrient = 0.0;
+  .addColorRange(0x2CC8D2DC, 0x1CC8D2DC);   // faint and see-through: a veil, not single lines
+}
+
+// ---- snow: soft, slowly drifting flakes, very fine (a pixel or two), in the same box around the view ----
+with ($flakes = new_particleEmitter($scene)) {
+  .setTexture("regs/mods/opencim.weather/textures/softdot.dds");
+  .particleBlend = 4;            // BLEND_ADDITIVE_ALPHA: light dots, no shadows
+  .autoemit = false;
+  .density = 0.0;
+  .direction = vector(0.22, -1.0, 0.12);   // a little wind
+  .minParticleAngle = 0.0;
+  .maxParticleAngle = 0.35;                // some drift either way
+  .particleAirResist = 0.0;
+  .gravitation = vector(0.0, 0.0, 0.0);
+  .ownerVelocity = 0.0;
+  .addColorRange(0x50F4F6F8, 0x40F4F6F8);
+}
+
+// ---- spray: a soft, low mist trail behind moving vehicles while the roads are wet. Many tiny, very faint particles
+// (the soft sprite, no outline), stretched along their motion (regsStretch), kept low by gravity and drag, spread a
+// little sideways behind the wheels; they live half a second, so the trail fades within a car length or two. The
+// engine scales the rate with the square of each vehicle's speed. ----
+$softDot = "regs/mods/opencim.weather/textures/softdot.dds";   // made by the build (regs-tool softdot)
+with ($spray = new_particleEmitter($scene)) {
+  .setTexture($softDot);
+  .particleBlend = 1;            // BLEND_ALPHA; far too faint to cast shadows (alpha test 0.2)
+  .autoemit = true;
+  .density = 0.0;
+  .position = vector(0.0, 0.12, 0.1);       // right behind the rear end, just above the road
+  .regsEmitBox = vector(0.85, 0.04, 0.25);  // across the track of the wheels
+  .direction = vector(0.0, 1.0, 0.0);
+  .minParticleAngle = 0.9;                  // mostly sideways and back, hardly up
+  .maxParticleAngle = 1.5;
+  .gravitation = vector(0.0, -2.0, 0.0);
+  .particleAirResist = 3.5;
+  .ownerVelocity = 0.55;                    // carried along behind the vehicle, falling back as the drag acts
+  .particleSize = 0.22;
+  .regsStretch = 0.12;                      // drawn along the motion: streaks, not discs
+  .setParticleScale(1.2, 0.0, 1.0);
+  .maxDistance = 140.0;
+  .addColorRange(0x26D4D8DC, 0x00D4D8DC);  // low opacity: it only builds up where they overlap
+}
+$grid = MAIN.$grid;
+$grid.regsVehicleEmitters = [$spray];
+
+// ---- seasons: the foliage (shaders/seasons.glsl), falling leaves, summer heat (shaders/heat.glsl) ----
+// The foliage follows the day of the year (seasons_time.x; each tree a few days earlier or later in the shader):
+// autumn colours from late September, leaves falling from mid October, bare from late November to early April, the
+// leaves coming back bright green in April. Seasons off (the Mods page): the summer look within a few seconds.
+// REGS_TEST_SEASON=<day of the year>[+<days per real second>] fixes the foliage's day (and lets it run on).
+// REGS_DEBUG_SEASONS=1: the foliage shows its classes (leaves red, twigs yellow, the rest blue); =2: the heat
+// shimmer's strength in red.
+$seasonsShown = $seasonsOn ? 1.0 : 0.0;
+$heat = 0.0;            // shown heat shimmer 0..1 (eased)
+$testSeason = getenv("REGS_TEST_SEASON");
+$testDayOfYear = -1.0;
+$testSeasonSpeed = 0.0;
+if ($testSeason != "") {
+  $plus = findstr($testSeason, "+");
+  if ($plus >= 0) {
+    $testDayOfYear = float(substr($testSeason, 0, $plus));
+    $testSeasonSpeed = float(substr($testSeason, $plus + 1, 20));
+  } else {
+    $testDayOfYear = float($testSeason);
+  }
+}
+$debugSeasons = getenv("REGS_DEBUG_SEASONS");
+$testHeat = getenv("REGS_TEST_HEAT");   // a fixed heat shimmer 0..1 (tests)
+// the deciduous trees and bushes of the base game (their mesh names; tree04 and tree05 are conifers)
+$deciduous = ["tree01", "tree02", "tree03", "tree06", "tree07", "street-tree", "bush", "bush01", "bush02", "bush03",
+              "bush-small"];
+
+// the day of the year now (0 = 1 January 0:00, with the hour)
+function dayOfYear($d, $h) {
+  return float($d - mkdate(1, 1, $clock.years)) + $h / 24.0;
+}
+
+// how many leaves fall now, 0..1: a bump over the falling weeks (mid October to late November)
+function leafFall($doy) {
+  $x = clamp(($doy - 280.0) / 52.0, 0.0, 1.0);
+  return 4.0 * $x * (1.0 - $x);
+}
+
+// ---- falling leaves: from the crowns of the deciduous trees near the camera (gsGrid.regsTreeEmitters), small,
+// yellow to brown, drifting and swinging down at a metre or two per second; they lie under the tree for 45 s and
+// fade away (at the peak about 13 000 leaves near the camera, under the engine's 24 000 particles with the rain) ----
+with ($leaves = new_particleEmitter($scene)) {
+  .setTexture("regs/mods/opencim.weather/textures/leaf.dds");   // a leaf blade with a crisp edge (regs-tool leaf)
+  .particleBlend = 1;            // BLEND_ALPHA
+  .autoemit = false;
+  .density = 0.0;
+  .direction = vector(0.4, -1.0, 0.25);
+  .minParticleAngle = 0.3;
+  .maxParticleAngle = 1.3;
+  .particleSize = 0.22;
+  .maxDistance = 200.0;
+  .regsTrees = $deciduous;
+  .minParticleOrient = 0.0;
+  .maxParticleOrient = 6.28;
+  // muted like leaves in the light of the street, not lit up: ochre, orange, rust, brown
+  .addColorRange(0xFFA0803A, 0xFF947636);
+  .addColorRange(0xFFA4602C, 0xFF965828);
+  .addColorRange(0xFF884426, 0xFF7C3E24);
+  .addColorRange(0xFF6C4E30, 0xFF62482C);
+}
+$grid.regsTreeEmitters = [$leaves];
+
+function placeLeaves($doy, $dt) {
+  $ts = max(1.0, $scene.particleEngine.timeSpeed);   // the engine runs particles faster at high game speed
+  $storm = 1.0 + 2.0 * $heavy * $rain;                  // a storm shakes them off
+  // per tree and second (the engine's tick runs on game time): about one leaf every two seconds at the peak
+  $rate = 0.5 * leafFall($doy) * $seasonsShown * $storm / max(1.0, gameSpeed());
+  with ($leaves) {
+    .density = $rate;
+    .autoemit = $rate > 0.001;
+    .minParticleSpeed = 0.2 / $ts;
+    .maxParticleSpeed = 0.9 / $ts;
+    .gravitation = vector(0.0, -3.0 / ($ts * $ts), 0.0);  // with the drag about 1.2 m/s down
+    .particleAirResist = 2.5 / $ts;
+    .regsFlutter = 0.7 / $ts;
+    .minParticleLife = 60.0 * $ts;                     // falling: long enough to reach the ground
+    .maxParticleLife = 60.0 * $ts;
+    .regsLand = 45.0 * $ts;                            // lying: 45 s, fading over the last 15
+    .visible = (MAIN.$grid.viewMode : 0) != 0x180;
+  }
+}
+
+// the seasons each frame: the foliage's day, the heat (afternoons of a heat spell, none in rain), the hooks' uniforms
+function updateSeasons($dt, $date, $hour) {
+  $seasonsShown += clamp(($seasonsOn ? 1.0 : 0.0) - $seasonsShown, -0.5 * $dt, 0.5 * $dt);
+  $doy = dayOfYear($date, $hour);
+  if ($testDayOfYear >= 0.0) {
+    $testDayOfYear += $testSeasonSpeed * $dt;
+    if ($testDayOfYear >= 365.0) $testDayOfYear -= 365.0;
+    $doy = $testDayOfYear;
+  }
+  $heatWant = $seasonsOn ? clamp(($temp - 26.0) / 6.0, 0.0, 1.0) * (1.0 - clamp($rain * 3.0, 0.0, 1.0)) : 0.0;
+  if ($testHeat != "") $heatWant = float($testHeat);
+  $heat += clamp($heatWant - $heat, -0.05 * $dt, 0.05 * $dt);
+  placeLeaves($doy, $dt);
+  regsShaderUniform("seasons_time", quat($doy, $seasonsShown, $debugSeasons == "1" ? 1.0 : 0.0, 0.0));
+  regsShaderUniform("weather_hot", quat($heat, $debugSeasons == "2" ? 1.0 : 0.0, 0.0, 0.0));
+  $scene.regsPostHooks = ($heat > 0.002 || $debugSeasons == "2") ? 1.0 : 0.0;   // the shimmer's screen pass only when it shows
+}
+
+// ---- sounds: CC0 recordings from freesound.org (sounds/LICENSES.txt); the loops are cut seamless by the build ----
+// 2D loops and thunder in the Ambience group (new_music), the wet tyre hiss as the grid's vehicle sound (Effects)
+function newLoop($file) {
+  $snd = new_music($scene);
+  $snd.load($root + "sounds/" + $file, false);
+  $snd.relative = true;
+  $snd.volume = 0.0;
+  return $snd;
+}
+$loops = [newLoop("rain-light.wav"), newLoop("rain-normal.wav"), newLoop("rain-heavy.wav"), newLoop("wet-traffic.wav")];
+$loopPlaying = [false, false, false, false];
+function newThunder($file) {
+  $snd = new_music($scene);
+  $snd.load($root + "sounds/" + $file, false);
+  $snd.relative = true;
+  return $snd;
+}
+$thunderClose = newThunder("thunder-blast-close.mp3");
+$thunderMid = newThunder("thunder-mid.wav");
+$thunderFar = newThunder("thunder-distant.mp3");
+with ($tyres = new_sound($scene)) {
+  .load($root + "sounds/car-wet-road.mp3", true);
+  .minDistance = 40.0;    // the camera hovers 100-300 m above the streets
+  .maxDistance = 240.0;
+  .volume = 0.8;
+}
+$grid.regsVehicleSound = $tyres;
+$grid.regsVehicleSoundGain = 0.0;
+
+function applyLook($w, $h, $wetness) {
+  // overcast: less direct light, greyer light, a darker grey fog a little nearer; heavy rain darker and closer still;
+  // a lightning flash lifts sun and ambient for a moment; wet roofs and walls a little darker. Nothing here may
+  // brighten the ground as the rain sets in: the ambient never rises (shaded streets are lit by it alone), and the
+  // fog, which the nearer fog brings onto the ground, is darker than the location's
+  // snowfall: a slightly softer light and a nearer fog, no tint and no loss of colour (only the snow is white)
+  // summer heat: a slightly stronger, warmer sun and a pale warm haze in the distance
+  $scene.regsLightScale = 1.0 - 0.35 * $w - 0.17 * $h - 0.1 * $snowFall + 1.1 * $flash + 0.06 * $heat;
+  $scene.regsLightTint = (int(120.0 * $heat) << 24) | 0xFFEAD0;
+  $scene.regsAmbientScale = 1.0 - 0.08 * $w - 0.1 * $h + 1.6 * $flash;
+  $scene.regsLightDesaturate = 0.45 * $w + 0.2 * $h;
+  $scene.regsFogTint = $heat > $w ? ((int(90.0 * $heat) << 24) | 0xD9D2C2) : ((int(200.0 * $w + 40.0 * $h) << 24) | 0x5A5F64);
+  $scene.regsFogScale = 1.0 - 0.25 * $w - 0.2 * $h - 0.3 * $snowFall - 0.12 * $heat;
+  $scene.regsSurfaceDiffuse = 1.0 - 0.12 * $wetness;
+  $scene.regsSurfaceSpecular = 1.0 + 1.5 * $wetness;
+}
+
+function placeRain($w, $h) {
+  $eye = $camera.regsEyePosition;
+  $look = $camera.regsLookPosition;
+  $ex = vector_x($eye); $ey = vector_y($eye); $ez = vector_z($eye);
+  $lx = vector_x($look); $ly = vector_y($look); $lz = vector_z($look);
+  $dist = max(20.0, vector_length(vector($ex - $lx, $ey - $ly, $ez - $lz)));
+  // the box: centred a third of the way from the look-at point to the eye, from the ground to half the eye height
+  // (streaks right in front of the camera would look large)
+  $height = max(15.0, 0.5 * ($ey - $ly));
+  $radius = max(25.0, 0.8 * $dist);
+  $ts = max(1.0, $scene.particleEngine.timeSpeed);   // the engine runs particles faster at high game speed
+  $speed = max(25.0, 0.55 * $dist) * (1.0 + 0.35 * $h);
+  $life = $height / $speed;
+  with ($emitter) {
+    .position = vector($lx + ($ex - $lx) * 0.33, $ly + 0.5 * $height, $lz + ($ez - $lz) * 0.33);
+    .regsEmitBox = vector($radius, 0.5 * $height, $radius);
+    .minParticleSpeed = $speed * 0.9 / $ts;
+    .maxParticleSpeed = $speed * 1.1 / $ts;
+    .minParticleLife = $life * $ts;
+    .maxParticleLife = $life * 1.1 * $ts;
+    // very fine: under a pixel wide and about 10 pixels long at the look-at distance
+    .particleSize = 0.0004 * $dist;
+    .regsStretch = 0.008 * $dist / $speed * $ts;
+    // many of them: about 9000 at full rain, 14000 in heavy rain (with the spray under the engine's 24000 cap)
+    .density = 9000.0 * $w * (1.0 + 0.55 * $h) / $life;
+    .autoemit = $w > 0.01;
+    .visible = (MAIN.$grid.viewMode : 0) != 0x180;   // not in the underground view
+  }
+}
+
+// the flakes: the rain's box, a slow fall (about a tenth of the rain's speed), a pixel or two wide, round soft dots
+function placeSnow($s, $hv) {
+  $eye = $camera.regsEyePosition;
+  $look = $camera.regsLookPosition;
+  $ex = vector_x($eye); $ey = vector_y($eye); $ez = vector_z($eye);
+  $lx = vector_x($look); $ly = vector_y($look); $lz = vector_z($look);
+  $dist = max(20.0, vector_length(vector($ex - $lx, $ey - $ly, $ez - $lz)));
+  $height = max(15.0, 0.5 * ($ey - $ly));
+  $radius = max(25.0, 0.8 * $dist);
+  $ts = max(1.0, $scene.particleEngine.timeSpeed);
+  $speed = max(3.0, 0.05 * $dist);
+  $life = $height / $speed;
+  with ($flakes) {
+    .position = vector($lx + ($ex - $lx) * 0.33, $ly + 0.5 * $height, $lz + ($ez - $lz) * 0.33);
+    .regsEmitBox = vector($radius, 0.5 * $height, $radius);
+    .minParticleSpeed = $speed * 0.8 / $ts;
+    .maxParticleSpeed = $speed * 1.2 / $ts;
+    .minParticleLife = $life * $ts;
+    .maxParticleLife = $life * 1.1 * $ts;
+    .particleSize = 0.0007 * $dist;
+    // about 6000 flakes in a normal snowfall, 9000 in heavy snow
+    .density = 6000.0 * $s * (1.0 + 0.5 * $hv) / $life;
+    .autoemit = $s > 0.01;
+    .visible = (MAIN.$grid.viewMode : 0) != 0x180;
+  }
+}
+
+function placeSpray($h) {
+  $ts = max(1.0, $scene.particleEngine.timeSpeed);
+  // from wetness 0.25 on, stronger with the wetness and in heavy rain (the engine scales it with each vehicle's speed);
+  // slush on the roads sprays too
+  $slush = clamp(($snowShown - 0.5) * 2.0, 0.0, 1.0) * 0.6;
+  $strength = max(clamp(($wet - 0.25) / 0.75, 0.0, 1.0), $slush) * (1.0 + 0.8 * $h);
+  with ($spray) {
+    .density = 260.0 * $strength;
+    .minParticleSpeed = 0.5 / $ts;
+    .maxParticleSpeed = 1.5 / $ts;
+    .minParticleLife = 0.35 * $ts;
+    .maxParticleLife = 0.6 * $ts;
+    .regsStretch = 0.12 * $ts;
+    .visible = (MAIN.$grid.viewMode : 0) != 0x180;
+  }
+}
+
+// ---- the ground's water, in game hours ----
+// film: the thin water that darkens the asphalt and gives it a sheen; wet after about half an hour of rain (drizzle:
+// an hour or more), dry about 4 hours after it. water: the standing water (about mm), filled by the rain (the square
+// of the intensity: drizzle hardly adds any) and drained by the gutters and evaporation (0.15 + 0.1 per unit and
+// hour). Puddles start at 1 unit (steady rain: after about 1.7 hours, heavy rain: 20 minutes; drizzle never) and are
+// full at 3; after the rain the asphalt dries first, the last puddles (the gutter's) about 11 hours later.
+// The shown values follow the model at most 0.25 (film) and 0.1 (puddles) per real second, so nothing pops in at
+// fast forward.
+function updateGround($dh, $dt, $w, $h) {
+  if ($dh > 0.0 && $dh < 24.0) {   // not paused, no jump (load)
+    if ($w > 0.02) $film = min(1.0, $film + $dh * $w * 2.5 * (1.0 + $h));
+    else $film = max(0.0, $film - $dh * 0.25);
+    $water = clamp($water + $dh * ($w * $w * (0.8 + 2.2 * $h) - (0.15 + 0.1 * $water)), 0.0, 8.0);
+  }
+  $wet += clamp($film - $wet, -0.25 * $dt, 0.25 * $dt);
+  $puddleTarget = clamp(($water - 1.0) / 2.0, 0.0, 1.0);
+  $puddles += clamp($puddleTarget - $puddles, -0.1 * $dt, 0.1 * $dt);
+}
+
+// ---- snow on the ground, in game hours ----
+// The cover grows while it snows (a light cover after 1-2 hours, full after about 7, heavy snow twice as fast; up to
+// 2 = deep) and stays while it is cold. Above freezing it melts: about 0.03 per hour plus more the warmer it is, so a
+// full cover goes in a day or two; the melt water wets the ground (the film) and fills the standing water, so the
+// thaw ends in the rain's puddles, gutter first, which then dry as after rain. The shown cover follows at most 0.08
+// per real second up and 0.12 down, so nothing pops.
+function updateSnow($dh, $dt, $s, $hv) {
+  if ($dh > 0.0 && $dh < 24.0) {
+    if ($s > 0.01) $snow = min(2.0, $snow + $dh * $s * 0.15 * (1.0 + $hv));
+    if ($snow > 0.3) $film = max($film, 0.8);   // under snow and slush the asphalt is wet
+    if ($temp > 0.0 && $snow > 0.0) {
+      $melt = min($snow, $dh * (0.03 + 0.01 * $temp));
+      $snow -= $melt;
+      $film = min(1.0, $film + $melt * 4.0);
+      $water = min(8.0, $water + $melt * 7.0);
+    }
+  }
+  $snowShown += clamp(min(1.0, $snow) - $snowShown, -0.12 * $dt, 0.08 * $dt);
+  $thawTarget = ($temp > 0.0 && $snow > 0.0) ? 1.0 : 0.0;
+  $thaw += clamp($thawTarget - $thaw, -0.2 * $dt, 0.2 * $dt);
+}
+
+// ---- thunderstorms: flashes paced in real time, at least 10 s apart whatever the game speed ----
+function updateStorm($dt, $w, $h) {
+  $speed = gameSpeed();
+  $storm = $kindNow == 2 && $w > 0.5;
+  if ($storm && $speed > 0.0) {
+    $flashWait -= $dt;
+    if ($flashWait <= 0.0) {
+      $flashCount++;
+      $close = hash01($flashCount, 21);                       // 1 = right overhead
+      $flashPeak = 0.35 + 0.45 * $close;                        // never a full white-out
+      $flashAge = 0.0;
+      $delay = 0.5 + 5.5 * (1.0 - $close);                      // sound travels 340 m/s: 0.5-6 s
+      $thunders[] = [$delay, $close, $delay];
+      // the next flash: 10-60 s of real time, a little sooner at fast forward, never under 10 s
+      $flashWait = max(10.0, (10.0 + 50.0 * hash01($flashCount, 22)) / max(1.0, pow($speed, 0.5)));
+      echo "weather: lightning (closeness " + string($close) + "), thunder in " + string($delay) + " s, at " + dateText();
+    }
+  }
+  // the flash: up in 0.05 s, gone over about half a second (one soft pulse, no strobing)
+  $flashAge += $dt;
+  if ($holdFlash && $flashAge < 3.0) $flash = $flashPeak;   // REGS_DEBUG_WEATHER=flash: the peak held for screenshots
+  else if ($flashAge < 0.05) $flash = $flashPeak * $flashAge / 0.05;
+  else if ($flashAge < 0.8) $flash = $flashPeak * pow(0.5, ($flashAge - 0.05) / 0.12);
+  else $flash = 0.0;
+  // thunder after the delay: near ones loud with a crack, far ones a low rumble
+  for ($i = 0; $i < #$thunders; ++$i) {
+    $tq = $thunders[$i];
+    $tq[0] = $tq[0] - $dt;
+    $thunders[$i] = $tq;
+    if ($tq[0] > 0.0) continue;
+    $closeness = $tq[1];
+    // near: the sharp blast; middle: a clap that rolls on; far: a low distant rumble. Pitch and so length vary.
+    $which = "far";
+    $snd = $thunderFar;
+    if ($closeness > 0.65) { $snd = $thunderClose; $which = "close, crack"; }
+    else if ($closeness > 0.3) { $snd = $thunderMid; $which = "middle"; }
+    $snd.pitch = 0.85 + 0.2 * hash01($flashCount, 23) + 0.1 * $closeness;
+    $snd.volume = 0.25 + 0.65 * $closeness;
+    $snd.play(false);
+    echo "weather: thunder (" + $which + ", volume " + string($snd.volume) + ", pitch " + string($snd.pitch) + ") " +
+         string($tq[2]) + " s after the flash";
+    array_erase($thunders, $i);
+    --$i;
+  }
+}
+
+// one loop: started above a whisper, stopped at silence
+function setLoop($i, $vol) {
+  if ($vol > 0.005 && !$loopPlaying[$i]) {
+    $loops[$i].play(true);
+    $loopPlaying[$i] = true;
+  } else if ($vol <= 0.005 && $loopPlaying[$i]) {
+    $loops[$i].stop();
+    $loopPlaying[$i] = false;
+  }
+  $loops[$i].volume = $vol;
+}
+
+function updateSound($w, $h) {
+  // light rain fades into steady rain as it gets stronger, heavy rain takes over in heavy spells; wet traffic noise
+  // while the streets are wet (a city's cars on wet asphalt), quieter under heavy rain
+  $level = min(1.0, $w * 1.3);
+  setLoop(0, 0.55 * $level * (1.0 - $h) * (1.0 - $w));
+  setLoop(1, 0.55 * $level * (1.0 - $h) * $w);
+  setLoop(2, 0.7 * $level * $h);
+  setLoop(3, 0.22 * clamp(($wet - 0.2) / 0.8, 0.0, 1.0) * (1.0 - 0.5 * $h));
+  // the tyre hiss of vehicles near the camera (the engine's vehicle sound hook)
+  $grid.regsVehicleSoundGain = clamp(($wet - 0.2) / 0.6, 0.0, 1.0);
+}
+
+function frame($dt) {
+  $hour = float($clock.time) / 3600000.0;
+  $date = $clock.date;
+  $weatherOn = MAIN.$settings.$regsWeatherEnabled : true;
+  $seasonsOn = MAIN.$settings.$regsSeasonsEnabled : true;
+  $target = $weatherOn ? scheduled($date, $hour) : 0.0;
+  if (!$weatherOn) $kindNow = 0;
+  if (($target > 0.0) != $raining) {
+    $raining = $target > 0.0;
+    echo "weather: " + kindName($kindNow) + " " + ($raining ? "starts" : "stops") + " at " + dateText();
+  }
+  // game hours since the last frame
+  $dh = 0.0;
+  if ($lastDate >= 0) $dh = float($date - $lastDate) * 24.0 + ($hour - $lastClockHour);
+  $lastDate = $date;
+  $lastClockHour = $hour;
+  $step = $dt / $fadeSeconds;
+  $isSnow = $kindNow >= 3;
+  $temp = temperature($date, $hour);
+  // rain and snow share the schedule; a snowfall builds up like rain, a little slower
+  $rain += clamp(($isSnow ? 0.0 : $target) - $rain, -$step, $step);
+  $snowFall += clamp(($isSnow ? $target : 0.0) - $snowFall, -$step * 0.7, $step * 0.7);
+  $heavyTarget = ($kindNow == 1 || $kindNow == 2) && $target > 0.0 ? 1.0 : 0.0;
+  $heavy += clamp($heavyTarget - $heavy, -$step, $step);
+  updateGround($dh, $dt, $rain, $heavy);
+  updateSnow($dh, $dt, $snowFall, $kindNow == 4 ? 1.0 : 0.0);
+  if (!$weatherOn) {  // switched off: the cover, the film and the water go within seconds (the shown values ease)
+    $snow = max(0.0, $snow - 0.3 * $dt);
+    $film = max(0.0, $film - 0.2 * $dt);
+    $water = max(0.0, $water - 1.5 * $dt);
+  }
+  updateStorm($dt, $rain, $heavy);
+  if ($debug && int($hour) != $lastHour) {
+    $lastHour = int($hour);
+    echo "weather: " + dateText() + " scheduled " + string($target) + " " + kindName($kindNow) + " rain " + string($rain) +
+         " heavy " + string($heavy) + " snowfall " + string($snowFall) + " temp " + string($temp) + " snow " +
+         string($snow) + " wet " + string($wet) + " water " + string($water) + " puddles " + string($puddles) + " heat " + string($heat) + " look " +
+         string($camera.regsLookPosition);
+  }
+  updateSeasons($dt, $date, $hour);
+  applyLook($rain, $heavy, $wet);
+  placeRain($rain, $heavy);
+  placeSnow($snowFall, $kindNow == 4 ? 1.0 : 0.0);
+  placeSpray($heavy);
+  updateSound($rain, $heavy);
+  // snow is quiet: the city's ambience a little lower under a cover (ambience.script's level for its next fades)
+  if (MAIN.$ambience : false) MAIN.$ambience.$ambienceVolume = 0.2 * (1.0 - 0.35 * $snowShown);
+  // the ground shader hook (shaders/wet.glsl)
+  regsShaderUniform("weather_wet", quat($wet, $puddles, $rain, $heavy));
+  regsShaderUniform("weather_misc", quat($flash, $debugMap ? (getenv("REGS_DEBUG_WEATHER") == "3" ? 2.0 : 1.0) : 0.0, 0.0, 0.0));
+  regsShaderUniform("weather_snow", quat($snowShown, $snowFall, $thaw, $snowShown >= 0.1 ? 1.0 : 0.0));
+  // footprints in the snow (the engine's footprint map): on while snow lies; new snow fills them in (in about ten
+  // minutes of heavy snowfall), thaw faster; off (and cleared) once the cover is gone
+  $grid.regsFootprints = $snowShown < 0.1 ? 0.0 : ($thaw > 0.3 ? 240.0 : ($snowFall > 0.05 ? 600.0 / max($snowFall, 0.001) : 1.0e9));
+  // snowplows (only in winter: while snow lies and it is not thawing): they clear the lanes they drive (filling in
+  // again like the footprints) and push the snow into heaps on the kerb
+  $grid.regsSnowplows = ($snowShown > 0.3 && $thaw < 0.3) ? $plowCount : 0;
+  updateRoadSpeed($dt);
+}
+
+// Slower road traffic (setting "Slow traffic in snow and heavy rain", $regsWeatherSlowTraffic, on by default; the
+// settings menu's Mods page): cars, buses and trams on roads and street-tram lanes (the engine's gsGrid.regsRoadSpeed;
+// metro, trains, boats and helicopters keep their speed). Heavy rain about 0.8 of normal speed, falling snow about 0.7,
+// roads under snow about 0.85 until the cover has melted; lanes a snowplow cleared lately at full speed again (snow
+// does not slow there, heavy rain does). The factors move slowly (about 0.05 per real second). One ticker message
+// when it starts (snow or heavy rain) and one when it is over.
+$roadSpeed = 1.0;
+$roadSpeedCleared = 1.0;
+$slowKind = 0;          // 0 none, 1 snow, 2 heavy rain (the ticker message given)
+$roadLogClock = 0.0;
+function updateRoadSpeed($dt) {
+  $on = MAIN.$settings.$regsWeatherSlowTraffic : true;
+  $rainF = 1.0 - 0.2 * $heavy * clamp($rain * 2.0, 0.0, 1.0);
+  $covered = clamp(($snowShown - 0.2) / 0.3, 0.0, 1.0);
+  $snowF = min(1.0 - 0.3 * $snowFall, 1.0 - 0.15 * $covered);
+  $want = $on ? min($rainF, $snowF) : 1.0;
+  $wantCleared = $on ? $rainF : 1.0;
+  $step = 0.05 * $dt;
+  $roadSpeed += clamp($want - $roadSpeed, -$step, $step);
+  $roadSpeedCleared += clamp($wantCleared - $roadSpeedCleared, -$step, $step);
+  $grid.regsRoadSpeed = $roadSpeed;
+  $grid.regsRoadSpeedCleared = $roadSpeedCleared;
+  $roadLogClock += $dt;
+  if ($debug && $roadLogClock > 5.0) {
+    $roadLogClock = 0.0;
+    echo "weather: road speed " + string($roadSpeed) + " (want " + string($want) + ", rain " + string($rainF) + ", snow " + string($snowF) + "), cleared " + string($roadSpeedCleared) + ", rain " + string($rain) + " heavy " + string($heavy);
+  }
+  // the ticker: once per event, with some hysteresis so a factor near the line does not repeat it
+  $kind = $want < 0.95 ? ($snowF < $rainF ? 1 : 2) : 0;
+  if ($slowKind == 0 && $kind != 0) {
+    $slowKind = $kind;
+    tickerText($kind == 1 ? $texts.$weather_snowSlow_ticker : $texts.$weather_rainSlow_ticker);
+  } else if ($slowKind != 0 && $want > 0.98) {
+    $slowKind = 0;
+    tickerText($texts.$weather_slowOver_ticker);
+  }
+}
+
+function tickerText($text) {
+  if ($debug) echo "weather: ticker: " + $text;
+  if (MAIN.$petitionbar : false) MAIN.$petitionbar.addTickerText(1, escapePattern($text));
+}
+
+echo "weather: on (" + ($mode != "" ? "REGS_TEST_WEATHER=" + $mode : "seed " + string($seed)) + ")";
+if ($debug) logPlan($clock.date);
+$frameThread = thread "gameUI" :: loop {
+  frame(skip_frame);
+};
+
+event this.onDestroy::() {
+  if ($frameThread) { delete $frameThread; $frameThread = null; }
+  $flash = 0.0;
+  $heat = 0.0;
+  applyLook(0.0, 0.0, 0.0);
+  regsShaderUniform("weather_wet", quat(0.0, 0.0, 0.0, 0.0));
+  regsShaderUniform("weather_misc", quat(0.0, 0.0, 0.0, 0.0));
+  regsShaderUniform("weather_snow", quat(0.0, 0.0, 0.0, 0.0));
+  regsShaderUniform("seasons_time", quat(180.0, 0.0, 0.0, 0.0));
+  regsShaderUniform("weather_hot", quat(0.0, 0.0, 0.0, 0.0));
+  $scene.regsPostHooks = 0.0;
+  $scene.regsLightTint = 0;
+  if (MAIN.$ambience : false) MAIN.$ambience.$ambienceVolume = 0.2;
+  if ($flakes) { delete $flakes; $flakes = null; }
+  if ($texts) { delete $texts; $texts = null; }
+  if ($grid) {
+    $grid.regsVehicleEmitters = [];
+    $grid.regsTreeEmitters = [];
+    $grid.regsFootprints = 0.0;
+    $grid.regsSnowplows = 0;
+    $grid.regsRoadSpeed = 1.0;
+    $grid.regsRoadSpeedCleared = 1.0;
+    $grid.regsVehicleSoundGain = 0.0;
+    $grid.regsVehicleSound = null;
+  }
+  foreach ($loops) {
+    if (current) { current.stop(); delete current; }
+  }
+  $loops = [];
+  foreach ([$thunderClose, $thunderMid, $thunderFar, $tyres]) {
+    if (current) delete current;
+  }
+  if ($spray) { delete $spray; $spray = null; }
+  if ($leaves) { delete $leaves; $leaves = null; }
+  if ($emitter) { delete $emitter; $emitter = null; }
+  MAIN.$weather = null;
+}

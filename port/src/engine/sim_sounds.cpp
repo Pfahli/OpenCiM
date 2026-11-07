@@ -85,6 +85,15 @@ struct SimSounds {
   std::vector<ItemSound> items;
   uint64_t itemsGeneration = ~0ull, itemsVersion = ~0ull;
   std::map<uint32_t, DoorSound> doors;  // by item
+  // port mod hook gsGrid.regsVehicleSound (tickVehicleSoundHook): the playing one-shots and each mover's next start
+  struct HookVoice {
+    size_t mover = 0;
+    int voice = 0;
+    float volume = 1;
+  };
+  std::vector<HookVoice> hookVoices;
+  std::map<size_t, float> hookNext;  // mover → seconds until it may start again
+  float hookClock = 0;
   std::minstd_rand rng{12345};  // the port's own stream: the simulation's rand() sequence stays untouched
   float rnd(float a, float b) { return a + (b - a) * float(rng() - rng.min()) / float(rng.max() - rng.min()); }
 
@@ -94,6 +103,7 @@ struct SimSounds {
       for (OneShot& o : m.shots) worldSoundStop(o.voice, "simulation ends");
     }
     for (OneShot& o : loose) worldSoundStop(o.voice, "simulation ends");
+    for (HookVoice& h : hookVoices) worldSoundStop(h.voice, "simulation ends");
     for (ItemSound& it : items) worldSoundStop(it.voice, "simulation ends");
     for (auto& [item, d] : doors) worldSoundStop(d.voice, "simulation ends");
   }
@@ -366,6 +376,71 @@ void tickDoors(GridObj* grid, SimState& s, SimSounds& ss, const Vec3& eye, float
   }
 }
 
+// Port mod hook (mod-manager.md §4.2): gsGrid.regsVehicleSound, a loaded 3D gsSound, plays as a one-shot that follows
+// moving road and rail vehicles near the listener (not boats, aircraft or tunnels; faster than 3 m/s, inside the
+// sound's maxDistance), at most kHookVoices at a time, each vehicle again after the sound's length plus 2-8 s; the
+// volume is the template's × gsGrid.regsVehicleSoundGain (0 = off) × speed / 15 (0.3-1), the pitch 0.9-1.1 by speed.
+constexpr size_t kHookVoices = 5;
+
+void tickVehicleSoundHook(VM& vm, GridObj* grid, SimState& s, SimSounds& ss, const Vec3& eye, float dt) {
+  std::erase_if(ss.hookVoices, [](const SimSounds::HookVoice& h) { return !worldSoundAlive(h.voice); });
+  for (auto it = ss.hookNext.begin(); it != ss.hookNext.end();) {
+    it->second -= dt;
+    it = it->second <= 0 ? ss.hookNext.erase(it) : std::next(it);
+  }
+  auto sf = grid->fieldValues.find(u"regsVehicleSound");
+  auto gf = grid->fieldValues.find(u"regsVehicleSoundGain");
+  SoundTemplate t;
+  float gain = gf == grid->fieldValues.end() ? 0.0f : vm.toFloat(vm.resolve(gf->second));
+  if (sf == grid->fieldValues.end() || gain <= 0 || !soundTemplate(vm.resolve(sf->second).object(), t)) {
+    for (auto& h : ss.hookVoices) worldSoundStop(h.voice, "vehicle sound hook off");
+    ss.hookVoices.clear();
+    return;
+  }
+  // the playing ones follow their vehicle
+  for (auto& h : ss.hookVoices) {
+    if (h.mover >= s.movers.size() || !s.movers[h.mover].live || s.movers[h.mover].units.empty()) continue;
+    const Mover& m = s.movers[h.mover];
+    PlacedPose p = unitPose(s, m, m.units[0], m.dist);
+    float sp = std::clamp(m.speed / 15.0f, 0.3f, 1.0f);
+    worldSoundUpdate(h.voice, t, p.position, p.forward * m.speed, false, 0.9f + 0.2f * sp, gain * sp);
+  }
+  if (ss.hookVoices.size() >= kHookVoices || dt <= 0) return;
+  // new ones: the nearest fast vehicles without a sound
+  float length = 6.0f;
+  if (t.clip) length = std::max(1.0f, float(audio::clipInfo(t.clip).seconds()));
+  struct Near {
+    float d2;
+    size_t mover;
+  };
+  std::vector<Near> near;
+  float r2 = t.maxDistance * t.maxDistance;
+  for (size_t id = 0; id < s.movers.size(); ++id) {
+    const Mover& m = s.movers[id];
+    if (!m.live || m.parked || m.boat || m.aircraft || m.track.nodes.empty() || m.units.empty() || m.speed < 3.0f) continue;
+    if (ss.hookNext.count(id)) continue;
+    const LaneNode& node = s.graph.nodes[size_t(m.track.nodes[m.track.at(m.dist)])];
+    if (node.flags & 0x800000) continue;  // tunnel
+    Vec3 q = node.p0 - eye;
+    if (dot(q, q) < r2) near.push_back({dot(q, q), id});
+  }
+  std::sort(near.begin(), near.end(), [](const Near& a, const Near& b) { return a.d2 < b.d2; });
+  for (const Near& n : near) {
+    if (ss.hookVoices.size() >= kHookVoices) break;
+    bool playing = false;
+    for (auto& h : ss.hookVoices) playing = playing || h.mover == n.mover;
+    if (playing) continue;
+    const Mover& m = s.movers[n.mover];
+    PlacedPose p = unitPose(s, m, m.units[0], m.dist);
+    float sp = std::clamp(m.speed / 15.0f, 0.3f, 1.0f);
+    int v = worldSoundPlay(s.grid, t, p.position, p.forward * m.speed, false, false, 0.9f + 0.2f * sp, gain * sp,
+                           "vehicle hook");
+    if (!v) continue;
+    ss.hookVoices.push_back({n.mover, v, gain * sp});
+    ss.hookNext[n.mover] = length + ss.rnd(2.0f, 8.0f);
+  }
+}
+
 }  // namespace
 
 void simSoundsTick(VM& vm, GridObj* grid, SimState& s, float dt) {
@@ -377,6 +452,7 @@ void simSoundsTick(VM& vm, GridObj* grid, SimState& s, float dt) {
   tickCharacters(s, ss, eye, dt);
   tickItems(vm, grid, ss, eye, dt);
   if (grid->data) tickDoors(grid, s, ss, eye, dt);
+  tickVehicleSoundHook(vm, grid, s, ss, eye, dt);
   std::erase_if(ss.loose, [](const OneShot& o) { return !worldSoundAlive(o.voice); });
 }
 
@@ -418,6 +494,17 @@ void simSoundVehicleEvent(VM& vm, SimState& s, int vi, SimSoundEvent e) {
 }
 
 void registerSimSoundNatives(VM& vm) {
+  // port mod fields gsGrid.regsVehicleSound / regsVehicleSoundGain (tickVehicleSoundHook), stored as given
+  if (ClassInfo* g = vm.findClass("gsGrid"))
+    for (const char16_t* name : {u"regsVehicleSound", u"regsVehicleSoundGain"}) {
+      FieldInfo& f = g->fields[name];
+      f.name = name;
+      f.get = [name](VM&, Object* o) {
+        auto it = o->fieldValues.find(name);
+        return it == o->fieldValues.end() ? Value::null() : it->second;
+      };
+      f.set = [name](VM& v, Object* o, const Value& x) { o->fieldValues[name] = v.resolve(x); };
+    }
   // gsGridVehicleController.playSound(s) (W:0x10107b60): gsGridVehicle::playSound(s, false, 1.0)
   implement(vm, "gsGridVehicleController", u"playSound", [](VM& v, Object* self, int argc, const Value* a) {
     if (argc < 1 || !soundsEnabled()) return Value();

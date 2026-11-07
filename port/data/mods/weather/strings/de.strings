@@ -1,0 +1,9 @@
+﻿// Wetter-Mod (opencim.weather): Texte
+$weather_options_heading = "Wetter und Jahreszeiten";
+$weather_slowTraffic_item = "Verkehr bei Schnee und Starkregen verlangsamen";
+$weather_snowSlow_ticker = "Glätte und Schnee: Der Verkehr und der öffentliche Nahverkehr sind langsamer unterwegs.";
+$weather_rainSlow_ticker = "Starkregen: Der Verkehr und der öffentliche Nahverkehr sind langsamer unterwegs.";
+$weather_slowOver_ticker = "Die Straßen sind wieder frei: Der Verkehr läuft wieder normal.";
+$weather_enabled_item = "Wetter aktivieren (Regen, Gewitter, Schnee)";
+$weather_seasons_item = "Jahreszeiten aktivieren (Winter mit Schnee, Regen und Temperatur nach Monat)";
+$weather_dayNight_item = "Tag-Nacht-Wechsel aktivieren";
