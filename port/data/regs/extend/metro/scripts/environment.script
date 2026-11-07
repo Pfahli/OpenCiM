@@ -1,6 +1,14 @@
 // ReGS extension of metro/scripts/environment.script (used as installed; see VM::extendSource): the densities of a
 // sandbox game (sandbox.script / campaign.script extensions) reach the simulation before level.script loads the map.
 // Population is read once per load (home slots); traffic also applies live.
+// Content packages (main.script extension): the buildings, props and foliage envsets of the map's packages are loaded
+// after the location's: in the editor the author's choice ($regsSelectedPackages), in a game the packages the map
+// needs ($regsPackages of its .scenario). Envsets of different cities share many IDs (London's re-registers the base
+// "cityhall", its "hospital" is another model), so while a package loads, names already registered are skipped: the
+// objects already on the map keep their look and the lists get no duplicates.
+//@rename loadBuilding regsBaseLoadBuilding
+//@rename loadProp regsBaseLoadProp
+//@rename loadTree regsBaseLoadTree
 
 //@base
 
@@ -16,3 +24,66 @@ if (defined MAIN.$campaign) {
 }
 if ($grid.citizens.hasMember("regsPopulationDensity")) $grid.citizens.regsPopulationDensity = $regsPopulationDensity;
 if ($grid.vehicles.hasMember("regsTrafficDensity")) $grid.vehicles.regsTrafficDensity = $regsTrafficDensity;
+
+// ---- content packages ----
+$regsPackageLoading = false;
+$regsLoadedPackages = map [];
+
+function loadBuilding($category, $name, $model, $w = 0, $l = 0, $targetW = 0, $targetL = 0) {
+  if (($regsPackageLoading : false) && $grid.getGridObject($name)) return;  // also called by the base part, before the flag is set
+  regsBaseLoadBuilding($category, $name, $model, $w, $l, $targetW, $targetL);
+}
+
+function loadProp($category, $name, $model, $genDiag = false) {
+  if (($regsPackageLoading : false) && $grid.getGridObject($name)) return;  // also called by the base part, before the flag is set
+  regsBaseLoadProp($category, $name, $model, $genDiag);
+}
+
+function loadTree($name, $model, $genDiag = false) {
+  if (($regsPackageLoading : false) && $grid.getGridObject($name)) return;  // also called by the base part, before the flag is set
+  regsBaseLoadTree($name, $model, $genDiag);
+}
+
+// the envsets of a package that bring buildings, props or foliage (not its roads, stops, vehicles or characters,
+// which would replace the location's)
+function regsPackageEnvsets($package) {
+  $result = [];
+  foreach (list_files($package+"/envsets", ".script")) {
+    if (findstr(current, "building") >= 0 || findstr(current, "prop") >= 0 || findstr(current, "foliage") >= 0 ||
+        findstr(current, "germany") >= 0 || findstr(current, "ulm") >= 0) {
+      $result[] = $package+"/envsets/"+current;
+    }
+  }
+  return $result;
+}
+
+// loads the packages not loaded yet (also later, from the editor's map attributes)
+function regsLoadPackages($packages) {
+  $regsPackageLoading = true;
+  foreach ($packages) {
+    $p = current;
+    if (!(defined $regsLoadedPackages[$p])) {
+      $regsLoadedPackages[$p] = true;
+      foreach (regsPackageEnvsets($p)) {
+        echo "Loading content package \""+$p+"\": "+current;
+        $e = load "/"+current;
+        delete $e;
+      }
+    }
+  }
+  $regsPackageLoading = false;
+}
+
+$regsLocationSetup = MAIN.$gridLocation : "";
+$regsPackages = null;
+if (MAIN.$scenario : false) {
+  if (MAIN.$scenario.$location : false) {
+    if (defined MAIN.$scenario.$location.$locationSetup) $regsLocationSetup = MAIN.$scenario.$location.$locationSetup;
+    if (defined MAIN.$scenario.$location.$regsPackages) $regsPackages = MAIN.$scenario.$location.$regsPackages;
+  }
+} else if (defined MAIN.$regsSelectedPackages) {
+  $regsPackages = MAIN.$regsSelectedPackages;
+}
+$regsLoadedPackages[""] = true;
+$regsLoadedPackages[MAIN.$main.regsPackageOf($regsLocationSetup)] = true;  // the location loaded its own
+if ($regsPackages) regsLoadPackages($regsPackages);

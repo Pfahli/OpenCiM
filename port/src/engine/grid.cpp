@@ -154,7 +154,55 @@ bool parseBmp(const std::vector<uint8_t>& d, int& width, int& height, std::vecto
   return true;
 }
 
+std::string contentPackageOf(const std::string& path) {
+  std::string p = path;
+  for (char& ch : p)
+    if (ch == '\\') ch = '/';
+  while (!p.empty() && p[0] == '/') p.erase(0, 1);
+  for (const char* root : {"addons/", "metro/addons/", "userdata/addons/"}) {
+    size_t n = std::strlen(root);
+    if (p.compare(0, n, root) != 0) continue;
+    size_t slash = p.find('/', n);
+    return slash == std::string::npos ? p : p.substr(0, slash);
+  }
+  return std::string();
+}
+
 void registerGridNatives(VM& vm) {
+  // port: content packages (map editor, owner's request 2026-11-07). regsGetObjectPackage(idName): the package a
+  // template was loaded from ("addons/london", "" for the base game); regsGetUsedPackages(): the packages of the
+  // templates the live map items use, each once.
+  if (ClassInfo* c = vm.findClass("gsGrid")) {
+    addMethod(c, u"regsGetObjectPackage", 1, 1);
+    addMethod(c, u"regsGetUsedPackages", 0, 0);
+  }
+  implement(vm, "gsGrid", u"regsGetObjectPackage", [](VM& v, Object* s, int, const Value* a) {
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g) return Value::string(u"");
+    auto it = g->templates.find(utf16ToUtf8(v.toStr(a[0])));
+    if (it == g->templates.end()) return Value::string(u"");
+    auto pk = it->second->fieldValues.find(u"<package>");
+    return pk == it->second->fieldValues.end() ? Value::string(u"") : pk->second;
+  });
+  implement(vm, "gsGrid", u"regsGetUsedPackages", [](VM&, Object* s, int, const Value*) {
+    auto arr = make<ArrayObj>();
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g || !g->data) return Value::heap(VT::Array, arr.get());
+    std::vector<bool> used(g->data->types.size(), false);
+    for (const GridData::Item& it : g->data->items)
+      if (!it.removed && !(it.flags & 0x100000) && it.type < used.size()) used[it.type] = true;
+    std::set<std::u16string> seen;
+    for (size_t t = 0; t < used.size(); ++t) {
+      if (!used[t]) continue;
+      auto tp = g->templates.find(g->data->types[t]);
+      if (tp == g->templates.end()) continue;
+      auto pk = tp->second->fieldValues.find(u"<package>");
+      if (pk == tp->second->fieldValues.end()) continue;
+      std::u16string name = pk->second.toString();
+      if (!name.empty() && seen.insert(name).second) arr->items.push_back(Value::string(name));
+    }
+    return Value::heap(VT::Array, arr.get());
+  });
   if (ClassInfo* c = vm.findClass("gsGrid")) c->factory = [](const ClassInfo* ci) { return Ref<Object>(new GridObj(ci)); };
   // loadGridObject(idName, objectFile, [fallbackFile, [scaleX, scaleZ]]) (0x100c2b20, docs/renderer/grid-items.md §1):
   // a gsGridObject template. Like gsObject::loadFromFile: the companion script (width, flags, $price, storeMesh, ...),
@@ -180,6 +228,7 @@ void registerGridNatives(VM& vm) {
       }
     }
     t->fieldValues[u"idName"] = Value::string(utf8ToUtf16(name));
+    t->fieldValues[u"<package>"] = Value::string(utf8ToUtf16(contentPackageOf(utf16ToUtf8(meshPath))));
     g->templates[name] = t;
     g->templateOrder.push_back(name);
     runCompanionScript(v, t.get(), path);

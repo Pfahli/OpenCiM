@@ -41,3 +41,9 @@ $regs_fromOriginal_note = "(aus Cities in Motion)";
 // Suchfeld im Fahrzeughandel (extend/metro/ui/vehiclepanel/vehiclepanel.script): Platzhalter und Tooltip
 $regs_vehicles_search = "Suchen...";
 $regs_vehicles_search_hint = "Fahrzeuge nach Namen filtern";
+// Inhaltspakete im Karteneditor (extend/metro/ui/menus/editor.script, extend/metro/scripts/main.script)
+$regs_packages_title = "Inhaltspakete:";
+$regs_packages_base = "Hauptspiel";
+$regs_packages_missing_dialog = "Diese Karte braucht nicht installierte Inhalte, um so auszusehen und zu spielen, wie der Autor sie gedacht hat:";
+$regs_packages_openAnyway_button = "Trotzdem öffnen";
+$regs_package_names = map ["germany", "Deutsche Städte", "humble", "Humble-Fahrzeuge", "london", "London", "mappack01", "Kartenpaket", "munich", "München", "paris", "Paris", "stationpack01", "Metrostationen", "stpetersburg", "St. Petersburg", "tokyo", "Tokio", "ulm", "Ulm", "usa", "USA", "vehiclepack01", "Fahrzeugpaket 1", "vehiclepack02", "Fahrzeugpaket 2", "vehiclepack03", "Fahrzeugpaket 3", "vehiclepack04", "Fahrzeugpaket 4", "vehiclepack05", "Fahrzeugpaket 5"];

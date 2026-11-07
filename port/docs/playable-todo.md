@@ -214,6 +214,13 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   (`gsTextureVariant_OGL.saveToFile`, A8R8G8B8 with mips).
 - [x] Loading: Karte laden into the editor; the saved map in the sandbox list (with its thumbnail) and a sandbox game
   on it.
+- [x] Content packages (port, owner's request): the map attributes list the installed DLC/mod packages
+  (`addons/*`, `userdata/addons/*`) to tick; their buildings, props and foliage join the editor (names already
+  registered are kept). The map's .scenario stores `$regsPackages` (those of its objects and location) and
+  `$regsSelectedPackages`, which the original ignores. Opening a map with a package missing (editor list, sandbox
+  start) names it and offers "Open anyway" or cancel; missing objects stay invisible and are kept in the files.
+  Not checked yet: a DLC object actually placed showing up in `$regsPackages`; vehicle packs are not filtered.
+- [x] Undo keeps working after saving (same session).
 - [ ] Open: bridges, tunnels, ramps and map-edge road pieces; the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 

@@ -6,7 +6,10 @@
 //   tools/make-opencim-logo.ps1), and the version, build and a short note in the bottom right corner.
 // * The map editor's "load map" list also shows the original game's maps (Documents\Cities In Motion\maps, read only)
 //   with a note; main.script's startEditor (extension) copies the chosen one into the OpenCiM folder.
+// * Content packages (main.script extension): choosing a map in the editor's load list or starting a sandbox game on
+//   a map whose packages are not all installed asks first ("Open anyway" or cancel).
 //@rename showDialog regsBaseShowDialog
+//@rename buttonClick regsBaseButtonClick
 //@base
 
 if (MAIN.$settings.$regsMenuMusicFollowsMusicVolume : false) {
@@ -54,4 +57,30 @@ function showDialog($text, $inputText = false, $default = "", $items = null) {
     }
   }
   regsBaseShowDialog($text, $inputText, $default, $items);
+}
+
+// the map an OK opens: the editor's load list hands over "<name>.grid", the sandbox page's start button its map
+function regsPickedMap($text, $actionName) {
+  if ($actionName != "ok") return "";
+  if (#$text > 5 && findstr($text, "regs-cim:") < 0 && substr($text, #$text - 5) == ".grid") return "userdata/maps/"+$text;
+  if ($text == $strings.$menu_sandboxStart_button) {
+    $sub = MAIN.$main.$submenu : null;
+    if ($sub) return $sub.$selectedMap : "";
+  }
+  return "";
+}
+
+function buttonClick($text, $actionName) {
+  $map = regsPickedMap($text, $actionName);
+  if ($map == "" || #MAIN.$main.regsMissingPackages($map) == 0) {
+    regsBaseButtonClick($text, $actionName);
+    return;
+  }
+  $regsPendingText = $text;
+  $regsPendingAction = $actionName;
+  $regsPendingMap = $map;
+  thread :: {  // the dialog waits for the player; the load list goes back when cancelled, the sandbox page stays
+    if (MAIN.$main.regsConfirmPackages($regsPendingMap)) regsBaseButtonClick($regsPendingText, $regsPendingAction);
+    else if ($regsPendingText != $strings.$menu_sandboxStart_button) regsBaseButtonClick($regsPendingText, "cancel");
+  };
 }
