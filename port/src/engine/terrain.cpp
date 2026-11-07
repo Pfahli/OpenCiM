@@ -15,9 +15,11 @@
 
 #include "core/log.h"
 #include "core/text.h"
+#include "engine/api.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
+#include "engine/gui.h"
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
@@ -625,8 +627,9 @@ void prepareTerrainCells(GridData& g) {
     }
 }
 
-void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
-                 float detailScale, std::vector<DrawItem>& items) {
+// the map's cache (divisions, materials, grid items, surface map), rebuilt when the map changed; collectGrid
+// calls it, and regsPrewarmGrid() on the loading screen so the first frame after it does not wait for it
+void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
   if (!grid->data || grid->data->height.empty()) return;
   const GridData& g = *grid->data;
   if (!grid->terrain) grid->terrain = std::make_shared<TerrainCache>();
@@ -690,6 +693,16 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
     }
   }
+}
+
+void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
+                 float detailScale, std::vector<DrawItem>& items) {
+  if (!grid->data || grid->data->height.empty()) return;
+  ensureGridCache(d, vm, grid);
+  const GridData& g = *grid->data;
+  if (!grid->terrain) grid->terrain = std::make_shared<TerrainCache>();
+  TerrainCache& tc = *grid->terrain;
+  float cs = g.cellSize;
   // live map edits (engine/grid_edit.h): new types and items, then the touched divisions rebuilt at once where built
   syncGridItems(d, vm, grid, tc);
   applyItemColors(*grid, tc);
@@ -923,6 +936,48 @@ bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4], uint32_t* t
   rect[2] = 1.0f / (float(m.w) * m.texel);
   rect[3] = 1.0f / (float(m.h) * m.texel);
   return true;
+}
+
+void registerTerrainNatives(VM& vm) {
+  // regsPrewarmGrid(): builds the main map's cache (materials, textures, window masks, grid items) now, on the loading
+  // screen before its Spielen button (data/regs/extend/metro/ui/loading/loading.script), instead of in the first
+  // frame after it, which stayed black for seconds
+  implementGlobal(vm, u"regsPrewarmGrid", [](VM& v, Object*, int, const Value*) {
+    Display* d = display();
+    Value* main = v.findGlobal(u"MAIN");
+    Object* m = main ? main->object() : nullptr;
+    Value* g = m ? m->findVar(u"grid") : nullptr;
+    auto* grid = g ? dynamic_cast<GridObj*>(v.resolve(*g).object()) : nullptr;
+    if (d && grid && grid->data) {
+      auto t0 = std::chrono::steady_clock::now();
+      ensureGridCache(*d, v, grid);
+      auto t1 = std::chrono::steady_clock::now();
+      // the first view drawn once, unseen (the loading screen covers it): its shader programs compile now; with a
+      // cold driver cache (a new driver, changed shaders) that took half a minute of black screen after Spielen
+      const int linked = render::gProgramsLinked;
+      Value* vpv = m->findVar(u"viewport");
+      Value* scene = m->findVar(u"scene");
+      Value* camera = m->findVar(u"camera");
+      auto* vp = vpv ? dynamic_cast<ControlObj*>(v.resolve(*vpv).object()) : nullptr;
+      if (vp && scene && camera) {  // the game state gives the viewport its scene and camera only after Spielen
+        Value self = Value::heap(VT::Object, vp);
+        Value oldScene = v.getMember(self, u"scene"), oldCamera = v.getMember(self, u"camera");
+        try {
+          v.setMember(self, u"scene", v.resolve(*scene));
+          v.setMember(self, u"camera", v.resolve(*camera));
+          renderViewportScene(*d, v, vp);
+          v.setMember(self, u"scene", oldScene);
+          v.setMember(self, u"camera", oldCamera);
+        } catch (const ScriptError&) {
+        }
+      }
+      auto t2 = std::chrono::steady_clock::now();
+      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs)",
+               std::chrono::duration<double, std::milli>(t1 - t0).count(),
+               std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked);
+    }
+    return Value();
+  });
 }
 
 }  // namespace regs::engine

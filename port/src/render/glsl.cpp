@@ -1,5 +1,8 @@
 #include "render/glsl.h"
 
+#include <cctype>
+#include <cstdlib>
+#include <map>
 #include <regex>
 #include <set>
 
@@ -336,27 +339,107 @@ std::map<std::string, std::array<float, 4>>& shaderHookUniforms() {
   return u;
 }
 
+namespace {
+
+bool identChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
+
+// GLSL 1.10 → 3.30 renames in one pass over the identifiers (whole words, as \b...\b did; comments too). A "call"
+// entry only renames when the next non-blank character is '('; "main" only after "void". Returns the first game
+// built-in (gl_...) left that GLSL 3.30 core lacks in *unsupported, or "" when all were translated. std::regex was
+// slow here: 13 passes over ~160 sources made the first game frame wait over a second.
+std::string renameIdentifiers(const std::string& src, bool fragment, const char* mainName, std::string* unsupported) {
+  struct Rule {
+    const char* from;
+    const char* to;
+    bool call;
+  };
+  static const std::vector<Rule> common = {
+      {"texture2D", "texture", true}, {"textureCube", "texture", true}, {"shadow2D", "regs_shadow2D", true},
+      // smoothstep(0.8, 0.0, x) (terrain maps) has edge0 > edge1, undefined in GLSL; the old drivers used the formula
+      {"smoothstep", "regs_smoothstep", true},
+      {"gl_ModelViewProjectionMatrix", "regs_ModelViewProjectionMatrix", false},
+      {"gl_ModelViewMatrix", "regs_ModelViewMatrix", false}, {"gl_ProjectionMatrix", "regs_ProjectionMatrix", false},
+      {"gl_NormalMatrix", "regs_NormalMatrix", false}, {"gl_FrontMaterial", "regs_FrontMaterial", false},
+      {"gl_LightSource", "regs_LightSource", false}, {"gl_FrontLightProduct", "regs_FrontLightProduct", false},
+      {"gl_LightModel", "regs_LightModel", false}, {"gl_Fog", "regs_Fog", false}};
+  static const std::vector<Rule> vertex = {
+      {"attribute", "in", false}, {"varying", "out", false}, {"gl_Vertex", "regs_Vertex", false},
+      {"gl_Normal", "regs_Normal", false}, {"gl_Color", "regs_Color", false}, {"gl_FrontColor", "regs_FrontColor", false},
+      {"gl_MultiTexCoord0", "regs_MultiTexCoord0", false}, {"gl_MultiTexCoord1", "regs_MultiTexCoord1", false},
+      {"gl_MultiTexCoord2", "regs_MultiTexCoord2", false}, {"gl_MultiTexCoord3", "regs_MultiTexCoord3", false},
+      {"gl_MultiTexCoord4", "regs_MultiTexCoord4", false}, {"gl_MultiTexCoord5", "regs_MultiTexCoord5", false},
+      {"gl_MultiTexCoord6", "regs_MultiTexCoord6", false}, {"gl_MultiTexCoord7", "regs_MultiTexCoord7", false}};
+  static const std::vector<Rule> frag = {
+      {"varying", "in", false}, {"gl_Color", "regs_FrontColor", false}, {"gl_FragColor", "regs_FragColor", false}};
+  static const char* const allowed[] = {"gl_Position", "gl_FragCoord", "gl_FragDepth", "gl_PointSize", "gl_FrontFacing"};
+  std::string out;
+  out.reserve(src.size() + 256);
+  size_t i = 0, n = src.size();
+  // the #version line (the first one) goes: the translated source gets its own
+  {
+    size_t k = 0;
+    while (k < n && std::isspace(static_cast<unsigned char>(src[k]))) ++k;
+    if (src.compare(k, 8, "#version") == 0) {
+      size_t e = src.find('\n', k);
+      i = e == std::string::npos ? n : e + 1;
+    }
+  }
+  std::string lastWord;
+  while (i < n) {
+    char c = src[i];
+    if (!identChar(c) || (std::isdigit(static_cast<unsigned char>(c)) && i > 0 && identChar(src[i - 1]))) {
+      out += c;
+      ++i;
+      continue;
+    }
+    if (std::isdigit(static_cast<unsigned char>(c))) {  // a number (1.0e5, 2u): copied as it is
+      while (i < n && (identChar(src[i]) || src[i] == '.')) out += src[i++];
+      continue;
+    }
+    size_t b = i;
+    while (i < n && identChar(src[i])) ++i;
+    std::string w = src.substr(b, i - b);
+    size_t next = i;
+    while (next < n && (src[next] == ' ' || src[next] == '\t' || src[next] == '\r' || src[next] == '\n')) ++next;
+    const bool paren = next < n && src[next] == '(';
+    const char* to = nullptr;
+    for (const std::vector<Rule>* table : {&common, fragment ? &frag : &vertex})
+      for (const Rule& r : *table)
+        if (!to && w == r.from && (!r.call || paren)) to = r.to;
+    if (!to && w == "main" && paren && lastWord == "void") to = mainName;
+    std::string result = to ? std::string(to) : w;
+    if (result.compare(0, 3, "gl_") == 0) {
+      bool ok = false;
+      for (const char* a : allowed) ok = ok || result == a;
+      if (!ok) {
+        if (unsupported) *unsupported = result;
+        return "";
+      }
+    }
+    out += result;
+    lastWord = w;
+  }
+  return out;
+}
+
+}  // namespace
+
 std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool withHooks) {
   withHooks = withHooks && !hooks().empty();
-  std::string s = src;
-  auto sub = [&](const char* re, const char* to) { s = std::regex_replace(s, std::regex(re), to); };
-  sub(R"(^\s*#version[^\n]*\n)", "");
-  sub(R"(\btexture2D\s*\()", "texture(");
-  sub(R"(\btextureCube\s*\()", "texture(");
-  sub(R"(\bshadow2D\s*\()", "regs_shadow2D(");
-  // smoothstep(0.8, 0.0, x) (terrain maps) has edge0 > edge1, undefined in GLSL; the old drivers used the formula
-  sub(R"(\bsmoothstep\s*\()", "regs_smoothstep(");
-  sub(R"(\bgl_(ModelViewProjectionMatrix|ModelViewMatrix|ProjectionMatrix|NormalMatrix)\b)", "regs_$1");
-  sub(R"(\bgl_(FrontMaterial|LightSource|FrontLightProduct|LightModel|Fog)\b)", "regs_$1");
+  std::string why;
+  std::string s = renameIdentifiers(src, fragment, fragment ? "regs_main" : "regs_vmain", &why);
+  if (s.empty() && !why.empty()) {
+    if (unsupported) *unsupported = why;
+    return "";
+  }
   std::string head = "#version 330 core\n";
+  // REGS_SHADER_SALT=<text>: a comment that makes every source new to the driver's shader cache (cold-start tests)
+  static const char* salt = std::getenv("REGS_SHADER_SALT");
+  if (salt) head += std::string("// ") + salt + "\n";
   head += kBuiltins;
   // shadow2D as GLSL 1.10 has it (vec4); the particle shader samples the shadow map in its vertex shader too
   head += "vec4 regs_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c)); }\n";
   if (!fragment) {
-    sub(R"(\battribute\b)", "in");
-    sub(R"(\bvarying\b)", "out");
-    sub(R"(\bgl_(Vertex|Normal|Color|MultiTexCoord[0-7])\b)", "regs_$1");
-    sub(R"(\bgl_FrontColor\b)", "regs_FrontColor");
     head += "in vec4 regs_Vertex;\nin vec3 regs_Normal;\nin vec4 regs_Color;\n";
     for (int i = 0; i < 8; ++i) head += "in vec4 regs_MultiTexCoord" + std::to_string(i) + ";\n";
     head += "out vec4 regs_FrontColor;\n";
@@ -365,7 +448,6 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     // with the shader hooks also the clip position for the hooks' world position and the mesh's two texture coordinates
     head += "uniform mat4 regs_ViewInverse;\nuniform vec4 regs_ProjInverse;\nout vec3 regs_WorldPos;\nout float regs_Seed;\nout vec3 regs_ModelPos;\n";
     if (withHooks) head += "out vec4 regs_HookClip;\nout vec4 regs_HookUV;\n";
-    sub(R"(\bvoid\s+main\s*\()", "void regs_vmain(");
     s += "\nvoid main() {\n  regs_vmain();\n";
     if (withHooks)
       s += "  regs_HookClip = gl_Position;\n  regs_HookUV = vec4(regs_MultiTexCoord0.xy, regs_MultiTexCoord1.xy);\n";
@@ -374,26 +456,14 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
          "                (gl_Position.y - regs_ProjInverse.w * ze) * regs_ProjInverse.y, ze);\n"
          "  regs_WorldPos = (regs_ViewInverse * vec4(e, 1.0)).xyz;\n  regs_Seed = regs_Color.a;\n  regs_ModelPos = regs_Vertex.xyz;\n}\n";
   } else {
-    sub(R"(\bvarying\b)", "in");
-    sub(R"(\bgl_Color\b)", "regs_FrontColor");
-    sub(R"(\bgl_FragColor\b)", "regs_FragColor");
     head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\nin vec3 regs_WorldPos;\nin float regs_Seed;\nin vec3 regs_ModelPos;\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
-    sub(R"(\bvoid\s+main\s*\()", "void regs_main(");
     if (withHooks)
       s += hookFragmentCode() +
            "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_HookOn > 0.5) regs_hooks(regs_FragColor);\n"
            "  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
     else
       s += "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
-  }
-  std::regex builtin(R"(\bgl_[A-Za-z0-9_]+)");
-  for (auto it = std::sregex_iterator(s.begin(), s.end(), builtin); it != std::sregex_iterator(); ++it) {
-    const std::string n = it->str();
-    if (n == "gl_Position" || n == "gl_FragCoord" || n == "gl_FragDepth" || n == "gl_PointSize" || n == "gl_FrontFacing")
-      continue;
-    if (unsupported) *unsupported = n;
-    return "";
   }
   return head + s;
 }

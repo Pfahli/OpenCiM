@@ -2,6 +2,7 @@
 // colorize, a fixed camera, the sun's light, render-to-texture. Conventions: docs/renderer/scene-basics.md.
 #include "engine/scene3d.h"
 
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -428,6 +429,10 @@ GpuMaterial scriptMaterial(Display& d, VM& vm, Object* variant) {
   return g;
 }
 
+// seconds per frame phase (load-time measurements, Display::renderFrame logs them for slow frames): 1 scene nodes,
+// 2 grid, 3 sim vehicles, 4 particles, 5 night lights, 6 programs
+double gPhaseSeconds[8] = {};
+
 void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   Object* scene = fieldOf(vm, vp, u"scene").object();
   Object* cam = fieldOf(vm, vp, u"camera").object();
@@ -478,7 +483,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   std::vector<Object*> suns;
   std::vector<GridObj*> grids;
   Object* sky = nullptr;
-  collect(d, vm, scene, items, suns, grids, sky);
+  { auto ts_ = std::chrono::steady_clock::now(); collect(d, vm, scene, items, suns, grids, sky); gPhaseSeconds[1] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
 
   SceneView v;
   v.timer = d.effectTimer;
@@ -496,8 +501,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     detailScale = std::clamp(settingNumber(vm, u"regsDetailDistance", 1.0f), 0.5f, 4.0f);
   }
   v.proj = perspective(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f), float(w) / float(h), nearZ, farZ * viewScale);
-  for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items);
-  for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items);
+  { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items); gPhaseSeconds[2] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+  { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items); gPhaseSeconds[3] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   addSkyItems(d, vm, sky, suns, eye, farZ * viewScale, items);  // sky dome and sun disc (engine/sky.cpp)
   for (Object* s : suns) {
     Light l;
@@ -527,8 +532,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   ParticleDrawList particles;
   {
     float t = std::tan(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
-    collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles);
-    addNightLights(d, vm, grids, sky, v, particles, items);  // port day/night cycle: window and lamp light, lamp glows
+    { auto ts_ = std::chrono::steady_clock::now(); collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles); gPhaseSeconds[4] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+    { auto ts_ = std::chrono::steady_clock::now(); addNightLights(d, vm, grids, sky, v, particles, items); gPhaseSeconds[5] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
     if (!particles.sprites.empty()) v.particles = &particles;
   }
   // environment flags: light count << 12 outside shadow passes (FUN_10051120)
@@ -583,7 +588,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       }
     }
   }
-  assignPrograms(d, vm, items, v.env);
+  { auto ts_ = std::chrono::steady_clock::now(); assignPrograms(d, vm, items, v.env); gPhaseSeconds[6] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   if (v.particles) prepareParticlePrograms(d, vm, particles, v.env);
   uint32_t clear = uint32_t(vm.toInt(fieldOf(vm, vp, u"clearColor")));
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites

@@ -30,6 +30,7 @@
 #include "engine/host.h"
 #include "engine/user_folders.h"
 #include "engine/mods.h"
+#include "engine/terrain.h"
 
 namespace regs::engine {
 
@@ -76,6 +77,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerSimNatives(*vm_);
   registerUserFolderNatives(*vm_);
   registerModNatives(*vm_);
+  registerTerrainNatives(*vm_);
   // MAIN: the root gsMain object, registered as a global when it is attached (gsMain setParent, 0x100a15c0)
   main_ = vm_->newObject(vm_->findClass("gsMain"), nullptr);
   vm_->setGlobal(u"MAIN", Value::heap(VT::Object, main_.get()));

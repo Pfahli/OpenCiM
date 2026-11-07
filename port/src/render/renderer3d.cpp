@@ -1,5 +1,6 @@
 #include "render/renderer3d.h"
 
+#include <chrono>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -683,7 +684,18 @@ void Renderer3D::postHookState(const SceneView& v, uint32_t prog) {
   gl::UniformMatrix4fv(gl::GetUniformLocation(prog, "regs_PostInvViewProj"), 1, 0, inv.m);
 }
 
+// programs linked and the time spent (load-time measurements: Display::renderFrame logs slow frames)
+int gProgramsLinked = 0;
+double gLinkSeconds = 0;
+
 uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, std::string* error) {
+  struct Timed {
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ~Timed() {
+      ++gProgramsLinked;
+      gLinkSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    }
+  } timed;
   uint32_t v = compile(gl::VERTEX_SHADER, vs.c_str(), error), f = v ? compile(gl::FRAGMENT_SHADER, fs.c_str(), error) : 0;
   if (!v || !f) return 0;
   uint32_t prog = gl::CreateProgram();

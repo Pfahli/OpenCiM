@@ -29,4 +29,9 @@ void collectGrid(Display& d, script::VM& vm, GridObj* grid, const render::Vec3& 
 // topTexture: the top map (the highest item surface above each 1 m cell, same rect)
 bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4], uint32_t* topTexture = nullptr);
 
+// the map's cache (divisions, materials, grid items, surface map), built when missing or stale
+void ensureGridCache(Display& d, script::VM& vm, GridObj* grid);
+// regsPrewarmGrid() for the loading screen
+void registerTerrainNatives(script::VM& vm);
+
 }  // namespace regs::engine

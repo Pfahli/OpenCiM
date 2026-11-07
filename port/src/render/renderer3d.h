@@ -21,6 +21,10 @@ constexpr int kHookFootIndexUnit = 14, kHookFootAtlasUnit = 15;  // the footprin
 // guarantees, which the materials (0-6), the shadow map (7) and the shader hooks (8-15) fill; desktop GPUs have 32.
 constexpr int kNightWindowUnit = 16, kNightLampUnit = 17, kNightCarUnit = 18;
 
+// shader programs linked so far and the seconds spent (load-time measurements, REGS_LOG_TIME)
+extern int gProgramsLinked;
+extern double gLinkSeconds;
+
 // GpuMaterial::surfaceClass: the map surfaces a shader hook can tell apart (mod-manager.md §4.3)
 enum : uint8_t {
   kSurfaceOther = 0,     // buildings, props, vehicles, people, menus
