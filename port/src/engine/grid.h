@@ -41,7 +41,9 @@ struct GridData {
     int kind = 0;                                    // 0: small road
     uint8_t ends = 0;  // bit 0: the start lies on a road block (a straight piece the tool made of a dead end), bit 1: the end;
                        // bit 2: tram tracks along it; bit 3: the start's block is a tram track on the grass (no road:
-                       // its turning circle lies over the track, the tracks run on through it), bit 4: the end's
+                       // its turning circle lies over the track, the tracks run on through it), bit 4: the end's;
+                       // bit 5: one-way (both lanes run from the start to the end: roundabouts), bit 6 with it: a
+                       // single lane on the centre line
     // stops along it: a bus or tram stop centred at arc length s on one side, its platform bent to the curve; a real stop
     // item of the game (the anchor, stop_bus0<design>_small / stop_tram01_small at stopAnchor's cell) carries it for
     // lines, picking and saving, and is not drawn (GridData::curveAnchors)
@@ -103,6 +105,7 @@ class GridObj : public script::Object {
   bool hasCurvePreview = false;
   GridData::CurveRoad curvePreview;
   bool curvePreviewBad = false;  // drawn red-tinted: the ends do not fit
+  std::vector<GridData::CurveRoad> curvePreviewMore;  // more preview curves with it (a roundabout's arcs), drawn without caps
   // curves added or removed in the running edit batch: gridEditEnd hands them to the simulation (simCurvesChanged)
   // with the cell rectangles (x0, z0, x1, z1) whose walk map they touch
   bool curvesDirty = false;

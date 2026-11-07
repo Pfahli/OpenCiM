@@ -777,12 +777,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           appendPlacedMesh(dob->data->mesh, db, o, ax, az, m);
         }
       };
-      auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1) {
+      auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
         if (c.kind != 0) {
           bentRoad(c, m, t0, t1);
           return;
         }
-        buildCurveMesh(c, curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1);
+        buildCurveMesh(c, noCaps ? CurveEnds{} : curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1);
         if (c.stops.empty()) return;
         std::vector<CurveSample> shape = curveShape(c);
         for (const CurveRoad::Stop& st : c.stops) {
@@ -823,7 +823,9 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       upload(all, tc.curves, tc.curvesBuilt);
       if (grid->hasCurvePreview) {
         MeshData p;
-        curveMesh(grid->curvePreview, p, 0.0f, 0.0f);
+        bool ring = !grid->curvePreviewMore.empty();
+        curveMesh(grid->curvePreview, p, 0.0f, 0.0f, ring);
+        for (const CurveRoad& more : grid->curvePreviewMore) curveMesh(more, p, 0.0f, 0.0f, true);
         upload(p, tc.curvePreview, tc.curvePreviewBuilt);
       }
     }

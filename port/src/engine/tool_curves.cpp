@@ -99,6 +99,7 @@ void select(VM& vm, GridObj* grid, uint32_t item, bool bad) {
 }
 
 void clearPreview(GridObj* grid) {
+  grid->curvePreviewMore.clear();
   if (grid->hasCurvePreview) {
     grid->hasCurvePreview = false;
     ++grid->curvesVersion;
@@ -373,6 +374,77 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   return true;
 }
 
+// ---- roundabouts (modes 4: one lane, 5: two lanes; owner's request 2026-11-07) ----
+// A ring of four quarter-circle curves (Bézier handles 0.5523·r), one-way counter-clockwise as seen from above (right-hand
+// traffic), centre and radius picked with two clicks. Roads join it like any curve: ending on the ring cuts it there
+// and makes a junction, whose lanes keep to the ring's direction.
+std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single) {
+  static const float dx[5] = {1, 0, -1, 0, 1}, dz[5] = {0, -1, 0, 1, 0};  // east, north, west, south (north is −z)
+  std::vector<CurveRoad> arcs;
+  for (int q = 0; q < 4; ++q) {
+    CurveRoad c;
+    c.kind = 0;
+    c.x0 = C.x + dx[q] * r, c.y0 = C.y, c.z0 = C.z + dz[q] * r;
+    c.x1 = C.x + dx[q + 1] * r, c.y1 = C.y, c.z1 = C.z + dz[q + 1] * r;
+    c.dx0 = dz[q], c.dz0 = -dx[q];  // the tangent turning from east to north
+    c.dx1 = dz[q + 1], c.dz1 = -dx[q + 1];
+    c.a = c.b = 0.5523f * r;
+    c.ends = uint8_t(0x20 | (single ? 0x40 : 0));
+    arcs.push_back(c);
+  }
+  return arcs;
+}
+
+void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
+  State& st = g_state;
+  st.length = st.angle = 0;
+  if (st.step == 0) {
+    clearPreview(grid);
+    return;
+  }
+  float r = std::clamp(std::sqrt(len2(p - st.start)), 12.0f, 40.0f);
+  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, r, st.mode == 4);
+  bool bad = false;
+  for (const CurveRoad& c : arcs) {
+    std::vector<uint32_t> trees, blocking;
+    if (overItems(vm, grid, c, trees, blocking)) bad = true;
+    for (uint32_t i : blocking) select(vm, grid, i, true);
+  }
+  grid->curvePreview = arcs[0];
+  grid->curvePreviewMore.assign(arcs.begin() + 1, arcs.end());
+  grid->hasCurvePreview = true;
+  grid->curvePreviewBad = bad;
+  ++grid->curvesVersion;
+  st.previewOk = !bad;
+  st.length = r;  // the panel shows the radius
+}
+
+void commitRoundabout(VM& vm, ControlObj* player, GridObj* grid) {
+  State& st = g_state;
+  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, std::max(12.0f, st.length), st.mode == 4);
+  Object* tl = playerTimeline(vm, player);
+  unselectAll(vm, grid);
+  clearPreview(grid);
+  gridEditBegin(vm, grid);
+  if (tl) timelineBeginGroup(vm, tl, "%8");
+  for (const CurveRoad& c : arcs) {
+    std::vector<uint32_t> trees, blocking;
+    overItems(vm, grid, c, trees, blocking);
+    for (uint32_t t : trees) {
+      if (t >= grid->data->items.size() || grid->data->items[t].removed) continue;
+      timelineRecordDelete(vm, tl, grid, t);
+      gridEditRemoveItem(vm, grid, t);
+    }
+    applyCurveEdit(vm, grid, c, true);
+    timelineRecordCurve(vm, tl, c, true);
+  }
+  if (tl) timelineEndGroup(vm, tl);
+  gridEditEnd(vm, grid);
+  LOG_INFO("curve tool: roundabout, radius %.1f, %s, %zu curves now", st.length, st.mode == 4 ? "one lane" : "two lanes",
+           grid->data->curves.size());
+  st.step = 0;
+}
+
 void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (!grid->data) return;
   State& st = g_state;
@@ -384,6 +456,10 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   }
   const GridData& g = *grid->data;
   Vec3 p = pick.point;
+  if (st.mode >= 4) {  // roundabouts: the centre, then the size
+    moveRoundabout(vm, grid, p);
+    return;
+  }
   Snap sn = findSnap(vm, player, grid, p);
   Vec3 h = sn.ok ? sn.p : Vec3{p.x, p.y + 0.2f, p.z};  // a free end: the pavement 0.2 over the ground
   st.endSnap = sn;
@@ -586,6 +662,18 @@ void up(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     int k = st.hoverCurve;
     clearPreview(grid);
     removeCurve(vm, player, grid, k);
+    move(vm, player, grid, x, y);
+    return;
+  }
+  if (st.mode >= 4) {
+    if (st.step == 0) {
+      ToolPick pick = toolPick(vm, player, x, y, false);
+      if (!pick.hit) return;
+      st.start = Vec3{pick.point.x, pick.point.y + 0.2f, pick.point.z};
+      st.step = 1;
+    } else if (st.previewOk) {
+      commitRoundabout(vm, player, grid);
+    }
     move(vm, player, grid, x, y);
     return;
   }
@@ -913,7 +1001,7 @@ void registerCurveTool(VM& vm) {
   // regsCurveToolMode([mode]): the mode (0 straight, 1 curved, 2 freeform, 3 remove); setting it drops the road being drawn
   implementGlobal(vm, u"regsCurveToolMode", [](VM& v, Object*, int argc, const Value* a) {
     if (argc > 0) {
-      g_state.mode = std::clamp(v.toInt(a[0]), 0, 3);
+      g_state.mode = std::clamp(v.toInt(a[0]), 0, 5);
       g_state.step = 0;
       g_state.startDir = g_state.startBlock = false;
       g_state.startSnap = Snap();

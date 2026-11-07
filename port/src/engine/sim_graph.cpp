@@ -836,19 +836,23 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       tramDy0 = tramHeight(s.front().p + s.front().right * 1.5f, s.front().p.y) - s.front().p.y;
       tramDy1 = tramHeight(s.back().p + s.back().right * 1.5f, s.back().p.y) - s.back().p.y;
     }
+    // one-way (ends bit 5, roundabouts): both lanes from the start to the end, or (bit 6) a single lane on the centre line
+    const bool oneWay = (c.ends & 0x20) != 0, single = oneWay && (c.ends & 0x40);
     for (int medium = 0; medium < ((c.ends & 4) ? 2 : 1); ++medium) {  // 0 road, 1 tram
-      for (int side = 0; side < 2; ++side) {  // 0: start → end on the right, 1: end → start
+      for (int side = 0; side < (single && !medium ? 1 : 2); ++side) {  // 0: start → end on the right, 1: end → start
+        const bool back = side && !(oneWay && !medium);  // a one-way road's second lane runs forward on the left
+        const float across = single && !medium ? 0.0f : side ? -1.5f : 1.5f;
         for (size_t k = 0; k + 1 < s.size(); ++k) {
-          const CurveSample &a = side ? s[s.size() - 1 - k] : s[k], &b = side ? s[s.size() - 2 - k] : s[k + 1];
-          float sign = side ? -1.0f : 1.0f;
+          const CurveSample &a = back ? s[s.size() - 1 - k] : s[k], &b = back ? s[s.size() - 2 - k] : s[k + 1];
+          float sign = back ? -1.0f : 1.0f;
           auto dy = [&](const CurveSample& q) {
             return medium ? tramDy0 + (tramDy1 - tramDy0) * (L > s.front().s ? (q.s - s.front().s) / (L - s.front().s) : 0) : -0.2f;
           };
           LaneNode n;
           n.flags = medium ? 0x800 : 0x300;  // street tram / small road lanes (classOfType of types 10 and 2)
           n.item = -1;
-          n.p0 = a.p + a.right * (1.5f * sign) + Vec3{0, dy(a), 0};
-          n.p1 = b.p + b.right * (1.5f * sign) + Vec3{0, dy(b), 0};
+          n.p0 = a.p + a.right * across + Vec3{0, dy(a), 0};
+          n.p1 = b.p + b.right * across + Vec3{0, dy(b), 0};
           n.f0 = a.dir * sign;
           n.f1 = b.dir * sign;
           // a stop of this medium on this lane's side within the piece: its platform lane (STOP)
@@ -870,12 +874,26 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         if (a == b) continue;
         const CurveArm &A = j.arms[a], &B = j.arms[b];
         Vec3 ra = render::normalize(Vec3{-A.out.z, 0, A.out.x}), rb = render::normalize(Vec3{-B.out.z, 0, B.out.x});
-        for (int k = 0; k < ln.count; ++k) {
+        // an arm's lane ends at its mouth, the rightmost (in the direction of travel) first: two-way arms both ways,
+        // a one-way arm (roundabout ring) only its own way, with both lanes (or the single one on the centre line)
+        auto laneEnds = [&](const CurveArm& X, const Vec3& rx, bool incoming) {
+          std::vector<Vec3> pts;
+          if (X.flow == 0) {
+            for (int k = ln.count - 1; k >= 0; --k) pts.push_back(X.mouth + rx * (incoming ? -ln.offset[k] : ln.offset[k]));
+          } else if ((X.flow == 1) == incoming) {
+            if (X.single) pts.push_back(X.mouth);
+            else if (incoming) pts = {X.mouth - rx * 1.5f, X.mouth + rx * 1.5f};
+            else pts = {X.mouth + rx * 1.5f, X.mouth - rx * 1.5f};
+          }
+          return pts;
+        };
+        std::vector<Vec3> ins = laneEnds(A, ra, true), outs = laneEnds(B, rb, false);
+        for (size_t k = 0; k < ins.size() && !outs.empty(); ++k) {  // lane to lane, extra ones into the leftmost
           LaneNode n;
           n.flags = ln.medium | kPathIntersection;
           n.item = -1;
-          n.p0 = A.mouth - ra * ln.offset[k] + Vec3{0, -0.2f, 0};  // toward the centre on its right
-          n.p1 = B.mouth + rb * ln.offset[k] + Vec3{0, -0.2f, 0};
+          n.p0 = ins[k] + Vec3{0, -0.2f, 0};
+          n.p1 = outs[std::min(k, outs.size() - 1)] + Vec3{0, -0.2f, 0};
           n.f0 = A.out * -1.0f;
           n.f1 = B.out;
           add(n);

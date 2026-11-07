@@ -118,3 +118,18 @@ Checked: small-road junctions on a curve (Y) and on a straight road (T at about 
 cars (era4 SUVs) and trams (tram-01) driving through them in a game; zebra crossings, edge lines and rails in the
 junction. Not checked: a large-road or avenue junction with long arms (no room on the test map; one with a too-short
 arm showed the dead end's missing inner-lane U-turn), trams on a real tram line through a junction.
+
+## Roundabouts (2026-11-07)
+
+Curve panel modes "Kreisel 1" (one lane) and "Kreisel 2" (two lanes): click the centre, then click again to set the
+radius (12–40 units). The ring is four quarter-circle small-road curves (Bézier handles 0.5523·r), one-way (end flag
+bit 5) counter-clockwise as seen from above (right-hand traffic); one-lane rings (bit 6) have a single lane on the
+centre line and no lane divider, two-lane rings both lanes running forward. Roads join the ring like any curve: ending
+on it cuts it there and makes a junction. Junction lanes keep to one-way arms (an incoming ring arm only feeds, an
+outgoing one is only fed; lanes pair from the right, so entering cars join the outer lane) and there is no zebra over
+the ring.
+
+Checked: one- and two-lane roundabouts with three roads each, all junction lanes joined (5 per entry with two lanes, 3
+with one), cars circulating counter-clockwise through them (REGS_TEST_CURVE_CARS). Not done: roundabouts of large roads
+or avenues (the modes always build small-road rings), yielding to traffic on the ring beyond the simulation's own
+crossing rules.

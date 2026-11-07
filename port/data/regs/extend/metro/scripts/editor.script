@@ -304,7 +304,7 @@ function regsCurveTool() {
   regsCurveToolMode(regsCurveToolMode());   // a fresh start
   if ($regsCurvePanel) return;
   $regsCurveStrings = regsStringsNow();
-  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 190, 1 | 2 | 4 | 8);
+  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 490, 70, 470, 190, 1 | 2 | 4 | 8);
   with ($t = new_control($regsCurvePanel.$content)) {
     .setRect(10, 0, 330, 22);
     .text = $regsCurveStrings.$regs_curve_panel_title;
@@ -313,9 +313,10 @@ function regsCurveTool() {
   }
   MAIN.$ui.setTitleFont($t);
   $regsCurveNames = [$regsCurveStrings.$regs_curve_mode_straight, $regsCurveStrings.$regs_curve_mode_curved,
-                     $regsCurveStrings.$regs_curve_mode_freeform, $regsCurveStrings.$regs_curve_mode_remove];
-  for ($regsI = 0; $regsI < 4; ++$regsI) {
-    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 88, 28, 84, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+                     $regsCurveStrings.$regs_curve_mode_freeform, $regsCurveStrings.$regs_curve_mode_remove,
+                     $regsCurveStrings.$regs_curve_mode_round1, $regsCurveStrings.$regs_curve_mode_round2];
+  for ($regsI = 0; $regsI < 6; ++$regsI) {
+    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 76, 28, 70, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
     if ($regsI == regsCurveToolMode()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveModes");
   }
   with ($regsCurveInfo = new_control($regsCurvePanel.$content)) {
@@ -342,6 +343,8 @@ function regsCurveTool() {
       $s = $regsCurveStrings;
       if (regsCurveToolMode() == 3) {
         $regsCurveInfo.text = $ci[4] ? $s.$regs_curve_info_remove : $s.$regs_curve_info_pick;
+      } else if (regsCurveToolMode() >= 4) {   // roundabouts: the centre, then the radius
+        $regsCurveInfo.text = $ci[0] == 0 ? $s.$regs_curve_info_centre : expandPattern($s.$regs_curve_info_radius, int($ci[1] + 0.5), regsCurveToolMode() - 3) + ($ci[3] ? "" : "  " + $s.$regs_curve_info_bad);
       } else if ($ci[0] == 0) {
         $regsCurveInfo.text = $s.$regs_curve_info_start;
       } else if (regsCurveToolMode() == 1 && $ci[0] == 1) {

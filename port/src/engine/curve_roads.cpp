@@ -363,7 +363,8 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   b.begin(matMarks);
   b.band(-2.81f, -2.52f, -0.19f, 9.0f, 0.0f, 9.0f, 0.9916f, -0.1099f, 0.0372f, 0.0052f);  // edge lines
   b.band(2.52f, 2.81f, -0.19f, 9.0f, 0.0f, 9.0f, 0.9916f, -0.1099f, 0.0722f, 0.0401f);
-  b.band(-0.19f, 0.10f, -0.19f, 6.0f, 2.0f, 2.27f, 0.4317f, -0.03546f, 0.1099f, 0.0764f);  // centre dashes
+  if (!(c.ends & 0x40))  // centre dashes (a single-lane one-way road has none)
+    b.band(-0.19f, 0.10f, -0.19f, 6.0f, 2.0f, 2.27f, 0.4317f, -0.03546f, 0.1099f, 0.0764f);
   b.end();
   b.begin(matWalk);
   b.band(-6.0f, -3.0f, 0.0f, 12.0f, 0.0f, 12.0f, 0.5383f, -0.008925f, 0.0458f, 0.0190f);  // pavements
@@ -666,7 +667,7 @@ static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, boo
   c = CurveRoad();
   c.x0 = f[0], c.y0 = f[1], c.z0 = f[2], c.dx0 = f[3], c.dz0 = f[4];
   c.x1 = f[5], c.y1 = f[6], c.z1 = f[7], c.dx1 = f[8], c.dz1 = f[9];
-  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 31);
+  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 127);
   if (!v2) return true;
   if (p + 4 > stop) return false;
   uint32_t n;
@@ -825,6 +826,7 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
       arm.curve = ends[k].curve;
       arm.end = ends[k].end;
       arm.tram = (c.ends & 4) != 0;
+      if (c.ends & 0x20) arm.flow = arm.end ? 1 : 2, arm.single = (c.ends & 0x40) != 0;
       size_t n = d.size(), hit = n;  // the first sample from the junction's end at the radius
       for (size_t i = 0; i < n; ++i) {
         size_t at = arm.end ? n - 1 - i : i;
@@ -873,8 +875,8 @@ Vec3 splitCurve(const CurveRoad& c, float s, CurveRoad& first, CurveRoad& second
   first.a = std::max(0.5f, len(Q0 - P0)), first.b = std::max(0.5f, len(S - R0));
   second.x0 = S.x, second.y0 = S.y, second.z0 = S.z, second.dx0 = dm.x, second.dz0 = dm.z;
   second.a = std::max(0.5f, len(R1 - S)), second.b = std::max(0.5f, len(P3 - Q2));
-  first.ends = uint8_t(c.ends & (1 | 4 | 8));
-  second.ends = uint8_t(c.ends & (2 | 4 | 16));
+  first.ends = uint8_t(c.ends & (1 | 4 | 8 | 32 | 64));
+  second.ends = uint8_t(c.ends & (2 | 4 | 16 | 32 | 64));
   first.stops.clear(), second.stops.clear();
   for (CurveRoad::Stop st : c.stops) {
     if (st.s < s) {
@@ -1167,6 +1169,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   };
   // zebra crossings: bars across each arm just inside its mouth, cycling through the atlas' bar variants
   for (const CurveArm& A : j.arms) {
+    if (A.flow) continue;  // no crossing over a one-way road (a roundabout's ring)
     Vec3 in = A.out * -1.0f, r = rightOf(A.out), m0 = at(A.mouth);
     int bars = std::max(1, int((2.0f * pf.carriageway - 0.32f) / 0.93f));
     float first = -(float(bars) * 0.93f - 0.32f) * 0.5f;

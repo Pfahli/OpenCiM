@@ -78,6 +78,8 @@ struct CurveArm {
   render::Vec3 mouth;       // the curve's centre line where the junction begins
   render::Vec3 out;         // unit, flat: away from the junction there
   bool tram = false;        // the curve has tram tracks (they run on through the junction to the other tracked arms)
+  int flow = 0;             // one-way curves: 1 runs into the junction, 2 out of it (0 two-way)
+  bool single = false;      // a one-way curve with a single lane on its centre line
 };
 struct CurveJunction {
   render::Vec3 centre;
