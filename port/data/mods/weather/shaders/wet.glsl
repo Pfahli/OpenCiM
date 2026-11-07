@@ -107,6 +107,14 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   if (cls == 7 && s.item < 0.5) return;  // moving vehicles stay clear
   float cover = weather_snow.x;
   float up = smoothstep(0.55, 0.85, s.normal.y);
+  if (cls == 9) {
+    // foliage: its cards are flat, so the faces' slope alone would cut the cover into flat bands with straight edges.
+    // The snow follows the slope only loosely and settles needle by needle on the brighter upper sides of the twigs
+    // (the card's own texel), a little green showing everywhere
+    vec4 t = regs_texel0(s.uv);
+    float lift = smoothstep(-0.3, 0.95, s.normal.y);
+    up = smoothstep(0.35, 0.75, 0.55 * lift + 1.6 * (dot(t.rgb, vec3(0.3, 0.59, 0.11)) - 0.3)) * 0.9;
+  }
   if (up <= 0.0) return;
   float amount;
   float slush = 0.0, bank = 0.0;

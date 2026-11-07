@@ -96,7 +96,9 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 * **Falling snow:** fine soft dots drifting slowly with a little wind; light snowfall builds up like rain.
 * **Cover:** on upward faces of the ground, grass, pavements, roofs, foliage, platforms and parked vehicles (walls and
   moving vehicles stay clear); below full white (about 0.87 in the sun), a cool tint in shade, two light levels (sun
-  and shade) so the texture below only shows as a faint modulation; buildings keep their colours.
+  and shade) so the texture below only shows as a faint modulation; buildings keep their colours. On trees the snow
+  follows the slope only loosely and settles needle by needle on the upper sides of the twigs (no flat bands with
+  straight edges on the cards), the green showing between.
 * **Streets:** the engine's lane traffic decides how much snow stays: quiet lanes white with faint tyre tracks, busy
   lanes grey slush with dark tracks at the wheels (along the lanes, following curves); banks of snow along the kerbs on
   both sides, brighter, melting last; the thaw clears roads first, then pavements, then grass and roofs.
