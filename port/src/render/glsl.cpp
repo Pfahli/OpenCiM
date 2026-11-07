@@ -48,6 +48,7 @@ uniform float regs_HookItem = 0.0;
 uniform mat4 regs_HookInvViewProj;
 uniform vec3 regs_HookEye;
 uniform float regs_HookTime;
+uniform float regs_HookNight = 0.0;  // the day/night cycle: 0 by day, 1 at night (0 without the cycle)
 uniform samplerCube regs_EnvMap;
 uniform sampler2D regs_SurfaceMap;
 uniform vec4 regs_SurfaceMapRect;

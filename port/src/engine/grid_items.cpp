@@ -6,6 +6,7 @@
 // height in uv1.x and the shader subtracts it (shaders.cpp, portShaderPatch). Not yet: terrain normals on upward faces, the vertexGeneration triangle order,
 // base walls, skeletal animation and the fade between 800 and 880 m.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <map>
 
@@ -25,6 +26,7 @@ using namespace regs::script;
 using namespace regs::render;
 
 namespace {
+double gMatSeconds = 0, gMaskSeconds = 0;  // load-time measurement (grid items log line)
 
 // GRID_ITEM_* types and flags (L:0x08188450.c) and engine-only item bits (grid-items.md §1.4)
 constexpr int kTypeMetroStation = 0x10, kTypeTree = 0x13, kTypeMarker = 0x15, kTypeSpawnPoint = 0x16;
@@ -186,7 +188,10 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
     bool carriageway = false;
     for (const MaterialDef& m : o->data->materials) carriageway = carriageway || (m.flags & kMatKeepOnVariation);
     for (const MaterialDef& m : o->data->materials) {
+      auto tm0 = std::chrono::steady_clock::now();
       tc.materials.push_back(objectMaterial(d, vm, o, m));
+      auto tm1 = std::chrono::steady_clock::now();
+      gMatSeconds += std::chrono::duration<double>(tm1 - tm0).count();
       tc.materials.back().surfaceClass =
           road && carriageway && !(m.flags & kMatKeepOnVariation) ? kSurfacePavement : surface;
       // foliage: the materials the trees' wind shader draws (set in the templates' onLoaded)
@@ -211,6 +216,7 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
           tc.materials.back().windowKind = uint8_t(kind);
         }
       }
+      gMaskSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - tm1).count();
     }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");
@@ -293,6 +299,8 @@ size_t bucketItems(const GridData& g, TerrainCache& tc, bool markDirty) {
 }  // namespace
 
 void initGridItems(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
+  const auto tStart = std::chrono::steady_clock::now();
+  gMatSeconds = gMaskSeconds = 0;
   const GridData& g = *grid->data;
   tc.typeTemplate.clear();
   tc.fileMaterials.clear();
@@ -301,8 +309,10 @@ void initGridItems(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
   tc.itemColor.clear();
   tc.itemsBucketed = 0;
   size_t placed = bucketItems(g, tc, false);
-  LOG_INFO("grid items: %zu of %zu placed, %zu templates, %zu materials", placed, g.items.size(), tc.templates.size(),
-           tc.materials.size());
+  LOG_INFO("grid items: %zu of %zu placed, %zu templates, %zu materials in %.0f ms (materials %.0f ms, night masks %.0f ms)",
+           placed, g.items.size(), tc.templates.size(), tc.materials.size(),
+           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count(), gMatSeconds * 1000,
+           gMaskSeconds * 1000);
 }
 
 void syncGridItems(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {

@@ -757,6 +757,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.hookItem = at("regs_HookItem");
     l.hookTrafficRect = at("regs_TrafficRect");
     l.hookFootRect = at("regs_FootRect");
+    l.hookNight = at("regs_HookNight");
   }
   l.viewInverse = at("regs_ViewInverse");
   l.projInverse = at("regs_ProjInverse");
@@ -842,6 +843,7 @@ void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
   gl::UniformMatrix4fv(l.hookInvViewProj, 1, 0, inv.m);
   gl::Uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
   gl::Uniform1f(l.hookTime, v.timer);
+  gl::Uniform1f(l.hookNight, v.night[3]);
   ProgramLocs& lw = locs_[prog];
   for (const auto& [name, value] : shaderHookUniforms()) {
     auto it = lw.hookUniforms.find(name);

@@ -209,6 +209,14 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   vec3 snow = vec3(0.86, 0.87, 0.88) * tint * light * (1.0 - 0.15 * weather_snow.z);
   snow *= 0.94 + 0.12 * smoothstep(0.3, 1.6, est);
   snow *= 1.0 + 0.05 * bank;  // the banks: a little brighter (thicker)
+  // at night (the day/night cycle) the two levels above would glow like day: the snow is lit by what lights the
+  // ground under it instead (moonlight, street lamps, shop windows, headlights), about three times as bright as the
+  // ground and in the light's colour (the ground's hue, half of it)
+  if (regs_HookNight > 0.0) {
+    vec3 hue = dry / max(dot(dry, vec3(0.3, 0.59, 0.11)), 1e-4);
+    vec3 lit = vec3(0.87) * min(est, 1.15) * mix(vec3(1.0), hue, 0.5);
+    snow = mix(snow, min(lit, vec3(1.0)), regs_HookNight);
+  }
   // the hills: a little brighter on top, slightly shaded on their flanks; flat ground keeps its brightness (no dark
   // band or spots around them)
   float flank = 4.0 * hill * (1.0 - hill);

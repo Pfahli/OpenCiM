@@ -345,7 +345,10 @@ void applyAtmosphere(const Atmosphere& a, SceneView& v) {
   if (a.fogTint >> 24) {
     float t = float(a.fogTint >> 24) / 255.0f, tint[4];
     argbToFloats(a.fogTint, tint);
-    for (int k = 0; k < 3; ++k) v.fogColor[k] += (tint[k] - v.fogColor[k]) * t;
+    // the tint is a daylight colour: at night (a dark fog) it is as much darker, so an overcast night stays dark
+    const float fogLum = 0.3f * v.fogColor[0] + 0.59f * v.fogColor[1] + 0.11f * v.fogColor[2];
+    const float dark = std::clamp(fogLum / 0.6f, 0.0f, 1.0f);
+    for (int k = 0; k < 3; ++k) v.fogColor[k] += (tint[k] * dark - v.fogColor[k]) * t;
   }
   v.fogStart *= a.fogScale;
   v.fogEnd *= a.fogScale;

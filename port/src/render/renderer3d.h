@@ -275,7 +275,7 @@ class Renderer3D {
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
     // shader hooks (render/glsl.h): -1 in programs without them
     int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1,
-        hookItem = -1, hookTrafficRect = -1, hookFootRect = -1;
+        hookItem = -1, hookTrafficRect = -1, hookFootRect = -1, hookNight = -1;
     std::map<std::string, int> hookUniforms;
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;

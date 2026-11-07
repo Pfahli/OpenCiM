@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
   std::error_code ec;
   if (fs::is_directory(data, ec)) engine::host().dataDir = data;
   engine::Engine eng(game, documents);
-  eng.echo = [](const std::string& s) { std::printf("[script] %s\n", s.c_str()); };
+  eng.echo = [](const std::string& s) { std::printf("%s[script] %s\n", logStamp().c_str(), s.c_str()); };
   eng.errors = [](const std::string& s) { std::printf("[error] %s\n", s.c_str()); };
   if (!eng.init(u"metro/scripts/init.script")) {
     std::fprintf(stderr, "init.script failed\n");
