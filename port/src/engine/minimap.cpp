@@ -360,6 +360,7 @@ void registerMinimapNatives(VM& vm) {
     }
     tex->width = w;
     tex->height = h;
+    tex->cpuBGRA.assign(bytes, bytes + size_t(w) * size_t(h) * 4);  // for saveToFile (the editor's <map>.dds)
     return Value();
   });
   // worldToMapPosition(vector | x, z) / mapToWorldPosition(vector | x, y): control-local pixels ↔ world (§4.2)

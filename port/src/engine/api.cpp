@@ -15,6 +15,7 @@ Value defaultFor(int type) {
     case 3: return Value::integer(0);
     case 4: return Value::real(0.0f);
     case 5: case 6: return Value::string(std::u16string());
+    case 8: return Value::null();  // an object pointer field the engine never set reads as null
     default: return Value();
   }
 }

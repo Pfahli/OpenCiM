@@ -356,6 +356,69 @@ void registerGridNatives(VM& vm) {
     loadSimulation(v, g, file);
     return Value::boolean(true);
   });
+  // addCamera(camera): the original keeps a list of cameras for its division culling; the port culls per view.
+  implement(vm, "gsGrid", u"addCamera", [](VM&, Object*, int, const Value*) { return Value(); });
+  // setSize(width, length, [divisionShift]) (0x100b9a20 → gsGrid::setSize L:0x0813eb50): an empty map, as the editor's
+  // "empty map" starts it. Every cell at height 0x200 with no flags (gsGridCellPlane::setSize L:0x08163b10), no items,
+  // the simulation cleared. Same size as now = nothing happens. The map gets a stand-in source file (header, empty
+  // terrain and network sections) so saveToFile writes it like a loaded one.
+  implement(vm, "gsGrid", u"setSize", [](VM& v, Object* s, int argc, const Value* a) {
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g) return Value();
+    int w = std::max(0, v.toInt(a[0])), l = std::max(0, v.toInt(a[1]));
+    int shift = argc > 2 ? std::max(1, v.toInt(a[2])) : 4;
+    if (g->data && g->data->width == w && g->data->length == l && int(g->data->bucketShift) == shift) return Value();
+    std::vector<uint8_t> file = emptyGridFile(w, l, shift);
+    auto data = std::make_shared<GridData>();
+    std::string err;
+    if (!parseGridFile(file, *data, &err)) {
+      LOG_ERROR("grid setSize %dx%d: %s", w, l, err.c_str());
+      return Value();
+    }
+    LOG_INFO("grid: new empty map %dx%d cells", w, l);
+    g->data = data;
+    g->sourceFile = std::make_shared<const std::vector<uint8_t>>(file);
+    ++g->generation;
+    loadSimulation(v, g, file);
+    return Value();
+  });
+}
+
+std::vector<uint8_t> emptyGridFile(int width, int length, int bucketShift) {
+  std::vector<uint8_t> f;
+  auto p32 = [&](uint32_t x) { f.insert(f.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 4); };
+  auto p16 = [&](uint16_t x) { f.insert(f.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 2); };
+  size_t cells = size_t(width) * size_t(length);
+  p32(0x07000000);
+  p32(0);
+  p32(uint32_t(width));
+  p32(uint32_t(length));
+  float cs = 3.0f;
+  uint32_t csBits;
+  std::memcpy(&csBits, &cs, 4);
+  p32(csBits);
+  p32(uint32_t(bucketShift));
+  p16(0x200);
+  p16(0);
+  p32(0);
+  p32(0x07010000);
+  p32(uint32_t(cells * 4));
+  f.reserve(f.size() + cells * 4 + 64);
+  for (size_t i = 0; i < cells; ++i) {
+    p16(0x200);
+    p16(0);
+  }
+  p32(0x07020000);  // {typeCount 0, itemCount 0} and the three empty tables
+  p32(8 + 3 * 8);
+  p32(0);
+  p32(0);
+  for (uint32_t tag : {0x07020100u, 0x07020210u, 0x07020310u}) {
+    p32(tag);
+    p32(0);
+  }
+  uint32_t size = uint32_t(f.size() - 8);
+  std::memcpy(f.data() + 4, &size, 4);
+  return f;
 }
 
 void GridObj::tick(VM& vm, float dt) {

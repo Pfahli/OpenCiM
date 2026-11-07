@@ -17,6 +17,9 @@ class TextureObj : public script::Object {
   bool renderTarget = false;  // colour buffer of a gsTextureTarget_OGL (drawn into by a viewport)
   bool cube = false;          // DDS cube map (bound as GL_TEXTURE_CUBE_MAP)
   bool loadFailed = false;
+  // pixels the engine made on the CPU (gsGrid.renderMap): BGRA bytes, row 0 first, width × height; saveToFile writes
+  // them (the original reads the GL texture back with glGetTexImage)
+  std::vector<uint8_t> cpuBGRA;
 };
 
 // Texture cache by path (gsTextures_OGL): a missing or unreadable file gives textures/default.dds.
