@@ -716,6 +716,9 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.lampMap = at("regs_LampMap");
   l.lampMapXf = at("regs_LampMapXf");
   l.lampHeight = at("regs_LampHeight");
+  l.carMap = at("regs_CarMap");
+  l.carMapXf = at("regs_CarMapXf");
+  l.carLight = at("regs_CarLight");
   return l;
 }
 
@@ -764,6 +767,9 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   gl::Uniform1i(l.lampMap, 9);
   gl::Uniform4fv(l.lampMapXf, 1, v.lampMapXf);
   gl::Uniform4f(l.lampHeight, v.lampHeight[0], v.lampHeight[1], 0, 0);
+  gl::Uniform1i(l.carMap, 10);
+  gl::Uniform4fv(l.carMapXf, 1, v.carMapXf);
+  gl::Uniform4f(l.carLight, v.carLight[0], v.carLight[1], v.carMap ? v.carLight[2] : 0.0f, 0);
 }
 
 void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
@@ -795,9 +801,9 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform4fv(l.colorize, 1, tint);
   gl::Uniform1f(l.reflection, m.reflection);
   if (l.windowOn >= 0) {  // port night lights: the material's window groups on unit 8
-    bool on = m.windowMask && v.night[0] > 0;
-    gl::Uniform1f(l.windowOn, on ? 1.0f : 0.0f);
-    if (on) {
+    float code = !m.windowMask ? 0.0f : m.windowKind == 1 ? it.lampCode : v.night[0] > 0 ? 1.0f : 0.0f;
+    gl::Uniform1f(l.windowOn, code);
+    if (code > 0) {
       gl::ActiveTexture(gl::TEXTURE0 + 8);
       gl::BindTexture(gl::TEXTURE_2D, m.windowMask);
     }
@@ -918,6 +924,11 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   if (v.lampMap) {  // port night lights: the lamp light map on unit 9 for the whole pass
     gl::ActiveTexture(gl::TEXTURE0 + 9);
     gl::BindTexture(gl::TEXTURE_2D, v.lampMap);
+    gl::ActiveTexture(gl::TEXTURE0);
+  }
+  if (v.carMap) {  // port night lights: the vehicles' headlight map on unit 10
+    gl::ActiveTexture(gl::TEXTURE0 + 10);
+    gl::BindTexture(gl::TEXTURE_2D, v.carMap);
     gl::ActiveTexture(gl::TEXTURE0);
   }
   uint32_t current = 0;

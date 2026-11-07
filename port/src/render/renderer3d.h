@@ -20,6 +20,7 @@ struct GpuMaterial {
   float shininess = 1;
   float reflection = 0;   // header byte 0x27 / 255
   uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
+  uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode)
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
   float custom[8][4] = {};    // shader parameters custom0..7
@@ -121,6 +122,9 @@ struct SceneView {
   uint32_t lampMap = 0;               // lamp light over the map (unit 9): rgb light, a = lamp head height
   float lampMapXf[4] = {0, 0, 0, 0};  // uv = (world.xz − (x, y)) · (z, w)
   float lampHeight[2] = {0, 1};       // head height = [0] + a · [1]
+  uint32_t carMap = 0;                // vehicle headlights around the view (unit 10): rgb light, a = ground height
+  float carMapXf[4] = {0, 0, 0, 0};   // uv = (world.xz − (x, y)) · (z, w)
+  float carLight[4] = {0, 1, 0, 0};   // ground height = [0] + a · [1]; [2] = strength (0: none)
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms
@@ -139,7 +143,8 @@ struct DrawItem {
   Mat4 world;
   float colorize[4] = {1, 1, 1, 1};
   float alpha = 1;
-  bool shadowOnly = false;  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
+  bool shadowOnly = false;
+  float lampCode = 0;  // port night lights: vehicle lamps (engine/night_lights.h vehicleLampCode), 0 = off  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
   // a per-instance custom4.xy over the material's (vehicles' animated parts: rotor angle and spin-up, which the engine
   // writes into each vehicle's own material copy, L:0x081adca0.c:604-690); z and w stay the material's
   bool hasCustom4 = false;
@@ -214,7 +219,7 @@ class Renderer3D {
     int matrix = -1, eyepos = -1, timer = -1, reflection = -1, worldup = -1, colorize = -1, vieworient = -1, alphaRef = -1;
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
     int viewInverse = -1, projInverse = -1, night = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
-        lampHeight = -1;
+        lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
   };
   std::map<uint32_t, ProgramLocs> locs_;
   const ProgramLocs& locs(uint32_t prog);

@@ -17,8 +17,8 @@ it is, what already exists, and the open decisions. Order is not priority.
     from a lamp map, glows on the heads found from the lamp meshes) and lit windows (masks from the buildings'
     specular maps, made in memory at load; four random groups per building that go on and off over the evening, most
     dark after midnight, early risers from 5:30).
-  * Vehicles (owner, 2026-11-07): headlights and tail lights on cars, trams and buses; high beams (Fernlicht) when
-    there are no buildings and no other vehicles ahead. Tram and metro interior light.
+  * Vehicles: done on the same branch (lamps found on the models' textures, beams as a light map, high beams on free
+    roads, lights switching on one by one at dusk). Open: tram and metro interior light; better front-lamp finding.
   * Open: the cost of many vehicle light pools (a deferred or clustered light pass in the planned new renderer).
 * **Seasons and weather.** A mod (the owner's decision), `port/data/mods/weather`; rain is being built first.
   Next after rain (owner's request): **snow** that slowly accumulates on surfaces (ground, roofs, trees, and parked

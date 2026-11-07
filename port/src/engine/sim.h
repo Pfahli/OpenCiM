@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "render/math3d.h"
+#include "render/mesh.h"
 #include "render/renderer3d.h"
 #include "script/vm.h"
 
@@ -100,6 +101,21 @@ void simTerrainChanged(script::VM& vm, GridObj* grid, int x0, int z0, int x1, in
 // Door items (engine/sim_doors.cpp): per door item the skeleton clip time gsGridItem::animate got last (−1 = bind
 // pose); null when the map has none or there is no simulation.
 const std::unordered_map<uint32_t, float>* simDoorTimes(GridObj* grid);
+
+// Port night lights (engine/night_lights.h): the light points of every moving road and rail consist within range of
+// the eye: its leading end (headlights) and trailing end (tail lights), the travel direction, the body's half width
+// and the lights' height above the ground. Parked cars, boats, aircraft and units in tunnels have none.
+struct VehicleLightSource {
+  render::Vec3 front, back, forward, backForward;
+  float halfWidth = 0.8f, frontY = 0.6f, backY = 0.8f;
+  float speed = 0;
+  int mover = -1;
+  uint32_t seed = 0;  // per vehicle: when it switches its lights on
+  const render::ObjectData* frontData = nullptr, *backData = nullptr;  // the leading and trailing unit's models
+  bool frontIsModelRear = false, backIsModelFront = false;              // reversed units
+  bool rail = false, bus = false;
+};
+void simVehicleLights(GridObj* grid, const render::Vec3& eye, float range, std::vector<VehicleLightSource>& out);
 
 // Adds the spawned vehicles within farZ of the eye that are in view to the draw list.
 void collectSimVehicles(Display& d, script::VM& vm, GridObj* grid, const render::Vec3& eye,

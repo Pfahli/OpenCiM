@@ -622,6 +622,60 @@ int cmdWindowMask(int argc, char** argv) {
   return 0;
 }
 
+// vehiclelamps <gameDir> <outDir> <.object path>...: the lamps found on vehicle textures (engine/night_lights.cpp),
+// front lamps white and rear lamps red over the darkened diffuse map, one PNG per material
+int cmdVehicleLamps(int argc, char** argv) {
+  if (argc < 5) return 2;
+  Vfs vfs;
+  vfs.setInstallRoot(widen(argv[2]));
+  vfs.rescan();
+  auto read = [&](const std::string& p, std::vector<uint8_t>& out) { return vfs.read(p, out); };
+  for (int a = 4; a < argc; ++a) {
+    render::ObjectData od;
+    std::string err;
+    if (!render::loadObject(argv[a], read, od, &err)) {
+      std::printf("%s: %s\n", argv[a], err.c_str());
+      continue;
+    }
+    for (size_t mi = 0; mi < od.materials.size(); ++mi) {
+      const render::MaterialDef& m = od.materials[mi];
+      std::vector<uint8_t> data;
+      render::Image di, si, mask;
+      if (!(m.flags & render::kMatDiffuseMap) || m.textures.empty() || !read(m.textures[0], data) || !render::parseDds(data, di, nullptr))
+        continue;
+      size_t at = 1 + ((m.flags & 0x400) ? 1 : 0) + ((m.flags & 0x800) ? 2 : 0);
+      bool spec = (m.flags & render::kMatSpecularMap) && at < m.textures.size() && read(m.textures[at], data) &&
+                  render::parseDds(data, si, nullptr);
+      engine::VehicleLampInfo info;
+      bool ok = engine::makeVehicleLampMask(od.mesh, int(mi), di, spec ? &si : nullptr, mask, &info);
+      std::printf("%s / %s: %d front, %d rear lamp areas\n", argv[a], m.name.c_str(), info.frontLamps, info.rearLamps);
+      if (!ok) continue;
+      std::vector<uint8_t> drgba;
+      int dw = 0, dh = 0, level = 0;
+      while (level + 1 < di.mipCount && (di.width >> level) > mask.width) ++level;
+      render::decodeRgba(di, level, drgba, dw, dh);
+      const int w = mask.width, h = mask.height;
+      std::vector<uint8_t> out(size_t(w) * size_t(h) * 4);
+      for (size_t i = 0; i < size_t(w) * size_t(h); ++i) {
+        const uint8_t* mp = &mask.levels[0][i * 4];
+        for (int c = 0; c < 3; ++c) {
+          float v = drgba[i * 4 + size_t(c)] / 255.0f * 0.45f + mp[2] / 255.0f * 0.9f + (c == 0 ? mp[1] / 255.0f * 0.9f : 0.0f);
+          out[i * 4 + size_t(c)] = uint8_t(std::clamp(v, 0.0f, 1.0f) * 255.0f);
+        }
+        out[i * 4 + 3] = 255;
+      }
+      std::string name = argv[a];
+      name = name.substr(name.find_last_of('/') + 1) + "-" + std::to_string(mi) + ".png";
+      std::vector<uint8_t> png = render::encodePng(out.data(), w, h);
+      if (FILE* f = std::fopen((std::string(argv[3]) + "/" + name).c_str(), "wb")) {
+        std::fwrite(png.data(), 1, png.size(), f);
+        std::fclose(f);
+      }
+    }
+  }
+  return 0;
+}
+
 // lamps <gameDir> <.object path>...: the lamp heads the night lights find on lamp models
 int cmdLamps(int argc, char** argv) {
   if (argc < 4) return 2;
@@ -709,6 +763,7 @@ int main(int argc, char** argv) {
     else if (cmd == "texpng") rc = cmdTexPng(argc, argv);
     else if (cmd == "windowmask") rc = cmdWindowMask(argc, argv);
     else if (cmd == "lamps") rc = cmdLamps(argc, argv);
+    else if (cmd == "vehiclelamps") rc = cmdVehicleLamps(argc, argv);
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

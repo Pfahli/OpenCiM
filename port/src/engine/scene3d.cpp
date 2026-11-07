@@ -441,7 +441,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   {
     float t = std::tan(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
     collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles);
-    addNightLights(d, vm, grids, sky, v, particles);  // port day/night cycle: window and lamp light, lamp glows
+    addNightLights(d, vm, grids, sky, v, particles, items);  // port day/night cycle: window and lamp light, lamp glows
     if (!particles.sprites.empty()) v.particles = &particles;
   }
   // environment flags: light count << 12 outside shadow passes (FUN_10051120)
