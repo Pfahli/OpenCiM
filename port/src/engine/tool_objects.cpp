@@ -741,7 +741,10 @@ bool finishPlace(VM& vm, ControlObj* player, GridObj* grid) {
   }
   // the editor records the placing as one group (finishTool L:0x0819a3e0.c:299-508)
   Object* tl = conflict ? nullptr : playerTimeline(vm, player);
-  if (tl) timelineBeginGroup(vm, tl, mode == kGridModeCreateStop ? "%!10" : "%!9");
+  if (tl) {  // placing: "%9 " and the object (L:0x0819a3e0.c:302-311), stops "%!10"
+    std::string what = !t.newItems.empty() && t.newItems[0] < g.items.size() ? g.types[g.items[t.newItems[0]].type] : std::string();
+    timelineBeginGroup(vm, tl, mode == kGridModeCreateStop ? std::string("%!10") : "%9 " + what);
+  }
   if (!conflict)
     for (uint32_t r : t.replaced) {
       gridSetSelected(vm, grid, r, false, false);
