@@ -47,3 +47,4 @@ $regs_packages_base = "Base game (with Munich and the free content)";
 $regs_packages_missing_dialog = "This map needs content that is not installed to look and play as its author intended:";
 $regs_packages_openAnyway_button = "Open anyway";
 $regs_package_names = map ["vehiclepack01", "Design Classics", "vehiclepack02", "Design Marvels", "tokyo", "Tokyo", "vehiclepack03", "Design Now", "stationpack01", "Metro Stations", "germany", "German Cities", "usa", "US Cities", "vehiclepack05", "Design Dreams", "ulm", "Ulm", "paris", "Paris", "stpetersburg", "St. Petersburg", "london", "London", "humble", "Design Quirks"];
+$regs_packages_allDlcs_button = "Enable all DLCs";

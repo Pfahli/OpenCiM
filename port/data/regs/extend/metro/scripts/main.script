@@ -176,6 +176,8 @@ function regsPackageName($package, $strings = null) {
   $key = extractFileName($package);
   $name = $key;
   if (defined $strings.$regs_package_names[$key]) $name = $strings.$regs_package_names[$key];
+  // "Tokyo DLC" (list and dialog), the suffix in grey
+  if (findstr($package, "addons/") == 0 && regsIsDlc($key)) $name = formatText(escapePattern($name) + " {0:DLC}", [0xFF909090]);
   if ($own) delete $strings;
   return $name;
 }

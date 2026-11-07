@@ -24,7 +24,7 @@ with ($regsTitle = new_control($box.$content)) {
   .canActivate = false;
 }
 with ($regsArea = new_control($box.$content)) {
-  .setRect(560, 140, 390, 260);
+  .setRect(560, 140, 390, 228);
   .setBorder(0xFF777777, 2);
   .visible = true;
   .canActivate = false;
@@ -79,3 +79,15 @@ foreach (MAIN.$main.regsInstalledPackages()) {
   $regsY += 20;
 }
 MAIN.$ui.resetScrollArea($regsBox);  // from the top
+
+// "Enable all DLCs": every listed DLC (not mods) ticked
+function regsSelectAllDlcs() {
+  foreach (MAIN.$main.regsInstalledPackages()) {
+    if (MAIN.$main.regsIsDlc(extractFileName(current)) && findstr(current, "addons/") == 0 && !regsIsSelected(current)) {
+      if (defined $regsButtons[current]) regsTogglePackage(current);
+    }
+  }
+}
+with ($regsAllButton = MAIN.$ui.createButton($box.$content, 560, 374, 390, 26, $regsStrings.$regs_packages_allDlcs_button, regsSelectAllDlcs, "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds")) {
+  .setCropRect(16.0 / 128.0, 3.0 / 32.0, 96.0 / 128.0, 25.0 / 32.0);
+}
