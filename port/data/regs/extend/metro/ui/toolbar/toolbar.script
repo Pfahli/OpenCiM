@@ -1,0 +1,31 @@
+// ReGS extension of the editor toolbar (metro/ui/toolbar/toolbar.script, used as installed; see VM::extendSource),
+// owner's request 2026-11-07: the building list gets a category "Vehicles" with every player vehicle (buses, trams,
+// metro trains, boats, helicopters, DLC ones included) and every AI vehicle (cars, trucks, trains, ships, aircraft)
+// of the loaded location, to place as scenery: the vehicle's own template stands on the map as a plain object.
+//@rename openBuildingMenu regsBaseOpenBuildingMenu
+
+//@base
+
+function openBuildingMenu() {
+  regsBaseOpenBuildingMenu();
+  $regsFile = "regs/strings/"+MAIN.$language+".strings";
+  if (!file_exists($regsFile)) $regsFile = "regs/strings/en_US.strings";
+  $regsS = load "/"+$regsFile;
+  MAIN.$strings.$category_vehicles = $regsS.$regs_category_vehicles;
+  delete $regsS;
+  $regsSeen = map [];
+  foreach (MAIN.$level.$playerVehicles) {
+    $regsName = current[0];
+    if (!(defined $regsSeen[$regsName]) && $grid.getGridObject($regsName)) {
+      $regsSeen[$regsName] = true;
+      $list.addItem("vehicles", $regsName, macro($regsName) :: selectObject($0));
+    }
+  }
+  foreach (MAIN.$level.$regsAIVehicles : []) {
+    $regsName = current;
+    if (!(defined $regsSeen[$regsName]) && $grid.getGridObject($regsName)) {
+      $regsSeen[$regsName] = true;
+      $list.addItem("vehicles", $regsName, macro($regsName) :: selectObject($0));
+    }
+  }
+}

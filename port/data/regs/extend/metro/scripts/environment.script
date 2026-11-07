@@ -9,6 +9,7 @@
 //@rename loadBuilding regsBaseLoadBuilding
 //@rename loadProp regsBaseLoadProp
 //@rename loadTree regsBaseLoadTree
+//@rename loadAIVehicle regsBaseLoadAIVehicle
 
 //@base
 
@@ -24,6 +25,13 @@ if (defined MAIN.$campaign) {
 }
 if ($grid.citizens.hasMember("regsPopulationDensity")) $grid.citizens.regsPopulationDensity = $regsPopulationDensity;
 if ($grid.vehicles.hasMember("regsTrafficDensity")) $grid.vehicles.regsTrafficDensity = $regsTrafficDensity;
+
+// the AI vehicles (cars, trucks, trains, boats, aircraft), for the editor's vehicle category (toolbar.script extension)
+function loadAIVehicle($name, $model) {
+  if (!(defined $regsAIVehicles)) $regsAIVehicles = [];
+  $regsAIVehicles[] = $name;
+  regsBaseLoadAIVehicle($name, $model);
+}
 
 // ---- content packages ----
 $regsPackageLoading = false;

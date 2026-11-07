@@ -48,3 +48,8 @@ $regs_packages_missing_dialog = "Diese Karte braucht nicht installierte Inhalte,
 $regs_packages_openAnyway_button = "Trotzdem öffnen";
 $regs_package_names = map ["vehiclepack01", "Design Classics", "vehiclepack02", "Design Marvels", "tokyo", "Tokyo", "vehiclepack03", "Design Now", "stationpack01", "Metro Stations", "germany", "German Cities", "usa", "US Cities", "vehiclepack05", "Design Dreams", "ulm", "Ulm", "paris", "Paris", "stpetersburg", "St. Petersburg", "london", "London", "humble", "Design Quirks"];
 $regs_packages_allDlcs_button = "Alle DLCs aktivieren";
+// Objektliste im Editor (extend/metro/ui/objectlist/objectlist.script): Filter nach Inhaltspaket und Suche
+$regs_list_filter_title = "Filter:";
+$regs_list_filter_all = "Alle Inhalte";
+$regs_list_filter_base = "Hauptspiel";
+$regs_category_vehicles = "Fahrzeuge";

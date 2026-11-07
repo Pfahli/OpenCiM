@@ -255,7 +255,9 @@ void registerGridNatives(VM& vm) {
     return Value::heap(VT::Object, m.get());
   });
   // colormap(path): a BMP as a top-down RGB pixel table (L:0x080eecb0) for per-item tints
-  if (ClassInfo* c = vm.findClass("gsObjectVariant")) {
+  ClassInfo* colorMapClass = vm.findClass("gsColorMap");
+  if (!colorMapClass) colorMapClass = vm.findClass("gsObjectVariant");
+  if (ClassInfo* c = colorMapClass) {
     implementGlobal(vm, u"colormap", [c](VM& v, Object* self, int, const Value* a) {
       Ref<Object> o(new ColormapObj(c));
       auto* cm = static_cast<ColormapObj*>(o.get());
@@ -265,6 +267,17 @@ void registerGridNatives(VM& vm) {
       return Value::heap(VT::Object, o.get());
     });
   }
+  // get(u, v) (gsColorMap::method_get / getColor L:0x080ef310 / 0x080ef230): the pixel at (round((w−1)·u),
+  // round((h−1)·v)), clamped, as 0xFFRRGGBB; 0 (and white for an empty map, as getColor) otherwise
+  implement(vm, "gsColorMap", u"get", [](VM& v, Object* s, int, const Value* a) {
+    auto* cm = dynamic_cast<ColormapObj*>(s);
+    if (!cm || cm->argb.empty()) return Value::integer(int32_t(0xFFFFFFFFu));
+    int x = int(std::lrint(float(cm->width - 1) * float(v.toFloat(a[0]))));
+    int y = int(std::lrint(float(cm->height - 1) * float(v.toFloat(a[1]))));
+    x = std::clamp(x, 0, cm->width - 1);
+    y = std::clamp(y, 0, cm->height - 1);
+    return Value::integer(int32_t(cm->argb[size_t(y) * size_t(cm->width) + size_t(x)]));
+  });
   implement(vm, "gsGrid", u"getGridObject", [](VM& v, Object* s, int, const Value* a) {
     auto* g = dynamic_cast<GridObj*>(s);
     if (!g) return Value::null();
