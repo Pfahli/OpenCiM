@@ -1834,6 +1834,7 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
     });
   }
   buildLaneGraph(vm, grid, *grid->data, s->graph, fileFlags.empty() ? nullptr : &fileFlags);
+  rebuildCurveNodes(*grid->data, s->graph);  // port curved roads: their lanes after the items'
   s->rt.assign(s->graph.nodes.size(), NodeRt());
   collectSources(*s);
   buildDoors(vm, grid, *s);
@@ -2116,6 +2117,43 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   }
 }
 
+// vehicles on removed lane nodes: traffic despawns, a citizen's car ends its drive, parked cars go, line vehicles
+// leave the line and come back at a platform; the nodes' run-time state is cleared. Returns how many were taken off.
+int takeOffRemovedNodes(VM& vm, SimState& s, const std::vector<uint8_t>& nodeGone) {
+  int despawned = 0;
+  for (size_t id = 0; id < s.movers.size(); ++id) {
+    Mover& m = s.movers[id];
+    if (!m.live) continue;
+    bool hit = false;
+    for (size_t k = size_t(std::max(0, m.holdBegin)); k < m.track.nodes.size() && !hit; ++k) hit = nodeGone[size_t(m.track.nodes[k])] != 0;
+    if (!hit) continue;
+    ++despawned;
+    if (m.transit) {
+      VehicleState& v = s.vehicles[size_t(m.vehicle)];
+      for (auto& st : s.lines[size_t(v.line)].stops)
+        if (st.docked == m.vehicle) st.docked = -1;
+      vm.fireEvent(v.object.get(), u"onUnspawn", {});
+      despawn(vm, s, int(id));
+      v.stopTime = 0;
+      v.halted = v.brokenHalted = false;
+    } else if (m.parked) {
+      if (m.citizen >= 0) {
+        Citizen& c = s.citizens[size_t(m.citizen)];
+        if (c.car == int(id)) c.car = -1, c.flags &= ~0x100000u;
+      }
+      m.citizen = -1;
+      despawn(vm, s, int(id));
+    } else if (m.citizen >= 0) {
+      carArrived(vm, s, int(id), true);
+    } else {
+      despawn(vm, s, int(id));
+    }
+  }
+  for (size_t n = 0; n < nodeGone.size(); ++n)
+    if (nodeGone[n]) s.rt[n] = NodeRt();
+  return despawned;
+}
+
 void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, const std::vector<uint32_t>& removed) {
   if (!grid || !grid->sim || !grid->data || (added.empty() && removed.empty())) return;
   SimState& s = *grid->sim;
@@ -2162,38 +2200,7 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
 
   // 2. vehicles on removed nodes: traffic despawns, a citizen's car ends its drive, parked cars go, line vehicles
   //    leave the line and come back at a platform
-  int despawned = 0;
-  for (size_t id = 0; id < s.movers.size(); ++id) {
-    Mover& m = s.movers[id];
-    if (!m.live) continue;
-    bool hit = false;
-    for (size_t k = size_t(std::max(0, m.holdBegin)); k < m.track.nodes.size() && !hit; ++k) hit = nodeGone[size_t(m.track.nodes[k])] != 0;
-    if (!hit) continue;
-    ++despawned;
-    if (m.transit) {
-      VehicleState& v = s.vehicles[size_t(m.vehicle)];
-      for (auto& st : s.lines[size_t(v.line)].stops)
-        if (st.docked == m.vehicle) st.docked = -1;
-      vm.fireEvent(v.object.get(), u"onUnspawn", {});
-      despawn(vm, s, int(id));
-      v.stopTime = 0;
-      v.halted = v.brokenHalted = false;
-    } else if (m.parked) {
-      if (m.citizen >= 0) {
-        Citizen& c = s.citizens[size_t(m.citizen)];
-        if (c.car == int(id)) c.car = -1, c.flags &= ~0x100000u;
-      }
-      m.citizen = -1;
-      despawn(vm, s, int(id));
-    } else if (m.citizen >= 0) {
-      carArrived(vm, s, int(id), true);
-    } else {
-      despawn(vm, s, int(id));
-    }
-  }
-  for (size_t n = 0; n < nodeGone.size(); ++n)
-    if (nodeGone[n]) s.rt[n] = NodeRt();
-
+  int despawned = takeOffRemovedNodes(vm, s, nodeGone);
   // 3. stops: new stop items join the stop vector; stops on removed items leave their lines (removeItem :55-104)
   for (uint32_t i : added)
     if (i < g.items.size()) registerStop(vm, grid, s, i);
@@ -2288,6 +2295,28 @@ void simTerrainChanged(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
   (void)vm;
   if (!grid || !grid->sim || !grid->data) return;
   restampWalk(*grid->sim, x0, z0, x1, z1);
+}
+
+void simCurvesChanged(VM& vm, GridObj* grid, const std::vector<std::array<int, 4>>& rects) {
+  if (!grid || !grid->sim || !grid->data) return;
+  SimState& s = *grid->sim;
+  LaneGraph& G = s.graph;
+  std::vector<uint8_t> nodeGone(G.nodes.size(), 0);
+  for (int n : G.curveNodes) nodeGone[size_t(n)] = 1;
+  rebuildCurveNodes(*grid->data, G);
+  s.rt.resize(G.nodes.size());
+  nodeGone.resize(G.nodes.size(), 0);
+  int despawned = takeOffRemovedNodes(vm, s, nodeGone);
+  for (LineState& line : s.lines) relinkLine(vm, grid, s, line);
+  s.roadStarts.clear(), s.roadEnds.clear(), s.waterStarts.clear(), s.waterEnds.clear();
+  s.airEntries.clear(), s.airGatesIn.clear(), s.airGatesOut.clear(), s.airExits.clear();
+  s.landing = s.departing = AirPending();
+  for (int k = 0; k < 2; ++k) s.trainStarts[k].clear(), s.trainEnds[k].clear();
+  collectSources(s);
+  buildDoors(vm, grid, s);
+  for (const auto& r : rects) restampWalk(s, r[0], r[1], r[2], r[3]);
+  LOG_INFO("sim: curved roads changed: %zu curves, %zu curve lane nodes, %d vehicles taken off",
+           grid->data->curves.size(), G.curveNodes.size(), despawned);
 }
 
 // gsGridVehicle::updateVisibility (L:0x081ad310, docs/renderer/underground.md §5): in the underground view a car of a

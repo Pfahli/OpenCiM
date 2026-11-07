@@ -75,6 +75,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerTrackTools(*vm_);
   registerTerrainTools(*vm_);
   registerTemplateTools(*vm_);
+  registerCurveTool(*vm_);
   registerSaveNatives(*vm_);
   registerTimelineNatives(*vm_);
   registerGridEditNatives(*vm_);

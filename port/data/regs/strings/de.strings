@@ -123,3 +123,17 @@ $regs_template_missing_dialog = "Diese Vorlage braucht nicht installierte Inhalt
 $regs_mods_button = "Mods";
 $regs_mods_title = "Mods";
 $regs_mods_none = "Die aktivierten Mods haben keine Einstellungen.";
+// curved roads in the map editor (extend/metro/scripts/editor.script, engine/tool_curves.cpp)
+$regs_curve_button = "Kurve";
+$regs_curve_hint = "Straße frei ziehen: gerade, als Kurve oder freihändig (wie in Cities: Skylines)";
+$regs_curve_panel_title = "Straße ziehen";
+$regs_curve_mode_straight = "Gerade";
+$regs_curve_mode_curved = "Kurve";
+$regs_curve_mode_freeform = "Freihand";
+$regs_curve_panel_hint1 = "Endet an Sackgassen und freien Straßenenden.";
+$regs_curve_panel_hint2 = "Rechtsklick: abbrechen, sonst Straße entfernen.";
+$regs_curve_info_start = "Klicken: Anfang setzen";
+$regs_curve_info_bend = "Klicken: Knickpunkt setzen";
+$regs_curve_info_remove = "Rechtsklick: diese Straße entfernen";
+$regs_curve_info_length = "Länge %0 m, Winkel %1°";
+$regs_curve_info_bad = "(passt nicht)";

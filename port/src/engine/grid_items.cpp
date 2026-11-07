@@ -14,6 +14,7 @@
 #include "core/text.h"
 #include "engine/display.h"
 #include "engine/grid.h"
+#include "engine/curve_roads.h"
 #include "engine/grid_render.h"
 #include "engine/night_lights.h"
 #include "engine/scene3d.h"
@@ -376,6 +377,7 @@ void fixGridCover(VM& vm, GridData& g, const TerrainCache& tc, uint32_t viewMode
         if (writeNormal) g.normals[cell] = normal;
       }
   }
+  if (viewMode & 0x20) applyCurveCover(g, 0, 0, g.width - 1, g.length - 1);  // port curved roads
   LOG_INFO("grid cover: %zu cell covers", covered);
 }
 
@@ -438,6 +440,7 @@ void fixGridCoverArea(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
         if (writeNormal) g.normals[cell] = normal;
       }
   }
+  if (cover) applyCurveCover(g, x0, z0, x1, z1);  // port curved roads (engine/curve_roads.h)
 }
 
 bool gridItemVisible(const GridData& g, const TerrainCache& tc, uint32_t item, uint32_t viewMode) {

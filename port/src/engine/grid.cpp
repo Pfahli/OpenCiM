@@ -9,6 +9,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
 #include "engine/sim_graph.h"
@@ -79,6 +80,8 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
         g.height[i] = int16_t(int16_t(r.u16(body + i * 4)) + shift);
         g.flags[i] = r.u16(body + i * 4 + 2);
       }
+    } else if (tag == kCurveSectionTag) {  // port: curved roads (engine/curve_roads.h)
+      parseCurveSection(d, body, stop, g);
     } else if (tag == 0x07020000) {  // network: type names, 16-byte items, names
       uint32_t typeCount = r.u32(body), itemCount = r.u32(body + 4);
       r.children(body + 8, stop, [&](uint32_t t2, size_t b2, size_t s2) {
@@ -456,6 +459,13 @@ void registerGridNatives(VM& vm) {
     }
     for (GridData::Item& it : data->items)  // parents by their new index (a dropped parent drops the link)
       it.parent = it.parent && it.parent <= remap.size() && remap[it.parent - 1] >= 0 ? uint32_t(remap[it.parent - 1] + 1) : 0;
+    // port curved roads: world coordinates move with the offset and the new centre, heights with the new base
+    float cxw = (float(ox) - float(w - old.width) * 0.5f) * old.cellSize, czw = (float(oz) - float(l - old.length) * 0.5f) * old.cellSize;
+    float cyw = float((0x200 - int(data->heightBase)) - shiftOld) * old.cellSize / 256.0f;
+    for (CurveRoad c : old.curves) {
+      c.x0 += cxw, c.z0 += czw, c.y0 += cyw, c.x1 += cxw, c.z1 += czw, c.y1 += cyw;
+      data->curves.push_back(c);
+    }
     LOG_INFO("grid: resized %dx%d -> %dx%d, offset %d,%d, %zu items", old.width, old.length, w, l, ox, oz, data->items.size());
     g->data = data;
     g->sourceFile = std::make_shared<const std::vector<uint8_t>>(file);

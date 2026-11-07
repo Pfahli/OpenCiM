@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -30,7 +31,19 @@ struct GridData {
   std::vector<std::string> types;
   std::vector<Item> items;
   std::vector<std::string> names;
+  // port: curved roads (engine/curve_roads.h), saved in the port's own section 0x07F00000 of map.grid
+  struct CurveRoad {
+    float x0 = 0, y0 = 0, z0 = 0, dx0 = 1, dz0 = 0;  // start: the end block's edge centre (world units, y = the
+                                                     // block's item height), and the unit direction into the curve
+    float x1 = 0, y1 = 0, z1 = 0, dx1 = 1, dz1 = 0;  // end: edge centre and the direction of travel there (into the
+                                                     // end block)
+    float a = 0, b = 0;                              // the Bézier's handle lengths at the start and the end
+    int kind = 0;                                    // 0: small road
+    uint8_t ends = 0;  // bit 0: the start lies on a road block (a straight piece the tool made of a dead end), bit 1: the end
+  };
+  std::vector<CurveRoad> curves;
 };
+using CurveRoad = GridData::CurveRoad;
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);
 
@@ -68,6 +81,15 @@ class GridObj : public script::Object {
   std::shared_ptr<const std::vector<uint8_t>> sourceFile;  // the loaded map.grid; saveToFile writes it back by section
   uint64_t generation = 0;  // bumped on every load (render caches rebuild)
   uint64_t itemsVersion = 0;  // bumped after each batch of live map edits (engine/grid_edit.h)
+  // port curved roads: bumped when GridData::curves or the tool's preview curve changed (the renderer rebuilds)
+  uint64_t curvesVersion = 0;
+  bool hasCurvePreview = false;
+  GridData::CurveRoad curvePreview;
+  bool curvePreviewBad = false;  // drawn red-tinted: the ends do not fit
+  // curves added or removed in the running edit batch: gridEditEnd hands them to the simulation (simCurvesChanged)
+  // with the cell rectangles (x0, z0, x1, z1) whose walk map they touch
+  bool curvesDirty = false;
+  std::vector<std::array<int, 4>> curveRects;
   std::shared_ptr<TerrainCache> terrain;  // division meshes, owned by the renderer
   std::shared_ptr<SimState> sim;          // lane graph, lines and vehicles (engine/sim.h)
   // tool highlights (engine/tools.h): cells with flag 0x4000 (0x8000 = red) and items with flag 0x100 (0x200 = red),

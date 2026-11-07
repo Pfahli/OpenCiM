@@ -287,3 +287,79 @@ foreach ([["/metro/ui/menus/save.dds", regsSaveTemplateTool, $regsRs.$regs_templ
   MAIN.$ui.setTooltip($regsB, current[2], 0, 1);
 }
 delete $regsRs;
+
+// ---- curved roads (owner's request 2026-11-07; engine/tool_curves.cpp, like the road tool of Cities: Skylines) ----
+// A "Curve" button in the small-road tab selects the tool; a panel (top right, while the tool is on) offers its
+// modes Straight / Curved / Freeform and shows what the next click does, the road's length and angle.
+$regsCurvePanel = null;
+$regsCurveStrings = null;
+$regsCurveInfo = null;
+
+function regsCurveMode($m) {
+  regsCurveToolMode($m);
+}
+
+function regsCurveTool() {
+  $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
+  regsCurveToolMode(regsCurveToolMode());   // a fresh start
+  if ($regsCurvePanel) return;
+  $regsCurveStrings = regsStringsNow();
+  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 190, 1 | 2 | 4 | 8);
+  with ($t = new_control($regsCurvePanel.$content)) {
+    .setRect(10, 0, 330, 22);
+    .text = $regsCurveStrings.$regs_curve_panel_title;
+    .visible = true;
+    .canActivate = false;
+  }
+  MAIN.$ui.setTitleFont($t);
+  $regsCurveNames = [$regsCurveStrings.$regs_curve_mode_straight, $regsCurveStrings.$regs_curve_mode_curved,
+                     $regsCurveStrings.$regs_curve_mode_freeform];
+  for ($regsI = 0; $regsI < 3; ++$regsI) {
+    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 116, 28, 110, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+    if ($regsI == regsCurveToolMode()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveModes");
+  }
+  with ($regsCurveInfo = new_control($regsCurvePanel.$content)) {
+    .setRect(10, 62, 340, 20);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .visible = true;
+    .canActivate = false;
+  }
+  $regsHints = [$regsCurveStrings.$regs_curve_panel_hint1, $regsCurveStrings.$regs_curve_panel_hint2];
+  for ($regsI = 0; $regsI < 2; ++$regsI) {
+    with ($h = new_control($regsCurvePanel.$content)) {
+      .setRect(10, 90 + 20 * $regsI, 340, 18);
+      MAIN.$ui.setTextFont(current, 0xFFBBBBBB);
+      .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+      .text = $regsHints[$regsI];
+      .visible = true;
+      .canActivate = false;
+    }
+  }
+  thread :: {   // the panel follows the tool and goes with it
+    while ($player.editMode == REGS_GRIDMODE_CURVE_ROAD) {
+      $ci = regsCurveToolInfo();
+      $s = $regsCurveStrings;
+      if ($ci[0] == 0) {
+        $regsCurveInfo.text = $ci[4] ? $s.$regs_curve_info_remove : $s.$regs_curve_info_start;
+      } else if (regsCurveToolMode() == 1 && $ci[0] == 1) {
+        $regsCurveInfo.text = $s.$regs_curve_info_bend;
+      } else {
+        $regsCurveInfo.text = expandPattern($s.$regs_curve_info_length, int($ci[1] + 0.5), int($ci[2] + 0.5)) + ($ci[3] ? "" : "  " + $s.$regs_curve_info_bad);
+      }
+      wait 0.1;
+    }
+    delete $regsCurvePanel;
+    $regsCurvePanel = null;
+    delete $regsCurveStrings;
+    $regsCurveStrings = null;
+  };
+}
+
+// the button after the original's in the small-road tab
+$regsRoadTab = $trafficMenu.$tabs["smallroad"];
+$regsRs = regsStringsNow();
+$regsN = $regsRoadTab.getChildCount();
+$regsB = MAIN.$ui.createChoiceButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, $regsRs.$regs_curve_button, regsCurveTool);
+MAIN.$ui.setTooltip($regsB, $regsRs.$regs_curve_hint, 0, 1);
+delete $regsRs;

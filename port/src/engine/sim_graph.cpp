@@ -11,6 +11,7 @@
 
 #include "core/log.h"
 #include "core/text.h"
+#include "engine/curve_roads.h"
 #include "engine/api.h"
 #include "engine/scene3d.h"
 #include "vfs/vfs.h"
@@ -516,6 +517,27 @@ Tpl templateOf(VM& vm, GridObj* grid, const GridData& g, size_t type) {
   return tp;
 }
 
+}  // namespace
+
+void finishLaneNode(LaneNode& n) {
+  n.length = std::sqrt(dist2(n.p0, n.p1));
+  // §2.1 steps 4-6: the curve's bend sets curveFactor and with it the speed limit
+  Vec3 b = n.p0 + n.f0 * (n.length / 3), cc = n.p1 - n.f1 * (n.length / 3);
+  float k = std::sqrt(std::max({bezierDeviation(n.p0, b, cc, n.p1, 0.1f), bezierDeviation(n.p0, b, cc, n.p1, 0.5f),
+                                bezierDeviation(n.p0, b, cc, n.p1, 0.9f)}));
+  n.curveFactor = k >= 8 ? 2.5f : k > 1 ? 20.0f / k : 20.0f;
+  if (n.flags & kPathClassMask) n.curveFactor *= 1.5f;
+  float limit = std::max(2 * n.curveFactor, 1.5f);
+  uint32_t medium = n.flags & kPathClassMask;
+  float cap = medium == 0x1000 || medium == 0x2000 || medium == 0x700 ? 10.0f
+              : medium == 0x500                                       ? 8.0f
+              : medium == kPathAir                                    ? ((n.flags & kPathIgnoreTraffic) ? 6.0f : 3.0f)
+                                                                      : 6.0f;
+  n.speedLimit = std::min(limit, cap);
+}
+
+namespace {
+
 // gsGridObject::addPaths: one node per path of a placed item, inserted and linked (§2.1-2.3)
 void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vector<int>& scratch) {
   const GridData::Item& it = g.items[i];
@@ -541,20 +563,7 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
     n.p1 = place(path.p1) + T;
     n.f0 = render::normalize(place(path.f0));
     n.f1 = render::normalize(place(path.f1));
-    n.length = std::sqrt(dist2(n.p0, n.p1));
-    // §2.1 steps 4-6: the curve's bend sets curveFactor and with it the speed limit
-    Vec3 b = n.p0 + n.f0 * (n.length / 3), cc = n.p1 - n.f1 * (n.length / 3);
-    float k = std::sqrt(std::max({bezierDeviation(n.p0, b, cc, n.p1, 0.1f), bezierDeviation(n.p0, b, cc, n.p1, 0.5f),
-                                  bezierDeviation(n.p0, b, cc, n.p1, 0.9f)}));
-    n.curveFactor = k >= 8 ? 2.5f : k > 1 ? 20.0f / k : 20.0f;
-    if (n.flags & kPathClassMask) n.curveFactor *= 1.5f;
-    float limit = std::max(2 * n.curveFactor, 1.5f);
-    uint32_t medium = n.flags & kPathClassMask;
-    float cap = medium == 0x1000 || medium == 0x2000 || medium == 0x700 ? 10.0f
-                : medium == 0x500                                       ? 8.0f
-                : medium == kPathAir                                    ? ((n.flags & kPathIgnoreTraffic) ? 6.0f : 3.0f)
-                                                                        : 6.0f;
-    n.speedLimit = std::min(limit, cap);
+    finishLaneNode(n);
     int ni = int(G.nodes.size());
     G.nodes.push_back(n);
     insertNode(G, ni, scratch);
@@ -597,9 +606,13 @@ void addItemNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, const 
 
 void removeItemNodes(LaneGraph& G, uint32_t item) {
   if (item >= G.itemNodes.size()) return;
+  removeNodeList(G, G.itemNodes[item]);
+}
+
+void removeNodeList(LaneGraph& G, std::vector<int>& list) {
   std::vector<int> found;
   float cs = G.cellSize;
-  for (int ni : G.itemNodes[item]) {
+  for (int ni : list) {
     LaneNode& n = G.nodes[size_t(ni)];
     if (n.flags & kPathDeleted) continue;
     // predecessors: the candidates insertNode linked around p0
@@ -627,7 +640,72 @@ void removeItemNodes(LaneGraph& G, uint32_t item) {
     n.inDegree = 0;
     n.flags |= kPathDeleted;
   }
-  G.itemNodes[item].clear();
+  list.clear();
+}
+
+// port: the curved roads' lanes (engine/curve_roads.h), all rebuilt together after the items' (at load and after a
+// curve edit): per curve a lane each way 1.5 units right of the centre line, at the asphalt (item height − 0.2) as
+// the straight small road's paths lie, cut into pieces of at most 5 units (a node's curve is fixed by its ends and
+// directions, so short pieces follow the Bézier). The ends meet the straight blocks' lanes exactly and link as theirs.
+void rebuildCurveNodes(const GridData& g, LaneGraph& G) {
+  removeNodeList(G, G.curveNodes);
+  size_t first = G.nodes.size();
+  std::vector<int> scratch;
+  auto add = [&](LaneNode n) {
+    finishLaneNode(n);
+    int ni = int(G.nodes.size());
+    G.nodes.push_back(n);
+    insertNode(G, ni, scratch);
+    G.curveNodes.push_back(ni);
+  };
+  for (const CurveRoad& c : g.curves) {
+    std::vector<CurveSample> s = sampleCurve(c, 5.0f);
+    if (s.size() < 2) continue;
+    // a free end's U-turn: from the lane arriving there (right of the way out) around the point 3 units further on
+    // (radius 1.5) into the lane leaving
+    CurveEnds free = curveFreeEnds(g, c);
+    for (int end = 0; end < 2; ++end) {
+      if (!(end ? free.free1 : free.free0)) continue;
+      Vec3 e = end ? Vec3{c.x1, c.y1 - 0.2f, c.z1} : Vec3{c.x0, c.y0 - 0.2f, c.z0};
+      Vec3 u = end ? Vec3{c.dx1, 0, c.dz1} : Vec3{-c.dx0, 0, -c.dz0};
+      Vec3 r = render::normalize(Vec3{-u.z, 0, u.x});
+      Vec3 q = e + u * kCurveCapReach;
+      Vec3 pts[5] = {e + r * 1.5f, q + r * 1.5f, q + u * 1.5f, q - r * 1.5f, e - r * 1.5f};
+      Vec3 dirs[5] = {u, u, r * -1.0f, u * -1.0f, u * -1.0f};
+      for (int k = 0; k < 4; ++k) {
+        LaneNode n;
+        n.flags = 0x300;
+        n.item = -1;
+        n.p0 = pts[k], n.p1 = pts[k + 1], n.f0 = dirs[k], n.f1 = dirs[k + 1];
+        add(n);
+      }
+    }
+    for (int side = 0; side < 2; ++side) {  // 0: start → end on the right, 1: end → start
+      for (size_t k = 0; k + 1 < s.size(); ++k) {
+        const CurveSample &a = side ? s[s.size() - 1 - k] : s[k], &b = side ? s[s.size() - 2 - k] : s[k + 1];
+        float sign = side ? -1.0f : 1.0f;
+        LaneNode n;
+        n.flags = 0x300;  // a small road's lanes (classOfType of type 2)
+        n.item = -1;
+        n.p0 = a.p + a.right * (1.5f * sign) + Vec3{0, -0.2f, 0};
+        n.p1 = b.p + b.right * (1.5f * sign) + Vec3{0, -0.2f, 0};
+        n.f0 = a.dir * sign;
+        n.f1 = b.dir * sign;
+        add(n);
+      }
+    }
+  }
+  linkCrossings(G, first);
+  if (!g.curves.empty()) {  // how they joined the items' lanes (both ways at each road block they meet)
+    std::vector<uint8_t> isCurve(G.nodes.size(), 0);
+    for (int n : G.curveNodes) isCurve[size_t(n)] = 1;
+    int in = 0, out = 0;
+    for (size_t i = 0; i < G.nodes.size(); ++i)
+      for (int s : G.nodes[i].next)
+        if (isCurve[i] != isCurve[size_t(s)]) ++(isCurve[i] ? out : in);
+    LOG_INFO("curved roads: %zu curves, %zu lane nodes, %d links from the road network into them, %d out", g.curves.size(),
+             G.curveNodes.size(), in, out);
+  }
 }
 
 void registerPathNatives(VM& vm) {

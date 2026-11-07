@@ -17,6 +17,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/interaction.h"
@@ -33,7 +34,9 @@ constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x0708101
                    kName8 = 0x07081070, kName = 0x07081071, kVariation = 0x07081080,
                    // port: a terrain patch (the editor's templates): i16 x, i16 z, u16 w, u16 l, then w·l × (i16 height,
                    // u16 flags) row by row; kept in Action::raw. The original game does not know the tag.
-                   kRegsPatch = 0x07081090;
+                   kRegsPatch = 0x07081090,
+                   // port: a curved road added or removed (engine/curve_roads.h curveActionBytes), kept in Action::raw
+                   kRegsCurve = 0x070810A0;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -526,6 +529,13 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       gridEditCellsChanged(ap.grid, x0 - 1, z0 - 1, x0 + w, z0 + l, true);
       break;
     }
+    case kRegsCurve: {
+      CurveRoad c;
+      bool add = true;
+      if (preview || !curveFromActionBytes(a.raw, c, add)) break;
+      applyCurveEdit(ap.vm, ap.grid, c, add);
+      break;
+    }
     default: break;
   }
 }
@@ -731,6 +741,14 @@ void timelineRecordPatch(VM& vm, Object* s, int x, int z, int w, int l, const st
     put(uint16_t(heights[i]));
     put(flags[i]);
   }
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordCurve(VM& vm, Object* s, const CurveRoad& c, bool add) {
+  if (!s) return;
+  Action a;
+  a.tag = kRegsCurve;
+  a.raw = curveActionBytes(c, add);
   recordAction(vm, s, std::move(a));
 }
 

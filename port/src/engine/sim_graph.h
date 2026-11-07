@@ -44,6 +44,7 @@ struct LaneGraph {
   int width = 0, length = 0, bucketsX = 0, bucketsZ = 0;
   float cellSize = 3;
   std::vector<int> buckets;                 // head node per 8×8-cell bucket
+  std::vector<int> curveNodes;              // port: the curved roads' lanes (rebuildCurveNodes), after the items'
 
   // FUN_100e2070: nodes with cellX ∈ [x−3, x+w+3], cellZ ∈ [z−3, z+l+3] and all mask bits, in bucket row,
   // bucket column, bucket list order
@@ -72,6 +73,12 @@ void waterLattice(const GridData& g, const std::vector<uint16_t>& flags, std::ve
 // item's nodes unlinked from their neighbours and buckets and flagged kPathDeleted. Node indices stay valid.
 void addItemNodes(script::VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, const std::vector<uint32_t>& items);
 void removeItemNodes(LaneGraph& G, uint32_t item);
+// the same for any node list (emptied)
+void removeNodeList(LaneGraph& G, std::vector<int>& list);
+// a node's length, curveFactor and speed limit from its ends, directions and flags (§2.1 steps 4-6)
+void finishLaneNode(LaneNode& n);
+// port: the curved roads' lanes out and in again (engine/curve_roads.h), linked as the items' lanes
+void rebuildCurveNodes(const GridData& g, LaneGraph& G);
 
 // The placed height of an item (cells·256) as the item renderer uses it.
 int itemHeight(const GridData& g, const GridData::Item& it, uint32_t templateFlags, int templateType);

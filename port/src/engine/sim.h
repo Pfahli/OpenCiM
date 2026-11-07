@@ -2,6 +2,7 @@
 // The native simulation (docs/simulation/): the lane graph built from the items' paths, the transport lines of a
 // loaded save and their vehicles. Slice 1 runs the line vehicles; citizens, passengers and background traffic come
 // later.
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -97,6 +98,9 @@ void simItemsChanged(script::VM& vm, GridObj* grid, const std::vector<uint32_t>&
 
 // Terrain heights or water flags (0x2000) of the cells [x0, x1] × [z0, z1] changed: their walk layers follow.
 void simTerrainChanged(script::VM& vm, GridObj* grid, int x0, int z0, int x1, int z1);
+// port curved roads (engine/curve_roads.h): GridData::curves changed; their lanes are rebuilt (after the items'),
+// vehicles on removed curve lanes taken off, lines relinked, and the walk map stamped again over the rectangles
+void simCurvesChanged(script::VM& vm, GridObj* grid, const std::vector<std::array<int, 4>>& rects);
 
 // Door items (engine/sim_doors.cpp): per door item the skeleton clip time gsGridItem::animate got last (−1 = bind
 // pose); null when the map has none or there is no simulation.

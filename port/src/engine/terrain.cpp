@@ -16,6 +16,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
@@ -695,6 +696,65 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
   }
 }
 
+// port curved roads (engine/curve_roads.h): every curve in one world-space mesh of the small road's own materials
+// (road_small_basic: asphalt, markings, walkways), rebuilt when they change, and the curve tool's preview tinted green
+// (fits) or red; the surface map learns their asphalt and pavements for the mods' shader hooks
+void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vector<DrawItem>& items) {
+  GridData& g = *grid->data;
+  if (g.curves.empty() && !grid->hasCurvePreview && !tc.curvesBuilt && !tc.curvePreviewBuilt) return;
+  if (tc.curvesVersion != grid->curvesVersion) {
+    tc.curvesVersion = grid->curvesVersion;
+    if (tc.curvesBuilt) d.r3d().destroy(tc.curves);
+    if (tc.curvePreviewBuilt) d.r3d().destroy(tc.curvePreview);
+    tc.curvesBuilt = tc.curvePreviewBuilt = false;
+    static const std::string kTemplate = "road_small_basic";
+    int type = -1;
+    for (size_t t = 0; t < g.types.size() && type < 0; ++t)
+      if (g.types[t] == kTemplate) type = int(t);
+    if (type < 0 && grid->templates.count(kTemplate)) {  // a map with curves but no small road yet: the type joins
+      g.types.push_back(kTemplate);
+      type = int(g.types.size()) - 1;
+    }
+    syncGridItems(d, vm, grid, tc);
+    int ti = type >= 0 && size_t(type) < tc.typeTemplate.size() ? tc.typeTemplate[size_t(type)] : -1;
+    int base = ti >= 0 ? tc.templates[size_t(ti)].materialBase : -1;
+    if (base < 0) {
+      LOG_WARN("curved roads: no template %s, not drawn", kTemplate.c_str());
+    } else {
+      auto upload = [&](MeshData& m, GpuMesh& out, bool& built) {
+        if (!m.vertexCount()) return;
+        render::computeTangents(m);
+        m.radius = 1e6f;
+        out = d.r3d().upload(m);
+        built = true;
+      };
+      MeshData all;
+      for (const CurveRoad& c : g.curves) buildCurveMesh(c, curveFreeEnds(g, c), base, base + 1, base + 2, all);
+      if (tc.surfaceMap && all.vertexCount()) surfaceMapPaint(*tc.surfaceMap, all, Mat4(), tc.materials, true);
+      upload(all, tc.curves, tc.curvesBuilt);
+      if (grid->hasCurvePreview) {
+        MeshData p;
+        buildCurveMesh(grid->curvePreview, curveFreeEnds(g, grid->curvePreview), base, base + 1, base + 2, p);
+        upload(p, tc.curvePreview, tc.curvePreviewBuilt);
+      }
+    }
+  }
+  if (tc.curvesBuilt && !tc.curves.parts.empty()) {
+    DrawItem it;
+    it.mesh = &tc.curves;
+    it.materials = &tc.materials;
+    items.push_back(it);
+  }
+  if (grid->hasCurvePreview && tc.curvePreviewBuilt && !tc.curvePreview.parts.empty()) {
+    DrawItem it;
+    it.mesh = &tc.curvePreview;
+    it.materials = &tc.materials;
+    const float good[4] = {0.75f, 1.0f, 0.75f, 1.0f}, bad[4] = {1.0f, 0.35f, 0.3f, 1.0f};
+    for (int k = 0; k < 4; ++k) it.colorize[k] = grid->curvePreviewBad ? bad[k] : good[k];
+    items.push_back(it);
+  }
+}
+
 void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
                  float detailScale, std::vector<DrawItem>& items) {
   if (!grid->data || grid->data->height.empty()) return;
@@ -920,6 +980,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     it.surfaceClass = kSurfaceOverlay;  // tool highlights keep their colours under the mods' shader hooks
     items.push_back(it);
   }
+  collectCurves(d, vm, grid, tc, items);  // port curved roads
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame

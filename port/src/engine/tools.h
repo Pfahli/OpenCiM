@@ -98,8 +98,13 @@ struct ToolMode {
   // port: the left button's release for modes that apply on their own (the editor's templates) instead of firing
   // onTryApplyTool to the hover script (no price). Default: none.
   std::function<void(script::VM&, ControlObj* player, GridObj* grid, float x, float y)> up;
+  // port: the right button's press for modes that handle it themselves (the curve tool: cancel, remove). Default: none
+  // (the framework cancels a running tool).
+  std::function<void(script::VM&, ControlObj* player, GridObj* grid, float x, float y)> right;
 };
 void registerToolMode(int mode, ToolMode m);
+// port: the map editor's curved-road tool (engine/tool_curves.cpp)
+void registerCurveTool(script::VM& vm);
 
 // softenArea(cx, cz, r, 1) (L:0x0818cfb0): one pass of the 5-tap mean over the unlocked corners of a disc (tool_tracks)
 void toolSoftenArea(GridObj* grid, int cx, int cz, int r);

@@ -496,7 +496,9 @@ void toolMouseDown(VM& vm, ControlObj* player, float x, float y, int key) {
       }
     }
   } else if (key == kMouseRight) {
-    if (mode == kGridModePlaceObject) {  // turn the object (toolMode, +0x24c); eight steps with a diagonal variant
+    if (auto m = g_modes.find(mode); m != g_modes.end() && m->second.right && grid) {  // port: the mode's own
+      m->second.right(vm, player, grid, x, y);
+    } else if (mode == kGridModePlaceObject) {  // turn the object (toolMode, +0x24c); eight steps with a diagonal variant
       bool eight = player->fieldValues.count(u"toolObject2") && player->fieldValues[u"toolObject2"].object();
       int o = intField(vm, player, u"toolMode", 0);
       player->fieldValues[u"toolMode"] = Value::integer(eight ? (o + 7) & 7 : (o + 3) & 3);
