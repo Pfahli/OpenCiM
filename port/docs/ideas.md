@@ -149,6 +149,17 @@ it is, what already exists, and the open decisions. Order is not priority.
     scales; OSM's licence (ODbL) requires the credit "© OpenStreetMap contributors" with the map and keeps shared
     generated maps under share-alike terms.
 
+* **Buildings with a year and a construction site (owner's idea 2026-11-07).** In the editor, a placed building
+  gets options: from which year it exists, and whether it is preceded by a construction site (a pit with a crane and
+  a fence around the footprint). A map can then start tiny in 1920 and grow towards 1960 as its buildings appear.
+  * What there is: the editor's timeline already records every placement on the day it was made, and the game
+    replays it with half a year of previews (hidden placeholders, the 0x40 construction-site ground, conflict marks;
+    `engine/timeline.cpp`); the debug time bar picks the day. What is missing is a way to set the year per object
+    without paging through the time bar, and a visible site.
+  * How: an "Exists from" field in the object's info panel moves its create action to that date in the timeline; the
+    construction site is a set of props (pit decal, crane, fence) the preview phase places around the footprint and
+    removes when the building appears. Needs the timeline simulation in games (it runs) and the editor's date bar.
+
 ## Platforms
 
 * **ARM builds.** The port is plain C++20; its one third-party library, miniaudio (audio, `third_party/`), already
