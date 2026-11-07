@@ -185,3 +185,13 @@ one-lane track swings from the centre line to the right-hand track on the piece 
 does); tram links at both ends; test trams running the whole loop one way round (down the one-way street, along the
 street's eastbound track, up the other side), cars likewise. The tram track tool now takes a point beyond a curve's
 end on a road block as that block (a drag can start there). Not checked: the halved price on screen.
+
+## Editor UI (2026-11-08)
+
+- Traffic menu, small-road tab: Curve, One-way 1 lane, One-way 2 lanes, Roundabout (icons; the one-way buttons open the
+  curve tool set to that). Alley, large-road and avenue tabs: Curve.
+- Curve panel: icon rows "Form" (straight = the game's straight road icon, curve, freeform, remove = the game's
+  bulldozer) and "Richtung (kleine Straßen)" (both ways, one-way 1 lane, one-way 2 lanes), tooltips on every icon.
+- Roundabout panel: icons for 1 and 2 lanes.
+- New icons (Magnific, fitted by tools/make-toolbar-icon.ps1; the one-way and two-way tiles zoomed to their middle so
+  the arrows stay readable at 46 px): oneway-1, oneway-2, twoway, curve-free, roundabout-1.

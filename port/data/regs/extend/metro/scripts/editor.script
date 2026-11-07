@@ -289,10 +289,13 @@ foreach ([["/metro/ui/menus/save.dds", regsSaveTemplateTool, $regsRs.$regs_templ
 delete $regsRs;
 
 // ---- curved roads (owner's request 2026-11-07; engine/tool_curves.cpp, like the road tool of Cities: Skylines) ----
-// A "Curve" button in the alley, small-road, large-road and avenue tabs selects the tool for that road; a panel (top
-// right, while the tool is on) offers its modes Straight / Curved / Freeform / Remove and shows what the next click
-// does, the road's length and angle. Roundabouts have their own button and panel (small-road tab): one or two lanes,
-// the centre and then the size with two clicks (the same engine tool in its modes 4 and 5).
+// Traffic menu: a Curve button in the alley, small-road, large-road and avenue tabs, in the small-road tab also
+// One-way (1 lane, 2 lanes) and Roundabout. The curve panel (top right, while the tool is on) has two rows of icons,
+// Shape (straight, curve, freeform, remove) and Direction (both ways, one-way with 1 or 2 lanes: small roads, the way
+// it is drawn), each with a tooltip, then what the next click does, the road's length and angle. Roundabouts have
+// their own panel: 1 or 2 lanes, the centre and then the size with two clicks (the same engine tool in its modes 4, 5).
+// The icons are the game's own where one fits (straight road, bulldozer), else in its style (generated with Magnific
+// from its road icons, fitted by tools/make-toolbar-icon.ps1: data/regs/ui/toolbar).
 $regsCurvePanel = null;
 $regsCurveStrings = null;
 $regsCurveInfo = null;
@@ -301,9 +304,35 @@ $regsRoundPanel = null;
 $regsRoundInfo = null;
 $regsRoundLanes = 2;
 $regsRoundStrings = null;
+$regsWayButtons = [];
+
+// an icon choice button (the game's 64x64 toolbar icons with _se / _ho variants, the 46x46 middle shown)
+function regsIconButton($parent, $group, $x, $y, $icon, $action, $tooltip) {
+  $b = MAIN.$ui.createChoiceButton($parent, $group, $x, $y, 46, 46, "", $action, $icon + ".dds", $icon + "_se.dds", $icon + "_ho.dds");
+  $b.setCropRect(9.0 / 64.0, 9.0 / 64.0, 46.0 / 64.0, 46.0 / 64.0);
+  MAIN.$ui.setTooltip($b, $tooltip, 0, 1);
+  return $b;
+}
+
+function regsSmallLabel($parent, $x, $y, $w, $text) {
+  with ($l = new_control($parent)) {
+    .setRect($x, $y, $w, 16);
+    MAIN.$ui.setTextFont(current, 0xFFBBBBBB);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $l;
+}
 
 function regsCurveMode($m) {
   regsCurveToolMode($m);
+}
+
+function regsCurveWay($n) {
+  regsCurveToolOneWay($n);
+  if (#$regsWayButtons == 3) MAIN.$ui.selectChoiceButton($regsWayButtons[$n], "regsCurveWays");
 }
 
 function regsCurveTool() {
@@ -312,44 +341,40 @@ function regsCurveTool() {
   regsCurveToolMode(regsCurveToolMode() >= 4 ? 1 : regsCurveToolMode());   // a fresh start (not a roundabout)
   if ($regsCurvePanel) return;
   $regsCurveStrings = regsStringsNow();
-  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 222, 1 | 2 | 4 | 8);
-  with ($t = new_control($regsCurvePanel.$content)) {
+  $s = $regsCurveStrings;
+  $regsCurvePanel = MAIN.$ui.createHudElement($desktop.width - 440, 70, 420, 214, 1 | 2 | 4 | 8);
+  $p = $regsCurvePanel.$content;
+  with ($t = new_control($p)) {
     .setRect(10, 0, 330, 22);
-    .text = $regsCurveStrings.$regs_curve_panel_title;
+    .text = $s.$regs_curve_panel_title;
     .visible = true;
     .canActivate = false;
   }
   MAIN.$ui.setTitleFont($t);
-  $regsCurveNames = [$regsCurveStrings.$regs_curve_mode_straight, $regsCurveStrings.$regs_curve_mode_curved,
-                     $regsCurveStrings.$regs_curve_mode_freeform, $regsCurveStrings.$regs_curve_mode_remove];
+  regsSmallLabel($p, 10, 24, 200, $s.$regs_curve_row_shape);
+  regsSmallLabel($p, 232, 24, 180, $s.$regs_curve_row_way);
+  $regsIcons = ["/metro/ui/toolbar/smallroad-road0", "/regs/ui/toolbar/curve-small", "/regs/ui/toolbar/curve-free", "/metro/ui/toolbar/bulldoze"];
+  $regsTips = [$s.$regs_curve_mode_straight, $s.$regs_curve_mode_curved, $s.$regs_curve_mode_freeform, $s.$regs_curve_mode_remove];
   for ($regsI = 0; $regsI < 4; ++$regsI) {
-    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveModes", 10 + $regsI * 88, 28, 84, 25, $regsCurveNames[$regsI], macro($regsI) :: regsCurveMode($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+    $regsB = regsIconButton($p, "regsCurveModes", 10 + $regsI * 52, 42, $regsIcons[$regsI], macro($regsI) :: regsCurveMode($0), $regsTips[$regsI]);
     if ($regsI == regsCurveToolMode()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveModes");
   }
-  // small roads: both ways or one-way (one or two lanes, the way it is drawn)
-  $regsWayNames = [$regsCurveStrings.$regs_curve_way_both, $regsCurveStrings.$regs_curve_way_one1, $regsCurveStrings.$regs_curve_way_one2];
+  $regsIcons = ["/regs/ui/toolbar/twoway", "/regs/ui/toolbar/oneway-1", "/regs/ui/toolbar/oneway-2"];
+  $regsTips = [$s.$regs_curve_way_both, $s.$regs_curve_way_one1, $s.$regs_curve_way_one2];
+  $regsWayButtons = [];
   for ($regsI = 0; $regsI < 3; ++$regsI) {
-    $regsB = MAIN.$ui.createChoiceButton($regsCurvePanel.$content, "regsCurveWays", 10 + $regsI * 120, 58, 116, 25, $regsWayNames[$regsI], macro($regsI) :: regsCurveToolOneWay($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
-    if ($regsI == regsCurveToolOneWay()) MAIN.$ui.selectChoiceButton($regsB, "regsCurveWays");
+    $regsWayButtons[] = regsIconButton($p, "regsCurveWays", 232 + $regsI * 52, 42, $regsIcons[$regsI], macro($regsI) :: regsCurveWay($0), $regsTips[$regsI]);
   }
-  with ($regsCurveInfo = new_control($regsCurvePanel.$content)) {
-    .setRect(10, 94, 340, 20);
+  MAIN.$ui.selectChoiceButton($regsWayButtons[regsCurveToolOneWay()], "regsCurveWays");
+  with ($regsCurveInfo = new_control($p)) {
+    .setRect(10, 100, 400, 20);
     MAIN.$ui.setTextFont(current);
     .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
     .visible = true;
     .canActivate = false;
   }
-  $regsHints = [$regsCurveStrings.$regs_curve_panel_hint1, $regsCurveStrings.$regs_curve_panel_hint2];
-  for ($regsI = 0; $regsI < 2; ++$regsI) {
-    with ($h = new_control($regsCurvePanel.$content)) {
-      .setRect(10, 122 + 20 * $regsI, 340, 18);
-      MAIN.$ui.setTextFont(current, 0xFFBBBBBB);
-      .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
-      .text = $regsHints[$regsI];
-      .visible = true;
-      .canActivate = false;
-    }
-  }
+  regsSmallLabel($p, 10, 128, 400, $s.$regs_curve_panel_hint1);
+  regsSmallLabel($p, 10, 146, 400, $s.$regs_curve_panel_hint2);
   thread :: {   // the panel follows the tool and goes with it (and when the roundabout panel takes over)
     while ($player.editMode == REGS_GRIDMODE_CURVE_ROAD && $regsCurveUi == "curve") {
       $ci = regsCurveToolInfo();
@@ -367,13 +392,15 @@ function regsCurveTool() {
     }
     delete $regsCurvePanel;
     $regsCurvePanel = null;
+    $regsWayButtons = [];
   };
 }
 
-// the tool for one road kind (0 small, 1 large, 2 avenue, 3 alley)
-function regsCurveToolFor($k) {
+// the tool for one road kind (0 small, 1 large, 2 avenue, 3 alley), both ways or one-way (small roads)
+function regsCurveToolFor($k, $way = 0) {
   regsCurveToolKind($k);
   regsCurveTool();
+  regsCurveWay($k == 0 ? $way : 0);
 }
 
 function regsRoundLanesSet($n) {
@@ -388,34 +415,30 @@ function regsRoundaboutTool() {
   regsCurveToolMode($regsRoundLanes == 1 ? 4 : 5);
   if ($regsRoundPanel) return;
   $regsRoundStrings = regsStringsNow();
-  $regsRoundPanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 170, 1 | 2 | 4 | 8);
-  with ($t = new_control($regsRoundPanel.$content)) {
+  $regsRoundPanel = MAIN.$ui.createHudElement($desktop.width - 440, 70, 420, 170, 1 | 2 | 4 | 8);
+  $p = $regsRoundPanel.$content;
+  with ($t = new_control($p)) {
     .setRect(10, 0, 330, 22);
     .text = $regsRoundStrings.$regs_round_title;
     .visible = true;
     .canActivate = false;
   }
   MAIN.$ui.setTitleFont($t);
-  $regsRoundNames = [$regsRoundStrings.$regs_round_one, $regsRoundStrings.$regs_round_two];
+  regsSmallLabel($p, 10, 24, 200, $regsRoundStrings.$regs_round_row_lanes);
+  $regsIcons = ["/regs/ui/toolbar/roundabout-1", "/regs/ui/toolbar/roundabout"];
+  $regsTips = [$regsRoundStrings.$regs_round_one, $regsRoundStrings.$regs_round_two];
   for ($regsI = 0; $regsI < 2; ++$regsI) {
-    $regsB = MAIN.$ui.createChoiceButton($regsRoundPanel.$content, "regsRoundLanes", 10 + $regsI * 128, 28, 120, 25, $regsRoundNames[$regsI], macro($regsI + 1) :: regsRoundLanesSet($0), "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+    $regsB = regsIconButton($p, "regsRoundLanes", 10 + $regsI * 52, 42, $regsIcons[$regsI], macro($regsI + 1) :: regsRoundLanesSet($0), $regsTips[$regsI]);
     if ($regsI + 1 == $regsRoundLanes) MAIN.$ui.selectChoiceButton($regsB, "regsRoundLanes");
   }
-  with ($regsRoundInfo = new_control($regsRoundPanel.$content)) {
-    .setRect(10, 62, 340, 20);
+  with ($regsRoundInfo = new_control($p)) {
+    .setRect(10, 100, 400, 20);
     MAIN.$ui.setTextFont(current);
     .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
     .visible = true;
     .canActivate = false;
   }
-  with ($h = new_control($regsRoundPanel.$content)) {
-    .setRect(10, 90, 340, 36);
-    MAIN.$ui.setTextFont(current, 0xFFBBBBBB);
-    .textAlign = ALIGN_TOP | ALIGN_LEFT;
-    .text = $regsRoundStrings.$regs_round_hint1;
-    .visible = true;
-    .canActivate = false;
-  }
+  regsSmallLabel($p, 10, 128, 400, $regsRoundStrings.$regs_round_hint1);
   thread :: {
     while ($player.editMode == REGS_GRIDMODE_CURVE_ROAD && $regsCurveUi == "round") {
       $ci = regsCurveToolInfo();
@@ -427,24 +450,22 @@ function regsRoundaboutTool() {
   };
 }
 
-// the buttons after the originals: Curve in the alley, small-road, large-road and avenue tabs, Roundabout in the
-// small-road tab
+// the traffic menu's buttons after the originals: Curve in the alley, small-road, large-road and avenue tabs; One-way
+// (1 lane, 2 lanes) and Roundabout in the small-road tab
 $regsRs = regsStringsNow();
 $regsCurveTabs = ["alley", "smallroad", "largeroad", "avenue"];
 $regsCurveKinds = [3, 0, 1, 2];
-// icons in the game's style (generated with Magnific from its road icons, fitted by tools/make-toolbar-icon.ps1)
 $regsCurveIcons = ["curve-alley", "curve-small", "curve-large", "curve-avenue"];
 for ($regsI = 0; $regsI < 4; ++$regsI) {
   $regsRoadTab = $trafficMenu.$tabs[$regsCurveTabs[$regsI]];
   $regsN = $regsRoadTab.getChildCount();
-  $regsIcon = "/regs/ui/toolbar/" + $regsCurveIcons[$regsI];
-  $regsB = MAIN.$ui.createChoiceButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, "", macro($regsCurveKinds[$regsI]) :: regsCurveToolFor($0), $regsIcon + ".dds", $regsIcon + "_se.dds", $regsIcon + "_ho.dds");
-  $regsB.setCropRect(9.0 / 64.0, 9.0 / 64.0, 46.0 / 64.0, 46.0 / 64.0);
-  MAIN.$ui.setTooltip($regsB, $regsRs.$regs_curve_hint, 0, 1);
+  regsIconButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, "/regs/ui/toolbar/" + $regsCurveIcons[$regsI], macro($regsCurveKinds[$regsI]) :: regsCurveToolFor($0, 0), $regsRs.$regs_curve_hint);
 }
 $regsRoadTab = $trafficMenu.$tabs["smallroad"];
 $regsN = $regsRoadTab.getChildCount();
-$regsB = MAIN.$ui.createChoiceButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, "", regsRoundaboutTool, "/regs/ui/toolbar/roundabout.dds", "/regs/ui/toolbar/roundabout_se.dds", "/regs/ui/toolbar/roundabout_ho.dds");
-$regsB.setCropRect(9.0 / 64.0, 9.0 / 64.0, 46.0 / 64.0, 46.0 / 64.0);
-MAIN.$ui.setTooltip($regsB, $regsRs.$regs_round_tooltip, 0, 1);
+regsIconButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, "/regs/ui/toolbar/oneway-1", macro :: regsCurveToolFor(0, 1), $regsRs.$regs_oneway1_hint);
+$regsN = $regsRoadTab.getChildCount();
+regsIconButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, "/regs/ui/toolbar/oneway-2", macro :: regsCurveToolFor(0, 2), $regsRs.$regs_oneway2_hint);
+$regsN = $regsRoadTab.getChildCount();
+regsIconButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, "/regs/ui/toolbar/roundabout", regsRoundaboutTool, $regsRs.$regs_round_tooltip);
 delete $regsRs;
