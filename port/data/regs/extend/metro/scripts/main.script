@@ -3,11 +3,13 @@
 //   the campaign;
 // * the saves and maps of the original game's folder (Documents\Cities In Motion, read only; engine/user_folders.h)
 //   join the load lists with a note, as "regs-cim:<name>" values, and are copied into the OpenCiM folder when the
-//   player opens one (regsImportOriginal), then loaded from there under the name the copy got.
+//   player opens one (regsImportOriginal), then loaded from there under the name the copy got;
+// * saving a map keeps the editor's undo history for the rest of the session (owner's request 2026-11-07).
 //@rename loadSandboxScenario regsBaseLoadSandboxScenario
 //@rename getSaveGamesList regsBaseGetSaveGamesList
 //@rename loadSavedCampaign regsBaseLoadSavedCampaign
 //@rename startEditor regsBaseStartEditor
+//@rename saveMapData regsBaseSaveMapData
 
 //@base
 
@@ -76,6 +78,22 @@ function startEditor($level = "") {
     if ($regsImported != "") $level = $regsImported;
   }
   regsBaseStartEditor($level);
+}
+
+// Saving on the first day bakes the day's actions into the base grid and drops them (removeDay), which the file needs
+// but which ended the undo history. Port: the map files are written as before, then the day's actions and the old
+// base grid come back in memory, so the undo button keeps taking back edits until the editor closes.
+function saveMapData($mapName) {
+  $regsKeepUndo = MAIN.$mainClock.date == mkdate(1,1,1920) && file_exists("memory/base.grid");
+  if ($regsKeepUndo) {
+    MAIN.$timeline.saveToFile("memory/regs-undo.timeline");
+    copy_file("memory/base.grid", "memory/regs-undo-base.grid");
+  }
+  regsBaseSaveMapData($mapName);
+  if ($regsKeepUndo) {
+    MAIN.$timeline.loadFromFile("memory/regs-undo.timeline");
+    copy_file("memory/regs-undo-base.grid", "memory/base.grid");
+  }
 }
 
 // Graphics page (port, its save() calls this): the scripts' window got a new size (resolution, fullscreen or UI
