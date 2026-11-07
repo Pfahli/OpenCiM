@@ -88,3 +88,33 @@ Checked in the editor: a large road, an avenue and a footpath each with a freefo
 the dead end became a straight piece; large and avenue 7 lane links in, 8 out), free ends with the dead-end piece (the
 avenue's U-turn around the median). In a game: tram tracks laid on a large-road curve (rails on the outer lanes,
 priced as street track).
+
+## Junctions at any angle (2026-11-07)
+
+Where three or more curve ends of one kind meet (or two at an angle) the arms stop short and a junction fills the
+middle (`findCurveJunctions`, `buildJunctionMesh` in `curve_roads.cpp`):
+
+- The arms are cut where neighbouring arms' edges part: hw / tan(angle / 2) + 1.5 from the point.
+- Fill: the small road's asphalt, tiled with the texture plane fitted to small_basic's own asphalt (`fitPlanarUV`);
+  footpaths with the footpath texture. Pavement corners rounded between the arms, kerbs, outer walls.
+- Markings as on the game's junction pieces (small_junction4.object, road-marks.dds): zebra crossings across every arm
+  at its mouth (bars 0.61 wide every 0.93, 2.71 deep, 0.17 inside the edge) and edge lines along the kerbs.
+- Lanes: from every arm's incoming lanes into the same lanes of every other arm (Bézier, flagged as intersection;
+  crossing links keep crossing turns apart). With tram tracks on two or more arms, tram lanes and rails between them.
+- Walk map: crossable carriageway, walkable corners; cover and terrain under the outline.
+
+Making one with the curve tool (free direction at the point, at least 30° from the roads there):
+- start or end on the middle of a curve: it is cut in two there;
+- start or end where curve ends already meet;
+- start or end on the middle of a straight road block: it and as many straight neighbours along the road as the
+  angle needs become two straight curves meeting at the point (refused when the road ends or turns too near).
+The new road and the halves of a cut curve must reach past the junction's radius.
+
+Test switches: `REGS_TEST_CURVE_CARS=<n>` / `REGS_TEST_CURVE_TRAMS=<n>` keep n cars / trams on random trips between
+curve lanes (engine/snowplows.cpp); `REGS_DEBUG_CURVES` logs where they are, junction fitting, and "N junctions, M turn
+lanes, K joined both ways" after each lane rebuild.
+
+Checked: small-road junctions on a curve (Y) and on a straight road (T at about 60°), all turn lanes joined both ways;
+cars (era4 SUVs) and trams (tram-01) driving through them in a game; zebra crossings, edge lines and rails in the
+junction. Not checked: a large-road or avenue junction with long arms (no room on the test map; one with a too-short
+arm showed the dead end's missing inner-lane U-turn), trams on a real tram line through a junction.

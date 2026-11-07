@@ -54,6 +54,15 @@ struct Snap {
   std::vector<Vec3> arms;         // the roads already there: their directions away from the point
   std::vector<uint32_t> blocks;   // 3: the blocks that go
   Vec3 far[2];                    // 3: the outer ends of the two straight curves (block edges)
+  // 3: the straight blocks along the road on each side (outward, with their far edges), of which fitJunction takes
+  // as many as the angle of the new road needs; the block under the point is blocks[0]
+  std::vector<uint32_t> chain[2];
+  std::vector<Vec3> chainFar[2];
+  Vec3 axis, centreEdge[2];
+  float guard = 0;                // along the new road from the point: what the junction covers (not in the way)
+  float radius = 0;               // where the junction will cut its arms (fitJunction)
+  float splitS = 0, splitL = 0;   // 2: where on the curve, and its length
+  bool fits = true;
 };
 
 struct State {
@@ -166,6 +175,7 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
     CurveSample k = curveAt(shape, s);
     Snap sn;
     sn.ok = true, sn.p = k.p, sn.junction = 2;
+    sn.splitS = s, sn.splitL = L;
     sn.arms = {unit(k.dir), unit(k.dir) * -1.0f};
     bestD = side * side, best = sn;
   }
@@ -185,20 +195,60 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
     sn.ok = true, sn.p = C, sn.junction = 3;
     sn.arms = {e.dir, e.dir * -1.0f};
     sn.blocks = {e.item};
-    for (int side = 0; side < 2; ++side) {  // a straight neighbour along the road goes too (longer arms)
-      Vec3 ax = side ? e.dir * -1.0f : e.dir, edge = C + ax * half, beyond = C + ax * (3.0f * half);
-      sn.far[side] = edge;
-      for (const RoadEnd& n : findSmallRoadEnds(vm, player, grid, beyond.x, beyond.z, 1.0f, pf.itemType)) {
-        if (n.deadEnd || n.tram || n.item == e.item || dot(n.dir, ax) < 0.9f || hasChildren(n.item)) continue;
-        sn.blocks.push_back(n.item);
-        sn.far[side] = n.point;
-        break;
+    sn.axis = e.dir;
+    for (int side = 0; side < 2; ++side) {  // the straight neighbours along the road (up to 4)
+      Vec3 ax = side ? e.dir * -1.0f : e.dir, edge = C + ax * half;
+      sn.far[side] = sn.centreEdge[side] = edge;
+      uint32_t prev = e.item;
+      for (int k = 1; k <= 4; ++k) {
+        Vec3 beyond = C + ax * (float(2 * k + 1) * half);
+        bool found = false;
+        for (const RoadEnd& n : findSmallRoadEnds(vm, player, grid, beyond.x, beyond.z, 1.0f, pf.itemType)) {
+          if (n.deadEnd || n.tram || n.item == prev || dot(n.dir, ax) < 0.9f || hasChildren(n.item)) continue;
+          sn.chain[side].push_back(n.item);
+          sn.chainFar[side].push_back(n.point);
+          prev = n.item, found = true;
+          break;
+        }
+        if (!found) break;
       }
     }
     best = sn;
     break;
   }
   return best;
+}
+
+// the room a junction point needs for a new road leaving it along `out`: the radius its arms are cut at (as
+// findCurveJunctions finds it) and, at a block point, as many straight blocks each way as make the arms that long
+void fitJunction(Snap& sn, const Vec3& out) {
+  if (!sn.junction) return;
+  const CurveProfile& pf = curveProfile(g_state.kind);
+  float R = pf.halfWidth;
+  Vec3 o = unit(out);
+  for (const Vec3& a : sn.arms) {
+    float th = std::acos(std::clamp(dot(o, a), -1.0f, 1.0f));
+    if (th > 0.01f && th < kPi - 0.05f) R = std::max(R, pf.halfWidth / std::tan(th * 0.5f));
+  }
+  R += 1.5f;
+  sn.guard = R + pf.halfWidth;
+  sn.radius = R;
+  sn.fits = true;
+  if (sn.junction == 2) sn.fits = sn.splitS >= R + 1.0f && sn.splitL - sn.splitS >= R + 1.0f;  // both halves outlast it
+  if (sn.junction != 3) return;
+  const float half = pf.piece * 0.5f;
+  sn.blocks.resize(1);
+  sn.fits = true;
+  for (int side = 0; side < 2; ++side) {
+    sn.far[side] = sn.centreEdge[side];
+    float reach = half;
+    for (size_t k = 0; reach < R + 1.0f && k < sn.chain[side].size(); ++k) {
+      sn.blocks.push_back(sn.chain[side][k]);
+      sn.far[side] = sn.chainFar[side][k];
+      reach += pf.piece;
+    }
+    if (reach < R + 1.0f) sn.fits = false;  // the road ends (or turns) too near for this angle
+  }
 }
 
 // the smallest angle (degrees) between a new road leaving a junction point along `out` and the roads already there
@@ -228,7 +278,7 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
   std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
-  const float cs = g.cellSize, guard = 2.0f * curveProfile(c.kind).halfWidth + 3.0f;
+  const float cs = g.cellSize;
   for (uint32_t i : gridItemsNear(vm, grid, x0, z0, x1, z1)) {
     if (i >= g.items.size() || g.items[i].removed) continue;
     GridItemShape sh = gridItemShape(vm, grid, i);
@@ -248,7 +298,8 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
         curveNearest(shape, wx, wz, side, s);
         hit = std::fabs(side) < curveProfile(c.kind).halfWidth - 0.5f;
         // near a junction point the junction takes the corner (its neighbours' blocks are not in the way)
-        if (hit && ((g_state.startSnap.junction && s < guard) || (g_state.endSnap.junction && s > shape.back().s - guard)))
+        if (hit && ((g_state.startSnap.junction && s < g_state.startSnap.guard) ||
+                    (g_state.endSnap.junction && s > shape.back().s - g_state.endSnap.guard)))
           hit = false;
       }
     if (!hit) continue;
@@ -368,6 +419,13 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   }
   const CurveProfile& pf = curveProfile(c.kind);
   bool bad = curveLength(c) < std::min(6.0f, pf.piece) || curveMinRadius(c) < pf.minRadius;
+  // junction points: the room they need for this road (blocks to replace, the part of the road they cover)
+  if (st.startSnap.junction) fitJunction(st.startSnap, Vec3{c.dx0, 0, c.dz0});
+  if (st.endSnap.junction && !(st.mode == 1 && st.step == 1)) fitJunction(st.endSnap, Vec3{-c.dx1, 0, -c.dz1});
+  sn = st.endSnap;
+  if (!st.startSnap.fits || !sn.fits) bad = true;
+  // the new road itself must outlast the junctions at its ends
+  if (curveLength(c) < (st.startSnap.junction ? st.startSnap.radius + 1.0f : 0.0f) + (sn.junction ? sn.radius + 1.0f : 0.0f)) bad = true;
   std::vector<uint32_t> trees, blocking;
   if (!bad && overItems(vm, grid, c, trees, blocking)) bad = true;
   // at a junction point the new road must keep 30 degrees from the roads there
@@ -375,6 +433,10 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (st.startSnap.junction) jAngle = std::min(jAngle, junctionAngle(st.startSnap, Vec3{c.dx0, 0, c.dz0}));
   if (sn.junction && !(st.mode == 1 && st.step == 1)) jAngle = std::min(jAngle, junctionAngle(sn, Vec3{-c.dx1, 0, -c.dz1}));
   if (jAngle < 30.0f) bad = true;
+  if (std::getenv("REGS_DEBUG_CURVES") && (st.startSnap.junction || sn.junction))
+    LOG_INFO("curve tool: junction start %d end %d, angle %.0f, fits %d/%d, guard %.1f/%.1f, chains %zu+%zu, blocks %zu", st.startSnap.junction,
+             sn.junction, jAngle, st.startSnap.fits ? 1 : 0, sn.fits ? 1 : 0, st.startSnap.guard, sn.guard, st.startSnap.chain[0].size(),
+             st.startSnap.chain[1].size(), st.startSnap.blocks.size());
   for (uint32_t b : st.startSnap.blocks) select(vm, grid, b, bad);
   if (!(st.mode == 1 && st.step == 1))
     for (uint32_t b : sn.blocks) select(vm, grid, b, bad);

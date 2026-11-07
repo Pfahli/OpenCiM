@@ -219,6 +219,71 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
                s.roadSpeed, s.roadSpeedCleared, n ? sum / float(n) : 0.0f, n, nPlowed ? sumPlowed / float(nPlowed) : 0.0f, nPlowed);
     }
   }
+  // test switch REGS_TEST_CURVE_CARS=<n> (curved roads): up to n cars at a time on random trips between two curve road
+  // lanes far apart, through the curves' junctions; REGS_DEBUG_CURVES logs each trip
+  // (REGS_TEST_CURVE_TRAMS=<n> likewise with trams on the curves' tram lanes)
+  struct TestTrips {
+    const char* env;
+    uint32_t medium;
+    const char* model;
+    const char* what;
+    float clock = 0, logClock = 0;
+    std::vector<int> movers;
+  };
+  static TestTrips tests[2] = {{"REGS_TEST_CURVE_CARS", kPathRoad, "era4-suv", "car"},
+                               {"REGS_TEST_CURVE_TRAMS", kPathTram, "tram-01", "tram"}};
+  for (TestTrips& tt : tests) {
+    const char* t = std::getenv(tt.env);
+    if (!t) continue;
+    float& carClock = tt.clock;
+    float& logClock = tt.logClock;
+    std::vector<int>& cars = tt.movers;
+    carClock += dt;
+    cars.erase(std::remove_if(cars.begin(), cars.end(), [&](int id) {
+                 return id < 0 || size_t(id) >= s.movers.size() || !s.movers[size_t(id)].live;
+               }), cars.end());
+    if ((logClock += dt) >= 1.0f && std::getenv("REGS_DEBUG_CURVES")) {
+      logClock = 0;
+      for (int id : cars) {
+        const Mover& m = s.movers[size_t(id)];
+        if (m.units.empty() || m.track.nodes.empty()) continue;
+        Vec3 p = unitPose(s, m, m.units[0], m.dist).position;
+        int node = m.track.nodes[m.track.at(m.dist)];
+        LOG_INFO("curve cars: %s %d at %.1f %.1f speed %.2f node %d%s", tt.what, id, p.x, p.z, m.speed, node,
+                 (s.graph.nodes[size_t(node)].flags & kPathIntersection) ? " (junction)" : "");
+      }
+    }
+    std::vector<int> lanes;
+    for (int n : s.graph.curveNodes)
+      if ((s.graph.nodes[size_t(n)].flags & tt.medium) && !(s.graph.nodes[size_t(n)].flags & (kPathDeleted | kPathIntersection)))
+        lanes.push_back(n);
+    int model = modelFor(vm, grid, s, tt.model);
+    if (int(cars.size()) < std::atoi(t) && carClock >= 0.5f && lanes.size() > 1 && model >= 0) {
+      carClock = 0;
+      int from = lanes[plowRandom() % lanes.size()], to = -1;
+      float best = 0;
+      std::vector<int> path;
+      float cost = 0;
+      for (int k = 0; k < 24; ++k) {  // the farthest of a few reachable ones
+        int e = lanes[plowRandom() % lanes.size()];
+        Vec3 d = s.graph.nodes[size_t(e)].p1 - s.graph.nodes[size_t(from)].p0;
+        std::vector<int> p;
+        if (d.x * d.x + d.z * d.z > best && s.graph.search(from, e, false, p, cost) && !p.empty())
+          best = d.x * d.x + d.z * d.z, to = e, path = p;
+      }
+      if (to >= 0 && canEnter(s, from, -2, false) && s.rt[size_t(from)].occupant < 0) {
+        Unit u;
+        u.model = model;
+        int id = spawnTraffic(vm, s, {u}, from, path, false);
+        cars.push_back(id);
+        int turns = 0;
+        for (int n : path) turns += (s.graph.nodes[size_t(n)].flags & kPathIntersection) ? 1 : 0;
+        LOG_INFO("curve cars: %s %d, %zu lanes, %d through junctions, %.0f m", tt.what, id, path.size(), turns, std::sqrt(best));
+      } else if (std::getenv("REGS_DEBUG_CURVES")) {
+        LOG_INFO("curve cars: no route from lane %d to %d", from, to);
+      }
+    }
+  }
   // test switch REGS_TEST_PLOWS=<n>: that many plows whenever the mod asks for any
   if (const char* t = std::getenv("REGS_TEST_PLOWS"); t && want > 0) want = std::atoi(t);
   static float clock = 0;

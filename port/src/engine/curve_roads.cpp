@@ -298,6 +298,8 @@ std::vector<CurveSample> sampleCurveRange(const CurveRoad& c, float s0, float s1
 
 float curveLength(const CurveRoad& c) { return denseOf(c).back().s; }
 
+float curveTramOffset(int kind) { return kind == 1 ? 4.5f : 1.5f; }
+
 const CurveLanes& curveLanes(int kind) {
   static const CurveLanes k[kCurveKinds] = {
       {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0}};
@@ -822,6 +824,7 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
       CurveArm arm;
       arm.curve = ends[k].curve;
       arm.end = ends[k].end;
+      arm.tram = (c.ends & 4) != 0;
       size_t n = d.size(), hit = n;  // the first sample from the junction's end at the radius
       for (size_t i = 0; i < n; ++i) {
         size_t at = arm.end ? n - 1 - i : i;
@@ -993,7 +996,8 @@ PlanarUV fitPlanarUV(const render::MeshData& m, int material) {
   return r;
 }
 
-void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, int matWalk, render::MeshData& out) {
+void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, int matWalk, render::MeshData& out,
+                       int matMarks, int matTram) {
   const CurveProfile& pf = curveProfile(j.kind);
   const Vec3 up{0, 1, 0};
   const bool footpath = pf.carriageway <= 0;
@@ -1094,6 +1098,120 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   sub.vertexCount = uint32_t(out.vertexCount()) - sub.firstVertex;
   sub.indexCount = uint32_t(out.indices.size()) - sub.firstIndex;
   if (sub.indexCount) out.submeshes.push_back(sub);
+  // tram tracks: between every two tracked arms, along the tram lane's own Bézier (the street tram piece's rail strip,
+  // tracks/small_basic: 1.4 wide, the texture repeating every 6 units)
+  if (matTram >= 0) {
+    render::Submesh tr;
+    tr.material = matTram;
+    tr.firstVertex = uint32_t(out.vertexCount());
+    tr.firstIndex = uint32_t(out.indices.size());
+    const float off = curveTramOffset(j.kind), ry = j.centre.y - 0.18f;
+    for (const CurveArm& A : j.arms)
+      for (const CurveArm& B : j.arms) {
+        if (&A == &B || !A.tram || !B.tram) continue;
+        Vec3 p0 = A.mouth - rightOf(A.out) * off, p3 = B.mouth + rightOf(B.out) * off;
+        Vec3 f0 = A.out * -1.0f, f1 = B.out, e = p3 - p0;
+        float L = std::sqrt(dot(e, e));
+        Vec3 p1 = p0 + f0 * (L / 3), p2 = p3 - f1 * (L / 3);
+        const int steps = 16;
+        std::vector<Vec3> pts;
+        for (int k = 0; k <= steps; ++k) {
+          float t = float(k) / float(steps), u = 1 - t;
+          Vec3 p = p0 * (u * u * u) + p1 * (3 * u * u * t) + p2 * (3 * u * t * t) + p3 * (t * t * t);
+          p.y = ry;
+          pts.push_back(p);
+        }
+        float arc = 0, w0 = 0;
+        auto side = [&](size_t k) {
+          Vec3 d = pts[std::min(k + 1, pts.size() - 1)] - pts[k > 0 ? k - 1 : 0];
+          return rightOf(d);
+        };
+        uint32_t pL = vertex(pts[0] - side(0) * 0.7f, up, 1.0f, 0.1875f), pR = vertex(pts[0] + side(0) * 0.7f, up, 1.0f, 0.0625f);
+        for (size_t k = 1; k < pts.size(); ++k) {
+          Vec3 d = pts[k] - pts[k - 1];
+          float seg = std::sqrt(dot(d, d)), segStart = arc;
+          arc += seg;
+          Vec3 sa = side(k - 1), sb = side(k);
+          while (true) {
+            float nextB = w0 + 6.0f;
+            if (arc <= nextB + 1e-4f || seg < 1e-4f) {
+              float u = 1.0f - (arc - w0) / 6.0f;
+              uint32_t Lv = vertex(pts[k] - sb * 0.7f, up, u, 0.1875f), Rv = vertex(pts[k] + sb * 0.7f, up, u, 0.0625f);
+              tri(pL, pR, Lv, up), tri(pR, Rv, Lv, up);
+              pL = Lv, pR = Rv;
+              break;
+            }
+            float t = (nextB - segStart) / seg;
+            Vec3 m = pts[k - 1] + d * t, sm = render::normalize(sa + (sb - sa) * t);
+            uint32_t Lv = vertex(m - sm * 0.7f, up, 0.0f, 0.1875f), Rv = vertex(m + sm * 0.7f, up, 0.0f, 0.0625f);
+            tri(pL, pR, Lv, up), tri(pR, Rv, Lv, up);
+            w0 = nextB;
+            pL = vertex(m - sm * 0.7f, up, 1.0f, 0.1875f), pR = vertex(m + sm * 0.7f, up, 1.0f, 0.0625f);
+          }
+        }
+      }
+    tr.vertexCount = uint32_t(out.vertexCount()) - tr.firstVertex;
+    tr.indexCount = uint32_t(out.indices.size()) - tr.firstIndex;
+    if (tr.indexCount) out.submeshes.push_back(tr);
+  }
+  if (matMarks < 0) return;
+  // markings (road-marks.dds regions of small_junction4.object, v as the loader gives them: raw + 1)
+  render::Submesh mk;
+  mk.material = matMarks;
+  mk.firstVertex = uint32_t(out.vertexCount());
+  mk.firstIndex = uint32_t(out.indices.size());
+  const float my = j.centre.y - 0.19f;
+  auto at = [&](Vec3 p) {
+    p.y = my;
+    return p;
+  };
+  // zebra crossings: bars across each arm just inside its mouth, cycling through the atlas' bar variants
+  for (const CurveArm& A : j.arms) {
+    Vec3 in = A.out * -1.0f, r = rightOf(A.out), m0 = at(A.mouth);
+    int bars = std::max(1, int((2.0f * pf.carriageway - 0.32f) / 0.93f));
+    float first = -(float(bars) * 0.93f - 0.32f) * 0.5f;
+    for (int k = 0; k < bars; ++k) {
+      float z0 = first + float(k) * 0.93f, z1 = z0 + 0.61f;
+      float u0 = 0.1587f + 0.033f * float(k % 5), u1 = u0 + 0.0215f;
+      uint32_t a = vertex(m0 + in * 0.17f + r * z0, up, u0, 0.5466f), b = vertex(m0 + in * 0.17f + r * z1, up, u1, 0.5466f);
+      uint32_t c = vertex(m0 + in * 2.88f + r * z1, up, u1, 0.3492f), d = vertex(m0 + in * 2.88f + r * z0, up, u0, 0.3492f);
+      tri(a, b, c, up), tri(a, c, d, up);
+    }
+  }
+  // edge lines along the kerbs (0.19..0.48 inside), the texture repeating every 9 units as on the straight road
+  std::vector<Vec3> e0 = junctionOutline(j, pf.carriageway - 0.19f, perGap), e1 = junctionOutline(j, pf.carriageway - 0.48f, perGap);
+  const float uA = 0.9916f, uRate = -0.1099f, vOut = 0.0722f, vIn = 0.0401f;
+  for (size_t i = 0; i < n; ++i) {
+    std::vector<size_t> line;
+    for (size_t k = 1; k <= size_t(perGap) + 1; ++k) line.push_back(i * per + k);
+    line.push_back(((i + 1) % n) * per);
+    float arc = 0, w0 = 0;
+    uint32_t pO = vertex(at(e0[line[0]]), up, uA, vOut), pI = vertex(at(e1[line[0]]), up, uA, vIn);
+    for (size_t k = 1; k < line.size(); ++k) {
+      Vec3 a = at(e0[line[k - 1]]), b = at(e0[line[k]]), ai = at(e1[line[k - 1]]), bi = at(e1[line[k]]);
+      Vec3 e = b - a;
+      float L = std::sqrt(dot(e, e)), segStart = arc;
+      arc += L;
+      while (true) {
+        float nextB = w0 + 9.0f;
+        if (arc <= nextB + 1e-4f || L < 1e-4f) {
+          uint32_t O = vertex(b, up, uA + uRate * (arc - w0), vOut), I = vertex(bi, up, uA + uRate * (arc - w0), vIn);
+          tri(pO, pI, O, up), tri(pI, I, O, up);
+          pO = O, pI = I;
+          break;
+        }
+        float t = (nextB - segStart) / L;
+        Vec3 mo = a + (b - a) * t, mi = ai + (bi - ai) * t;
+        uint32_t O = vertex(mo, up, uA + uRate * 9.0f, vOut), I = vertex(mi, up, uA + uRate * 9.0f, vIn);
+        tri(pO, pI, O, up), tri(pI, I, O, up);
+        w0 = nextB;
+        pO = vertex(mo, up, uA, vOut), pI = vertex(mi, up, uA, vIn);
+      }
+    }
+  }
+  mk.vertexCount = uint32_t(out.vertexCount()) - mk.firstVertex;
+  mk.indexCount = uint32_t(out.indices.size()) - mk.firstIndex;
+  if (mk.indexCount) out.submeshes.push_back(mk);
 }
 
 void junctionCells(const GridData& g, const CurveJunction& j, int& x0, int& z0, int& x1, int& z1) {

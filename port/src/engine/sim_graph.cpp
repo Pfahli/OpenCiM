@@ -598,11 +598,18 @@ void dumpTemplates(VM& vm, GridObj* grid) {
     if (data) {
       const render::MeshData& m = data->mesh;
       for (const render::Submesh& sm : m.submeshes) {
-        float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+        float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f}, ulo[2] = {1e9f, 1e9f}, uhi[2] = {-1e9f, -1e9f};
         for (uint32_t k = 0; k < sm.indexCount; ++k) {
           uint32_t v = m.indices[sm.firstIndex + k];
           for (int a = 0; a < 3; ++a) lo[a] = std::min(lo[a], m.positions[v * 3 + a]), hi[a] = std::max(hi[a], m.positions[v * 3 + a]);
+          if (m.uv0.size() > v * 2 + 1)
+            for (int a = 0; a < 2; ++a) ulo[a] = std::min(ulo[a], m.uv0[v * 2 + a]), uhi[a] = std::max(uhi[a], m.uv0[v * 2 + a]);
         }
+        if (std::getenv("REGS_DUMP_VERTICES"))
+          for (uint32_t k = sm.firstVertex; k < sm.firstVertex + sm.vertexCount; ++k)
+            LOG_INFO("dump %s:     v %.2f %.2f %.2f uv %.4f %.4f", name.c_str(), m.positions[k * 3], m.positions[k * 3 + 1],
+                     m.positions[k * 3 + 2], m.uv0.size() > k * 2 + 1 ? m.uv0[k * 2] : 0.0f, m.uv0.size() > k * 2 + 1 ? m.uv0[k * 2 + 1] : 0.0f);
+        LOG_INFO("dump %s:   uv %.4f..%.4f, %.4f..%.4f", name.c_str(), ulo[0], uhi[0], ulo[1], uhi[1]);
         std::string mat = size_t(sm.material) < data->materials.size() ? data->materials[size_t(sm.material)].name : "?";
         LOG_INFO("dump %s:   material %d %s: x %.2f..%.2f y %.2f..%.2f z %.2f..%.2f (%u tris)", name.c_str(), sm.material,
                  mat.c_str(), lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], sm.indexCount / 3);
@@ -869,6 +876,17 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
           n.item = -1;
           n.p0 = A.mouth - ra * ln.offset[k] + Vec3{0, -0.2f, 0};  // toward the centre on its right
           n.p1 = B.mouth + rb * ln.offset[k] + Vec3{0, -0.2f, 0};
+          n.f0 = A.out * -1.0f;
+          n.f1 = B.out;
+          add(n);
+        }
+        if (A.tram && B.tram) {  // trams between two tracked arms (at the item height, as on the curves)
+          const float off = curveTramOffset(j.kind);
+          LaneNode n;
+          n.flags = 0x800u | kPathIntersection;
+          n.item = -1;
+          n.p0 = A.mouth - ra * off;
+          n.p1 = B.mouth + rb * off;
           n.f0 = A.out * -1.0f;
           n.f1 = B.out;
           add(n);

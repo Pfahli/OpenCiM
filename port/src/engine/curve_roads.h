@@ -77,6 +77,7 @@ struct CurveArm {
   float trim = 0;           // arc length cut off that end
   render::Vec3 mouth;       // the curve's centre line where the junction begins
   render::Vec3 out;         // unit, flat: away from the junction there
+  bool tram = false;        // the curve has tram tracks (they run on through the junction to the other tracked arms)
 };
 struct CurveJunction {
   render::Vec3 centre;
@@ -105,7 +106,13 @@ struct PlanarUV {
 PlanarUV fitPlanarUV(const render::MeshData& m, int material);
 // the junction's mesh: the fill (asphalt, or for footpaths the footpath) tiled with fillUV, the pavement corners and
 // kerbs (walk material, the small road's pavement texture region)
-void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& fillUV, int matWalk, render::MeshData& out);
+// matMarks (roads): zebra crossings across every arm at its mouth and edge lines along the kerbs, as the game's own
+// junction pieces have them (small_junction4.object: bars 0.61 wide every 0.93, 2.71 deep, 0.17 inside the edge)
+void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& fillUV, int matWalk, render::MeshData& out,
+                       int matMarks = -1, int matTram = -1);
+// the tram lanes' offset right of the centre line on a curve of the kind (the outer lanes of large roads, the median of
+// avenues)
+float curveTramOffset(int kind);
 // levels the unlocked terrain corners under the junctions at a curve's ends; the cells their outlines cover
 void levelTerrainUnderJunctions(GridObj* grid, const CurveRoad& c);
 void junctionCells(const GridData& g, const CurveJunction& j, int& x0, int& z0, int& x1, int& z1);

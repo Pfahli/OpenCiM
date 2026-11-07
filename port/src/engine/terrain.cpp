@@ -816,7 +816,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           buildJunctionMesh(j, fb, uv, -1, all);
         } else {
           const PlanarUV& uv = fillOf("road_small_basic", 0, fb);
-          buildJunctionMesh(j, fb, uv, base + 2, all);
+          buildJunctionMesh(j, fb, uv, base + 2, all, base + 1, tramBase);
         }
       }
       if (tc.surfaceMap && all.vertexCount()) surfaceMapPaint(*tc.surfaceMap, all, Mat4(), tc.materials, true);
