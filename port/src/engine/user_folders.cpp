@@ -381,7 +381,8 @@ void registerUserFolderNatives(VM& vm) {
   // afterwards. Both return true when the disk changed.
   auto mapsPath = [](VM& v, const Value& val, std::filesystem::path& out) {
     std::string p = utf16ToUtf8(v.toStr(val));
-    if (p.rfind("userdata/maps/", 0) != 0 || p.find("..") != std::string::npos || p.size() <= 14) return false;
+    bool maps = p.rfind("userdata/maps/", 0) == 0 && p.size() > 14, templates = p.rfind("userdata/templates/", 0) == 0 && p.size() > 19;
+    if (!(maps || templates) || p.find("..") != std::string::npos) return false;  // the maps and the editor's templates only
     return v.vfs().writableDiskPath(p, out);
   };
   implementGlobal(vm, u"regsMapsRename", [mapsPath](VM& v, Object*, int, const Value* a) {

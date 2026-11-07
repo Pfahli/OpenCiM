@@ -99,42 +99,102 @@ function regsTemplateCheckName($key) {
   return $key >= 'a' && $key <= 'z' || $key >= 'A' && $key <= 'Z' || $key >= '0' && $key <= '9' || $key >= ',' && $key <= '.' || $key == '_' || $key == ' ' || $key >= 192;
 }
 
+// the selection panel (top right, while the select tool is on): what is selected, how Shift works, save / cancel
+$regsPanel = null;
+$regsPanelInfo = null;
+$regsPanelStrings = null;
+
 function regsSaveTemplateTool() {
   $toolbar.selectTool(REGS_GRIDMODE_SELECT_AREA);
-  regsTakeSelectedArea();
-  thread :: {
+  regsClearSelection();
+  if ($regsPanel) return;
+  $regsPanelStrings = regsStringsNow();
+  $regsPanel = MAIN.$ui.createHudElement($desktop.width - 400, 70, 380, 190, 1 | 2 | 4 | 8);
+  with ($t = new_control($regsPanel.$content)) {
+    .setRect(10, 0, 330, 22);
+    .text = $regsPanelStrings.$regs_template_panel_title;
+    .visible = true;
+    .canActivate = false;
+  }
+  MAIN.$ui.setTitleFont($t);
+  with ($regsPanelInfo = new_control($regsPanel.$content)) {
+    .setRect(10, 26, 330, 20);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($h = new_control($regsPanel.$content)) {
+    .setRect(10, 50, 330, 40);
+    MAIN.$ui.setTextFont(current, 0xFFBBBBBB);
+    .textAlign = ALIGN_TOP | ALIGN_LEFT;
+    .text = $regsPanelStrings.$regs_template_panel_hint;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($regsPanel.$save = MAIN.$ui.createButton($regsPanel.$content, 10, 98, 112, 25, $regsPanelStrings.$regs_template_panel_save, regsSaveSelection, "/metro/ui/ok.dds", "/metro/ui/ok.dds", "/metro/ui/ok.dds")) {
+    .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
+    .setMargins(14, 0, 0, 0);
+  }
+  MAIN.$ui.setTitleFont($regsPanel.$save);
+  with ($c = MAIN.$ui.createButton($regsPanel.$content, 228, 98, 112, 25, MAIN.$strings.$menu_cancel_button, macro :: $toolbar.selectTool(GRIDMODE_SELECT_OBJECT), "/metro/ui/cancel.dds", "/metro/ui/cancel.dds", "/metro/ui/cancel.dds")) {
+    .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
+    .setMargins(14, 0, 0, 0);
+  }
+  MAIN.$ui.setTitleFont($c);
+  thread :: {   // the panel follows the selection and goes with the tool
     while ($player.editMode == REGS_GRIDMODE_SELECT_AREA) {
-      skip_frame;
-      $area = regsTakeSelectedArea();
-      if ($area) {
-        $rs = regsStringsNow();
-        $name = "";
-        if (MAIN.$ui.showDialog($rs.$regs_template_name_dialog, true, true, true, @$name, regsTemplateCheckName) && $name != "") {
-          mkdir("userdata/templates");
-          if ($grid.regsSaveTemplate("userdata/templates/"+$name+".grid", $area[0], $area[1], $area[2], $area[3])) {
-            updateFileSystem();
-            MAIN.$ui.showStatusMessage($rs.$regs_template_saved_status);
-          }
-        }
-        delete $rs;
+      $sel = regsSelection();
+      if ($sel) {
+        $regsPanelInfo.text = expandPattern($regsPanelStrings.$regs_template_panel_text, $sel[2], $sel[3], $sel[4]);
+      } else {
+        $regsPanelInfo.text = $regsPanelStrings.$regs_template_panel_empty;
       }
+      $regsPanel.$save.enabled = $sel != null;
+      $regsPanel.$save.visibility = $sel != null ? 1.0 : 0.3;
+      wait 0.1;
     }
+    delete $regsPanel;
+    $regsPanel = null;
+    delete $regsPanelStrings;
   };
 }
+
+function regsSaveSelection() {
+  thread :: {
+    $rs2 = regsStringsNow();
+    $name = "";
+    if (regsSelection() && MAIN.$ui.showDialog($rs2.$regs_template_name_dialog, true, true, true, @$name, regsTemplateCheckName) && $name != "") {
+      mkdir("userdata/templates");
+      if ($grid.regsSaveTemplate("userdata/templates/"+$name+".grid")) {
+        updateFileSystem();
+        regsClearSelection();
+        MAIN.$ui.showStatusMessage($rs2.$regs_template_saved_status);
+      }
+    }
+    delete $rs2;
+  };
+}
+
+// the template list: the map manager window (regs/ui/mapbrowser.script) on userdata/templates, with the preview
+// pictures and the folder buttons; the chosen template goes to the place tool
+$regsTemplateFolder = "";
 
 function regsPlaceTemplateTool() {
   $toolbar.closeSubMenu();
   thread :: {
+    mkdir("userdata/templates");
+    updateFileSystem();
     $rs = regsStringsNow();
-    $items = map [];
-    foreach (list_files("userdata/templates", ".grid")) $items[current] = changeFileExt(current, "");
-    if (#$items == 0) {
-      MAIN.$ui.showInfoDialog($rs.$regs_template_none);
-      delete $rs;
-      return;
-    }
-    $chosen = "";
-    $ok = MAIN.$ui.showDialog($rs.$regs_template_list_dialog, true, true, false, @$chosen, null, $items);
+    $b = load "/regs/ui/mapbrowser.script";
+    $b.$root = "userdata/templates";
+    $b.$title = $rs.$regs_template_browser_title;
+    $b.$openText = $rs.$regs_template_place_button;
+    $b.$folder = $regsTemplateFolder;
+    $ok = $b.run();
+    $regsTemplateFolder = $b.$folder;
+    $chosen = $b.$value;
+    delete $b;
     delete $rs;
     if (!$ok || $chosen == "") return;
     if (regsSetTemplate("userdata/templates/"+$chosen)) $toolbar.selectTool(REGS_GRIDMODE_PLACE_TEMPLATE);

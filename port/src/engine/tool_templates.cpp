@@ -1,9 +1,10 @@
 // The map editor's templates (port, owner's request 2026-11-07): select an area, save its terrain and objects as a
 // template, and stamp it somewhere else. Two tool modes and a few natives (script side:
 // data/regs/extend/metro/scripts/editor.script):
-// * kModeSelectArea: drag a rectangle (left button); on release it is kept for regsTakeSelectedArea().
-// * gsGrid.regsSaveTemplate(path, x, z, w, l): the cells' heights and ground flags and the objects lying fully inside
-//   (with their attached parts) into a small map.grid. Heights are stored relative to the area's mean height (rounded
+// * kModeSelectArea: drag a rectangle (left button); Shift adds rectangles and objects (click) or takes them out
+//   (regsSelection / regsClearSelection).
+// * gsGrid.regsSaveTemplate(path): the selection's cells (heights, ground flags) and objects (with their parts)
+//   into a small map.grid, and its minimap picture as <path>.dds. Heights are stored relative to the area's mean height (rounded
 //   to half a cell, so buildings stay aligned): the template's ground level is 0x200.
 // * regsSetTemplate(path): the template the place mode stamps; kModePlaceTemplate shows its outline under the cursor
 //   and, on click, replaces the area with it: the objects touching it go (shown red beforehand), the terrain takes the template's
@@ -24,7 +25,9 @@
 #include "engine/grid_edit.h"
 #include "engine/grid_save.h"
 #include "engine/gui.h"
+#include "engine/input.h"
 #include "engine/interaction.h"
+#include "engine/minimap.h"
 #include "engine/timeline.h"
 #include "engine/tools.h"
 #include "vfs/vfs.h"
@@ -44,7 +47,6 @@ struct Rect {
 };
 
 Rect g_shown;                       // the highlighted rectangle (both modes)
-Rect g_selected;                    // the last finished selection, until the script takes it
 std::shared_ptr<GridData> g_template;
 std::string g_templateName;
 
@@ -70,6 +72,21 @@ int meanHeight(const GridData& g, Rect r) {
       if (x >= 0 && z >= 0) sum += g.height[size_t(z) * size_t(g.width) + size_t(x)], ++n;
   int m = n ? int(sum / n) : 0x200;
   return (m + 0x40) & ~0x7f;
+}
+
+// roots and their parts (children of any depth), in index order (parents before their children)
+std::vector<uint32_t> withParts(const GridData& g, const std::vector<uint32_t>& roots) {
+  std::vector<bool> keep(g.items.size(), false);
+  for (uint32_t i : roots)
+    if (i < keep.size()) keep[i] = true;
+  std::vector<uint32_t> out;
+  for (uint32_t i = 0; i < g.items.size(); ++i) {
+    const GridData::Item& it = g.items[i];
+    if (it.removed || (it.flags & kItemTemp)) continue;
+    if (!keep[i] && it.parent && it.parent <= g.items.size() && keep[it.parent - 1]) keep[i] = true;
+    if (keep[i]) out.push_back(i);
+  }
+  return out;
 }
 
 // the live items whose footprint lies fully inside the rectangle, each with its parts (children)
@@ -111,28 +128,128 @@ std::vector<uint32_t> rootsTouching(VM& vm, GridObj* grid, Rect r) {
 }
 
 // ---- select area ----
+// The selection is an area (its terrain) and a set of objects (by their root item). Dragging without Shift starts a
+// new selection: the rectangle and the objects lying fully inside it. With Shift held, a drag adds its rectangle and
+// objects, and a click on an object adds it (the area grows to cover it) or takes it out again. The selection stays
+// highlighted until it is saved, cleared or the tool changes.
+Rect g_area;                      // the selection's terrain area
+std::vector<uint32_t> g_items;    // the selected objects (roots)
+Rect g_drag;                      // the rectangle being dragged
+bool g_dragShift = false;
+
+Rect unite(Rect a, Rect b) {
+  if (!a.valid()) return b;
+  if (!b.valid()) return a;
+  int x0 = std::min(a.x, b.x), z0 = std::min(a.z, b.z);
+  int x1 = std::max(a.x + a.w, b.x + b.w), z1 = std::max(a.z + a.l, b.z + b.l);
+  return Rect{x0, z0, x1 - x0, z1 - z0};
+}
+
+uint32_t rootOf(const GridData& g, uint32_t i) {
+  for (int guard = 0; guard < 32 && g.items[i].parent && g.items[i].parent <= g.items.size(); ++guard) i = g.items[i].parent - 1;
+  return i;
+}
+
+std::vector<uint32_t> rootsInside(VM& vm, GridObj* grid, Rect r) {
+  const GridData& g = *grid->data;
+  std::vector<uint32_t> out;
+  for (uint32_t i : itemsInside(vm, grid, r))
+    if (!g.items[i].parent) out.push_back(i);
+  return out;
+}
+
+// the highlight: the area's cells and the selected objects in green, the rectangle being dragged too
+Rect g_litCells;
+std::vector<uint32_t> g_litItems;
+void showSelection(VM& vm, GridObj* grid) {
+  gridEditBegin(vm, grid);
+  if (g_litCells.valid()) gridUnselectArea(vm, grid, g_litCells.x, g_litCells.z, g_litCells.w, g_litCells.l);
+  for (uint32_t i : g_litItems) gridSetSelected(vm, grid, i, false, false);
+  g_litItems.clear();
+  Rect cells = unite(g_area, g_drag);
+  if (cells.valid()) {
+    gridSelectArea(vm, grid, cells.x, cells.z, cells.w, cells.l, false);
+    // gridSelectArea lit every object touching the cells: only the selected ones stay lit
+    for (uint32_t i : gridGetObjects(vm, grid, cells.x, cells.z, cells.w, cells.l)) gridSetSelected(vm, grid, i, false, false);
+  }
+  const GridData& g = *grid->data;
+  for (uint32_t r : g_items)
+    for (uint32_t i : withParts(g, {r})) {
+      gridSetSelected(vm, grid, i, true, false);
+      g_litItems.push_back(i);
+    }
+  gridEditEnd(vm, grid);
+  g_litCells = cells;
+}
+
+void clearSelection(VM& vm, GridObj* grid) {
+  g_area = g_drag = Rect{};
+  g_items.clear();
+  if (grid && grid->data) showSelection(vm, grid);
+}
+
+Rect dragRect(const ToolState& t, int cx, int cz) {
+  return Rect{std::min(t.startX, cx), std::min(t.startZ, cz), std::abs(cx - t.startX) + 1, std::abs(cz - t.startZ) + 1};
+}
+
 void moveSelect(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   ToolState& t = toolState(player);
-  ToolPick p = toolPick(vm, player, x, y, true);
+  ToolPick p = toolPick(vm, player, x, y, false);
   if (!p.hit) return;
-  Rect r{p.cellX, p.cellZ, 1, 1};
-  if (t.inProgress && t.startX >= 0) {
-    r.x = std::min(t.startX, p.cellX), r.z = std::min(t.startZ, p.cellZ);
-    r.w = std::abs(p.cellX - t.startX) + 1, r.l = std::abs(p.cellZ - t.startZ) + 1;
-  }
-  if (r.x == g_shown.x && r.z == g_shown.z && r.w == g_shown.w && r.l == g_shown.l) return;
-  show(vm, grid, r, false);
+  if (p.cellX == t.cellX && p.cellZ == t.cellZ) return;
   t.cellX = p.cellX, t.cellZ = p.cellZ;
+  if (!t.inProgress || t.startX < 0) return;
+  g_drag = dragRect(t, p.cellX, p.cellZ);
+  showSelection(vm, grid);
 }
 
 void downSelect(VM&, ControlObj* player, GridObj*) {
   ToolState& t = toolState(player);
   t.startX = t.cellX, t.startZ = t.cellZ;
+  g_dragShift = (inputModifiers() & 0x100) != 0;
 }
 
 void upSelect(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
-  moveSelect(vm, player, grid, x, y);
-  g_selected = g_shown;
+  ToolState& t = toolState(player);
+  const GridData& g = *grid->data;
+  ToolPick cell = toolPick(vm, player, x, y, false);
+  bool click = cell.hit && cell.cellX == t.startX && cell.cellZ == t.startZ;
+  if (g_dragShift && click) {
+    // Shift + click: the object under the cursor in or out
+    ToolPick p = toolPick(vm, player, x, y, false);
+    if (p.hit && p.item >= 0) {
+      uint32_t r = rootOf(g, uint32_t(p.item));
+      auto it = std::find(g_items.begin(), g_items.end(), r);
+      if (it != g_items.end()) {
+        g_items.erase(it);
+      } else {
+        g_items.push_back(r);
+        Rect ir;
+        gridItemRect(vm, grid, r, ir.x, ir.z, ir.w, ir.l);
+        g_area = unite(g_area, ir);
+      }
+    }
+  } else if (cell.hit && t.startX >= 0) {
+    Rect r = dragRect(t, cell.cellX, cell.cellZ);
+    if (!g_dragShift) {
+      g_area = r;
+      g_items = rootsInside(vm, grid, r);
+    } else {
+      g_area = unite(g_area, r);
+      for (uint32_t i : rootsInside(vm, grid, r))
+        if (std::find(g_items.begin(), g_items.end(), i) == g_items.end()) g_items.push_back(i);
+    }
+  }
+  g_drag = Rect{};
+  showSelection(vm, grid);
+  static const bool dbg = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  if (dbg) LOG_INFO("select: up start %d,%d hit %d cell %d,%d shift %d -> area %d,%d %dx%d, %zu objects", t.startX, t.startZ, cell.hit, cell.cellX, cell.cellZ, g_dragShift, g_area.x, g_area.z, g_area.w, g_area.l, g_items.size());
+}
+
+void cancelSelect(VM& vm, ControlObj*, GridObj* grid) { clearSelection(vm, grid); }
+bool finishSelect(VM& vm, ControlObj*, GridObj* grid) {
+  clearSelection(vm, grid);
+  return true;
 }
 
 // ---- place template ----
@@ -251,8 +368,8 @@ void registerTemplateTools(VM& vm) {
   select.move = moveSelect;
   select.down = downSelect;
   select.up = upSelect;
-  select.cancel = cancelBoth;
-  select.finish = finishBoth;
+  select.cancel = cancelSelect;
+  select.finish = finishSelect;
   registerToolMode(kModeSelectArea, select);
   ToolMode place;
   place.move = movePlace;
@@ -263,13 +380,20 @@ void registerTemplateTools(VM& vm) {
   vm.setGlobal(u"REGS_GRIDMODE_SELECT_AREA", Value::integer(kModeSelectArea));
   vm.setGlobal(u"REGS_GRIDMODE_PLACE_TEMPLATE", Value::integer(kModePlaceTemplate));
 
-  // regsTakeSelectedArea(): [x, z, w, l] of the last finished selection (once), or null
-  implementGlobal(vm, u"regsTakeSelectedArea", [](VM&, Object*, int, const Value*) {
-    if (!g_selected.valid()) return Value::null();
+  // regsSelection(): [x, z, w, l, objects] of the current selection, or null; regsClearSelection()
+  implementGlobal(vm, u"regsSelection", [](VM&, Object*, int, const Value*) {
+    if (!g_area.valid()) return Value::null();
     auto a = make<ArrayObj>();
-    for (int v : {g_selected.x, g_selected.z, g_selected.w, g_selected.l}) a->items.push_back(Value::integer(v));
-    g_selected = Rect{};
+    for (int v : {g_area.x, g_area.z, g_area.w, g_area.l, int(g_items.size())}) a->items.push_back(Value::integer(v));
     return Value::heap(VT::Array, a.get());
+  }, 0, 0);
+  implementGlobal(vm, u"regsClearSelection", [](VM& v, Object*, int, const Value*) {
+    Value* main = v.findGlobal(u"MAIN");
+    GridObj* grid = nullptr;
+    if (main && main->object())
+      if (auto f = main->object()->fieldValues.find(u"$grid"); f != main->object()->fieldValues.end()) grid = dynamic_cast<GridObj*>(v.resolve(f->second).object());
+    clearSelection(v, grid);
+    return Value();
   }, 0, 0);
 
   // regsSetTemplate(path): the template the place mode stamps; false when the file is no template
@@ -289,13 +413,14 @@ void registerTemplateTools(VM& vm) {
     return Value::boolean(true);
   }, 1, 1);
 
-  // gsGrid.regsSaveTemplate(path, x, z, w, l): the area as a template (see the file comment)
-  if (ClassInfo* c = vm.findClass("gsGrid")) addMethod(c, u"regsSaveTemplate", 5, 5);
+  // gsGrid.regsSaveTemplate(path): the selection as a template (see the file comment), and next to it <path>.dds,
+  // its minimap picture (128 × 128) for the template list
+  if (ClassInfo* c = vm.findClass("gsGrid")) addMethod(c, u"regsSaveTemplate", 1, 1);
   implement(vm, "gsGrid", u"regsSaveTemplate", [](VM& v, Object* s, int, const Value* a) {
     auto* grid = dynamic_cast<GridObj*>(s);
     if (!grid || !grid->data) return Value::boolean(false);
     const GridData& g = *grid->data;
-    Rect r{v.toInt(a[1]), v.toInt(a[2]), v.toInt(a[3]), v.toInt(a[4])};
+    Rect r = g_area;
     r.x = std::max(0, r.x), r.z = std::max(0, r.z);
     r.w = std::min(r.w, g.width - 1 - r.x), r.l = std::min(r.l, g.length - 1 - r.z);
     if (!r.valid()) return Value::boolean(false);
@@ -311,7 +436,7 @@ void registerTemplateTools(VM& vm) {
         t.height[k] = int16_t(int(g.height[c]) - base + 0x200);
         t.flags[k] = uint16_t(g.flags[c] & kGroundFlags);
       }
-    std::vector<uint32_t> items = itemsInside(v, grid, r);
+    std::vector<uint32_t> items = withParts(g, g_items);
     std::vector<int64_t> index(g.items.size(), -1);
     std::map<uint16_t, uint16_t> typeMap;
     int shift = shiftOf(g);
@@ -333,6 +458,60 @@ void registerTemplateTools(VM& vm) {
     }
     std::string path = utf16ToUtf8(v.toStr(a[0]));
     bool ok = v.vfs().write(path, gridFileOf(t));
+    // the preview: the template's own minimap, stretched to a square, as an uncompressed DDS (one level)
+    if (ok) {
+      const int P = 128;
+      // a picture of its own in the minimap's colours: per cell the ground (grass, field, pavement, water), what
+      // covers it (buildings, roads and tracks, trees) and a light from the north-west on the heights; the longer
+      // side fills the square, the rest stays dark
+      const int W = t.width - 1, L = t.length - 1;
+      std::vector<uint32_t> cellCol(size_t(std::max(1, W)) * size_t(std::max(1, L)), 0xFF495226u);
+      auto at = [&](int x, int z) -> uint32_t& { return cellCol[size_t(z) * size_t(W) + size_t(x)]; };
+      for (int z = 0; z < L; ++z)
+        for (int x = 0; x < W; ++x) {
+          uint16_t f = t.flags[size_t(z) * size_t(t.width) + size_t(x)];
+          uint32_t col = 0xFF495226u;
+          if (f & 0x2000) col = 0xFF295383u;
+          else if (f & 0x20) col = 0xFF6A5A18u;
+          else if (f & 0x08) col = 0xFF7A766Eu;
+          at(x, z) = col;
+        }
+      for (const GridData::Item& it : t.items) {
+        auto tpl = grid->templates.find(t.types[it.type]);
+        if (tpl == grid->templates.end()) continue;
+        const auto& fv = tpl->second->fieldValues;
+        auto fi = [&](const char16_t* n, int d) { auto i = fv.find(n); return i == fv.end() ? d : i->second.toInt(); };
+        int type = fi(u"type", 0), w = std::max(1, fi(u"width", 1)), l = std::max(1, fi(u"length", 1));
+        if (it.orient & 1) std::swap(w, l);
+        uint32_t col = type == 0x13 ? 0xFF202C0Au : type < 0x13 ? 0xFF605D58u : 0xFF42391Cu;
+        int r = type == 0x13 ? 1 : 0;
+        for (int z = it.z - r; z < it.z + (r ? r + 1 : l); ++z)
+          for (int x = it.x - r; x < it.x + (r ? r + 1 : w); ++x)
+            if (x >= 0 && z >= 0 && x < W && z < L) at(x, z) = col;
+      }
+      int side = std::max(W, L);
+      std::vector<uint8_t> dds;
+      auto p32 = [&](uint32_t x) { dds.insert(dds.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 4); };
+      for (uint32_t x : {0x20534444u, 0x7Cu, 0x100Fu, uint32_t(P), uint32_t(P), uint32_t(P * 4), 0u, 1u}) p32(x);
+      for (int i = 0; i < 11; ++i) p32(0);
+      for (uint32_t x : {0x20u, 0x41u, 0u, 0x20u, 0xFF0000u, 0xFF00u, 0xFFu, 0xFF000000u, 0x1000u, 0u, 0u, 0u, 0u}) p32(x);
+      for (int y = 0; y < P; ++y)
+        for (int x = 0; x < P; ++x) {
+          int sx = x * side / P, sy = y * side / P;
+          uint32_t col = 0xFF202020u;
+          if (sx < W && sy < L) {
+            col = at(sx, sy);
+            // the light: the slope towards the north-west brightens, away darkens
+            auto hh = [&](int cx, int cz) { return int(t.height[size_t(std::min(cz, L)) * size_t(t.width) + size_t(std::min(cx, W))]); };
+            int d = (hh(sx, sy) - hh(sx + 1, sy + 1)) / 8;
+            auto ch = [&](int sh) { return uint32_t(std::clamp(int((col >> sh) & 0xFF) + d, 0, 255)) << sh; };
+            col = 0xFF000000u | ch(16) | ch(8) | ch(0);
+          }
+          p32(col);
+        }
+      std::string pre = path.substr(0, path.rfind('.')) + ".dds";
+      v.vfs().write(pre, dds);
+    }
     LOG_INFO("template %s: %dx%d cells, %zu objects%s", path.c_str(), r.w, r.l, t.items.size(), ok ? "" : " (not written)");
     return Value::boolean(ok);
   });

@@ -382,9 +382,12 @@ void DesktopObj::inputMousePos(VM& vm, float x, float y) {
   if (height != 0) inputMouseMove(vm, (x * width - mouseX) / height, (y * height - mouseY) / height);
 }
 
+int g_modifiers = 0;
+
 void DesktopObj::inputKeyDown(VM& vm, int k) {
   Ref<Object> keep(this);
   mask |= maskBit(k);
+  g_modifiers = mask & 0x700;
   if (isMouseKey(k)) {
     lastDownKey = k;
     ControlObj* c = controlAt(mouseX, mouseY);
@@ -428,6 +431,7 @@ void DesktopObj::inputKeyDown(VM& vm, int k) {
 void DesktopObj::inputKeyUp(VM& vm, int k) {
   Ref<Object> keep(this);
   mask &= ~maskBit(k);
+  g_modifiers = mask & 0x700;
   if (isMouseKey(k)) {
     if (ControlObj* c = asControl(capture)) {
       Ref<Object> keepC(c);
@@ -577,6 +581,8 @@ void dispatchInput(Engine& eng) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+
+int inputModifiers() { return g_modifiers; }
 
 void registerInputNatives(VM& vm) {
   if (ClassInfo* c = vm.findClass("gsDesktop")) c->factory = [](const ClassInfo* ci) { return Ref<Object>(new DesktopObj(ci)); };

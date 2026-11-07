@@ -13,6 +13,10 @@ if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
 } else {
   $rs = load "/regs/strings/en_US.strings";
 }
+// the folder tree it shows, its title and the open button (the editor's templates use it with userdata/templates)
+$root = "userdata/maps";
+$title = $rs.$regs_browser_title;
+$openText = $rs.$regs_browser_open;
 $folder = "";
 $result = 0;
 $value = "";
@@ -37,8 +41,8 @@ $deleteButton = null;
 $cancelButton = null;
 
 function folderDir($f) {
-  if ($f == "") return "userdata/maps";
-  return "userdata/maps/"+$f;
+  if ($f == "") return $root;
+  return $root+"/"+$f;
 }
 
 function folderLabel($f) {
@@ -72,9 +76,9 @@ function readEntries() {
   if ($folder != "") $prefix = $folder+"/";
   $dirs = list_dirs(folderDir($folder));
   foreach ($dirs) {
-    if (!($folder == "" && current == "autosave")) $entries[] = ["folder", $prefix+current, gold(expandPattern($rs.$regs_maps_folder, current))];
+    if (!($folder == "" && current == "autosave" && $root == "userdata/maps")) $entries[] = ["folder", $prefix+current, gold(expandPattern($rs.$regs_maps_folder, current))];
   }
-  if ($folder == "") {
+  if ($folder == "" && $root == "userdata/maps") {
     foreach ($dirs) {
       if (current == "autosave") $entries[] = ["folder", "autosave", gold(expandPattern($rs.$regs_maps_folder, $rs.$regs_maps_autosave_folder))];
     }
@@ -128,7 +132,7 @@ function select($i) {
   }
   // the preview: the map's minimap thumbnail
   $file = "";
-  if ($kind == "map") $file = "userdata/maps/"+$path+".dds";
+  if ($kind == "map") $file = $root+"/"+$path+".dds";
   if ($kind == "cim") $file = "regs-cim/maps/"+changeFileExt($path, ".dds");
   $preview.visible = $file != "" && file_exists($file);
   if ($preview.visible) $preview.setImage("/"+$file);
@@ -197,7 +201,7 @@ function taken() {
 // a map's files (.grid, .timeline, .scenario, .dds) to a new base path, both below userdata/maps
 function moveMap($from, $to) {
   foreach ([".grid", ".timeline", ".scenario", ".dds"]) {
-    if (file_exists("userdata/maps/"+$from+current)) regsMapsRename("userdata/maps/"+$from+current, "userdata/maps/"+$to+current);
+    if (file_exists($root+"/"+$from+current)) regsMapsRename($root+"/"+$from+current, $root+"/"+$to+current);
   }
 }
 
@@ -239,12 +243,12 @@ function rename() {
     if ($name == "" || $name == extractFileName($path)) return;
     $target = $name;
     if (parentOf($path) != "") $target = parentOf($path)+"/"+$name;
-    if (file_exists("userdata/maps/"+$target+".grid") || dirExists($target)) {
+    if (file_exists($root+"/"+$target+".grid") || dirExists($target)) {
       taken();
       return;
     }
     if ($kind == "map") moveMap($path, $target);
-    else regsMapsRename("userdata/maps/"+$path, "userdata/maps/"+$target);
+    else regsMapsRename($root+"/"+$path, $root+"/"+$target);
     refresh($target);
   };
 }
@@ -272,12 +276,12 @@ function move() {
     if ($target == parentOf($path)) return;
     $dest = extractFileName($path);
     if ($target != "") $dest = $target+"/"+$dest;
-    if (file_exists("userdata/maps/"+$dest+".grid") || dirExists($dest)) {
+    if (file_exists($root+"/"+$dest+".grid") || dirExists($dest)) {
       taken();
       return;
     }
     if ($kind == "map") moveMap($path, $dest);
-    else regsMapsRename("userdata/maps/"+$path, "userdata/maps/"+$dest);
+    else regsMapsRename($root+"/"+$path, $root+"/"+$dest);
     refresh();
   };
 }
@@ -308,10 +312,10 @@ function deleteEntry() {
     if (!$ok) return;
     if ($kind == "map") {
       foreach ([".grid", ".timeline", ".scenario", ".dds"]) {
-        if (file_exists("userdata/maps/"+$path+current)) regsMapsRemove("userdata/maps/"+$path+current);
+        if (file_exists($root+"/"+$path+current)) regsMapsRemove($root+"/"+$path+current);
       }
     } else {
-      regsMapsRemove("userdata/maps/"+$path);
+      regsMapsRemove($root+"/"+$path);
     }
     refresh();
   };
@@ -339,7 +343,7 @@ function build() {
   $box.$content.active = true;
   event $box.keyDown::["Esc"]() { if (!$busy) $result = -1; }
   event $box.keyDown::["Enter"]() open();
-  MAIN.$ui.createHeadingBar($box, $rs.$regs_browser_title);
+  MAIN.$ui.createHeadingBar($box, $title);
   with ($pathLabel = new_control($box.$content)) {
     .setRect(40, 60, 540, 18);
     MAIN.$ui.setTextFont(current);
@@ -378,7 +382,7 @@ function build() {
   $renameButton = menuButton(354, $rs.$regs_browser_rename, rename);
   $moveButton = menuButton(392, $rs.$regs_browser_move, move);
   $deleteButton = menuButton(430, $rs.$regs_browser_delete, deleteEntry);
-  with ($openButton = MAIN.$ui.createButton($box.$content, 40, $box.$content.height - 45, 112, 25, $rs.$regs_browser_open, open, "/metro/ui/ok.dds", "/metro/ui/ok.dds", "/metro/ui/ok.dds")) {
+  with ($openButton = MAIN.$ui.createButton($box.$content, 40, $box.$content.height - 45, 112, 25, $openText, open, "/metro/ui/ok.dds", "/metro/ui/ok.dds", "/metro/ui/ok.dds")) {
     .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
     .setMargins(14, 0, 0, 0);
   }

@@ -14,4 +14,7 @@ void dispatchInput(Engine& eng);
 // is active and the game captures the mouse.
 void pollMouse(script::VM& vm, WindowObj* w);
 
+// the desktop's held modifier keys (0x100 Shift, 0x200 Control, 0x400 Alt), for the tools
+int inputModifiers();
+
 }  // namespace regs::engine
