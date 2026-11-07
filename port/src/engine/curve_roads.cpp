@@ -68,6 +68,7 @@ struct Builder {
   const std::vector<CurveSample>& d;
   float length;
   render::Submesh sub;
+  float from = 0, to = 1e30f;  // the stretch bands are drawn on (arc length)
 
   void begin(int material) {
     sub = render::Submesh();
@@ -109,7 +110,7 @@ struct Builder {
     int k0 = int(std::floor((0 - phase) / period)) - 1, k1 = int(std::ceil((length - phase) / period)) + 1;
     for (int k = k0; k <= k1; ++k) {
       float w0 = phase + float(k) * period;
-      float sa = std::max(0.0f, w0), sb = std::min(length, w0 + drawn);
+      float sa = std::max(std::max(0.0f, from), w0), sb = std::min(std::min(length, to), w0 + drawn);
       if (sb - sa > 0.01f) fn(w0, sa, sb);
     }
   }
@@ -144,18 +145,6 @@ struct Builder {
       uint32_t T = vertex(c.p + c.right * o + Vec3{0, dyTop, 0}, n, u, vTop);
       if (!first) tri(pb, B, pt, n), tri(B, T, pt, n);
       pb = B, pt = T, first = false;
-    }
-  }
-
-  // a flat end (on a grass tram track's block): the cross-section's face, down into the ground, facing out along u
-  void endFace(const CurveSample& c, const Vec3& u) {
-    const float parts[3][3] = {{-6.0f, -3.0f, 0.0f}, {-3.0f, 3.0f, -0.2f}, {3.0f, 6.0f, 0.0f}};  // from, to, top
-    for (const auto& k : parts) {
-      uint32_t a = vertex(c.p + c.right * k[0] + Vec3{0, -0.6f, 0}, u, 0.1921f, 0.9970f);
-      uint32_t b = vertex(c.p + c.right * k[1] + Vec3{0, -0.6f, 0}, u, 0.1921f, 0.9970f);
-      uint32_t t = vertex(c.p + c.right * k[1] + Vec3{0, k[2], 0}, u, 0.1921f, 0.9952f);
-      uint32_t s = vertex(c.p + c.right * k[0] + Vec3{0, k[2], 0}, u, 0.1921f, 0.9952f);
-      tri(a, b, t, u), tri(a, t, s, u);
     }
   }
 
@@ -213,8 +202,9 @@ CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c) {
     return false;
   };
   CurveEnds e;
-  e.free0 = !(c.ends & 1) && !joined(c.x0, c.z0);
-  e.free1 = !(c.ends & 2) && !joined(c.x1, c.z1);
+  // an end on a grass tram track keeps its turning circle too (cars turn there; the tracks run on through it)
+  e.free0 = (!(c.ends & 1) && !joined(c.x0, c.z0)) || (c.ends & 8);
+  e.free1 = (!(c.ends & 2) && !joined(c.x1, c.z1)) || (c.ends & 16);
   return e;
 }
 
@@ -328,11 +318,12 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   b.wall(6.0f, -0.6f, 0.0f, 1.0f, 0.1921f, 0.9970f, 0.9952f);
   if (caps.free0) b.cap(q0, u0, 1);
   if (caps.free1) b.cap(q1, u1, 1);
-  if (c.ends & 8) b.endFace(d.front(), u0);
-  if (c.ends & 16) b.endFace(d.back(), u1);
   b.end();
   if ((c.ends & 4) && matTram >= 0) {  // tram tracks: tracks/small_basic.object's rail strip (both lanes), every 6 units
     b.begin(matTram);
+    // the curve itself, not its turning circles' reach (a grass track's own rails run on from an end on its block)
+    b.from = caps.free0 ? kCurveCapReach : 0.0f;
+    b.to = d.back().s - (caps.free1 ? kCurveCapReach : 0.0f);
     b.band(-2.2f, -0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.1875f, 0.0625f);
     b.band(-0.8f, 0.8f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.0625f);
     b.band(0.8f, 2.2f, -0.18f, 6.0f, 0.0f, 6.0f, 1.0f, -1.0f / 6.0f, 0.0625f, 0.1875f);
@@ -407,8 +398,9 @@ void refreshCurveAnchors(GridData& g) {
 
 // a point past an end on a block (the block's own ground; a grass tram track's block keeps its grass and height)
 static bool beyondBlockEnd(const CurveRoad& c, float x, float z) {
-  if ((c.ends & 1) && (x - c.x0) * c.dx0 + (z - c.z0) * c.dz0 < -0.05f) return true;
-  if ((c.ends & 2) && (x - c.x1) * c.dx1 + (z - c.z1) * c.dz1 > 0.05f) return true;
+  // (an end on a grass tram track has its turning circle over the block: not this)
+  if ((c.ends & 9) == 1 && (x - c.x0) * c.dx0 + (z - c.z0) * c.dz0 < -0.05f) return true;
+  if ((c.ends & 18) == 2 && (x - c.x1) * c.dx1 + (z - c.z1) * c.dz1 > 0.05f) return true;
   return false;
 }
 

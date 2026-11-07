@@ -6,7 +6,7 @@
 // After each road the tool draws on from its end (in that end's direction) until the right button stops it; a road
 // ending on an existing road stops it too. Starts and ends snap to the closed side of a small road's dead end (the
 // block becomes a straight piece the curve continues), to a grass tram track's dead end (the same, and the curve gets
-// tracks; the road stops flat there) and to the free ends of other curves; elsewhere an end is free
+// tracks, its turning circle lies over the track) and to the free ends of other curves; elsewhere an end is free
 // and gets a turning circle. From a snapped end the road leaves straight along it (lanes must meet). The preview is
 // green when the road fits, red when it is shorter than 6 units, bends tighter than radius 6 or runs over buildings
 // (trees under it are cleared). The right button only stops drawing; the fourth mode, remove, takes away the curve
@@ -109,6 +109,8 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   const GridData& g = *grid->data;
   for (const CurveRoad& c : g.curves) {
     CurveEnds free = curveFreeEnds(g, c);
+    free.free0 = free.free0 && !(c.ends & 8);  // an end on a grass tram track is taken
+    free.free1 = free.free1 && !(c.ends & 16);
     if (free.free0) {
       Vec3 q{c.x0, c.y0, c.z0};
       float d = len2(q - p);
@@ -219,7 +221,7 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   c.a = std::max(a, 0.5f), c.b = std::max(b, 0.5f);
   bool endBlock = sn.ok && sn.block && st.step > 0;
   c.ends = uint8_t((st.startBlock ? 1 : 0) | (endBlock ? 2 : 0));
-  // an end on a grass tram track: the road stops flat at its block and gets tracks that run on into it
+  // an end on a grass tram track: the curve gets tracks that run on into it (its turning circle lies over the track)
   if (st.startBlock && st.startEnd.tram) c.ends |= 8 | 4;
   if (endBlock && sn.end.tram) c.ends |= 16 | 4;
   return true;

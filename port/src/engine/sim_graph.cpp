@@ -662,7 +662,8 @@ void rebuildCurveNodes(const GridData& g, LaneGraph& G) {
   for (const CurveRoad& c : g.curves) {
     std::vector<CurveSample> s = sampleCurve(c, 5.0f);
     if (s.size() < 2) continue;
-    // a free end's U-turn: from the lane arriving there (right of the way out) around the point 3 units further on
+    // a free end's U-turn (also an end on a grass tram track, whose turning circle lies over the track): from the lane
+    // arriving there (right of the way out) around the point 3 units further on
     // (radius 1.5) into the lane leaving
     CurveEnds free = curveFreeEnds(g, c);
     for (int end = 0; end < 2; ++end) {
@@ -674,23 +675,6 @@ void rebuildCurveNodes(const GridData& g, LaneGraph& G) {
       Vec3 pts[5] = {e + r * 1.5f, q + r * 1.5f, q + u * 1.5f, q - r * 1.5f, e - r * 1.5f};
       Vec3 dirs[5] = {u, u, r * -1.0f, u * -1.0f, u * -1.0f};
       for (int k = 0; k < 4; ++k) {
-        LaneNode n;
-        n.flags = 0x300;
-        n.item = -1;
-        n.p0 = pts[k], n.p1 = pts[k + 1], n.f0 = dirs[k], n.f1 = dirs[k + 1];
-        add(n);
-      }
-    }
-    // an end on a grass tram track (ends bits 3, 4): the road stops flat there, so its cars turn on the spot (a half
-    // circle of radius 1.5 just beyond the edge); the trams run on into the track block
-    for (int end = 0; end < 2; ++end) {
-      if (!(c.ends & (8 << end))) continue;
-      Vec3 e = end ? Vec3{c.x1, c.y1 - 0.2f, c.z1} : Vec3{c.x0, c.y0 - 0.2f, c.z0};
-      Vec3 u = end ? Vec3{c.dx1, 0, c.dz1} : Vec3{-c.dx0, 0, -c.dz0};
-      Vec3 r = render::normalize(Vec3{-u.z, 0, u.x});
-      Vec3 pts[3] = {e + r * 1.5f, e + u * 1.5f, e - r * 1.5f};
-      Vec3 dirs[3] = {u, r * -1.0f, u * -1.0f};
-      for (int k = 0; k < 2; ++k) {
         LaneNode n;
         n.flags = 0x300;
         n.item = -1;
