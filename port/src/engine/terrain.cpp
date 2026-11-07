@@ -739,7 +739,47 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       };
       // a curve with its stops: their stop templates' meshes bent along the curve beside the road (the anchor item's
       // centre 3 units out, as on a straight block)
+      // the other kinds: copies of their straight piece (cut into 1.5-unit slabs once) bent along the curve, the
+      // street tram piece's likewise when it has tracks, and their dead-end piece at a free end
+      static std::map<const render::ObjectData*, MeshData> sliced;
+      auto slicedOf = [&](const render::ObjectData* o) -> const MeshData& {
+        auto it = sliced.find(o);
+        if (it == sliced.end()) it = sliced.emplace(o, sliceMeshAlongX(o->mesh, 1.5f)).first;
+        return it->second;
+      };
+      auto bentRoad = [&](const CurveRoad& c, MeshData& m) {
+        const CurveProfile& pf = curveProfile(c.kind);
+        CurvePieces cp = curvePieces(c);
+        std::vector<CurveSample> shape = curveShape(c);
+        auto pieces = [&](const char* name) {
+          ObjectObj* o = nullptr;
+          int b = name[0] ? templateOf(name, &o) : -1;
+          if (b < 0 || !o || !o->data) return;
+          const MeshData& sm = slicedOf(o->data.get());
+          for (int i = 0; i < cp.count; ++i)
+            appendBentMesh(sm, b, shape, (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
+        };
+        pieces(pf.straight);
+        if (c.ends & 4) pieces(pf.tram);
+        CurveEnds caps = curveFreeEnds(g, c);
+        ObjectObj* dob = nullptr;
+        int db = templateOf(pf.deadend, &dob);
+        if (db < 0 || !dob || !dob->data) return;
+        auto cf = dob->fieldValues.find(u"connections");
+        uint32_t conn = cf == dob->fieldValues.end() || cf->second.isNone() ? 0x40u << pf.shift : uint32_t(vm.toInt(cf->second));
+        bool openPlusX = ((conn >> pf.shift) & 0x40) != 0;
+        for (int end = 0; end < 2; ++end) {
+          if (!(end ? caps.free1 : caps.free0)) continue;
+          Vec3 o, ax, az;
+          curveCapFrame(c, end, openPlusX, o, ax, az);
+          appendPlacedMesh(dob->data->mesh, db, o, ax, az, m);
+        }
+      };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m) {
+        if (c.kind != 0) {
+          bentRoad(c, m);
+          return;
+        }
         buildCurveMesh(c, curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase);
         if (c.stops.empty()) return;
         std::vector<CurveSample> shape = curveShape(c);

@@ -5,7 +5,8 @@ the road tool of Cities: Skylines, which the owner named as the model.
 
 ## Using it
 
-Map editor, traffic menu, small-road tab: the button **Kurve / Curve**. A panel (top right) offers three modes:
+Map editor, traffic menu: the button **Kurve / Curve** in the alley (footpath), small-road, large-road and avenue tabs
+draws that kind of road. A panel (top right) offers three modes:
 
 | Mode | Clicks |
 |---|---|
@@ -58,8 +59,9 @@ no terrain showing through at the joins.
 
 - Not checked in a game: traffic and pedestrians actually using curves, a sandbox started on a map with curves,
   saving and loading a game with curves.
-- Only the small road; no large roads, avenues, tram tracks, bridges or tunnels on curves.
-- No junctions on curves (a curve meets roads only at dead ends or other curves' ends); no stops or parking on curves.
+- No bridges, tunnels, express roads or ramps on curves; footpath and road variations (textures) are not offered.
+- No junctions on curves (a curve meets roads only at dead ends or other curves' ends); stops only on small-road
+  curves; no parking on curves.
 - The bulldozer does not remove curves (the curve tool's right button does).
 - Walkway texture variations of the map are not applied (always the plain pavement).
 - Game saves: a vehicle on a curve lane is not saved (it is dropped, as other unsaved movers).
@@ -71,3 +73,18 @@ no terrain showing through at the joins.
 - Tram stop: the same (green on the tracked straight road, nothing on the curve).
 - Tram track tool: on the straight road fine; dragged across the curve it lays a straight diagonal free-standing track
   over grass and the curve, and accepts it (green). Curves have no tram tracks and do not block the track tool.
+
+## Other road kinds (2026-11-07)
+
+Large road, avenue and footpath curves (CurveRoad::kind 1, 2, 3; `curveProfile` in `curve_roads.cpp`) bend copies of
+the type's own straight piece along the curve: a whole number of pieces (24 units for large roads and avenues, 3 for
+footpaths), stretched to fit, the mesh cut into 1.5-unit slabs first (`sliceMeshAlongX`) so it follows the bend. Their
+lanes are the straight piece's paths on every copy (building access paths and stop marks left out), so they meet the
+straight blocks' lanes exactly; a free end gets the type's dead-end piece (mesh and U-turn paths). With tram tracks the
+street tram piece (tram_large_basic / tram_avenue_basic) is bent the same way. The small road keeps its own mesh and
+lanes. Sizes come from `REGS_DUMP_TEMPLATES=name,name,...` (logs a template's size, mesh bounds per material and paths).
+
+Checked in the editor: a large road, an avenue and a footpath each with a freeform curve from its dead end (snapped,
+the dead end became a straight piece; large and avenue 7 lane links in, 8 out), free ends with the dead-end piece (the
+avenue's U-turn around the median). In a game: tram tracks laid on a large-road curve (rails on the outer lanes,
+priced as street track).

@@ -289,7 +289,7 @@ foreach ([["/metro/ui/menus/save.dds", regsSaveTemplateTool, $regsRs.$regs_templ
 delete $regsRs;
 
 // ---- curved roads (owner's request 2026-11-07; engine/tool_curves.cpp, like the road tool of Cities: Skylines) ----
-// A "Curve" button in the small-road tab selects the tool; a panel (top right, while the tool is on) offers its
+// A "Curve" button in the alley, small-road, large-road and avenue tabs selects the tool for that road; a panel (top right, while the tool is on) offers its
 // modes Straight / Curved / Freeform and shows what the next click does, the road's length and angle.
 $regsCurvePanel = null;
 $regsCurveStrings = null;
@@ -358,10 +358,20 @@ function regsCurveTool() {
   };
 }
 
-// the button after the original's in the small-road tab
-$regsRoadTab = $trafficMenu.$tabs["smallroad"];
+// the tool for one road kind (0 small, 1 large, 2 avenue, 3 alley)
+function regsCurveToolFor($k) {
+  regsCurveToolKind($k);
+  regsCurveTool();
+}
+
+// the button after the originals in the alley, small-road, large-road and avenue tabs
 $regsRs = regsStringsNow();
-$regsN = $regsRoadTab.getChildCount();
-$regsB = MAIN.$ui.createChoiceButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, $regsRs.$regs_curve_button, regsCurveTool);
-MAIN.$ui.setTooltip($regsB, $regsRs.$regs_curve_hint, 0, 1);
+$regsCurveTabs = ["alley", "smallroad", "largeroad", "avenue"];
+$regsCurveKinds = [3, 0, 1, 2];
+for ($regsI = 0; $regsI < 4; ++$regsI) {
+  $regsRoadTab = $trafficMenu.$tabs[$regsCurveTabs[$regsI]];
+  $regsN = $regsRoadTab.getChildCount();
+  $regsB = MAIN.$ui.createChoiceButton($regsRoadTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, $regsRs.$regs_curve_button, macro($regsCurveKinds[$regsI]) :: regsCurveToolFor($0));
+  MAIN.$ui.setTooltip($regsB, $regsRs.$regs_curve_hint, 0, 1);
+}
 delete $regsRs;

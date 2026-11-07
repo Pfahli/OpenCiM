@@ -25,7 +25,8 @@ struct RoadEnd {
 };
 // the small-road block edges within radius of (wx, wz), nearest first: dead ends' closed sides and both edges of
 // straight pieces
-std::vector<RoadEnd> findSmallRoadEnds(script::VM& vm, ControlObj* player, GridObj* grid, float wx, float wz, float radius);
+std::vector<RoadEnd> findSmallRoadEnds(script::VM& vm, ControlObj* player, GridObj* grid, float wx, float wz, float radius,
+                                       int roadType = 2);  // roadType: 2 small, 5 large, 6 avenue, 1 alley
 // the block of an end replaced inside an edit batch: open = a straight piece through the edge (a curve joins), else a
 // dead end closed there; recorded on the timeline (may be null). Returns the new item, −1 when there is no such piece.
 // the street tram piece on the block of a straight edge (a curve with tracks meets it): a dead end closed toward the

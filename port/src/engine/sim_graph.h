@@ -78,7 +78,7 @@ void removeNodeList(LaneGraph& G, std::vector<int>& list);
 // a node's length, curveFactor and speed limit from its ends, directions and flags (§2.1 steps 4-6)
 void finishLaneNode(LaneNode& n);
 // port: the curved roads' lanes out and in again (engine/curve_roads.h), linked as the items' lanes
-void rebuildCurveNodes(const GridData& g, LaneGraph& G);
+void rebuildCurveNodes(script::VM& vm, GridObj* grid, const GridData& g, LaneGraph& G);
 
 // The placed height of an item (cells·256) as the item renderer uses it.
 int itemHeight(const GridData& g, const GridData::Item& it, uint32_t templateFlags, int templateType);

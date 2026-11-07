@@ -224,18 +224,50 @@ CurveSample curveAt(const std::vector<CurveSample>& d, float s) {
   return r;
 }
 
+const CurveProfile& curveProfile(int kind) {
+  // sizes from the templates (REGS_DUMP_TEMPLATES): large and avenue pieces are 24 units long (two blocks), the large
+  // road 24 wide with asphalt ±6, the avenue 30 wide with asphalt ±10.5 around its median, the footpath 3 × 3
+  static const CurveProfile k[kCurveKinds] = {
+      {2, 0, 12.0f, 6.0f, 3.0f, kCurveCapReach, 6.0f, "road_small_basic", "road_small_deadend", "tram_small_basic"},
+      {5, 8, 24.0f, 12.0f, 6.0f, 12.0f, 15.0f, "road_large_basic", "road_large_deadend", "tram_large_basic"},
+      {6, 16, 24.0f, 15.0f, 10.5f, 9.0f, 18.0f, "road_avenue_basic", "road_avenue_deadend", "tram_avenue_basic"},
+      {1, 0, 3.0f, 1.5f, 0.0f, 1.5f, 3.0f, "alley_footpath_basic", "alley_footpath_deadend", ""},
+  };
+  return k[std::clamp(kind, 0, kCurveKinds - 1)];
+}
+
+CurvePieces curvePieces(const CurveRoad& c) {
+  const CurveProfile& pf = curveProfile(c.kind);
+  float L = curveLength(c);
+  CurvePieces r;
+  r.count = std::max(1, int(std::lround(L / pf.piece)));
+  r.stretch = L / (float(r.count) * pf.piece);
+  return r;
+}
+
+void curveCapFrame(const CurveRoad& c, int end, bool openPlusX, Vec3& o, Vec3& ax, Vec3& az) {
+  const CurveProfile& pf = curveProfile(c.kind);
+  // outward along the end, the piece's centre half a piece beyond it; its open side faces the curve
+  Vec3 out = end ? Vec3{c.dx1, 0, c.dz1} : Vec3{-c.dx0, 0, -c.dz0};
+  Vec3 e = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
+  o = e + out * (pf.piece * 0.5f);
+  ax = openPlusX ? out * -1.0f : out;  // local +x toward the open side (or away)
+  az = rightOf(ax);
+}
+
 std::vector<CurveSample> curveShape(const CurveRoad& c, CurveEnds caps) {
   std::vector<CurveSample> d = denseOf(c);
+  const float reach = curveProfile(c.kind).capReach;
   if (caps.free1) {
     CurveSample e = d.back();
-    e.p = e.p + Vec3{c.dx1, 0, c.dz1} * kCurveCapReach;
-    e.s += kCurveCapReach;
+    e.p = e.p + Vec3{c.dx1, 0, c.dz1} * reach;
+    e.s += reach;
     d.push_back(e);
   }
   if (caps.free0) {
     CurveSample b = d.front();
-    b.p = b.p - Vec3{c.dx0, 0, c.dz0} * kCurveCapReach;
-    for (CurveSample& k : d) k.s += kCurveCapReach;
+    b.p = b.p - Vec3{c.dx0, 0, c.dz0} * reach;
+    for (CurveSample& k : d) k.s += reach;
     b.s = 0;
     d.insert(d.begin(), b);
   }
@@ -286,7 +318,7 @@ void curveCells(const GridData& g, const CurveRoad& c, int& x0, int& z0, int& x1
   float lx = 1e30f, lz = 1e30f, hx = -1e30f, hz = -1e30f;
   for (const CurveSample& k : curveShape(c, {true, true}))
     lx = std::min(lx, k.p.x), lz = std::min(lz, k.p.z), hx = std::max(hx, k.p.x), hz = std::max(hz, k.p.z);
-  float m = kCurveHalfWidth + 3.0f, cs = g.cellSize;
+  float m = curveProfile(c.kind).halfWidth + 3.0f, cs = g.cellSize;
   x0 = std::clamp(int(std::floor((lx - m) / cs + float(g.width) * 0.5f)), 0, g.width - 1);
   z0 = std::clamp(int(std::floor((lz - m) / cs + float(g.length) * 0.5f)), 0, g.length - 1);
   x1 = std::clamp(int(std::floor((hx + m) / cs + float(g.width) * 0.5f)), 0, g.width - 1);
@@ -331,17 +363,110 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
   }
 }
 
+render::MeshData sliceMeshAlongX(const render::MeshData& src, float step) {
+  struct V {
+    float a[10];  // position, normal, uv0, uv1
+  };
+  auto get = [&](uint32_t i) {
+    V v{};
+    for (int k = 0; k < 3; ++k) v.a[k] = src.positions[i * 3 + k];
+    for (int k = 0; k < 3; ++k) v.a[3 + k] = src.normals.size() > i * 3 + 2 ? src.normals[i * 3 + k] : (k == 1 ? 1.0f : 0.0f);
+    for (int k = 0; k < 2; ++k) v.a[6 + k] = src.uv0.size() > i * 2 + 1 ? src.uv0[i * 2 + k] : 0.0f;
+    for (int k = 0; k < 2; ++k) v.a[8 + k] = src.uv1.size() > i * 2 + 1 ? src.uv1[i * 2 + k] : v.a[6 + k];
+    return v;
+  };
+  auto lerp = [](const V& p, const V& q, float t) {
+    V r;
+    for (int k = 0; k < 10; ++k) r.a[k] = p.a[k] + (q.a[k] - p.a[k]) * t;
+    return r;
+  };
+  // keeps the part of a polygon on one side of x = c (keepAbove: x ≥ c)
+  auto clip = [&](const std::vector<V>& in, float c, bool keepAbove) {
+    std::vector<V> out;
+    for (size_t i = 0; i < in.size(); ++i) {
+      const V &p = in[i], &q = in[(i + 1) % in.size()];
+      bool pin = keepAbove ? p.a[0] >= c : p.a[0] <= c, qin = keepAbove ? q.a[0] >= c : q.a[0] <= c;
+      if (pin) out.push_back(p);
+      if (pin != qin) out.push_back(lerp(p, q, (c - p.a[0]) / (q.a[0] - p.a[0])));
+    }
+    return out;
+  };
+  render::MeshData m;
+  auto put = [&](const V& v) {
+    m.positions.insert(m.positions.end(), {v.a[0], v.a[1], v.a[2]});
+    m.normals.insert(m.normals.end(), {v.a[3], v.a[4], v.a[5]});
+    m.uv0.insert(m.uv0.end(), {v.a[6], v.a[7]});
+    m.uv1.insert(m.uv1.end(), {v.a[8], v.a[9]});
+    return uint32_t(m.positions.size() / 3 - 1);
+  };
+  for (const render::Submesh& sm : src.submeshes) {
+    render::Submesh o = sm;
+    o.firstVertex = uint32_t(m.vertexCount());
+    o.firstIndex = uint32_t(m.indices.size());
+    for (uint32_t t = 0; t + 2 < sm.indexCount; t += 3) {
+      std::vector<V> tri = {get(src.indices[sm.firstIndex + t]), get(src.indices[sm.firstIndex + t + 1]),
+                            get(src.indices[sm.firstIndex + t + 2])};
+      float lo = std::min({tri[0].a[0], tri[1].a[0], tri[2].a[0]}), hi = std::max({tri[0].a[0], tri[1].a[0], tri[2].a[0]});
+      int k0 = int(std::floor(lo / step)), k1 = int(std::ceil(hi / step));
+      for (int k = k0; k < k1; ++k) {
+        std::vector<V> poly = clip(clip(tri, float(k) * step, true), float(k + 1) * step, false);
+        if (poly.size() < 3) continue;
+        uint32_t first = put(poly[0]), prev = put(poly[1]);
+        for (size_t i = 2; i < poly.size(); ++i) {
+          uint32_t cur = put(poly[i]);
+          m.indices.insert(m.indices.end(), {first, prev, cur});
+          prev = cur;
+        }
+      }
+    }
+    o.vertexCount = uint32_t(m.vertexCount()) - o.firstVertex;
+    o.indexCount = uint32_t(m.indices.size()) - o.firstIndex;
+    m.submeshes.push_back(o);
+  }
+  return m;
+}
+
+void appendPlacedMesh(const render::MeshData& src, int materialBase, const Vec3& o, const Vec3& ax, const Vec3& az,
+                      render::MeshData& out) {
+  if (src.positions.empty() || materialBase < 0) return;
+  const uint32_t base = uint32_t(out.vertexCount());
+  const Vec3 up{0, 1, 0};
+  for (size_t i = 0; i < src.vertexCount(); ++i) {
+    const float* p = &src.positions[i * 3];
+    Vec3 w = o + ax * p[0] + up * p[1] + az * p[2];
+    Vec3 nl{src.normals.size() > i * 3 + 2 ? src.normals[i * 3] : 0.0f, src.normals.size() > i * 3 + 2 ? src.normals[i * 3 + 1] : 1.0f,
+            src.normals.size() > i * 3 + 2 ? src.normals[i * 3 + 2] : 0.0f};
+    Vec3 nw = ax * nl.x + up * nl.y + az * nl.z;
+    out.positions.insert(out.positions.end(), {w.x, w.y, w.z});
+    out.normals.insert(out.normals.end(), {nw.x, nw.y, nw.z});
+    float u = src.uv0.size() > i * 2 + 1 ? src.uv0[i * 2] : 0, v = src.uv0.size() > i * 2 + 1 ? src.uv0[i * 2 + 1] : 0;
+    out.uv0.insert(out.uv0.end(), {u, v});
+    if (src.uv1.size() > i * 2 + 1) out.uv1.insert(out.uv1.end(), {src.uv1[i * 2], src.uv1[i * 2 + 1]});
+    else out.uv1.insert(out.uv1.end(), {u, v});
+  }
+  for (const render::Submesh& sm : src.submeshes) {
+    render::Submesh s;
+    s.material = materialBase + sm.material;
+    s.firstVertex = base + sm.firstVertex;
+    s.vertexCount = sm.vertexCount;
+    s.firstIndex = uint32_t(out.indices.size());
+    for (uint32_t k = 0; k < sm.indexCount; ++k) out.indices.push_back(base + src.indices[sm.firstIndex + k]);
+    s.indexCount = sm.indexCount;
+    out.submeshes.push_back(s);
+  }
+}
+
 void appendBentMesh(const render::MeshData& src, int materialBase, const std::vector<CurveSample>& shape, float s0,
-                    float side, float across, render::MeshData& out) {
+                    float side, float across, render::MeshData& out, float scale, float dy) {
   if (src.positions.empty() || materialBase < 0) return;
   const uint32_t base = uint32_t(out.vertexCount()), first = uint32_t(out.indices.size());
   const size_t n = src.vertexCount();
   const float sg = side >= 0 ? 1.0f : -1.0f;
   for (size_t i = 0; i < n; ++i) {
     float x = src.positions[i * 3], y = src.positions[i * 3 + 1], z = src.positions[i * 3 + 2];
-    CurveSample k = curveAt(shape, s0 + sg * x);
+    CurveSample k = curveAt(shape, s0 + sg * x * scale);
     Vec3 dir = render::normalize(Vec3{k.dir.x, 0, k.dir.z}) * sg, right = k.right * sg, up{0, 1, 0};
-    Vec3 p = k.p + right * (z + across) + up * y;
+    Vec3 p = k.p + right * (z + across) + up * (y + dy);
     Vec3 nl{src.normals.size() > i * 3 + 2 ? src.normals[i * 3] : 0.0f, src.normals.size() > i * 3 + 2 ? src.normals[i * 3 + 1] : 1.0f,
             src.normals.size() > i * 3 + 2 ? src.normals[i * 3 + 2] : 0.0f};
     Vec3 nw = dir * nl.x + up * nl.y + right * nl.z;
@@ -410,7 +535,7 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
   std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
-  const float cs = g.cellSize;
+  const float cs = g.cellSize, hw = curveProfile(c.kind).halfWidth;
   auto covered = [&](int x, int z) {
     if (x < 0 || z < 0 || x >= g.width || z >= g.length) return false;
     return (g.flags[size_t(z) * size_t(g.width) + size_t(x)] & 0x0F00) != 0;
@@ -428,10 +553,10 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
       float side, s;
       curveNearest(d, wx, wz, side, s);
       float ad = std::fabs(side);
-      if (ad > kCurveHalfWidth + 3.0f || (underItem && ad > kCurveHalfWidth)) continue;
+      if (ad > hw + 3.0f || (underItem && ad > hw)) continue;
       float target = (curveAt(d, s).p.y - 0.25f) * 256.0f / cs;  // just under the asphalt (−0.2)
       if (underItem && target >= float(g.height[ci])) continue;
-      float w = ad <= kCurveHalfWidth + 0.3f ? 1.0f : 1.0f - smoother((ad - kCurveHalfWidth - 0.3f) / 2.7f);
+      float w = ad <= hw + 0.3f ? 1.0f : 1.0f - smoother((ad - hw - 0.3f) / 2.7f);
       float h = float(g.height[ci]) + (target - float(g.height[ci])) * w;
       int16_t nh = int16_t(std::clamp(int(std::lround(h)), -0x7fff, 0x7fff));
       if (nh == g.height[ci]) continue;
@@ -462,7 +587,7 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
           float fx = k == 4 ? 0.5f : float(k & 1), fz = k == 4 ? 0.5f : float(k >> 1);
           float side, s, px = (float(x) + fx - float(g.width) * 0.5f) * cs, pz = (float(z) + fz - float(g.length) * 0.5f) * cs;
           curveNearest(d, px, pz, side, s);
-          inside = std::fabs(side) <= kCurveHalfWidth - 0.2f && !beyondBlockEnd(c, px, pz);
+          inside = std::fabs(side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz);
         }
         if (!inside) continue;
         size_t ci = size_t(z) * size_t(g.width) + size_t(x);

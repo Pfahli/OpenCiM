@@ -1690,7 +1690,8 @@ void registerTrackTools(VM& vm) {
 
 // ---- port curved roads (engine/tool_curves.cpp): the small road's block ends ----
 
-std::vector<RoadEnd> findSmallRoadEnds(VM& vm, ControlObj* player, GridObj* grid, float wx, float wz, float radius) {
+std::vector<RoadEnd> findSmallRoadEnds(VM& vm, ControlObj* player, GridObj* grid, float wx, float wz, float radius,
+                                       int roadType) {
   std::vector<RoadEnd> out;
   if (!grid || !grid->data) return out;
   Ctx c(vm, player, grid);
@@ -1699,20 +1700,23 @@ std::vector<RoadEnd> findSmallRoadEnds(VM& vm, ControlObj* player, GridObj* grid
   int cx = int(std::floor(wx / cs + float(g.width) * 0.5f)), cz = int(std::floor(wz / cs + float(g.length) * 0.5f));
   int r = int(std::ceil(radius / cs)) + 8;
   for (const Piece& o : c.getObjects(cx - r, cz - r, 2 * r + 1, 2 * r + 1)) {
-    // small roads, and tram tracks on the grass (a tram piece of no road)
-    bool tram = o.type() == 10 && o.parentLive < 0;    if ((o.type() != 2 && !tram) || (o.iflags & kItemTemp)) continue;
-    uint32_t b = o.conn & 0xff;
+    // roads of the type, and with small roads tram tracks on the grass (a tram piece of no road)
+    bool tram = roadType == 2 && o.type() == 10 && o.parentLive < 0;
+    if ((o.type() != roadType && !tram) || (o.iflags & kItemTemp)) continue;
+    uint32_t b = (o.conn >> roadShift(o.type())) & 0xff;
     auto [bx, bz] = roadXZ(o);
-    render::Vec3 centre{(2.0f * float(bx) + 4.0f - float(g.width)) * cs * 0.5f,
+    const float B = roadType == 1 ? 1.0f : 4.0f;  // the block (cells), its centre the piece's
+    const float half = roadType == 1 ? 1.5f : roadType == 5 || roadType == 6 ? 12.0f : 6.0f;  // half a piece
+    render::Vec3 centre{(2.0f * float(bx) + B - float(g.width)) * cs * 0.5f,
                 float(itemHeight(g, g.items[size_t(o.live)], o.t->flags, o.type())) * cs / 256.0f,
-                (2.0f * float(bz) + 4.0f - float(g.length)) * cs * 0.5f};
+                (2.0f * float(bz) + B - float(g.length)) * cs * 0.5f};
     auto edge = [&](uint32_t bit, bool deadEnd) {  // the edge on the side of `bit`, the way out through it
       int dz = 0, dx = 0;
       bitStep(bit, dz, dx);
       RoadEnd e;
       e.item = uint32_t(o.live);
       e.dir = render::Vec3{float(dx), 0, float(dz)};
-      e.point = centre + e.dir * 6.0f;
+      e.point = centre + e.dir * half;
       e.deadEnd = deadEnd;
       e.tram = tram;
       float ex = e.point.x - wx, ez = e.point.z - wz;
@@ -1739,7 +1743,8 @@ int replaceRoadBlockEnd(VM& vm, ControlObj* player, GridObj* grid, const RoadEnd
   if (!o.t) return -1;
   uint32_t out = dirBit(int(std::lround(end.dir.z)), int(std::lround(end.dir.x)));
   uint32_t back = ((out << 4) | (out >> 4)) & 0xff;
-  uint32_t conn = open ? (out | back) : back;  // a straight piece through the edge, or a dead end open to the road
+  uint32_t conn = (open ? (out | back) : back) << roadShift(o.type());  // a straight piece through the edge, or a dead end
+                                                                         // open to the road (in its type's byte)
   auto [bx, bz] = roadXZ(o);
   Piece p = c.createRoadItem(bx, o.y, bz, conn, 0, o.type(), o.tvar(), 0);
   if (!p.t || (p.iflags & kItemNegative)) return -1;
@@ -1767,10 +1772,11 @@ int openTramBlockEnd(VM& vm, ControlObj* player, GridObj* grid, const RoadEnd& e
     const GridData::Item& it = c.g.items[i];
     if (it.removed || it.parent != end.item + 1 || (it.flags & kItemTemp)) continue;
     Piece o = c.live(int(i));
-    if (!o.t || o.type() != 10) continue;           // the block's street tram piece
-    if ((o.conn & 0xff) != back) return -1;          // not a dead end closed toward the curve
+    if (!o.t || o.type() < 10 || o.type() > 12) continue;  // the block's street tram piece (small, large, avenue)
+    const int sh = o.type() == 11 ? 8 : o.type() == 12 ? 16 : 0;
+    if (((o.conn >> sh) & 0xff) != back) return -1;  // not a dead end closed toward the curve
     auto [bx, bz] = roadXZ(o);
-    Piece p = c.createRoadItem(bx, o.y, bz, out | back, 0, o.type(), o.tvar(), 0);
+    Piece p = c.createRoadItem(bx, o.y, bz, (out | back) << sh, 0, o.type(), o.tvar(), 0);
     if (!p.t || (p.iflags & kItemNegative)) return -1;
     uint32_t variation = o.variation;
     timelineRecordDelete(vm, timeline, grid, uint32_t(i));

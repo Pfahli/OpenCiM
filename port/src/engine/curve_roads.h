@@ -1,7 +1,7 @@
 #pragma once
 // Port: curved roads (owner's request 2026-11-07, prototype; the tool works like the road tool of Cities: Skylines:
 // straight, curved and freeform modes, drawing on from the last end, snapping to road ends). A curve is a cubic
-// Bézier of the small road (GridData::CurveRoad), not a grid item: the map editor's curve tool (tool_curves.cpp,
+// Bézier of a road kind (GridData::CurveRoad, CurveProfile below), not a grid item: the map editor's curve tool (tool_curves.cpp,
 // REGS_GRIDMODE_CURVE_ROAD) lays it, the renderer draws a mesh of the small road's own materials (terrain.cpp
 // collectGrid), the lane graph takes its lanes (sim_graph.cpp rebuildCurveNodes), pedestrians its pavements
 // (sim_citizens.cpp), and map.grid keeps it in the port's section 0x07F00000 (grid.cpp / grid_save.cpp); the editor's
@@ -24,6 +24,24 @@ namespace regs::engine {
 constexpr uint32_t kCurveSectionTag = 0x07F00000;
 constexpr float kCurveHalfWidth = 6.0f;  // world units: the small road's block is 12 wide
 constexpr float kCurveCapReach = 3.0f;   // a free end's turning circle: its centre this far beyond the end
+
+// The road kinds a curve can be (CurveRoad::kind). The small road (0) has its own mesh and lanes (buildCurveMesh,
+// rebuildCurveNodes); the others bend copies of their straight piece's mesh and paths along the curve (a whole number
+// of pieces, stretched to fit) and put their dead-end piece at a free end (owner's request 2026-11-07).
+struct CurveProfile {
+  int itemType;          // the road items' type: 2 small, 5 large, 6 avenue, 1 alley (footpath)
+  int shift;             // the connections byte of that type (roadShift)
+  float piece;           // a straight piece's length along the road (world units)
+  float halfWidth;       // centre line to the outer edge
+  float carriageway;     // centre line to the kerb (pavement beyond); 0: walkable all over (footpaths)
+  float capReach;        // how far a free end's shape grows (the dead end's footprint with halfWidth around)
+  float minRadius;       // the tightest bend the tool accepts
+  const char* straight;  // templates: the straight piece, the dead end, the street tram piece ("" none)
+  const char* deadend;
+  const char* tram;
+};
+constexpr int kCurveKinds = 4;
+const CurveProfile& curveProfile(int kind);
 
 struct CurveSample {
   render::Vec3 p;      // centre line at the item height (pavement level)
@@ -62,8 +80,23 @@ void buildCurveMesh(const CurveRoad& c, CurveEnds caps, int matAsphalt, int matM
 // a template's mesh bent along a curve shape: its local x runs along the curve from arc length s0 (backwards on the left
 // side), its local z away from the centre line from offset `across`, side +1 right / −1 left; its submesh materials
 // offset by materialBase (the template's first material in TerrainCache::materials); appended to out
+// (scale stretches the local x)
 void appendBentMesh(const render::MeshData& src, int materialBase, const std::vector<CurveSample>& shape, float s0,
-                    float side, float across, render::MeshData& out);
+                    float side, float across, render::MeshData& out, float scale = 1.0f, float dy = 0.0f);
+// a mesh cut into slabs `step` wide along its local x (so bending follows the curve), attributes interpolated
+render::MeshData sliceMeshAlongX(const render::MeshData& src, float step);
+// a template's mesh placed rigidly: local x along ax, z along az, y up, origin at o
+void appendPlacedMesh(const render::MeshData& src, int materialBase, const render::Vec3& o, const render::Vec3& ax,
+                      const render::Vec3& az, render::MeshData& out);
+// the copies of a straight piece along a curve of another kind than the small road: count and stretch, and the
+// rigid frames of its free ends' dead-end pieces (origin, local x, local z); openPlusX: the dead end's open side is
+// at its local +x (else −x)
+struct CurvePieces {
+  int count = 1;
+  float stretch = 1;
+};
+CurvePieces curvePieces(const CurveRoad& c);
+void curveCapFrame(const CurveRoad& c, int end, bool openPlusX, render::Vec3& o, render::Vec3& ax, render::Vec3& az);
 // curve stops: the stop item template of a stop, its anchor item's cell and orientation (at the pavement beside s),
 // and GridData::curveAnchors rebuilt from the map's items (after loads and curve edits)
 std::string stopTemplateName(const CurveRoad::Stop& st);

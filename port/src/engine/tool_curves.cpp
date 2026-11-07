@@ -51,6 +51,7 @@ struct Snap {
 
 struct State {
   int mode = 1;  // 0 straight, 1 curved, 2 freeform, 3 remove
+  int kind = 0;  // the road kind drawn (CurveProfile): 0 small, 1 large, 2 avenue, 3 alley
   int step = 0;  // 0 nothing picked, 1 the start, 2 (curved) the bend point too
   Vec3 start, bend;
   bool startDir = false;  // the start's direction is fixed (a snapped end, or drawing on)
@@ -101,38 +102,42 @@ void reset(VM& vm, GridObj* grid) {
 Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   Snap best;
   float bestD = 1e30f;
-  for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, p.x, p.z, 8.0f)) {
+  const CurveProfile& pf = curveProfile(g_state.kind);
+  for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, p.x, p.z, pf.piece * 0.5f + 2.0f, pf.itemType)) {
     if (!e.deadEnd) continue;
     float d = len2(e.point - p);
     if (d < bestD) bestD = d, best = Snap{true, e.point, e.dir, true, e};
   }
   const GridData& g = *grid->data;
+  const float reach2 = std::max(36.0f, pf.halfWidth * pf.halfWidth);
   for (const CurveRoad& c : g.curves) {
+    if (c.kind != g_state.kind) continue;  // only the same kind of road joins
     CurveEnds free = curveFreeEnds(g, c);
     free.free0 = free.free0 && !(c.ends & 8);  // an end on a grass tram track is taken
     free.free1 = free.free1 && !(c.ends & 16);
     if (free.free0) {
       Vec3 q{c.x0, c.y0, c.z0};
       float d = len2(q - p);
-      if (d <= 36.0f && d < bestD) bestD = d, best = Snap{true, q, Vec3{-c.dx0, 0, -c.dz0}, false, {}};
+      if (d <= reach2 && d < bestD) bestD = d, best = Snap{true, q, Vec3{-c.dx0, 0, -c.dz0}, false, {}};
     }
     if (free.free1) {
       Vec3 q{c.x1, c.y1, c.z1};
       float d = len2(q - p);
-      if (d <= 36.0f && d < bestD) bestD = d, best = Snap{true, q, Vec3{c.dx1, 0, c.dz1}, false, {}};
+      if (d <= reach2 && d < bestD) bestD = d, best = Snap{true, q, Vec3{c.dx1, 0, c.dz1}, false, {}};
     }
   }
   return best;
 }
 
-// the curve under p (within the road's half width), ???????1 for none
+// the curve under p (within its road's half width and the kerb), -1 for none
 int curveUnder(const GridData& g, const Vec3& p) {
   int best = -1;
-  float bestD = kCurveHalfWidth + 1.5f;  // the kerb edge too
+  float bestD = 1.5f;  // how far beyond the outer edge (the kerb edge too)
   for (size_t i = 0; i < g.curves.size(); ++i) {
     float side, s;
     curveNearest(curveShape(g.curves[i], curveFreeEnds(g, g.curves[i])), p.x, p.z, side, s);
-    if (std::fabs(side) < bestD) bestD = std::fabs(side), best = int(i);
+    float d = std::fabs(side) - curveProfile(g.curves[i].kind).halfWidth;
+    if (d < bestD) bestD = d, best = int(i);
   }
   return best;
 }
@@ -159,7 +164,7 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
         float wx = (float(x) + 0.5f - float(g.width) * 0.5f) * cs, wz = (float(z) + 0.5f - float(g.length) * 0.5f) * cs;
         float side, s;
         curveNearest(shape, wx, wz, side, s);
-        hit = std::fabs(side) < kCurveHalfWidth - 0.5f;
+        hit = std::fabs(side) < curveProfile(c.kind).halfWidth - 0.5f;
       }
     if (!hit) continue;
     if (sh.type == 0x13) trees.push_back(i);
@@ -216,6 +221,7 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   // S) has handles of about half the distance; the bend point only shapes roads with a free end
   if (sn.ok && !(st.mode == 1 && st.step < 2)) a = b = 0.45f * std::sqrt(len2(E - S));
   c = CurveRoad();
+  c.kind = st.kind;
   c.x0 = S.x, c.y0 = S.y, c.z0 = S.z, c.dx0 = d0.x, c.dz0 = d0.z;
   c.x1 = E.x, c.y1 = E.y, c.z1 = E.z, c.dx1 = d1.x, c.dz1 = d1.z;
   c.a = std::max(a, 0.5f), c.b = std::max(b, 0.5f);
@@ -270,7 +276,8 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     clearPreview(grid);
     return;
   }
-  bool bad = curveLength(c) < 6.0f || curveMinRadius(c) < 6.0f;
+  const CurveProfile& pf = curveProfile(c.kind);
+  bool bad = curveLength(c) < std::min(6.0f, pf.piece) || curveMinRadius(c) < pf.minRadius;
   std::vector<uint32_t> trees, blocking;
   if (!bad && overItems(vm, grid, c, trees, blocking)) bad = true;
   for (uint32_t i : blocking) select(vm, grid, i, true);
@@ -339,7 +346,7 @@ void removeCurve(VM& vm, ControlObj* player, GridObj* grid, int index) {
     if (!(c.ends & (1 << end))) continue;
     Vec3 q = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
     Vec3 out = end ? Vec3{-c.dx1, 0, -c.dz1} : Vec3{c.dx0, 0, c.dz0};  // the block's way out into the curve
-    for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, q.x, q.z, 1.0f))
+    for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, q.x, q.z, 1.0f, curveProfile(c.kind).itemType))
       if (!e.deadEnd && dot(e.dir, out) > 0.9f) {
         replaceRoadBlockEnd(vm, player, grid, e, false, tl);
         break;
@@ -457,7 +464,7 @@ bool overCurve(const GridData& g, float x, float z) {
   for (const CurveRoad& c : g.curves) {
     float side, s;
     curveNearest(curveShape(c), x, z, side, s);
-    if (std::fabs(side) < kCurveHalfWidth && s > 1.0f && s < curveLength(c) - 1.0f) return true;
+    if (std::fabs(side) < curveProfile(c.kind).halfWidth && s > 1.0f && s < curveLength(c) - 1.0f) return true;
   }
   return false;
 }
@@ -516,15 +523,16 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
       w.after = c;
       const float cs = g.cellSize;
       if (w.mode == 0x11) {
-        w.ok = !(c.ends & 4);
+        const CurveProfile& pf = curveProfile(c.kind);
+        w.ok = !(c.ends & 4) && pf.tram[0];  // footpaths take none
         w.after.ends |= 4;
-        int n = std::max(1, int(std::ceil(curveLength(c) / 12.0f)));
+        int n = std::max(1, int(std::ceil(curveLength(c) / pf.piece)));
         int cx = int(c.x0 / cs + float(g.width) * 0.5f), cz = int(c.z0 / cs + float(g.length) * 0.5f);
         for (int i = 0; i < n && w.ok; ++i)
-          invisiblePreview(vm, player, grid, "tram_small_basic", cx, int(c.y0 * 256.0f / cs), cz, 0, false);
+          invisiblePreview(vm, player, grid, pf.tram, cx, int(c.y0 * 256.0f / cs), cz, 0, false);
       } else {
         CurveRoad::Stop st;
-        w.ok = stopToolTemplate(vm, player, grid, st);
+        w.ok = stopToolTemplate(vm, player, grid, st) && c.kind == 0;  // stops on small-road curves only (so far)
         std::vector<CurveSample> shape = curveShape(c);
         float side, s;
         curveNearest(shape, pick.point.x, pick.point.z, side, s);
@@ -584,7 +592,7 @@ int openTramJoins(VM& vm, ControlObj* player, GridObj* grid, Object* tl) {
       if (!(c.ends & (1 << end))) continue;
       Vec3 q = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
       Vec3 out = end ? Vec3{-c.dx1, 0, -c.dz1} : Vec3{c.dx0, 0, c.dz0};  // the block's way into the curve
-      for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, q.x, q.z, 1.0f))
+      for (const RoadEnd& e : findSmallRoadEnds(vm, player, grid, q.x, q.z, 1.0f, curveProfile(c.kind).itemType))
         if (!e.deadEnd && dot(e.dir, out) > 0.9f) {
           if (!e.tram && openTramBlockEnd(vm, player, grid, e, tl) >= 0) ++opened;
           break;
@@ -693,6 +701,16 @@ void registerCurveTool(VM& vm) {
       g_state.startDir = g_state.startBlock = false;
     }
     return Value::integer(g_state.mode);
+  }, 0, 1);
+  // regsCurveToolKind([kind]): the road kind drawn (0 small, 1 large, 2 avenue, 3 alley); setting it drops the road
+  // being drawn
+  implementGlobal(vm, u"regsCurveToolKind", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc > 0) {
+      g_state.kind = std::clamp(v.toInt(a[0]), 0, kCurveKinds - 1);
+      g_state.step = 0;
+      g_state.startDir = g_state.startBlock = false;
+    }
+    return Value::integer(g_state.kind);
   }, 0, 1);
   // regsCurveToolInfo(): [step, length, angle in degrees, fits (0/1), a curve under the cursor (0/1)] for the panel
   implementGlobal(vm, u"regsCurveToolInfo", [](VM&, Object*, int, const Value*) {

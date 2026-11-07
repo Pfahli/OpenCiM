@@ -575,7 +575,50 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
 
 }  // namespace
 
+// REGS_DUMP_TEMPLATES=a,b,...: size, mesh bounds per material and paths of the named templates (curved-road research)
+void dumpTemplates(VM& vm, GridObj* grid) {
+  const char* env = std::getenv("REGS_DUMP_TEMPLATES");
+  if (!env) return;
+  std::string list = env;
+  size_t at = 0;
+  while (at <= list.size()) {
+    size_t e = list.find(',', at);
+    std::string name = list.substr(at, e == std::string::npos ? std::string::npos : e - at);
+    at = e == std::string::npos ? list.size() + 1 : e + 1;
+    auto it = grid->templates.find(name);
+    auto* o = it == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(it->second.get());
+    if (!o) {
+      LOG_INFO("dump %s: no template", name.c_str());
+      continue;
+    }
+    LOG_INFO("dump %s: %s width %d length %d type %d conn %x offset %d,%d yaw %.2f", name.c_str(), o->pendingPath.c_str(),
+             fieldInt(o, u"width", 1, vm), fieldInt(o, u"length", 1, vm), fieldInt(o, u"type", 0, vm),
+             fieldInt(o, u"connections", 0, vm), fieldInt(o, u"offsetx", 0, vm), fieldInt(o, u"offsetz", 0, vm), o->loadYaw);
+    auto data = o->pendingPath.empty() ? o->data : loadObjectCached(vm, o->pendingPath);
+    if (data) {
+      const render::MeshData& m = data->mesh;
+      for (const render::Submesh& sm : m.submeshes) {
+        float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+        for (uint32_t k = 0; k < sm.indexCount; ++k) {
+          uint32_t v = m.indices[sm.firstIndex + k];
+          for (int a = 0; a < 3; ++a) lo[a] = std::min(lo[a], m.positions[v * 3 + a]), hi[a] = std::max(hi[a], m.positions[v * 3 + a]);
+        }
+        std::string mat = size_t(sm.material) < data->materials.size() ? data->materials[size_t(sm.material)].name : "?";
+        LOG_INFO("dump %s:   material %d %s: x %.2f..%.2f y %.2f..%.2f z %.2f..%.2f (%u tris)", name.c_str(), sm.material,
+                 mat.c_str(), lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], sm.indexCount / 3);
+      }
+    }
+    PathSetObj* ps = pathSet(vm, o, true);
+    if (ps) buildPaths(vm, o, ps);
+    if (ps)
+      for (const auto& [pn, p] : ps->paths)
+        LOG_INFO("dump %s:   path %s flags %x  %.2f,%.2f,%.2f -> %.2f,%.2f,%.2f  f0 %.2f,%.2f f1 %.2f,%.2f", name.c_str(), pn.c_str(),
+                 p.flags, p.p0.x, p.p0.y, p.p0.z, p.p1.x, p.p1.y, p.p1.z, p.f0.x, p.f0.z, p.f1.x, p.f1.z);
+  }
+}
+
 void buildLaneGraph(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, const std::vector<uint16_t>* waterFlags) {
+  dumpTemplates(vm, grid);
   G = LaneGraph();
   G.width = g.width;
   G.length = g.length;
@@ -648,7 +691,7 @@ void removeNodeList(LaneGraph& G, std::vector<int>& list) {
 // curve edit): per curve a lane each way 1.5 units right of the centre line, at the asphalt (item height − 0.2) as
 // the straight small road's paths lie, cut into pieces of at most 5 units (a node's curve is fixed by its ends and
 // directions, so short pieces follow the Bézier). The ends meet the straight blocks' lanes exactly and link as theirs.
-void rebuildCurveNodes(const GridData& g, LaneGraph& G) {
+void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   removeNodeList(G, G.curveNodes);
   size_t first = G.nodes.size();
   std::vector<int> scratch;
@@ -659,7 +702,71 @@ void rebuildCurveNodes(const GridData& g, LaneGraph& G) {
     insertNode(G, ni, scratch);
     G.curveNodes.push_back(ni);
   };
+  // the other kinds than the small road: their straight piece's paths on every copy along the curve (local x along
+  // it, z to its right), the street tram piece's with tracks, the dead-end piece's at a free end (its U-turn); the
+  // building access paths (START / END) and the stop marks are left out
+  auto templateObject = [&](const char* name) -> ObjectObj* {
+    if (!grid || !name[0]) return nullptr;
+    auto it = grid->templates.find(name);
+    return it == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(it->second.get());
+  };
+  auto pathsOf = [&](ObjectObj* o) -> PathSetObj* {
+    PathSetObj* ps = o ? pathSet(vm, o, true) : nullptr;
+    if (ps) buildPaths(vm, o, ps);
+    return ps;
+  };
+  auto keep = [](const PathRecord& p) { return !(p.flags & (kPathStart | kPathEnd)); };
+  auto bentNodes = [&](const CurveRoad& c) {
+    const CurveProfile& pf = curveProfile(c.kind);
+    CurvePieces cp = curvePieces(c);
+    std::vector<CurveSample> shape = curveShape(c);
+    auto lay = [&](PathSetObj* ps) {
+      if (!ps) return;
+      for (int i = 0; i < cp.count; ++i) {
+        float s0 = (float(i) + 0.5f) * pf.piece * cp.stretch;
+        for (const auto& [name, p] : ps->paths) {
+          if (!keep(p)) continue;
+          CurveSample a = curveAt(shape, s0 + p.p0.x * cp.stretch), b = curveAt(shape, s0 + p.p1.x * cp.stretch);
+          LaneNode n;
+          n.flags = p.flags & ~kPathStop;
+          n.item = -1;
+          n.p0 = a.p + a.right * p.p0.z + Vec3{0, p.p0.y, 0};
+          n.p1 = b.p + b.right * p.p1.z + Vec3{0, p.p1.y, 0};
+          n.f0 = render::normalize(a.dir * p.f0.x + a.right * p.f0.z);
+          n.f1 = render::normalize(b.dir * p.f1.x + b.right * p.f1.z);
+          add(n);
+        }
+      }
+    };
+    lay(pathsOf(templateObject(pf.straight)));
+    if (c.ends & 4) lay(pathsOf(templateObject(pf.tram)));
+    ObjectObj* dead = templateObject(pf.deadend);
+    PathSetObj* dp = pathsOf(dead);
+    if (!dp) return;
+    bool openPlusX = ((uint32_t(fieldInt(dead, u"connections", 0x40 << pf.shift, vm)) >> pf.shift) & 0x40) != 0;
+    CurveEnds free = curveFreeEnds(g, c);
+    for (int end = 0; end < 2; ++end) {
+      if (!(end ? free.free1 : free.free0)) continue;
+      Vec3 o, ax, az, up{0, 1, 0};
+      curveCapFrame(c, end, openPlusX, o, ax, az);
+      for (const auto& [name, p] : dp->paths) {
+        if (!keep(p)) continue;
+        LaneNode n;
+        n.flags = p.flags & ~kPathStop;
+        n.item = -1;
+        n.p0 = o + ax * p.p0.x + up * p.p0.y + az * p.p0.z;
+        n.p1 = o + ax * p.p1.x + up * p.p1.y + az * p.p1.z;
+        n.f0 = render::normalize(ax * p.f0.x + az * p.f0.z);
+        n.f1 = render::normalize(ax * p.f1.x + az * p.f1.z);
+        add(n);
+      }
+    }
+  };
   for (const CurveRoad& c : g.curves) {
+    if (c.kind != 0) {
+      bentNodes(c);
+      continue;
+    }
     std::vector<CurveSample> s = sampleCurve(c, 5.0f);
     if (s.size() < 2) continue;
     // a free end's U-turn (also an end on a grass tram track, whose turning circle lies over the track): from the lane

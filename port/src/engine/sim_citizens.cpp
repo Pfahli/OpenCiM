@@ -575,6 +575,7 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
     if (cx0 > cx1 || cz0 > cz1) continue;
     std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
     float mid = shape.back().s * 0.5f;
+    const CurveProfile& pf = curveProfile(c.kind);
     for (int cz = cz0; cz <= cz1; ++cz)
       for (int cx = cx0; cx <= cx1; ++cx) {
         size_t ci = size_t(cz) * size_t(g.width) + size_t(cx);
@@ -588,8 +589,8 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
           float side, at;
           curveNearest(shape, wx, wz, side, at);
           float ad = std::fabs(side);
-          if (ad > kCurveHalfWidth) continue;
-          uint32_t code = ad > 3.0f ? 2u : std::fabs(at - mid) <= 1.5f ? 1u : 0u;
+          if (ad > pf.halfWidth) continue;
+          uint32_t code = ad > pf.carriageway ? 2u : std::fabs(at - mid) <= 1.5f ? 1u : 0u;
           w = (w & ~(3u << (2 * q))) | (code << (2 * q));
           any = true;
           if (code == 2 && !pavement) pavement = true, y = curveAt(shape, at).p.y;

@@ -1835,7 +1835,7 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
     });
   }
   buildLaneGraph(vm, grid, *grid->data, s->graph, fileFlags.empty() ? nullptr : &fileFlags);
-  rebuildCurveNodes(*grid->data, s->graph);  // port curved roads: their lanes after the items'
+  rebuildCurveNodes(vm, grid, *grid->data, s->graph);  // port curved roads: their lanes after the items'
   s->rt.assign(s->graph.nodes.size(), NodeRt());
   collectSources(*s);
   buildDoors(vm, grid, *s);
@@ -2322,7 +2322,7 @@ void simCurvesChanged(VM& vm, GridObj* grid, const std::vector<std::array<int, 4
   LaneGraph& G = s.graph;
   std::vector<uint8_t> nodeGone(G.nodes.size(), 0);
   for (int n : G.curveNodes) nodeGone[size_t(n)] = 1;
-  rebuildCurveNodes(*grid->data, G);
+  rebuildCurveNodes(vm, grid, *grid->data, G);
   s.rt.resize(G.nodes.size());
   nodeGone.resize(G.nodes.size(), 0);
   int despawned = takeOffRemovedNodes(vm, s, nodeGone);
