@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cwctype>
+#include <filesystem>
 #include <map>
 #include <tuple>
 #include <vector>
@@ -375,6 +376,31 @@ void registerUserFolderNatives(VM& vm) {
     for (auto& s : v) a->items.push_back(Value::string(utf8ToUtf16(s)));
     return Value::heap(VT::Array, a.get());
   };
+  // the map manager (extend/metro/ui/menus/mainmenu.script, regs/ui/mapbrowser.script): rename or move a file or
+  // folder, and delete one (a folder with everything in it), only below userdata/maps; the file system is read again
+  // afterwards. Both return true when the disk changed.
+  auto mapsPath = [](VM& v, const Value& val, std::filesystem::path& out) {
+    std::string p = utf16ToUtf8(v.toStr(val));
+    if (p.rfind("userdata/maps/", 0) != 0 || p.find("..") != std::string::npos || p.size() <= 14) return false;
+    return v.vfs().writableDiskPath(p, out);
+  };
+  implementGlobal(vm, u"regsMapsRename", [mapsPath](VM& v, Object*, int, const Value* a) {
+    std::filesystem::path from, to;
+    std::error_code ec;
+    if (!mapsPath(v, a[0], from) || !mapsPath(v, a[1], to) || !std::filesystem::exists(from, ec) || std::filesystem::exists(to, ec))
+      return Value::boolean(false);
+    std::filesystem::rename(from, to, ec);
+    v.vfs().rescan();
+    return Value::boolean(!ec);
+  }, 2, 2);
+  implementGlobal(vm, u"regsMapsRemove", [mapsPath](VM& v, Object*, int, const Value* a) {
+    std::filesystem::path p;
+    std::error_code ec;
+    if (!mapsPath(v, a[0], p) || !std::filesystem::exists(p, ec)) return Value::boolean(false);
+    std::filesystem::remove_all(p, ec);
+    v.vfs().rescan();
+    return Value::boolean(!ec);
+  }, 1, 1);
   implementGlobal(vm, u"regsOriginalSaves", [stringArray](VM& v, Object*, int, const Value*) {
     std::vector<std::string> out;
     if (!host().originalFolder.empty())

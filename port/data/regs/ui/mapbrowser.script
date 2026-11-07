@@ -1,0 +1,404 @@
+// OpenCiM map manager (owner's request 2026-11-07): the editor's "Load map" as a window in the game's style. The
+// maps of userdata/maps one folder at a time ("..", folders in gold, maps), a preview of the selected map's minimap,
+// and buttons to open, make a folder, rename, move and delete. The original game's maps and the autosaves are folders
+// of their own; the original's maps can only be opened (they are copied into OpenCiM then). The name and question
+// dialogs are the game's own (MAIN.$ui.showDialog). Used by the main menu extension: run() blocks until the player
+// opens a map ($result 1, $value as the old dialog returned it: "<folder>/<name>.grid" or "regs-cim:<file>") or
+// cancels ($result -1); $folder is the folder shown, kept for the next time.
+
+$desktop = MAIN.$desktop;
+$strings = MAIN.$strings;
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $rs = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $rs = load "/regs/strings/en_US.strings";
+}
+$folder = "";
+$result = 0;
+$value = "";
+$entries = [];      // [kind, path, label]: kind "up", "folder", "orig" (the original's folder), "map", "cim" (original map)
+$selected = -1;
+$clicked = -1;
+$busy = false;      // a question dialog is open
+// the window's controls (declared here: a variable first set inside a function would be local to it)
+$box = null;
+$modal = null;
+$pathLabel = null;
+$listArea = null;
+$list = null;
+$previewArea = null;
+$preview = null;
+$nameLabel = null;
+$openButton = null;
+$newFolderButton = null;
+$renameButton = null;
+$moveButton = null;
+$deleteButton = null;
+$cancelButton = null;
+
+function folderDir($f) {
+  if ($f == "") return "userdata/maps";
+  return "userdata/maps/"+$f;
+}
+
+function folderLabel($f) {
+  if ($f == "~cim") return $rs.$regs_maps_original_folder;
+  if ($f == "autosave") return $rs.$regs_maps_autosave_folder;
+  if ($f == "") return $rs.$regs_browser_top;
+  return $f;
+}
+
+function parentOf($f) {
+  $slash = -1;
+  for ($i = 0; $i < #$f; ++$i) {
+    if (substr($f, $i, 1) == "/") $slash = $i;
+  }
+  if ($slash > 0) return substr($f, 0, $slash);
+  return "";
+}
+
+function gold($text) {
+  return formatText("{0:"+escapePattern($text)+"}", [0xFFE8C860]);
+}
+
+function readEntries() {
+  $entries = [];
+  if ($folder != "") $entries[] = ["up", parentOf($folder), formatText("{0:"+escapePattern($rs.$regs_maps_up)+"}", [0xFFBBBBBB])];
+  if ($folder == "~cim") {
+    foreach (regsOriginalMaps()) $entries[] = ["cim", current, changeFileExt(current, "")];
+    return;
+  }
+  $prefix = "";
+  if ($folder != "") $prefix = $folder+"/";
+  $dirs = list_dirs(folderDir($folder));
+  foreach ($dirs) {
+    if (!($folder == "" && current == "autosave")) $entries[] = ["folder", $prefix+current, gold(expandPattern($rs.$regs_maps_folder, current))];
+  }
+  if ($folder == "") {
+    foreach ($dirs) {
+      if (current == "autosave") $entries[] = ["folder", "autosave", gold(expandPattern($rs.$regs_maps_folder, $rs.$regs_maps_autosave_folder))];
+    }
+    $originals = regsOriginalMaps();
+    if (#$originals > 0) $entries[] = ["orig", "~cim", gold(expandPattern($rs.$regs_maps_folder, $rs.$regs_maps_original_folder))];
+  }
+  foreach (list_files(folderDir($folder), ".grid")) {
+    $label = changeFileExt(current, "");
+    $scenario = folderDir($folder)+"/"+changeFileExt(current, ".scenario");
+    if (file_exists($scenario)) {
+      $s = load "/"+$scenario;
+      $time = $s.$regsAutosaveLabel : "";
+      delete $s;
+      if ($time != "") $label = formatText(escapePattern($label)+" {0:"+escapePattern($time)+"}", [0x80FFFFFF]);
+    }
+    $entries[] = ["map", $prefix+changeFileExt(current, ""), $label];
+  }
+}
+
+function refresh($keepPath = "") {
+  readEntries();
+  $list.$content.clear();
+  $y = 0;
+  $select = -1;
+  for ($i = 0; $i < #$entries; ++$i) {
+    $row = MAIN.$ui.createChoiceButton($list.$content, $listArea, 0, $y, $list.$content.width, 20, $entries[$i][2], macro($i) :: clickRow($0));
+    if ($entries[$i][1] == $keepPath && $keepPath != "") $select = $i;
+    $y += 20;
+  }
+  if (#$entries == 0) MAIN.$ui.createLabel($list.$content, 0, 0, $list.$content.width, 20, $rs.$regs_browser_empty);
+  MAIN.$ui.resetScrollArea($list);
+  $pathLabel.text = expandPattern($rs.$regs_maps_folder_hint, folderLabel($folder));
+  select($select);
+}
+
+function enable($button, $on) {
+  $button.enabled = $on;
+  $button.visibility = $on ? 1.0 : 0.3;
+}
+
+function select($i) {
+  $selected = $i;
+  $kind = "";
+  $path = "";
+  if ($i >= 0) {
+    $kind = $entries[$i][0];
+    $path = $entries[$i][1];
+    MAIN.$ui.selectChoiceButton($list.$content.children()[$i], $listArea);
+  } else {
+    MAIN.$ui.selectChoiceButton(null, $listArea);
+  }
+  // the preview: the map's minimap thumbnail
+  $file = "";
+  if ($kind == "map") $file = "userdata/maps/"+$path+".dds";
+  if ($kind == "cim") $file = "regs-cim/maps/"+changeFileExt($path, ".dds");
+  $preview.visible = $file != "" && file_exists($file);
+  if ($preview.visible) $preview.setImage("/"+$file);
+  $nameLabel.text = "";
+  if ($kind == "map" || $kind == "cim") $nameLabel.text = changeFileExt(extractFileName($path), "");
+  $editable = ($kind == "map") || ($kind == "folder" && $path != "autosave");
+  enable($openButton, $i >= 0);
+  enable($renameButton, $editable);
+  enable($moveButton, $editable);
+  enable($deleteButton, $editable);
+  enable($newFolderButton, $folder != "~cim");
+}
+
+function clickRow($i) {
+  if ($busy) return;
+  if ($clicked == $i && $selected == $i) {
+    open();
+    return;
+  }
+  select($i);
+  $clicked = $i;
+  thread :: {   // a second click within a quarter second opens
+    wait 0.25;
+    if ($clicked == $i) $clicked = -1;
+  };
+}
+
+function open() {
+  if ($busy || $selected < 0) return;
+  $kind = $entries[$selected][0];
+  $path = $entries[$selected][1];
+  $clicked = -1;
+  if ($kind == "up" || $kind == "folder" || $kind == "orig") {
+    $from = $folder;
+    $folder = $path;
+    refresh($kind == "up" ? $from : "");
+  } else if ($kind == "map") {
+    $value = $path+".grid";
+    $result = 1;
+  } else if ($kind == "cim") {
+    $value = "regs-cim:"+$path;
+    $result = 1;
+  }
+}
+
+// names: letters, digits, space, - _ , . and accents (as the game's map names), no slash
+function checkName($key) {
+  return $key >= 'a' && $key <= 'z' || $key >= 'A' && $key <= 'Z' || $key >= '0' && $key <= '9' || $key >= ',' && $key <= '.' || $key == '_' || $key == ' ' || $key >= 192;
+}
+
+function askName($text, $start) {
+  $name = $start;
+  $busy = true;
+  $ok = MAIN.$ui.showDialog($text, true, true, true, @$name, checkName);
+  $busy = false;
+  if (!$ok || $name == "") return "";
+  return $name;
+}
+
+function taken() {
+  $busy = true;
+  MAIN.$ui.showErrorDialog($rs.$regs_browser_exists);
+  $busy = false;
+}
+
+// a map's files (.grid, .timeline, .scenario, .dds) to a new base path, both below userdata/maps
+function moveMap($from, $to) {
+  foreach ([".grid", ".timeline", ".scenario", ".dds"]) {
+    if (file_exists("userdata/maps/"+$from+current)) regsMapsRename("userdata/maps/"+$from+current, "userdata/maps/"+$to+current);
+  }
+}
+
+function newFolder() {
+  if ($busy || $folder == "~cim") return;
+  thread :: {
+    $name = askName($rs.$regs_browser_newFolder_dialog, "");
+    if ($name == "") return;
+    $dir = folderDir($folder)+"/"+$name;
+    $newPath = $name;
+    if ($folder != "") $newPath = $folder+"/"+$name;
+    if (dirExists($newPath) || file_exists($dir+".grid")) {
+      taken();
+      return;
+    }
+    mkdir(folderDir($folder));
+    mkdir($dir);
+    updateFileSystem();
+    refresh($newPath);
+  };
+}
+
+function dirExists($path) {
+  $parent = parentOf($path);
+  $leaf = extractFileName($path);
+  foreach (list_dirs(folderDir($parent))) {
+    if (current == $leaf) return true;
+  }
+  return false;
+}
+
+function rename() {
+  if ($busy || $selected < 0) return;
+  $kind = $entries[$selected][0];
+  $path = $entries[$selected][1];
+  if ($kind != "map" && $kind != "folder") return;
+  thread :: {
+    $name = askName($rs.$regs_browser_rename_dialog, extractFileName($path));
+    if ($name == "" || $name == extractFileName($path)) return;
+    $target = $name;
+    if (parentOf($path) != "") $target = parentOf($path)+"/"+$name;
+    if (file_exists("userdata/maps/"+$target+".grid") || dirExists($target)) {
+      taken();
+      return;
+    }
+    if ($kind == "map") moveMap($path, $target);
+    else regsMapsRename("userdata/maps/"+$path, "userdata/maps/"+$target);
+    refresh($target);
+  };
+}
+
+function move() {
+  if ($busy || $selected < 0) return;
+  $kind = $entries[$selected][0];
+  $path = $entries[$selected][1];
+  if ($kind != "map" && $kind != "folder") return;
+  thread :: {
+    // every folder it can go to: the top and all folders, not into itself or its own sub folders
+    $items = map [];
+    $items["0|."] = gold($rs.$regs_browser_top);
+    foreach (allFolders("")) {
+      if (!($kind == "folder" && (current == $path || findstr(current, $path+"/") == 0)) && current != parentOf($path) + "") {
+        $items["1"+current+"|"+current] = gold(current);
+      }
+    }
+    $target = "";
+    $busy = true;
+    $ok = MAIN.$ui.showDialog($rs.$regs_browser_move_dialog, true, true, false, @$target, null, $items);
+    $busy = false;
+    if (!$ok || $target == "") return;
+    if ($target == ".") $target = "";
+    if ($target == parentOf($path)) return;
+    $dest = extractFileName($path);
+    if ($target != "") $dest = $target+"/"+$dest;
+    if (file_exists("userdata/maps/"+$dest+".grid") || dirExists($dest)) {
+      taken();
+      return;
+    }
+    if ($kind == "map") moveMap($path, $dest);
+    else regsMapsRename("userdata/maps/"+$path, "userdata/maps/"+$dest);
+    refresh();
+  };
+}
+
+function allFolders($f) {
+  $result2 = [];
+  foreach (list_dirs(folderDir($f))) {
+    $sub = current;
+    if ($f != "") $sub = $f+"/"+current;
+    if ($sub != "autosave") {
+      $result2[] = $sub;
+      foreach (allFolders($sub)) $result2[] = current;
+    }
+  }
+  return $result2;
+}
+
+function deleteEntry() {
+  if ($busy || $selected < 0) return;
+  $kind = $entries[$selected][0];
+  $path = $entries[$selected][1];
+  if ($kind != "map" && $kind != "folder") return;
+  thread :: {
+    $text = expandPattern($kind == "map" ? $rs.$regs_browser_delete_map : $rs.$regs_browser_delete_folder, extractFileName($path));
+    $busy = true;
+    $ok = MAIN.$ui.showConfirmationDialog($text);
+    $busy = false;
+    if (!$ok) return;
+    if ($kind == "map") {
+      foreach ([".grid", ".timeline", ".scenario", ".dds"]) {
+        if (file_exists("userdata/maps/"+$path+current)) regsMapsRemove("userdata/maps/"+$path+current);
+      }
+    } else {
+      regsMapsRemove("userdata/maps/"+$path);
+    }
+    refresh();
+  };
+}
+
+function menuButton($y, $text, $action) {
+  with ($b = MAIN.$ui.createButton($box.$content, 610, $y, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+    .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  MAIN.$ui.setTitleFont($b);
+  return $b;
+}
+
+function build() {
+  with ($modal = new_control($desktop)) {
+    .setRect(0, 0, $desktop.width, $desktop.height);
+    .visible = true;
+    .canActivate = false;
+  }
+  $box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - 600) * 0.5), 1000, 600, 1 | 2 | 4 | 8, $desktop);
+  $box.canActivate = true;
+  $box.active = true;
+  $box.$content.canActivate = true;
+  $box.$content.active = true;
+  event $box.keyDown::["Esc"]() { if (!$busy) $result = -1; }
+  event $box.keyDown::["Enter"]() open();
+  MAIN.$ui.createHeadingBar($box, $rs.$regs_browser_title);
+  with ($pathLabel = new_control($box.$content)) {
+    .setRect(40, 60, 540, 18);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($listArea = new_control($box.$content)) {
+    .setRect(40, 82, 540, 380);
+    .setBorder(0xFF777777, 2);
+    .visible = true;
+    .canActivate = false;
+  }
+  $list = MAIN.$ui.createScrollArea($listArea, 2, 2, $listArea.width - 4, $listArea.height - 4);
+  $list.$content.background = 0;
+  with ($previewArea = new_control($box.$content)) {
+    .setRect(675, 82, 196, 196);
+    .setBorder(0xFF777777, 2);
+    .background = 0x80000000;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($preview = new_control($previewArea)) {
+    .setRect(2, 2, 192, 192);
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($nameLabel = new_control($box.$content)) {
+    .setRect(610, 282, 322, 20);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+    .visible = true;
+    .canActivate = false;
+  }
+  $newFolderButton = menuButton(316, $rs.$regs_browser_newFolder, newFolder);
+  $renameButton = menuButton(354, $rs.$regs_browser_rename, rename);
+  $moveButton = menuButton(392, $rs.$regs_browser_move, move);
+  $deleteButton = menuButton(430, $rs.$regs_browser_delete, deleteEntry);
+  with ($openButton = MAIN.$ui.createButton($box.$content, 40, $box.$content.height - 45, 112, 25, $rs.$regs_browser_open, open, "/metro/ui/ok.dds", "/metro/ui/ok.dds", "/metro/ui/ok.dds")) {
+    .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
+    .setMargins(14, 0, 0, 0);
+  }
+  MAIN.$ui.setTitleFont($openButton);
+  with ($cancelButton = MAIN.$ui.createButton($box.$content, $box.$content.width - 152, $box.$content.height - 45, 112, 25, $strings.$menu_cancel_button, macro :: $result = -1, "/metro/ui/cancel.dds", "/metro/ui/cancel.dds", "/metro/ui/cancel.dds")) {
+    .setCropRect(8.0 / 128.0, 3.0 / 32.0, 112.0 / 128.0, 25.0 / 32.0);
+    .setMargins(14, 0, 0, 0);
+  }
+  MAIN.$ui.setTitleFont($cancelButton);
+}
+
+// shows the manager and waits for the player (call in a thread, as the game's dialogs)
+function run() {
+  $desktop.resetMouseDown();
+  if ($folder != "" && $folder != "~cim" && !dirExists($folder)) $folder = "";
+  build();
+  refresh();
+  $result = 0;
+  wait_until $result != 0;
+  delete $box;
+  delete $modal;
+  return $result == 1;
+}
