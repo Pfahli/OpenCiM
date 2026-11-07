@@ -38,6 +38,7 @@ namespace fs = std::filesystem;
 
 int cmdCut(int argc, char** argv);      // mod_assets.cpp
 int cmdSoftDot(int argc, char** argv);  // mod_assets.cpp
+int cmdLeaf(int argc, char** argv);     // mod_assets.cpp
 
 namespace {
 
@@ -555,6 +556,7 @@ int main(int argc, char** argv) {
     else if (cmd == "sound") rc = cmdSound(argc, argv);
     else if (cmd == "cut") rc = cmdCut(argc, argv);
     else if (cmd == "softdot") rc = cmdSoftDot(argc, argv);
+    else if (cmd == "leaf") rc = cmdLeaf(argc, argv);
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

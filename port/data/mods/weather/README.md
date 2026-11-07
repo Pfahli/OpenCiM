@@ -51,8 +51,8 @@ All sounds are recordings from freesound.org under CC0 1.0 (public domain); `sou
 author and page for each: light rain (soundrecorder7), slowly raining loop (unfa), heavy rain on a roof (Q.K.),
 thunder blast (bajko), thunder clap (Dave Welsh), distant thunder (lennyboy), a car on a wet road (Breviceps), cars
 in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-tool cut`: `rain-light.wav`,
-`rain-normal.wav`, `rain-heavy.wav`, `wet-traffic.wav`, `thunder-mid.wav`) and draws the particle sprite
-(`regs-tool softdot`: `textures/softdot.dds`).
+`rain-normal.wav`, `rain-heavy.wav`, `wet-traffic.wav`, `thunder-mid.wav`) and draws the particle sprites
+(`regs-tool softdot`: `textures/softdot.dds`; `regs-tool leaf`: `textures/leaf.dds`).
 
 ## Files
 
@@ -121,14 +121,16 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
   stay as they are; the grey leaves of the deciduous clusters change. Each tree has its own number from the engine
   (`RegsSurface.uv1.y`), so trees are up to a week apart and each has its autumn colour; each leaf (an 8-texel cell of
   the atlas) has its own moment, the leaves that turn first fall first.
-  * **Autumn:** from about 19 September the leaves turn yellow (like birches and limes), orange or, on a few trees,
-    red, the same brightness as the green; from mid October they go brown and fall, bare by late November.
+  * **Autumn:** from about 19 September each leaf turns on its own from green through a yellowish green to its
+    tree's colour: orange on most trees, golden yellow on some, red on a few, a little brighter than the green (by
+    hue, never through a dull olive); from late October they go a little browner and fall, bare by late November.
   * **Winter:** bare. A leaf card whose leaves have fallen shows the atlas's bare bush (brown twigs) at the same place,
     so a winter crown is a net of branches; snow settles on them. The shadows follow (the hook runs in the shadow
     passes too): bare trees cast thin branch shadows.
   * **Spring:** the leaves come out from early April (full by the end of April), bright yellowish green, deepening
     to the summer green by mid June.
-* **Falling leaves** (`gsGrid.regsTreeEmitters`): small yellow to brown leaves drift and swing down from the crowns of
+* **Falling leaves** (`gsGrid.regsTreeEmitters`): small leaf blades (`textures/leaf.dds`, drawn by `regs-tool leaf`
+  with a crisp edge, no glow) in muted ochre, orange, rust and brown drift and swing down from the crowns of
   the deciduous trees near the camera (mid October to late November, most at the start of November; storms shake off
   more), lie under the tree for 45 s and fade away.
 * **Summer heat:** one to three heat spells per summer (10 June to 31 August, 3-9 days, no rain), afternoons of

@@ -419,7 +419,7 @@ function leafFall($doy) {
 // yellow to brown, drifting and swinging down at a metre or two per second; they lie under the tree for 45 s and
 // fade away (at the peak about 13 000 leaves near the camera, under the engine's 24 000 particles with the rain) ----
 with ($leaves = new_particleEmitter($scene)) {
-  .setTexture($softDot);
+  .setTexture("regs/mods/opencim.weather/textures/leaf.dds");   // a leaf blade with a crisp edge (regs-tool leaf)
   .particleBlend = 1;            // BLEND_ALPHA
   .autoemit = false;
   .density = 0.0;
@@ -431,10 +431,11 @@ with ($leaves = new_particleEmitter($scene)) {
   .regsTrees = $deciduous;
   .minParticleOrient = 0.0;
   .maxParticleOrient = 6.28;
-  .addColorRange(0xF0D29A2E, 0xF0C88A28);   // yellow
-  .addColorRange(0xF0D07A26, 0xF0BC6A22);   // orange
-  .addColorRange(0xF0A8502A, 0xF0985028);   // red-brown
-  .addColorRange(0xF08E6434, 0xF0805C30);   // brown
+  // muted like leaves in the light of the street, not lit up: ochre, orange, rust, brown
+  .addColorRange(0xFFA0803A, 0xFF947636);
+  .addColorRange(0xFFA4602C, 0xFF965828);
+  .addColorRange(0xFF884426, 0xFF7C3E24);
+  .addColorRange(0xFF6C4E30, 0xFF62482C);
 }
 $grid.regsTreeEmitters = [$leaves];
 

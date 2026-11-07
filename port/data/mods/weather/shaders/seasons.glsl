@@ -43,7 +43,7 @@ const vec4 kSeasonsBare = vec4(0.295, 0.30, 0.565, 0.53);  // the bare bush: bro
 
 // the year of a deciduous tree, by its day d (its own few days earlier or later):
 //   leaves  0 bare .. 1 full: budding from 5 April, full by 30 April; falling from 15 October, bare by 21 November
-//   turned  0 green .. 1 autumn colour: from 19 September, full by 25 October
+//   turned  0 green .. 1 autumn colour: from 19 September, full by 25 October (through yellowish green)
 //   fresh   the bright spring green: from the budding, gone by mid June
 float seasons_leaves(float d) {
   return smoothstep(95.0, 120.0, d) * (1.0 - smoothstep(288.0, 325.0, d));
@@ -102,17 +102,22 @@ void seasons_foliage(inout vec4 c, RegsSurface s) {
   // its own; brown before it falls
   float turned = seasons_turned(d) * on;
   if (turned > 0.0) {
+    // most trees orange, some golden yellow, a few red like maples
     float kind = fract(seed * 7.31);
-    vec3 tint = mix(vec3(1.0, 0.78, 0.22), vec3(1.0, 0.52, 0.14), smoothstep(0.25, 0.65, kind));
-    tint = mix(tint, vec3(0.86, 0.26, 0.12), smoothstep(0.82, 0.95, kind));
+    vec3 tint = mix(vec3(1.0, 0.66, 0.16), vec3(1.0, 0.47, 0.1), smoothstep(0.15, 0.45, kind));
+    tint = mix(tint, vec3(0.9, 0.25, 0.1), smoothstep(0.84, 0.96, kind));
     tint *= 0.92 + 0.16 * seasons_hash(cell * 1.7 + 3.1);               // leaf to leaf
     float falling = 1.0 - seasons_leaves(d);                             // late: browner
-    tint = mix(tint, vec3(0.62, 0.38, 0.18), 0.55 * smoothstep(0.2, 0.9, falling) * step(200.0, d));
-    // as bright as the green or a little brighter (yellow leaves light up a crown, red ones less)
-    float lift = mix(1.3, 1.08, smoothstep(0.25, 0.95, kind));
-    vec3 autumn = clamp(lum * lift * tint / seasons_lum(tint), 0.0, 1.0);
+    tint = mix(tint, vec3(0.62, 0.38, 0.18), 0.35 * smoothstep(0.3, 0.95, falling) * step(200.0, d));
+    // each leaf turns on its own: green, then yellowish green, then its autumn colour, by hue (a plain mix of green
+    // and orange would pass through a dull olive); a little brighter than the green
     float t = smoothstep(h * 0.55, h * 0.55 + 0.45, turned);
-    c.rgb = mix(c.rgb, autumn, t * keep);
+    vec3 green = c.rgb / max(lum, 1e-3), mid = vec3(0.86, 0.88, 0.24) / seasons_lum(vec3(0.86, 0.88, 0.24));
+    vec3 ripe = tint / seasons_lum(tint);   // all three at luminance 1: the mix moves the hue, not the brightness
+    vec3 way = t < 0.4 ? mix(green, mid, t / 0.4) : mix(mid, ripe, (t - 0.4) / 0.6);
+    float lift = mix(1.0, mix(1.3, 1.12, smoothstep(0.15, 0.95, kind)), smoothstep(0.0, 0.6, t));
+    vec3 autumn = clamp(lum * lift * way / max(seasons_lum(way), 1e-3), 0.0, 1.0);
+    c.rgb = mix(c.rgb, autumn, smoothstep(0.0, 0.25, t) * keep);
   }
   // spring: the young leaves bright and yellowish green
   float fresh = seasons_fresh(d) * on;

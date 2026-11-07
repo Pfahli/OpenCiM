@@ -118,7 +118,7 @@ target_link_libraries(regs PRIVATE regs_engine dbghelp)
 # executable; copied on every build (also when only data/ changed and nothing relinks)
 # Built-in mods (data/mods, disabled until listed in the user's mods.json) come along; the weather mod's seamless loops
 # are cut here from its CC0 recordings by regs-tool cut (data/mods/weather/sounds/LICENSES.txt), its soft particle
-# sprite drawn by regs-tool softdot
+# sprite drawn by regs-tool softdot, its falling-leaf sprite by regs-tool leaf
 set(WEATHER_SOUNDS $<TARGET_FILE_DIR:regs>/data/mods/weather/sounds)
 add_custom_target(regs_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data
@@ -127,7 +127,8 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/heavy-rain-roof.mp3 ${WEATHER_SOUNDS}/rain-heavy.wav 10 30 3 loop
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/cars-rainy-street.mp3 ${WEATHER_SOUNDS}/wet-traffic.wav 2 30 3 loop
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/thunder-clap.mp3 ${WEATHER_SOUNDS}/thunder-mid.wav 0 14 4
-  COMMAND $<TARGET_FILE:regs-tool> softdot $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/softdot.dds 32)
+  COMMAND $<TARGET_FILE:regs-tool> softdot $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/softdot.dds 32
+  COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32)
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
   target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32)
