@@ -26,7 +26,7 @@ class TextureObj : public script::Object {
 script::Ref<script::Object> getTexture(script::VM& vm, std::u16string path);
 
 // Engine key codes (gsKey, docs/ui/input.md §1.4) used for mouse buttons and the wheel.
-enum Key : int { kKeyControl = 9, kKeyAlt = 10, kKeyShift = 11, kMouseLeft = 143, kMouseMiddle = 144, kMouseRight = 145,
+enum Key : int { kKeyEnter = 6, kKeyControl = 9, kKeyEscape = 12, kKeyAlt = 10, kKeyShift = 11, kMouseLeft = 143, kMouseMiddle = 144, kMouseRight = 145,
                  kWheelUp = 146, kWheelDown = 147, kKeyCount = 186 };
 const char16_t* keyName(int key);
 
@@ -119,6 +119,10 @@ class DesktopObj : public ControlObj {
   script::Ref<script::Object> pointer, capture, hover;
   int mask = 0, lastDownKey = 0;
   bool shortcutMode = false;
+  // port: an edit control clicked inside controls that cannot be activated (the in-game HUD panels; the original has
+  // no text field there) holds the keyboard itself: characters and keys go to it alone until a click elsewhere, Enter
+  // or Esc. The original's edit fields all sit in activatable menus and never use this.
+  script::Ref<script::Object> loneEdit;
 
   void inputMouseMove(script::VM& vm, float dx, float dy);  // gsInputObject slot 1
   void inputMousePos(script::VM& vm, float x, float y);     // slot 2

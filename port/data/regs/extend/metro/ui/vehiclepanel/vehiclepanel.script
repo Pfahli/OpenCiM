@@ -1,17 +1,63 @@
-// ReGS extension of metro/ui/vehiclepanel/vehiclepanel.script (used as installed; see VM::extendSource): a save made
-// with community vehicle mods lists those vehicles in $gameData.$availableVehicles, but the port loads no community
-// content by default, so their templates are missing and the shop stopped at the first one ("Undefined member $type",
-// the original does the same without the mods). The shop now leaves vehicles without a template out; the save keeps
-// them, so they come back when the mods are loaded (--community-addons).
+// ReGS extension of metro/ui/vehiclepanel/vehiclepanel.script (used as installed; see VM::extendSource).
+// 1. A save made with community vehicle mods lists those vehicles in $gameData.$availableVehicles, but the port loads
+//    no community content by default, so their templates are missing and the shop stopped at the first one
+//    ("Undefined member $type", the original does the same without the mods). The shop now leaves vehicles without a
+//    template out; the save keeps them, so they come back when the mods are loaded (--community-addons).
+// 2. Port QoL (owner's request 2026-11-07): a search field next to the shop title. While it holds text, the shop
+//    lists only the models whose name (displayName, case-insensitive) contains it; the page arrows page through the
+//    matches. Empty = the original list.
 //@rename showShopItems regsBaseShowShopItems
 
 //@base
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regsStrings = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regsStrings = load "/regs/strings/en_US.strings";
+}
+$regsSearch = "";
+
+with ($regsSearchHint = new_control($bg.$content)) {
+  .setRect(162, 21, 128, 18);
+  .setMargins(4, 0, 2, 0);
+  MAIN.$ui.setTextFont(current, 0x80FFFFFF);
+  .textAlign = ALIGN_LEFT | ALIGN_MIDDLE;
+  .text = $regsStrings.$regs_vehicles_search;
+  .visible = true;
+  .canActivate = false;
+  .clickThrough = true;
+}
+
+with ($regsSearchInput = new_editControl($bg.$content)) {
+  .setBorder(0xFF777777, 1);
+  .setRect(162, 21, 128, 18);
+  .background = 0x60000000;
+  .setMargins(4, 1, 2, 1);
+  MAIN.$ui.setTextFont(current);
+  .caretColor = 0xFFFFFFFF;
+  .maxLength = 24;
+  .text = "";
+  .visible = true;
+  event .onCheckInput::($key) {
+    .rejectInput = $key < 32;
+  }
+  event .onChange::() {
+    $regsSearch = lowercase(.text);
+    $regsSearchHint.visible = .text == "";
+    $scrollOffset = 0;
+    showShopItems($selectedType);
+  }
+}
+MAIN.$ui.setTooltip($regsSearchInput, $regsStrings.$regs_vehicles_search_hint, 0, 1);
 
 function showShopItems($type) {
   $all = MAIN.$gameData.$availableVehicles;
   $known = map [];
   foreach (keys $all) {
-    if (MAIN.$grid.getGridObject(current)) $known[current] = $all[current];
+    $object = MAIN.$grid.getGridObject(current);
+    if ($object) {
+      if ($regsSearch == "" || findstr(lowercase($object.displayName), $regsSearch) >= 0) $known[current] = $all[current];
+    }
   }
   MAIN.$gameData.$availableVehicles = $known;
   regsBaseShowShopItems($type);

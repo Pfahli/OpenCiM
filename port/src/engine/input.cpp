@@ -394,11 +394,29 @@ void DesktopObj::inputKeyDown(VM& vm, int k) {
       hover = Ref<Object>(c);
       if (c) c->mouseOver(vm);
     }
+    if (ControlObj* e = asControl(loneEdit); e && e != c) {  // a click elsewhere: the lone edit lets the keyboard go
+      loneEdit = nullptr;
+      if (!e->destroyed) e->setActive(vm, false);
+    }
     if (c) {
       Ref<Object> keepC(c);
       c->activate(vm);
+      if (c->isEdit() && c->active)  // the chain up to the desktop broken by a control that cannot be activated?
+        for (ControlObj* p = c->parentControl(); p && p != this; p = p->parentControl())
+          if (!p->canActivate) {
+            loneEdit = Ref<Object>(c);
+            break;
+          }
       c->mouseDown(vm, mouseX - c->desktopLeft(), mouseY - c->desktopTop(), k, mask);
     }
+  } else if (ControlObj* e = asControl(loneEdit); e && !e->destroyed && e->active && e->visible()) {
+    if (k == kKeyEscape || k == kKeyEnter) {  // done typing: the edit lets go, the key is swallowed
+      loneEdit = nullptr;
+      e->setActive(vm, false);
+    } else {
+      e->keyDown(vm, k, mask);  // Backspace, arrows; not the game's hotkeys (the camera stays put while typing)
+    }
+    return;
   } else if (k == kKeyControl || k == kKeyAlt) {
     shortcutMode = true;
   } else if (shortcutMode && shortCut(vm, k)) {
@@ -542,8 +560,11 @@ void dispatchInput(Engine& eng) {
         break;
       }
       case T::Char:
-        if (auto* desk = dynamic_cast<DesktopObj*>(w->snapshot.get()); desk && !desk->destroyed)
-          desk->keyChar(vm, e.ch, desk->mask);
+        if (auto* desk = dynamic_cast<DesktopObj*>(w->snapshot.get()); desk && !desk->destroyed) {
+          ControlObj* lone = asControl(desk->loneEdit);  // a lone edit (gui.h) takes the characters itself
+          if (lone && lone->active && lone->visible()) lone->keyChar(vm, e.ch, desk->mask);
+          else desk->keyChar(vm, e.ch, desk->mask);
+        }
         break;
       case T::Activate:
       case T::Deactivate:
