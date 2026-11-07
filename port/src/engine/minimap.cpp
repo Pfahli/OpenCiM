@@ -331,6 +331,10 @@ bool drawMapFootprint(Display& d, VM& vm, ControlObj* c) {
   return true;
 }
 
+std::vector<uint32_t> renderGridThumbnail(VM& vm, const GridObj& grid, const GridData& g, int w, int h) {
+  return renderMapPixels(g, mapTemplates(vm, grid, g), w, h, 0xFE);
+}
+
 void registerMinimapNatives(VM& vm) {
   // renderMap(texture, width, height, mode) (L:0x08143f60): the minimap texture of the current map
   implement(vm, "gsGrid", u"renderMap", [](VM& v, Object* s, int, const Value* a) {
@@ -360,6 +364,7 @@ void registerMinimapNatives(VM& vm) {
     }
     tex->width = w;
     tex->height = h;
+    tex->cpuBGRA.assign(bytes, bytes + size_t(w) * size_t(h) * 4);  // for saveToFile (the editor's <map>.dds)
     return Value();
   });
   // worldToMapPosition(vector | x, z) / mapToWorldPosition(vector | x, y): control-local pixels ↔ world (§4.2)

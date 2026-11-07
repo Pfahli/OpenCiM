@@ -102,7 +102,23 @@ void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skip
       if (e.is_directory(ec)) {
         // community content (setCommunityContent): every folder of the install, and userdata/addons
         if (!communityContent_ && (install || key == "userdata/addons")) continue;
+        // a folder of the user's own (userdata/…) is listed even while empty (the map manager's new folders): a
+        // marker record "<dir>/" that listDirs sees and listFiles skips
+        if (key.rfind("userdata/", 0) == 0) {
+          Record d;
+          d.kind = Kind::Loose;
+          d.disk = e.path();
+          records_[key + "/"] = std::move(d);
+        }
         walk(e.path(), relPath);
+      } else if (key.rfind("userdata/", 0) == 0 && e.path().extension() == L".cimtpl") {
+        // an OpenCiM template (the editor's templates, regs/ui/mapbrowser.script): a GS10 package shown as the folder
+        // "<name>.cimtpl/" (template.grid, preview.dds, template.info); the file itself stays listed for renaming
+        Record r;
+        r.kind = Kind::Loose;
+        r.disk = e.path();
+        records_[key] = std::move(r);
+        mountArchive(e.path(), relPath, keyPrefix);
       } else if (hasGsExtension(e.path())) {
         std::string relNoExt = relPath.substr(0, relPath.size() - 3);
         mountArchive(e.path(), relNoExt, keyPrefix);
@@ -225,7 +241,7 @@ std::vector<std::string> Vfs::listFiles(const std::string& dir, const std::strin
   std::vector<std::string> out;
   for (auto it = records_.lower_bound(prefix); it != records_.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it) {
     std::string name = it->first.substr(prefix.size());
-    if (name.find('/') != std::string::npos) continue;
+    if (name.empty() || name.find('/') != std::string::npos) continue;
     if (!ext.empty()) {
       auto dot = name.rfind('.');
       if (dot == std::string::npos || name.substr(dot) != ext) continue;

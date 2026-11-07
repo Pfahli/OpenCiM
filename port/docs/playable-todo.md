@@ -19,8 +19,10 @@ modes (the editor's roads, terrain and paint tools come later):
 - [x] Lay tram tracks and metro tracks (ground, elevated with pillars, underground on the three levels) with junctions,
   slopes, conflicts and prices (`engine/tool_tracks.cpp`, `docs/ui/construction.md` §6-§9); station track parts
   through `toolBlocks().track`.
-- [ ] Lay roads, alleys, bridges and tunnels (editor only; `createRoadBlock` is a plain stand-in), the double track's
-  road crossings.
+- [~] Lay roads and alleys (editor only, `moveLayRoad` in `engine/tool_tracks.cpp`): small, large, avenue and express
+  roads, alleys, straight, diagonal, junctions where a road crosses one, dead ends; `createRoadBlock` joins with the
+  track tools' rules, not the original's own map-edge and ramp code. Still open: bridges and tunnels (modes 0xb,
+  0xc), the ramps' heights, half-block road ends, the double track's road crossings.
 - [x] The underground view (`GRID_VIEW_UNDERGROUND`, `docs/renderer/underground.md`): the minimap's layer button, the
   "U" key and the subway tool switch it as in the original; the map turns into bare earth with pits 24 m deep around
   the tunnel items, in which the subway tracks, underground stations with their stairs and halls, metro trains on
@@ -34,9 +36,11 @@ modes (the editor's roads, terrain and paint tools come later):
   keeps its name and lines. The whole loop (lay track, place stops, new line, buy trams, run, save, reload) checked on
   Cim2.
 - [x] Bulldoze (`GRIDMODE_REMOVE_OBJECTS`), with the demolition cost of buildings (construction.md §13).
-- [ ] Terraforming and paint tools (shift, level, soften, pavement, fields, variation, rename), also used by the map
-  editor.
-- [ ] Undo (`addUndoItem`/`executeUndoItem`).
+- [x] Terraforming and paint tools (`engine/tool_terrain.cpp`): shift, level, soften, pavement, fields, ruin, grow
+  trees, toggle water (the original's basin flood fill); port QoL: round brushes (setting `regsRoundBrushes`, on).
+  Still open: the variation (0x15) and rename (0x14) tools.
+- [x] Undo: the editor's undo button (timeline `removeLastAction` + base grid replay); every tool records on
+  `gsGridPlayer.timeline`. The brushes' drag copy (`addUndoItem`) is put back on cancel.
 - [x] Live map updates after an edit (`engine/grid_edit.h`, used by the city timeline): items added and removed in
   batches, the item and terrain meshes of the touched divisions, cell cover (`fixGrid`) and ground levelling under
   LOCK_GROUND items, the lane graph and walk map (simulation hooks), picking, the minimap raster. Still open: the
@@ -195,8 +199,38 @@ modes (the editor's roads, terrain and paint tools come later):
 
 ## 8. Map editor
 
-- [ ] The editor flows (Karteneditor menu) on top of the construction tools: new map, terrain, water, objects, timeline,
-  saving `userdata/maps` with the minimap thumbnail.
+Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`port/run/editor/`, test script
+`port/run/editor/run.ps1 -NewMap`):
+
+- [x] New map: Karteneditor → Neue Karte → Kartenattribute → an empty flat map (`gsGrid.setSize`).
+- [x] Terrain: raise/lower (shift), level, soften, ruin, pavement and field paint, trees; water fills a dug basin.
+- [x] Objects: buildings, props and markers from the object lists, stops and stations, the bulldozer.
+- [~] Roads and alleys (see §1); bridges and tunnels still open.
+- [x] Undo button (timeline replay over `memory/base.grid`).
+- [x] Timeline: the original shows the time bar only in debug mode (`$debug = true`, `$disableDebug = false`); there
+  dated edits, the day's action list with its labels, moving between years and saving the timeline work (needed the
+  clock to fire onDay when its date is set, as the original's `write_date`).
+- [x] Saving to `userdata/maps`: .grid, .timeline, .scenario and the .dds minimap thumbnail
+  (`gsTextureVariant_OGL.saveToFile`, A8R8G8B8 with mips).
+- [x] Loading: Karte laden into the editor; the saved map in the sandbox list (with its thumbnail) and a sandbox game
+  on it.
+- [x] Content packages (port, owner's request): the map attributes list the installed DLC/mod packages
+  (`addons/*`, `userdata/addons/*`) to tick; their buildings, props and foliage join the editor (names already
+  registered are kept). The map's .scenario stores `$regsPackages` (those of its objects and location) and
+  `$regsSelectedPackages`, which the original ignores. Opening a map with a package missing (editor list, sandbox
+  start) names it and offers "Open anyway" or cancel; missing objects stay invisible and are kept in the files.
+  Not checked yet: a DLC object actually placed showing up in `$regsPackages`; vehicle packs are not filtered.
+- [x] Undo keeps working after saving (same session).
+- [x] Port additions (owner's requests 2026-11-07): content packages per map, map sizes 128-2048 and enlarging,
+  autosave with 5 versions, the object list's package filter and search, a vehicles category, folders and a map
+  manager window (Karte laden: new folder, rename, move, delete, preview), templates (objects menu: save an area's
+  terrain and objects, stamp it elsewhere; replaces what it touches; recorded on the timeline, so undo works).
+  Templates: Shift adds/removes objects and areas, "Gelände speichern" option, a screenshot as the picture, and
+  their own file format .cimtpl (GS10 package with template.grid, template.dds, template.info listing the DLCs of its
+  objects) with export (Explorer) and import (drop into the folder), the missing-DLC check before placing, and the
+  DLCs a template needs loaded when placing it. Still no rotation.
+- [ ] Open: bridges, tunnels, ramps and map-edge road pieces; the rename (0x14) and variation (0x15) tools;
+  `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
 ## 9. Release (OpenRCT2 style: requires the original game)
 

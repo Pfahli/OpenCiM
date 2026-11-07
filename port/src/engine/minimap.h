@@ -1,10 +1,19 @@
 #pragma once
+#include <cstdint>
+#include <vector>
+
 #include "script/vm.h"
 
 namespace regs::engine {
 
 class ControlObj;
 class Display;
+class GridObj;
+struct GridData;
+
+// the minimap picture (renderMap, mode 0xfe) of any grid data with the grid's templates: w × h pixels 0xAARRGGBB,
+// row 0 the top (the editor's template previews)
+std::vector<uint32_t> renderGridThumbnail(script::VM& vm, const GridObj& grid, const GridData& g, int w, int h);
 
 // The in-game minimap (docs/ui/minimap.md). Natives: gsGrid.renderMap, gsMapCtrl.worldToMapPosition /
 // mapToWorldPosition and the template place counts (addHomePlaces, addWorkPlaces, addVisitPlaces, preventVisitors).

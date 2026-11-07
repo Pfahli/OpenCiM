@@ -154,7 +154,55 @@ bool parseBmp(const std::vector<uint8_t>& d, int& width, int& height, std::vecto
   return true;
 }
 
+std::string contentPackageOf(const std::string& path) {
+  std::string p = path;
+  for (char& ch : p)
+    if (ch == '\\') ch = '/';
+  while (!p.empty() && p[0] == '/') p.erase(0, 1);
+  for (const char* root : {"addons/", "metro/addons/", "userdata/addons/"}) {
+    size_t n = std::strlen(root);
+    if (p.compare(0, n, root) != 0) continue;
+    size_t slash = p.find('/', n);
+    return slash == std::string::npos ? p : p.substr(0, slash);
+  }
+  return std::string();
+}
+
 void registerGridNatives(VM& vm) {
+  // port: content packages (map editor, owner's request 2026-11-07). regsGetObjectPackage(idName): the package a
+  // template was loaded from ("addons/london", "" for the base game); regsGetUsedPackages(): the packages of the
+  // templates the live map items use, each once.
+  if (ClassInfo* c = vm.findClass("gsGrid")) {
+    addMethod(c, u"regsGetObjectPackage", 1, 1);
+    addMethod(c, u"regsGetUsedPackages", 0, 0);
+  }
+  implement(vm, "gsGrid", u"regsGetObjectPackage", [](VM& v, Object* s, int, const Value* a) {
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g) return Value::string(u"");
+    auto it = g->templates.find(utf16ToUtf8(v.toStr(a[0])));
+    if (it == g->templates.end()) return Value::string(u"");
+    auto pk = it->second->fieldValues.find(u"<package>");
+    return pk == it->second->fieldValues.end() ? Value::string(u"") : pk->second;
+  });
+  implement(vm, "gsGrid", u"regsGetUsedPackages", [](VM&, Object* s, int, const Value*) {
+    auto arr = make<ArrayObj>();
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g || !g->data) return Value::heap(VT::Array, arr.get());
+    std::vector<bool> used(g->data->types.size(), false);
+    for (const GridData::Item& it : g->data->items)
+      if (!it.removed && !(it.flags & 0x100000) && it.type < used.size()) used[it.type] = true;
+    std::set<std::u16string> seen;
+    for (size_t t = 0; t < used.size(); ++t) {
+      if (!used[t]) continue;
+      auto tp = g->templates.find(g->data->types[t]);
+      if (tp == g->templates.end()) continue;
+      auto pk = tp->second->fieldValues.find(u"<package>");
+      if (pk == tp->second->fieldValues.end()) continue;
+      std::u16string name = pk->second.toString();
+      if (!name.empty() && seen.insert(name).second) arr->items.push_back(Value::string(name));
+    }
+    return Value::heap(VT::Array, arr.get());
+  });
   if (ClassInfo* c = vm.findClass("gsGrid")) c->factory = [](const ClassInfo* ci) { return Ref<Object>(new GridObj(ci)); };
   // loadGridObject(idName, objectFile, [fallbackFile, [scaleX, scaleZ]]) (0x100c2b20, docs/renderer/grid-items.md §1):
   // a gsGridObject template. Like gsObject::loadFromFile: the companion script (width, flags, $price, storeMesh, ...),
@@ -180,6 +228,7 @@ void registerGridNatives(VM& vm) {
       }
     }
     t->fieldValues[u"idName"] = Value::string(utf8ToUtf16(name));
+    t->fieldValues[u"<package>"] = Value::string(utf8ToUtf16(contentPackageOf(utf16ToUtf8(meshPath))));
     g->templates[name] = t;
     g->templateOrder.push_back(name);
     runCompanionScript(v, t.get(), path);
@@ -206,7 +255,9 @@ void registerGridNatives(VM& vm) {
     return Value::heap(VT::Object, m.get());
   });
   // colormap(path): a BMP as a top-down RGB pixel table (L:0x080eecb0) for per-item tints
-  if (ClassInfo* c = vm.findClass("gsObjectVariant")) {
+  ClassInfo* colorMapClass = vm.findClass("gsColorMap");
+  if (!colorMapClass) colorMapClass = vm.findClass("gsObjectVariant");
+  if (ClassInfo* c = colorMapClass) {
     implementGlobal(vm, u"colormap", [c](VM& v, Object* self, int, const Value* a) {
       Ref<Object> o(new ColormapObj(c));
       auto* cm = static_cast<ColormapObj*>(o.get());
@@ -216,6 +267,17 @@ void registerGridNatives(VM& vm) {
       return Value::heap(VT::Object, o.get());
     });
   }
+  // get(u, v) (gsColorMap::method_get / getColor L:0x080ef310 / 0x080ef230): the pixel at (round((w−1)·u),
+  // round((h−1)·v)), clamped, as 0xFFRRGGBB; 0 (and white for an empty map, as getColor) otherwise
+  implement(vm, "gsColorMap", u"get", [](VM& v, Object* s, int, const Value* a) {
+    auto* cm = dynamic_cast<ColormapObj*>(s);
+    if (!cm || cm->argb.empty()) return Value::integer(int32_t(0xFFFFFFFFu));
+    int x = int(std::lrint(float(cm->width - 1) * float(v.toFloat(a[0]))));
+    int y = int(std::lrint(float(cm->height - 1) * float(v.toFloat(a[1]))));
+    x = std::clamp(x, 0, cm->width - 1);
+    y = std::clamp(y, 0, cm->height - 1);
+    return Value::integer(int32_t(cm->argb[size_t(y) * size_t(cm->width) + size_t(x)]));
+  });
   implement(vm, "gsGrid", u"getGridObject", [](VM& v, Object* s, int, const Value* a) {
     auto* g = dynamic_cast<GridObj*>(s);
     if (!g) return Value::null();
@@ -356,6 +418,114 @@ void registerGridNatives(VM& vm) {
     loadSimulation(v, g, file);
     return Value::boolean(true);
   });
+  // port: regsResize(width, length, offsetX, offsetZ) (the editor's map attributes, owner's request 2026-11-07): the map
+  // in a grid of the new size, its cells and items moved by the offset; new cells flat at 0x200 without flags, cells
+  // and items that fall outside dropped. The simulation starts empty (editor maps have none) and every cache rebuilds.
+  if (ClassInfo* c = vm.findClass("gsGrid")) addMethod(c, u"regsResize", 4, 4);
+  implement(vm, "gsGrid", u"regsResize", [](VM& v, Object* s, int, const Value* a) {
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g || !g->data) return Value::boolean(false);
+    const GridData& old = *g->data;
+    int w = std::clamp(v.toInt(a[0]), 16, 8192), l = std::clamp(v.toInt(a[1]), 16, 8192);
+    int ox = v.toInt(a[2]), oz = v.toInt(a[3]);
+    std::vector<uint8_t> file = emptyGridFile(w, l, int(old.bucketShift));
+    auto data = std::make_shared<GridData>();
+    std::string err;
+    if (!parseGridFile(file, *data, &err)) return Value::boolean(false);
+    int shiftOld = 0x200 - int(old.heightBase);
+    for (int z = 0; z < old.length; ++z)
+      for (int x = 0; x < old.width; ++x) {
+        int nx = x + ox, nz = z + oz;
+        if (nx < 0 || nz < 0 || nx >= w || nz >= l) continue;
+        size_t o = size_t(z) * size_t(old.width) + size_t(x), n = size_t(nz) * size_t(w) + size_t(nx);
+        data->height[n] = int16_t(old.height[o] - shiftOld + (0x200 - int(data->heightBase)));
+        data->flags[n] = old.flags[o];
+      }
+    data->types = old.types;
+    std::vector<int64_t> remap(old.items.size(), -1);
+    for (size_t i = 0; i < old.items.size(); ++i) {
+      GridData::Item it = old.items[i];
+      if (it.removed || (it.flags & 0x100000)) continue;  // tombstones and tool previews
+      int nx = it.x + ox, nz = it.z + oz;
+      if (nx < 0 || nz < 0 || nx >= w || nz >= l) continue;
+      it.x = int16_t(nx), it.z = int16_t(nz);
+      it.y = int16_t(it.y + shiftOld - (0x200 - int(data->heightBase)));
+      remap[i] = int64_t(data->items.size());
+      data->items.push_back(it);
+      data->names.push_back(i < old.names.size() ? old.names[i] : std::string());
+    }
+    for (GridData::Item& it : data->items)  // parents by their new index (a dropped parent drops the link)
+      it.parent = it.parent && it.parent <= remap.size() && remap[it.parent - 1] >= 0 ? uint32_t(remap[it.parent - 1] + 1) : 0;
+    LOG_INFO("grid: resized %dx%d -> %dx%d, offset %d,%d, %zu items", old.width, old.length, w, l, ox, oz, data->items.size());
+    g->data = data;
+    g->sourceFile = std::make_shared<const std::vector<uint8_t>>(file);
+    ++g->generation;
+    loadSimulation(v, g, file);
+    return Value::boolean(true);
+  });
+  // addCamera(camera): the original keeps a list of cameras for its division culling; the port culls per view.
+  implement(vm, "gsGrid", u"addCamera", [](VM&, Object*, int, const Value*) { return Value(); });
+  // setSize(width, length, [divisionShift]) (0x100b9a20 → gsGrid::setSize L:0x0813eb50): an empty map, as the editor's
+  // "empty map" starts it. Every cell at height 0x200 with no flags (gsGridCellPlane::setSize L:0x08163b10), no items,
+  // the simulation cleared. Same size as now = nothing happens. The map gets a stand-in source file (header, empty
+  // terrain and network sections) so saveToFile writes it like a loaded one.
+  implement(vm, "gsGrid", u"setSize", [](VM& v, Object* s, int argc, const Value* a) {
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g) return Value();
+    int w = std::max(0, v.toInt(a[0])), l = std::max(0, v.toInt(a[1]));
+    int shift = argc > 2 ? std::max(1, v.toInt(a[2])) : 4;
+    if (g->data && g->data->width == w && g->data->length == l && int(g->data->bucketShift) == shift) return Value();
+    std::vector<uint8_t> file = emptyGridFile(w, l, shift);
+    auto data = std::make_shared<GridData>();
+    std::string err;
+    if (!parseGridFile(file, *data, &err)) {
+      LOG_ERROR("grid setSize %dx%d: %s", w, l, err.c_str());
+      return Value();
+    }
+    LOG_INFO("grid: new empty map %dx%d cells", w, l);
+    g->data = data;
+    g->sourceFile = std::make_shared<const std::vector<uint8_t>>(file);
+    ++g->generation;
+    loadSimulation(v, g, file);
+    return Value();
+  });
+}
+
+std::vector<uint8_t> emptyGridFile(int width, int length, int bucketShift) {
+  std::vector<uint8_t> f;
+  auto p32 = [&](uint32_t x) { f.insert(f.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 4); };
+  auto p16 = [&](uint16_t x) { f.insert(f.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 2); };
+  size_t cells = size_t(width) * size_t(length);
+  p32(0x07000000);
+  p32(0);
+  p32(uint32_t(width));
+  p32(uint32_t(length));
+  float cs = 3.0f;
+  uint32_t csBits;
+  std::memcpy(&csBits, &cs, 4);
+  p32(csBits);
+  p32(uint32_t(bucketShift));
+  p16(0x200);
+  p16(0);
+  p32(0);
+  p32(0x07010000);
+  p32(uint32_t(cells * 4));
+  f.reserve(f.size() + cells * 4 + 64);
+  for (size_t i = 0; i < cells; ++i) {
+    p16(0x200);
+    p16(0);
+  }
+  p32(0x07020000);  // {typeCount 0, itemCount 0} and the three empty tables
+  p32(8 + 3 * 8);
+  p32(0);
+  p32(0);
+  for (uint32_t tag : {0x07020100u, 0x07020210u, 0x07020310u}) {
+    p32(tag);
+    p32(0);
+  }
+  uint32_t size = uint32_t(f.size() - 8);
+  std::memcpy(f.data() + 4, &size, 4);
+  return f;
 }
 
 void GridObj::tick(VM& vm, float dt) {

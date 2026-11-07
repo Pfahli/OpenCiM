@@ -163,6 +163,9 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
     tp.skinned = isSkinnedModel(vm, o);
     tp.animStart = fieldFloat(vm, o, u"doorOpenStart", 0);
     tp.animLength = fieldFloat(vm, o, u"doorOpenLen", 0);
+    // port: a vehicle template placed as scenery (the editor's vehicle category) stands with closed doors, as
+    // parked vehicles are drawn (bind pose); looping its door clip like an animated building left the doors open
+    if (fieldFloat(vm, o, u"frontOffset", 0) != 0 || fieldFloat(vm, o, u"rearOffset", 0) != 0) tp.animLength = 0;
     tp.materialBase = int(tc.materials.size());
     for (const MaterialDef& m : o->data->materials) tc.materials.push_back(objectMaterial(d, vm, o, m));
     for (int n = 1; n <= 4; ++n) {

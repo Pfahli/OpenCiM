@@ -1,6 +1,7 @@
 // Window, video, texture and GUI-control natives: geometry, images, borders, text, formatting and fades behave like
 // the engine (docs/ui/controls.md); the display draws from this state (engine/display.cpp).
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <map>
 
@@ -334,6 +335,86 @@ void registerUiNatives(VM& vm) {
       f.get = [w](VM&, Object* o) { auto* t = static_cast<TextureObj*>(o); return Value::integer(w ? t->width : t->height); };
     }
   }
+  // saveToFile(path) (gsTextureVariant_OGL::method_saveToFile L:0x081fba50): ".bmp" a 24-bit BMP of level 0 (rows as
+  // the texture has them, so the image is upside down in a viewer, as the original's); anything else a DDS A8R8G8B8
+  // (flags 0x21007, caps 0x40100a) with the whole mip chain, each level the 2×2 mean of the one before, (a+b+c+d+3)>>2
+  // over SIGNED bytes as the original's char arithmetic (bright channels wrap; faithful). The editor saves the
+  // minimap this way as <map>.dds. Only textures with CPU pixels (renderMap) can be saved.
+  implement(vm, "gsTextureVariant_OGL", u"saveToFile", [](VM& v, Object* s, int, const Value* a) {
+    auto* t = dynamic_cast<TextureObj*>(s);
+    std::string path = utf16ToUtf8(v.toStr(a[0]));
+    if (!t || t->width <= 0 || t->height <= 0 || t->cpuBGRA.size() < size_t(t->width) * size_t(t->height) * 4) {
+      LOG_WARN("texture saveToFile %s: no pixels on the CPU (only renderMap textures can be saved)", path.c_str());
+      return Value();
+    }
+    int w = t->width, h = t->height;
+    std::vector<uint8_t> out;
+    auto p32 = [&](uint32_t x) { out.insert(out.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 4); };
+    auto p16 = [&](uint16_t x) { out.insert(out.end(), reinterpret_cast<uint8_t*>(&x), reinterpret_cast<uint8_t*>(&x) + 2); };
+    std::string ext = path.size() >= 4 ? path.substr(path.size() - 4) : "";
+    for (char& ch : ext) ch = char(std::tolower(uint8_t(ch)));
+    if (ext == ".bmp") {
+      p16(0x4D42);
+      p32(uint32_t(w * h * 3 + 0x38));
+      p32(0);
+      p32(0x38);
+      p32(0x28);
+      p32(uint32_t(w));
+      p32(uint32_t(h));
+      p16(1);
+      p16(24);
+      p32(0);
+      p32(uint32_t(w * h * 3));
+      p32(0x400);
+      p32(0x400);
+      p32(0);
+      p32(0);
+      for (size_t i = 0; i < size_t(w) * size_t(h); ++i) out.insert(out.end(), &t->cpuBGRA[i * 4], &t->cpuBGRA[i * 4] + 3);
+      return Value::boolean(v.vfs().write(path, out));
+    }
+    int mips = 1;
+    for (int m = std::max(w, h) >> 1; m; m >>= 1) ++mips;
+    p32(0x20534444);  // "DDS "
+    p32(0x7C);
+    p32(0x21007);
+    p32(uint32_t(h));
+    p32(uint32_t(w));
+    p32(0);
+    p32(0);
+    p32(uint32_t(mips));
+    for (int i = 0; i < 11; ++i) p32(0);
+    p32(0x20);
+    p32(0x41);
+    p32(0);
+    p32(0x20);
+    p32(0xFF0000);
+    p32(0xFF00);
+    p32(0xFF);
+    p32(0xFF000000u);
+    p32(0x40100A);
+    for (int i = 0; i < 4; ++i) p32(0);
+    std::vector<uint8_t> level = t->cpuBGRA;
+    int lw = w, lh = h;
+    for (;;) {
+      out.insert(out.end(), level.begin(), level.begin() + std::ptrdiff_t(size_t(lw) * size_t(lh) * 4));
+      if (lw == 1 && lh == 1) break;
+      int nw = std::max(1, lw >> 1), nh = std::max(1, lh >> 1);
+      std::vector<uint8_t> next(size_t(nw) * size_t(nh) * 4);
+      for (int y = 0; y < nh; ++y)
+        for (int x = 0; x < nw; ++x)
+          for (int c = 0; c < 4; ++c) {
+            auto px = [&](int xx, int yy) {
+              return int(int8_t(level[(size_t(std::min(yy, lh - 1)) * size_t(lw) + size_t(std::min(xx, lw - 1))) * 4 + size_t(c)]));
+            };
+            next[(size_t(y) * size_t(nw) + size_t(x)) * 4 + size_t(c)] =
+                uint8_t((px(2 * x, 2 * y) + px(2 * x + 1, 2 * y) + px(2 * x, 2 * y + 1) + px(2 * x + 1, 2 * y + 1) + 3) >> 2);
+          }
+      level.swap(next);
+      lw = nw;
+      lh = nh;
+    }
+    return Value::boolean(v.vfs().write(path, out));
+  });
   for (const char* video : {"gsVideo_OGL", "gsVideo"}) {
     implement(vm, video, u"new_texture", [](VM& v, Object*, int argc, const Value* a) {
       std::u16string path = argc > 0 ? v.resolvePath(v.toStr(a[0]), nullptr) : u"";

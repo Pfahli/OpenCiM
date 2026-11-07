@@ -16,6 +16,10 @@ class GridObj;
 using GridSectionWriter = std::function<bool(script::VM&, GridObj*, uint32_t tag, std::vector<uint8_t>& out)>;
 void setGridSectionWriter(GridSectionWriter writer);
 
+// a whole map.grid of a GridData: header, terrain and network only (the editor's templates)
+struct GridData;
+std::vector<uint8_t> gridFileOf(const GridData& g);
+
 void registerSaveNatives(script::VM& vm);
 
 }  // namespace regs::engine

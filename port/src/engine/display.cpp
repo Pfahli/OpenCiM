@@ -449,6 +449,12 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
   }
   drawFpsReadout(vm);
   r2d_.endFrame();
+  if (captureNext) {
+    auto fn = std::move(captureNext);
+    captureNext = nullptr;
+    std::vector<uint8_t> px = r2d_.readPixels();
+    fn(px, r2d_.frameWidth(), r2d_.frameHeight());
+  }
   if (!shot_.empty()) {
     if (saveScreenshot(shot_)) LOG_INFO("screenshot: %s", shot_.string().c_str());
     else LOG_ERROR("screenshot failed: %s", shot_.string().c_str());

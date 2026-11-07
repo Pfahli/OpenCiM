@@ -1,0 +1,122 @@
+// ReGS extension of the editor's object list (metro/ui/objectlist/objectlist.script, used as installed; see
+// VM::extendSource), owner's request 2026-11-07: next to the category a filter by content package and a search field.
+// * Filter: all content, the base game, or one DLC/mod (main.script extension); it offers only the packages that have
+//   objects in this list (vehicle packs have no buildings).
+// * Search: the display name or the ID, case-insensitive. While it holds text, the list shows the matches of every
+//   category, so a building is found without knowing its category.
+//@rename addItem regsBaseAddItem
+//@rename addItemToList regsBaseAddItemToList
+//@rename selectCategory regsBaseSelectCategory
+
+//@base
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regsStrings = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regsStrings = load "/regs/strings/en_US.strings";
+}
+$regsFilter = "*";   // "*" all, "" the base game, else a package ("addons/tokyo")
+$regsSearch = "";
+$regsFilterPackages = map [];
+
+$categoryList.width = 240;
+MAIN.$ui.createLabel($bg.$content, 430, 20, 70, 40, $regsStrings.$regs_list_filter_title);
+$regsFilterList = MAIN.$ui.createDropList($bg.$content, 500, 25, 230, 30);
+MAIN.$ui.addDropListItem($regsFilterList, $regsStrings.$regs_list_filter_all, macro :: regsSetFilter("*"));
+
+with ($regsSearchHint = new_control($bg.$content)) {
+  .setRect(750, 25, $bg.$content.width - 790, 30);
+  .setMargins(6, 0, 2, 0);
+  MAIN.$ui.setTextFont(current, 0x80FFFFFF);
+  .textAlign = ALIGN_LEFT | ALIGN_MIDDLE;
+  .text = $regsStrings.$regs_vehicles_search;
+  .visible = true;
+  .canActivate = false;
+  .clickThrough = true;
+}
+with ($regsSearchInput = new_editControl($bg.$content)) {
+  .setBorder(0xFF777777, 1);
+  .setRect(750, 25, $bg.$content.width - 790, 30);
+  .background = 0x60000000;
+  .setMargins(6, 6, 2, 2);
+  MAIN.$ui.setTextFont(current);
+  .caretColor = 0xFFFFFFFF;
+  .maxLength = 32;
+  .text = "";
+  .visible = true;
+  event .onCheckInput::($key) {
+    .rejectInput = $key < 32;
+  }
+  event .onChange::() {
+    $regsSearch = lowercase(.text);
+    $categoryList.$list.visible = false;   // typing closes the open drop-downs
+    $regsFilterList.$list.visible = false;
+    $regsSearchHint.visible = .text == "";
+    regsRefresh();
+  }
+}
+
+// an object's package for the filter: "" for the base game (also its free folders)
+function regsObjectPackage($object) {
+  $p = MAIN.$grid.regsGetObjectPackage($object);
+  if (MAIN.$main.regsIsBasePackage($p)) return "";
+  return $p;
+}
+
+function regsSetFilter($package) {
+  $regsFilter = $package;
+  regsRefresh();
+}
+
+function regsRefresh() {
+  if ($currentCategory != "") selectCategory($currentCategory);
+}
+
+function regsMatches($object) {
+  $o = MAIN.$grid.getGridObject($object);
+  if (!$o) return false;
+  if ($regsFilter != "*" && regsObjectPackage($object) != $regsFilter) return false;
+  if ($regsSearch != "") {
+    if (findstr(lowercase($o.displayName), $regsSearch) < 0 && findstr(lowercase($object), $regsSearch) < 0) return false;
+  }
+  return true;
+}
+
+// the toolbar fills the list after load: each object's package joins the filter the first time one shows up
+function addItem($category, $object, $action) {
+  $p = regsObjectPackage($object);
+  if (!(defined $regsFilterPackages[$p])) {
+    $regsFilterPackages[$p] = true;
+    $name = $p == "" ? $regsStrings.$regs_list_filter_base : MAIN.$main.regsPackageName($p, $regsStrings);
+    MAIN.$ui.addDropListItem($regsFilterList, $name, macro($p) :: regsSetFilter($0));
+  }
+  regsBaseAddItem($category, $object, $action);
+}
+
+// Objects without a display name (airport pieces, many props) showed only their size: they get one made from their
+// ID ("airport-runway_01" → "Airport runway 01"), kept on the template so the hover info shows it too.
+function regsNameFromId($id) {
+  $name = replacestr(replacestr($id, "-", " "), "_", " ");
+  if ($name == "") return $id;
+  return uppercase(substr($name, 0, 1)) + substr($name, 1);
+}
+
+function addItemToList($object, $action) {
+  if (!regsMatches($object)) return;
+  $o = MAIN.$grid.getGridObject($object);
+  if ($o.displayName == "") $o.displayName = regsNameFromId($object);
+  regsBaseAddItemToList($object, $action);
+}
+
+function selectCategory($category) {
+  if ($regsSearch == "") {
+    regsBaseSelectCategory($category);
+    return;
+  }
+  $listbox.$content.clear();   // searching: the matches of every category
+  $itemCount = 0;
+  $currentCategory = $category;
+  foreach (keys $items) {
+    foreach ($items[current]) addItemToList(current[0], current[1]);
+  }
+}

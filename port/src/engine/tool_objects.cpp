@@ -23,6 +23,7 @@
 #include "engine/gui.h"
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
+#include "engine/timeline.h"
 #include "engine/tools.h"
 
 namespace regs::engine {
@@ -738,9 +739,16 @@ bool finishPlace(VM& vm, ControlObj* player, GridObj* grid) {
     if (gridCheckConflict(vm, grid, t.newItems[k], t.replaced)) conflict = true;
     if (k > 0 && gridItemsConflict(vm, grid, t.newItems[k - 1], t.newItems[k])) conflict = true;
   }
+  // the editor records the placing as one group (finishTool L:0x0819a3e0.c:299-508)
+  Object* tl = conflict ? nullptr : playerTimeline(vm, player);
+  if (tl) {  // placing: "%9 " and the object (L:0x0819a3e0.c:302-311), stops "%!10"
+    std::string what = !t.newItems.empty() && t.newItems[0] < g.items.size() ? g.types[g.items[t.newItems[0]].type] : std::string();
+    timelineBeginGroup(vm, tl, mode == kGridModeCreateStop ? std::string("%!10") : "%9 " + what);
+  }
   if (!conflict)
     for (uint32_t r : t.replaced) {
       gridSetSelected(vm, grid, r, false, false);
+      timelineRecordDelete(vm, tl, grid, r);
       gridEditRemoveItem(vm, grid, r);
     }
   grid->mountedCopies.clear();
@@ -753,21 +761,25 @@ bool finishPlace(VM& vm, ControlObj* player, GridObj* grid) {
     if (mode == kGridModeCreateStop && n.ok && (n.flags & kFlagStop)) {
       int old = upgradedStop(vm, grid, i);
       if (old >= 0) {
+        timelineRecordDelete(vm, tl, grid, uint32_t(old));  // replayed as the old stop going and the new one coming
         GridData::Item& it = g.items[size_t(old)];
         it.type = g.items[i].type;
         it.orient = g.items[i].orient;
         gridEditItemChanged(grid, uint32_t(old));
+        timelineRecordCreate(vm, tl, grid, uint32_t(old));
         upgraded.emplace_back(uint32_t(old), n.tpl.obj);
         continue;
       }
     }
     int m = gridMountObject(vm, grid, i);
     if (m >= 0) mounted.push_back(uint32_t(m));
+    if (m >= 0) timelineRecordCreate(vm, tl, grid, uint32_t(m));
   }
   for (auto i = t.newItems.rbegin(); i != t.newItems.rend(); ++i) gridEditRemoveItem(vm, grid, *i);
   grid->mountedCopies.clear();
   t.newItems.clear();
   t.replaced.clear();
+  if (tl) timelineEndGroup(vm, tl);
   gridEditEnd(vm, grid);
   for (auto& [item, model] : upgraded)
     if (Object* c = gridItemController(vm, grid, item)) {
@@ -1024,10 +1036,15 @@ bool removeObjectTool(VM& vm, ControlObj* player, GridObj* grid, uint32_t item, 
     gridEditEnd(vm, grid);
     return false;
   }
+  // the editor records the removal: the item, the neighbours cut back and their new ends (removeObject L:0x08198b10)
+  Object* tl = playerTimeline(vm, player);
+  if (tl && depth == 0) timelineBeginGroup(vm, tl, "%0");
   gridSetSelected(vm, grid, item, false, false);
+  timelineRecordDelete(vm, tl, grid, item);
   gridEditRemoveItem(vm, grid, item);  // with its parts (gsGrid::removeObject)
   for (uint32_t o : t.replaced) {
     gridSetSelected(vm, grid, o, false, false);
+    timelineRecordDelete(vm, tl, grid, o);
     gridEditRemoveItem(vm, grid, o);
   }
   for (size_t k = 0; k < t.newItems.size(); ++k) placeObject(vm, player, grid, t.newItems[k]);
@@ -1036,6 +1053,7 @@ bool removeObjectTool(VM& vm, ControlObj* player, GridObj* grid, uint32_t item, 
   for (uint32_t i : t.newItems) {
     int m = gridMountObject(vm, grid, i);
     if (m >= 0) mounted.push_back(uint32_t(m));
+    if (m >= 0) timelineRecordCreate(vm, tl, grid, uint32_t(m));
   }
   for (auto i = t.newItems.rbegin(); i != t.newItems.rend(); ++i) gridEditRemoveItem(vm, grid, *i);
   grid->mountedCopies.clear();
@@ -1052,6 +1070,7 @@ bool removeObjectTool(VM& vm, ControlObj* player, GridObj* grid, uint32_t item, 
     if (next < 0) break;
     if (!removeObjectTool(vm, player, grid, uint32_t(next), depth + 1)) g.items[size_t(next)].flags &= ~kItemNegative;
   }
+  if (tl && depth == 0) timelineEndGroup(vm, tl);
   gridEditEnd(vm, grid);
   fireInstanceEvents(vm, grid, mounted);
   return true;

@@ -457,12 +457,14 @@ void registerObjectNatives(VM& vm) {
     field(u"days", [](ClockObj* k) { return Value::integer(k->day); }, nullptr);
     field(u"months", [](ClockObj* k) { return Value::integer(k->month); }, nullptr);
     field(u"years", [](ClockObj* k) { return Value::integer(k->year); }, nullptr);
-    // writing date or time decodes the calendar at once, without events (getSaveGamesList sets date and reads days)
+    // writing date or time decodes the calendar at once and fires the events of the parts that changed
+    // (gsClock::write_date / write_time L:0x080ec9c0 / 0x080ec990 call refresh L:0x080ec360): the editor's timebar
+    // follows a date picked on its bars through onDay; getSaveGamesList reads the decoded days right away
     for (const char16_t* n : {u"date", u"time"}) {
       FieldInfo& f = c->fields[n];
       f.set = [set = f.set](VM& vm, Object* o, const Value& v) {
         set(vm, o, v);
-        static_cast<ClockObj*>(o)->recompute(vm, false);
+        static_cast<ClockObj*>(o)->recompute(vm, true);
       };
     }
   }

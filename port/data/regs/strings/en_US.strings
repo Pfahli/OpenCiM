@@ -53,3 +53,69 @@ $regs_autosave_keep_label = "Keep";
 $regs_autosave_keep_item = "the last %0";
 $regs_autosave_note1 = "Autosaves go to the folder Autosave in the save list.";
 $regs_autosave_note2 = "The game is only saved while no construction tool and no dialog is open.";
+// search field in the vehicle shop (extend/metro/ui/vehiclepanel/vehiclepanel.script): placeholder and tooltip
+$regs_vehicles_search = "Search...";
+$regs_vehicles_search_hint = "Filter vehicles by name";
+// content packages in the map editor (extend/metro/ui/menus/editor.script, extend/metro/scripts/main.script)
+$regs_packages_title = "Content packages:";
+$regs_packages_base = "Base game (with Munich and the free content)";
+$regs_packages_missing_dialog = "This map needs content that is not installed to look and play as its author intended:";
+$regs_packages_openAnyway_button = "Open anyway";
+$regs_package_names = map ["vehiclepack01", "Design Classics", "vehiclepack02", "Design Marvels", "tokyo", "Tokyo", "vehiclepack03", "Design Now", "stationpack01", "Metro Stations", "germany", "German Cities", "usa", "US Cities", "vehiclepack05", "Design Dreams", "ulm", "Ulm", "paris", "Paris", "stpetersburg", "St. Petersburg", "london", "London", "humble", "Design Quirks"];
+$regs_packages_allDlcs_button = "Enable all DLCs";
+// object list in the editor (extend/metro/ui/objectlist/objectlist.script): content package filter and search
+$regs_list_filter_title = "Filter:";
+$regs_list_filter_all = "All content";
+$regs_list_filter_base = "Base game";
+$regs_category_vehicles = "Vehicles";
+// map sizes beyond XL (port): map attributes and the sandbox page
+$regs_mapSize_extra = ["XXL (1536x1536)", "XXXL (2048x2048)", "Tiny (256x256)", "Microscopic (128x128)"];
+$regs_mapSize_enlarge_hint = "Enlarge the map: the current map stays in the middle, the new border is flat grass.";
+// map editor autosave (extend/metro/scripts/editor.script)
+$regs_autosave_option = "Autosave (every 5 minutes, 5 versions)";
+$regs_autosave_status = "Map autosaved";
+$regs_autosave_note = "Autosave %0 %1";
+$regs_autosave_unnamed = "Unnamed";
+// folders in "Load map" and when saving (extend/metro/ui/menus/mainmenu.script)
+$regs_maps_up = ".. (back)";
+$regs_maps_folder = "[%0]";
+$regs_maps_original_folder = "Cities in Motion (original)";
+$regs_maps_autosave_folder = "Autosaves";
+$regs_maps_folder_hint = "Folder: %0";
+$regs_maps_save_hint = "Folders with a slash: folder/name";
+// map manager (regs/ui/mapbrowser.script)
+$regs_browser_title = "Load map";
+$regs_browser_open = "Open";
+$regs_browser_newFolder = "New folder";
+$regs_browser_rename = "Rename";
+$regs_browser_move = "Move";
+$regs_browser_delete = "Delete";
+$regs_browser_newFolder_dialog = "Name of the new folder:";
+$regs_browser_rename_dialog = "New name:";
+$regs_browser_move_dialog = "Move to which folder?";
+$regs_browser_delete_map = "Really delete the map %0?";
+$regs_browser_delete_folder = "Really delete the folder %0 with all maps in it?";
+$regs_browser_exists = "This name is already taken.";
+$regs_browser_top = "(top level)";
+$regs_browser_empty = "(empty)";
+// templates in the map editor (extend/metro/scripts/editor.script, engine/tool_templates.cpp)
+$regs_template_save_hint = "Save template\nDrag an area: its terrain and objects are saved as a template.";
+$regs_template_place_hint = "Place template\nPick a saved template and click on the map. What lies in the area is replaced.";
+$regs_template_name_dialog = "Name of the template:";
+$regs_template_list_dialog = "Which template to place?";
+$regs_template_saved_status = "Template saved";
+$regs_template_none = "No templates saved yet.";
+$regs_template_panel_title = "Selection for template";
+$regs_template_panel_text = "Area %0 x %1 cells, %2 objects";
+$regs_template_panel_empty = "Drag an area.";
+$regs_template_panel_hint = "Shift + click: add or remove an object\nShift + drag: add an area";
+$regs_template_panel_save = "Save";
+$regs_template_browser_title = "Templates";
+$regs_template_place_button = "Place";
+$regs_template_terrain_option = "Save terrain";
+$regs_template_export = "Export";
+$regs_template_import = "Import";
+$regs_template_export_hint = "Shows the template file (.cimtpl) in Explorer, to share it.";
+$regs_template_import_hint = "Opens the templates folder: put .cimtpl files in it, then open this window again.";
+$regs_template_needs_dlc = "(DLC missing)";
+$regs_template_missing_dialog = "This template needs content that is not installed to look as its author intended:";

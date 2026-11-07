@@ -53,3 +53,69 @@ $regs_autosave_keep_label = "Behalten";
 $regs_autosave_keep_item = "die letzten %0";
 $regs_autosave_note1 = "Die automatischen Spielstände liegen im Ordner Autosave der Spielstandliste.";
 $regs_autosave_note2 = "Gespeichert wird nur, wenn kein Bauwerkzeug und kein Dialog offen ist.";
+// Suchfeld im Fahrzeughandel (extend/metro/ui/vehiclepanel/vehiclepanel.script): Platzhalter und Tooltip
+$regs_vehicles_search = "Suchen...";
+$regs_vehicles_search_hint = "Fahrzeuge nach Namen filtern";
+// Inhaltspakete im Karteneditor (extend/metro/ui/menus/editor.script, extend/metro/scripts/main.script)
+$regs_packages_title = "Inhaltspakete:";
+$regs_packages_base = "Hauptspiel (mit München und den kostenlosen Inhalten)";
+$regs_packages_missing_dialog = "Diese Karte braucht nicht installierte Inhalte, um so auszusehen und zu spielen, wie der Autor sie gedacht hat:";
+$regs_packages_openAnyway_button = "Trotzdem öffnen";
+$regs_package_names = map ["vehiclepack01", "Design Classics", "vehiclepack02", "Design Marvels", "tokyo", "Tokyo", "vehiclepack03", "Design Now", "stationpack01", "Metro Stations", "germany", "German Cities", "usa", "US Cities", "vehiclepack05", "Design Dreams", "ulm", "Ulm", "paris", "Paris", "stpetersburg", "St. Petersburg", "london", "London", "humble", "Design Quirks"];
+$regs_packages_allDlcs_button = "Alle DLCs aktivieren";
+// Objektliste im Editor (extend/metro/ui/objectlist/objectlist.script): Filter nach Inhaltspaket und Suche
+$regs_list_filter_title = "Filter:";
+$regs_list_filter_all = "Alle Inhalte";
+$regs_list_filter_base = "Hauptspiel";
+$regs_category_vehicles = "Fahrzeuge";
+// Kartengrößen über XL hinaus (Port): Kartenattribute und Sandbox-Seite
+$regs_mapSize_extra = ["XXL (1536x1536)", "XXXL (2048x2048)", "Winzig (256x256)", "Mikroskopisch (128x128)"];
+$regs_mapSize_enlarge_hint = "Karte vergrößern: die bisherige Karte bleibt in der Mitte, der neue Rand ist flaches Gras.";
+// Autosave im Karteneditor (extend/metro/scripts/editor.script)
+$regs_autosave_option = "Automatisch speichern (alle 5 Minuten, 5 Versionen)";
+$regs_autosave_status = "Karte automatisch gesichert";
+$regs_autosave_note = "Autosave %0 %1";
+$regs_autosave_unnamed = "Unbenannt";
+// Ordner in "Karte laden" und beim Speichern (extend/metro/ui/menus/mainmenu.script)
+$regs_maps_up = ".. (zurück)";
+$regs_maps_folder = "[%0]";
+$regs_maps_original_folder = "Cities in Motion (Original)";
+$regs_maps_autosave_folder = "Autosaves";
+$regs_maps_folder_hint = "Ordner: %0";
+$regs_maps_save_hint = "Ordner mit Schrägstrich: Ordner/Name";
+// Kartenverwaltung (regs/ui/mapbrowser.script)
+$regs_browser_title = "Karte laden";
+$regs_browser_open = "Öffnen";
+$regs_browser_newFolder = "Neuer Ordner";
+$regs_browser_rename = "Umbenennen";
+$regs_browser_move = "Verschieben";
+$regs_browser_delete = "Löschen";
+$regs_browser_newFolder_dialog = "Name des neuen Ordners:";
+$regs_browser_rename_dialog = "Neuer Name:";
+$regs_browser_move_dialog = "Wohin verschieben?";
+$regs_browser_delete_map = "Karte %0 wirklich löschen?";
+$regs_browser_delete_folder = "Ordner %0 mit allen Karten darin wirklich löschen?";
+$regs_browser_exists = "Dieser Name ist schon vergeben.";
+$regs_browser_top = "(oberste Ebene)";
+$regs_browser_empty = "(leer)";
+// Vorlagen im Karteneditor (extend/metro/scripts/editor.script, engine/tool_templates.cpp)
+$regs_template_save_hint = "Vorlage speichern\nZiehen Sie einen Bereich auf: Gelände und Objekte darin werden als Vorlage gespeichert.";
+$regs_template_place_hint = "Vorlage platzieren\nWählen Sie eine gespeicherte Vorlage und klicken Sie auf die Karte. Was im Bereich liegt, wird ersetzt.";
+$regs_template_name_dialog = "Name der Vorlage:";
+$regs_template_list_dialog = "Welche Vorlage platzieren?";
+$regs_template_saved_status = "Vorlage gespeichert";
+$regs_template_none = "Noch keine Vorlagen gespeichert.";
+$regs_template_panel_title = "Auswahl für Vorlage";
+$regs_template_panel_text = "Bereich %0 x %1 Felder, %2 Objekte";
+$regs_template_panel_empty = "Ziehen Sie einen Bereich auf.";
+$regs_template_panel_hint = "Umschalt + Klick: Objekt hinzufügen oder entfernen\nUmschalt + Ziehen: Bereich hinzufügen";
+$regs_template_panel_save = "Speichern";
+$regs_template_browser_title = "Vorlagen";
+$regs_template_place_button = "Platzieren";
+$regs_template_terrain_option = "Gelände speichern";
+$regs_template_export = "Exportieren";
+$regs_template_import = "Importieren";
+$regs_template_export_hint = "Zeigt die Vorlagendatei (.cimtpl) im Explorer, zum Weitergeben.";
+$regs_template_import_hint = "Öffnet den Vorlagenordner: .cimtpl-Dateien hier hineinlegen, dann dieses Fenster neu öffnen.";
+$regs_template_needs_dlc = "(DLC fehlt)";
+$regs_template_missing_dialog = "Diese Vorlage braucht nicht installierte Inhalte, um so auszusehen, wie der Autor sie gedacht hat:";

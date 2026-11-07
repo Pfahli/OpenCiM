@@ -34,6 +34,12 @@ struct GridData {
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);
 
+// The content package of a game file: "addons/<name>" (also metro/addons, userdata/addons), "" for the base game.
+std::string contentPackageOf(const std::string& path);
+
+// A map.grid of an empty map (gsGrid.setSize): header, flat terrain at 0x200, an empty network.
+std::vector<uint8_t> emptyGridFile(int width, int length, int bucketShift = 4);
+
 // Per item: its 1-based index in a map.grid written now (removed items dropped, the rest in order), 0 if removed.
 // Every item reference a section writer emits goes through it.
 std::vector<uint32_t> savedItemRefs(const GridData& g);

@@ -2,11 +2,35 @@
 // * Save and load lists (main.script's getSaveGamesList) open with save folders: main.script's regsRunSaveDialog runs
 //   the dialog (folder clicks reopen it in that folder, "New folder", the typed name saved into the open folder) and
 //   the result goes on to the state machine as the original's showDialog would send it.
+// * The map editor's "Save map" dialog takes folders, "folder/name" (owner's request 2026-11-07; the slash is allowed
+//   there only), suggests the open map's own folder, lists every map below userdata/maps with its folder and says so
+//   in a second line. main.script's saveMapData (extension) makes the folders. The load list's folders are in the main
+//   menu extension.
 //@rename showDialog regsBaseShowDialog
-
+//@rename checkInputKey regsBaseCheckInputKey
 //@base
 
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regsStrings = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regsStrings = load "/regs/strings/en_US.strings";
+}
+$regsSlashAllowed = false;
+
+// every map below userdata/maps as "folder/name"; autosaves left out
+function regsAllMaps($dir = "userdata/maps", $prefix = "") {
+  $result = [];
+  foreach (list_files($dir, ".grid")) $result[] = $prefix+changeFileExt(current, "");
+  foreach (list_dirs($dir)) {
+    if (!($prefix == "" && current == "autosave")) {
+      foreach (regsAllMaps($dir+"/"+current, $prefix+current+"/")) $result[] = current;
+    }
+  }
+  return $result;
+}
+
 function showDialog($text, $inputText = false, $default = "", $items = null) {
+  // a save list (main.script's getSaveGamesList): with save folders
   if ($items != null && MAIN.$main.$regsSaveDialog) {
     MAIN.$main.$regsSaveDialog = false;
     $inDialog = true;
@@ -16,5 +40,28 @@ function showDialog($text, $inputText = false, $default = "", $items = null) {
     return;
   }
   MAIN.$main.$regsSaveDialog = false;
-  regsBaseShowDialog($text, $inputText, $default, $items);
+  if (!$inputText || $text != $strings.$menu_newMapName_dialog) {
+    regsBaseShowDialog($text, $inputText, $default, $items);
+    return;
+  }
+  // the open map's folder as the suggestion (an opened autosave: its map's name, outside the autosave folder)
+  $g = MAIN.$gridFileName : "";
+  if (findstr($g, "userdata/maps/") == 0) {
+    $default = changeFileExt(substr($g, 14), "");
+    if (findstr($default, "autosave/") == 0) {
+      $default = substr($default, 9);
+      $cut = findstr($default, " (Autosave ");
+      if ($cut > 0) $default = substr($default, 0, $cut);
+    }
+  }
+  $items = map [];
+  foreach (regsAllMaps()) $items[current] = current;
+  $regsSlashAllowed = true;
+  regsBaseShowDialog($text+"\n"+$regsStrings.$regs_maps_save_hint, $inputText, $default, $items);
+  $regsSlashAllowed = false;
+}
+
+function checkInputKey($key) {
+  if ($regsSlashAllowed && $key == '/') return true;
+  return regsBaseCheckInputKey($key);
 }

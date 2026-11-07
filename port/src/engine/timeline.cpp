@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -29,7 +30,10 @@ namespace {
 
 constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x07081010, kCreate = 0x07081020,
                    kCreateWithParent = 0x07081030, kDelete = 0x07081040, kBrush = 0x07081050, kWater = 0x07081060,
-                   kName8 = 0x07081070, kName = 0x07081071, kVariation = 0x07081080;
+                   kName8 = 0x07081070, kName = 0x07081071, kVariation = 0x07081080,
+                   // port: a terrain patch (the editor's templates): i16 x, i16 z, u16 w, u16 l, then w·l × (i16 height,
+                   // u16 flags) row by row; kept in Action::raw. The original game does not know the tag.
+                   kRegsPatch = 0x07081090;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -372,6 +376,10 @@ void applyCreate(Apply& ap, const Action& a, bool preview) {
 void applyBrush(Apply& ap, const Action& a, bool preview) {
   GridData& g = *ap.grid->data;
   int type = a.brushType, r = a.radius;
+  if (type & 0x40) {  // port: the round brush (grid_edit.h), its centres in 1/8 cell, radius r + 0.5
+    for (auto [px, pz] : a.points) gridRoundBrush(ap.grid, type & 0x3f, float(r) + 0.5f, float(px) / 8.0f, float(pz) / 8.0f, a.strength, preview);
+    return;
+  }
   if (preview && !(type >= 1 && type <= 8)) return;
   auto cell = [&](int x, int z) -> size_t {
     return x < 0 || z < 0 || x >= g.width || z >= g.length ? SIZE_MAX : size_t(z) * size_t(g.width) + size_t(x);
@@ -482,9 +490,7 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       int x = a.wx, z = a.wz;
       if (h(x, z) == 0x7FFF || h(x + 1, z) == 0x7FFF || h(x, z + 1) == 0x7FFF || h(x + 1, z + 1) == 0x7FFF) break;
       if (std::min({h(x, z), h(x + 1, z), h(x, z + 1), h(x + 1, z + 1)}) >= -0x140) break;
-      uint16_t& f = g.flags[size_t(z) * size_t(g.width) + size_t(x)];
-      f = a.on ? uint16_t(f | 0x2000) : uint16_t(f & 0xDFFF);
-      gridEditCellsChanged(ap.grid, x, z, x, z, true);
+      gridSetWaterFlag(ap.grid, x, z, a.on != 0);  // the whole basin (gsGridTimelineAction_water::apply L:0x081a4b30)
       break;
     }
     case kName: {
@@ -502,6 +508,22 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       if (i < 0) break;
       g.items[size_t(i)].variation = a.variation;
       gridEditItemChanged(ap.grid, uint32_t(i));
+      break;
+    }
+    case kRegsPatch: {
+      if (preview || a.raw.size() < 8) break;
+      auto rd = [&](size_t at) { int16_t v; std::memcpy(&v, a.raw.data() + at, 2); return v; };
+      int x0 = rd(0), z0 = rd(2), w = uint16_t(rd(4)), l = uint16_t(rd(6));
+      if (a.raw.size() < 8 + size_t(w) * size_t(l) * 4) break;
+      for (int z = 0; z < l; ++z)
+        for (int x = 0; x < w; ++x) {
+          int cx = x0 + x, cz = z0 + z;
+          if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length) continue;
+          size_t k = 8 + (size_t(z) * size_t(w) + size_t(x)) * 4, c = size_t(cz) * size_t(g.width) + size_t(cx);
+          g.height[c] = rd(k);
+          g.flags[c] = uint16_t((g.flags[c] & ~0x203Fu) | (uint16_t(rd(k + 2)) & 0x203Fu));
+        }
+      gridEditCellsChanged(ap.grid, x0 - 1, z0 - 1, x0 + w, z0 + l, true);
       break;
     }
     default: break;
@@ -530,18 +552,197 @@ std::u16string labelOf(const Action& a) {
     case kDelete: return u"%!12";
     case kBrush: {
       static const char16_t* names[] = {u"%!13", u"%!14", u"%!15", u"%!16", u"%!17", u"%!18", u"%!19", u"%!20"};
-      int t = a.brushType;
+      int t = a.brushType & 0x3f;  // 0x40: the port's round brush (gridRoundBrush)
       int k = t >= 1 && t <= 8 ? 0 : t == 9 ? 1 : t >= 10 && t <= 17 ? 2 : t == 18 ? 3 : t >= 19 && t <= 22 ? t - 15 : -1;
       return k >= 0 ? names[k] : u"%!21";
     }
     case kWater: return a.on ? u"%!22" : u"%!23";
     case kName: return u"%!24";
     case kVariation: return u"%!25";
+    case kRegsPatch: return u"%!18";  // shown as levelling the terrain
     default: return u"";
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// recording (the editor: gsGridPlayer.timeline; gsGridTimeline::addAction L:0x081a7380 / L:0x081a4c70,
+// beginGroup L:0x081a73c0, endGroup L:0x081a7490, addBrushAction L:0x081a7590)
+
+struct Recording {
+  bool groupOpen = false;  // +0xa8: actions go into this group (the newest action of groupDay)
+  int depth = 0;           // +0xb0: nested beginGroup calls while a group is open
+  uint32_t groupDay = 0;
+  bool brushOpen = false;  // +0xac: the newest action of the container is a brush that later dabs extend
+};
+std::unordered_map<const Object*, Recording> g_recording;
+
+void resetRecording(Object* s) { g_recording.erase(s); }
+
+std::vector<Action>& recordContainer(VM& vm, Object* s, Recording& rec) {
+  TimelineData& t = timelineOf(s);
+  if (rec.groupOpen) {
+    auto it = t.days.find(rec.groupDay);
+    if (it != t.days.end() && !it->second.empty() && it->second.front().tag == kGroup) return it->second.front().children;
+    rec.groupOpen = false;  // the group went away (day removed): back to the day
+    rec.depth = 0;
+  }
+  return t.days[uint32_t(std::max(0, currentDayOf(vm, s)))];
+}
+
+void recordAction(VM& vm, Object* s, Action a) {
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  c.insert(c.begin(), std::move(a));
+  if (!rec.groupOpen) vm.fireEvent(s, u"onChange", {});
+}
+
+ObjRef refOf(GridObj* grid, uint32_t item, uint32_t mask) {
+  const GridData& g = *grid->data;
+  const GridData::Item& it = g.items[item];
+  ObjRef r;
+  r.name = it.type < g.types.size() ? g.types[it.type] : std::string();
+  r.x = it.x;
+  r.y = int16_t(it.y + heightShift(g));
+  r.z = it.z;
+  r.orient = it.orient;
+  r.flags = it.flags & mask;
+  return r;
+}
+
 }  // namespace
+
+Object* playerTimeline(VM& vm, Object* player) {
+  if (!player) return nullptr;
+  auto it = player->fieldValues.find(u"timeline");
+  if (it == player->fieldValues.end()) return nullptr;
+  Object* t = vm.resolve(it->second).object();
+  return t && !t->destroyed ? t : nullptr;
+}
+
+void timelineBeginGroup(VM& vm, Object* s, const std::string& label) {
+  if (!s) return;
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  if (rec.groupOpen) {
+    ++rec.depth;
+    return;
+  }
+  Action g;
+  g.tag = kGroup;
+  g.label = label.substr(0, 31);
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  c.insert(c.begin(), std::move(g));
+  vm.fireEvent(s, u"onChange", {});
+  rec.groupOpen = true;
+  rec.depth = 0;
+  rec.groupDay = uint32_t(std::max(0, currentDayOf(vm, s)));
+}
+
+void timelineEndGroup(VM& vm, Object* s) {
+  if (!s) return;
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  if (rec.depth > 0) {
+    --rec.depth;
+    return;
+  }
+  if (!rec.groupOpen) return;
+  rec.groupOpen = false;
+  TimelineData& t = timelineOf(s);
+  auto it = t.days.find(rec.groupDay);
+  if (it != t.days.end() && !it->second.empty() && it->second.front().tag == kGroup && it->second.front().children.empty()) {
+    it->second.erase(it->second.begin());  // an empty group is dropped
+    if (it->second.empty()) t.days.erase(it);
+  }
+  vm.fireEvent(s, u"onChange", {});
+}
+
+void timelineRecordCreate(VM& vm, Object* s, GridObj* grid, uint32_t item) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  const GridData::Item& it = grid->data->items[item];
+  Action a;
+  a.tag = kCreate;
+  a.obj = refOf(grid, item, 0x42000000);
+  if (it.parent && it.parent <= grid->data->items.size()) a.parent = refOf(grid, it.parent - 1, kFlagAutoChild);
+  recordAction(vm, s, std::move(a));
+  if (it.variation) timelineRecordVariation(vm, s, grid, item, it.variation);
+}
+
+void timelineRecordDelete(VM& vm, Object* s, GridObj* grid, uint32_t item) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  Action a;
+  a.tag = kDelete;
+  a.obj = refOf(grid, item, kFlagAutoChild);
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordVariation(VM& vm, Object* s, GridObj* grid, uint32_t item, uint32_t variation) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  Action a;
+  a.tag = kVariation;
+  a.obj = refOf(grid, item, kFlagAutoChild);
+  a.variation = variation;
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordName(VM& vm, Object* s, GridObj* grid, uint32_t item, const std::string& name) {
+  if (!s || !grid || !grid->data || item >= grid->data->items.size()) return;
+  Action a;
+  a.tag = kName;
+  a.obj = refOf(grid, item, kFlagAutoChild);
+  a.text = name;
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordBrush(VM& vm, Object* s, int type, int radius, int x, int strength, int z) {
+  if (!s) return;
+  Recording& rec = g_recording[s];
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  if (rec.brushOpen && !c.empty()) {
+    Action& b = c.front();
+    if (b.tag == kBrush && b.brushType == int8_t(type) && b.radius == int8_t(radius) && b.points.size() < 0xFFFF &&
+        b.strength == int16_t(strength)) {
+      b.points.emplace_back(int16_t(x), int16_t(z));
+      return;
+    }
+  }
+  Action a;
+  a.tag = kBrush;
+  a.brushType = int8_t(type);
+  a.radius = int8_t(radius);
+  a.strength = int16_t(strength);
+  a.points.emplace_back(int16_t(x), int16_t(z));
+  recordAction(vm, s, std::move(a));
+  g_recording[s].brushOpen = true;
+}
+
+void timelineRecordPatch(VM& vm, Object* s, int x, int z, int w, int l, const std::vector<int16_t>& heights,
+                         const std::vector<uint16_t>& flags) {
+  if (!s || w <= 0 || l <= 0 || heights.size() < size_t(w) * size_t(l) || flags.size() < heights.size()) return;
+  Action a;
+  a.tag = kRegsPatch;
+  auto put = [&](uint16_t v) { a.raw.push_back(uint8_t(v)); a.raw.push_back(uint8_t(v >> 8)); };
+  put(uint16_t(x));
+  put(uint16_t(z));
+  put(uint16_t(w));
+  put(uint16_t(l));
+  for (size_t i = 0; i < size_t(w) * size_t(l); ++i) {
+    put(uint16_t(heights[i]));
+    put(flags[i]);
+  }
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordWater(VM& vm, Object* s, int x, int z, bool on) {
+  if (!s) return;
+  Action a;
+  a.tag = kWater;
+  a.wx = int16_t(x);
+  a.wz = int16_t(z);
+  a.on = on ? 1 : 0;
+  recordAction(vm, s, std::move(a));
+}
 
 void registerTimelineNatives(VM& vm) {
   // loadFromFile(path) (L:0x081a6b20): the actions per day; currentDay from the header
@@ -552,6 +753,7 @@ void registerTimelineNatives(VM& vm) {
     if (!v.vfs().read(path, file) || file.size() < 16 || r.u32(0) != kTimeline) return Value::boolean(false);
     TimelineData& t = timelineOf(s);
     t.days.clear();
+    resetRecording(s);
     size_t end = std::min(file.size(), size_t(8) + r.u32(4));
     for (size_t at = 16; at + 8 <= end;) {
       uint32_t tag = r.u32(at), size = r.u32(at + 4);
@@ -637,10 +839,12 @@ void registerTimelineNatives(VM& vm) {
   });
   // the editor's undo of the current day (L:0x081a37e0, L:0x081a3770, L:0x081a36c0) and its action list (L:0x081a5d50)
   implement(vm, "gsGridTimeline", u"removeDay", [](VM& v, Object* s, int, const Value*) {
+    resetRecording(s);
     if (timelineOf(s).days.erase(uint32_t(currentDayOf(v, s)))) v.fireEvent(s, u"onChange", {});
     return Value();
   });
   implement(vm, "gsGridTimeline", u"removeLastAction", [](VM& v, Object* s, int, const Value*) {
+    resetRecording(s);
     auto& days = timelineOf(s).days;
     auto it = days.find(uint32_t(currentDayOf(v, s)));
     if (it == days.end() || it->second.empty()) return Value();
@@ -650,6 +854,7 @@ void registerTimelineNatives(VM& vm) {
     return Value();
   });
   implement(vm, "gsGridTimeline", u"removeAction", [](VM& v, Object* s, int, const Value* a) {
+    resetRecording(s);
     auto& days = timelineOf(s).days;
     auto it = days.find(uint32_t(currentDayOf(v, s)));
     int i = v.toInt(a[0]);
@@ -665,6 +870,40 @@ void registerTimelineNatives(VM& vm) {
     if (auto it = days.find(uint32_t(currentDayOf(v, s))); it != days.end())
       for (const Action& act : it->second) arr->items.push_back(Value::string(labelOf(act)));
     return Value::heap(VT::Array, arr.get());
+  });
+  // port: regsShift(dx, dz): every action moved by (dx, dz) cells, as the map moved in gsGrid.regsResize (objects and
+  // their parents, brush dabs, port round brushes in 1/8 cell, water cells)
+  if (ClassInfo* c = vm.findClass("gsGridTimeline")) addMethod(c, u"regsShift", 2, 2);
+  implement(vm, "gsGridTimeline", u"regsShift", [](VM& v, Object* s, int, const Value* a) {
+    int dx = v.toInt(a[0]), dz = v.toInt(a[1]);
+    std::function<void(Action&)> shift = [&](Action& act) {
+      act.obj.x = int16_t(act.obj.x + dx), act.obj.z = int16_t(act.obj.z + dz);
+      if (!act.parent.name.empty()) act.parent.x = int16_t(act.parent.x + dx), act.parent.z = int16_t(act.parent.z + dz);
+      int k = (act.brushType & 0x40) ? 8 : 1;
+      for (auto& p : act.points) p.first = int16_t(p.first + dx * k), p.second = int16_t(p.second + dz * k);
+      act.wx = int16_t(act.wx + dx), act.wz = int16_t(act.wz + dz);
+      if (act.tag == kRegsPatch && act.raw.size() >= 4) {  // the patch's corner
+        int16_t px, pz;
+        std::memcpy(&px, act.raw.data(), 2);
+        std::memcpy(&pz, act.raw.data() + 2, 2);
+        px = int16_t(px + dx), pz = int16_t(pz + dz);
+        std::memcpy(act.raw.data(), &px, 2);
+        std::memcpy(act.raw.data() + 2, &pz, 2);
+      }
+      for (Action& c : act.children) shift(c);
+    };
+    resetRecording(s);
+    for (auto& [day, list] : timelineOf(s).days)
+      for (Action& act : list) shift(act);
+    v.fireEvent(s, u"onChange", {});
+    return Value();
+  });
+  // clear() (L:0x081a3460): every day gone (the debug console's flatten_timeline)
+  implement(vm, "gsGridTimeline", u"clear", [](VM& v, Object* s, int, const Value*) {
+    resetRecording(s);
+    timelineOf(s).days.clear();
+    v.fireEvent(s, u"onChange", {});
+    return Value();
   });
   implement(vm, "gsGridTimeline", u"removeRedundantActions", [](VM&, Object*, int, const Value*) {
     return Value();  // editor clean-up (L:0x081a8e80); not needed for play

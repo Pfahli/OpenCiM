@@ -1,0 +1,137 @@
+// ReGS extension of the map editor's map attributes (metro/ui/menus/editor.script, used as installed; see
+// VM::extendSource): the content packages (owner's request 2026-11-07, main.script extension). Right of the map
+// size, a list of the installed DLC and mod packages to tick; the base game and the location's own package are always
+// in. The ticked ones decide which buildings, props and trees the editor offers; main.script's setMapData takes
+// $regsSelected on OK, saveMapData writes the choice and the packages the map needs into its .scenario.
+
+//@base
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regsStrings = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regsStrings = load "/regs/strings/en_US.strings";
+}
+$regsSelected = [];
+foreach (MAIN.$regsSelectedPackages : []) $regsSelected[] = current;
+$regsButtons = map [];
+
+with ($regsTitle = new_control($box.$content)) {
+  .setRect(560, 120, 390, 18);
+  MAIN.$ui.setTextFont(current);
+  .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+  .text = $regsStrings.$regs_packages_title;
+  .visible = true;
+  .canActivate = false;
+}
+with ($regsArea = new_control($box.$content)) {
+  .setRect(560, 140, 390, 228);
+  .setBorder(0xFF777777, 2);
+  .visible = true;
+  .canActivate = false;
+}
+with ($regsBox = MAIN.$ui.createScrollArea($regsArea, 2, 2, $regsArea.width - 4, $regsArea.height - 4)) {
+  .$content.background = 0;
+}
+
+function regsRow($y, $text, $alpha) {
+  with ($label = new_control($regsBox.$content)) {
+    .setRect(26, $y, $regsBox.$content.width - 30, 20);
+    MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visibility = $alpha;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $label;
+}
+
+function regsIsSelected($package) {
+  foreach ($regsSelected) {
+    if (current == $package) return true;
+  }
+  return false;
+}
+
+function regsTogglePackage($package) {
+  $kept = [];
+  $was = false;
+  foreach ($regsSelected) {
+    if (current == $package) $was = true;
+    else $kept[] = current;
+  }
+  if (!$was) $kept[] = $package;
+  $regsSelected = $kept;
+  MAIN.$ui.selectChoiceButton($was ? null : $regsButtons[$package], $regsButtons[$package]);
+}
+
+$regsY = 2;
+$regsRowLast = regsRow($regsY, $regsStrings.$regs_packages_base, 0.5);
+$regsY += 20;
+$regsLocationPackage = MAIN.$main.regsPackageOf($citylocation);
+foreach (MAIN.$main.regsInstalledPackages()) {
+  $regsP = current;
+  $regsRowLast = regsRow($regsY, MAIN.$main.regsPackageName($regsP, $regsStrings), $regsP == $regsLocationPackage ? 0.5 : 1.0);
+  if ($regsP != $regsLocationPackage) {
+    $regsButtons[$regsP] = MAIN.$ui.createChoiceButton($regsBox.$content, "self", 4, $regsY + 2, 16, 16, "", macro($regsP) :: regsTogglePackage($0), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+    MAIN.$ui.selectChoiceButton(regsIsSelected($regsP) ? $regsButtons[$regsP] : null, $regsButtons[$regsP]);
+  }
+  $regsY += 20;
+}
+MAIN.$ui.resetScrollArea($regsBox);  // from the top
+
+// "Enable all DLCs": every listed DLC (not mods) ticked
+function regsSelectAllDlcs() {
+  foreach (MAIN.$main.regsInstalledPackages()) {
+    if (MAIN.$main.regsIsDlc(extractFileName(current)) && findstr(current, "addons/") == 0 && !regsIsSelected(current)) {
+      if (defined $regsButtons[current]) regsTogglePackage(current);
+    }
+  }
+}
+// a plain framed button in the style of the lists (the game's button image stretched badly at this width)
+with ($regsAllButton = MAIN.$ui.createButton($box.$content, 560, 376, 200, 22, $regsStrings.$regs_packages_allDlcs_button, regsSelectAllDlcs)) {
+  .background = 0x60777777;
+  .setBorder(0xFF777777, 2);
+}
+
+// map sizes (main.script extension): the list rebuilt in size order, microscopic (128) to XXXL (2048). In the running
+// editor the current size stays chosen and the larger ones enlarge the map on OK (main.script regsEnlargeMap).
+$sizeBox.$content.clear();
+$sizeBox.enabled = true;
+$regsCurrentSize = 0;   // not with ?: (it evaluates both sides)
+if (MAIN.$grid : false) $regsCurrentSize = MAIN.$grid.width;
+$regsY = 0;
+foreach ([128, 256, 512, 768, 1024, 1280, 1536, 2048]) {
+  $regsSize = current;
+  $regsButton = MAIN.$ui.createChoiceButton($sizeBox.$content, $sizeArea, 0, $regsY, $sizeBox.$content.width, 18, $strings.$menu_mapSize_items[MAIN.$main.regsMapSizeIndex($regsSize)], macro($regsSize) :: $cellsize = $0);
+  if ($cellsize == $regsSize) MAIN.$ui.selectChoiceButton($regsButton, $sizeArea);
+  if ($regsCurrentSize > 0) {
+    if ($regsSize < $regsCurrentSize) {
+      $regsButton.enabled = false;
+      $regsButton.visibility = 0.3;
+    } else if ($regsSize > $regsCurrentSize) {
+      MAIN.$ui.setTooltip($regsButton, $regsStrings.$regs_mapSize_enlarge_hint, 1, 0);
+    }
+  }
+  $regsY += 18;
+}
+MAIN.$ui.resetScrollArea($sizeBox);
+
+// autosave in the editor (editor.script extension): the setting, saved at once
+$regsAutosaveOn = MAIN.$settings.$regsEditorAutosave : true;
+$regsAutosaveButton = MAIN.$ui.createChoiceButton($box.$content, "self", 560, 421, 16, 16, "", macro :: regsSetAutosave(!$regsAutosaveOn), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+with ($regsAutosaveLabel = new_control($box.$content)) {
+  .setRect(582, 419, 368, 20);
+  MAIN.$ui.setTextFont(current);
+  .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+  .text = $regsStrings.$regs_autosave_option;
+  .visible = true;
+  .canActivate = false;
+}
+function regsSetAutosave($on) {
+  $regsAutosaveOn = $on;
+  MAIN.$settings.$regsEditorAutosave = $on;
+  MAIN.$settings.exportVariables(["regsEditorAutosave"]);
+  MAIN.$ui.selectChoiceButton($on ? $regsAutosaveButton : null, $regsAutosaveButton);
+}
+MAIN.$ui.selectChoiceButton($regsAutosaveOn ? $regsAutosaveButton : null, $regsAutosaveButton);

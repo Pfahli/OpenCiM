@@ -149,6 +149,17 @@ it is, what already exists, and the open decisions. Order is not priority.
     scales; OSM's licence (ODbL) requires the credit "© OpenStreetMap contributors" with the map and keeps shared
     generated maps under share-alike terms.
 
+* **Buildings with a year and a construction site (owner's idea 2026-11-07).** In the editor, a placed building
+  gets options: from which year it exists, and whether it is preceded by a construction site (a pit with a crane and
+  a fence around the footprint). A map can then start tiny in 1920 and grow towards 1960 as its buildings appear.
+  * What there is: the editor's timeline already records every placement on the day it was made, and the game
+    replays it with half a year of previews (hidden placeholders, the 0x40 construction-site ground, conflict marks;
+    `engine/timeline.cpp`); the debug time bar picks the day. What is missing is a way to set the year per object
+    without paging through the time bar, and a visible site.
+  * How: an "Exists from" field in the object's info panel moves its create action to that date in the timeline; the
+    construction site is a set of props (pit decal, crane, fence) the preview phase places around the footprint and
+    removes when the building appears. Needs the timeline simulation in games (it runs) and the editor's date bar.
+
 ## Platforms
 
 * **ARM builds.** The port is plain C++20; its one third-party library, miniaudio (audio, `third_party/`), already
@@ -160,6 +171,21 @@ it is, what already exists, and the open decisions. Order is not priority.
 * **Mod manager.** ReGS mods with manifests, load order, script extensions and an options API; designed in
   `docs/mod-manager.md`, including installing mods from a GitHub catalogue (§7.1). Community mods for the original game
   stay out of scope (not loaded by default, `--community-addons`).
+* **MCP bridge (owner's idea 2026-11-07).** A mod that exposes the running game and the map editor over the Model
+  Context Protocol, so Claude or another agent can build and change maps on its own.
+  * Tools it could offer: read the map (size, terrain heights, water, items in an area, the timeline), apply editor
+    actions (terrain brushes, water, place or remove objects, lay roads and tracks, set the date, save and load maps),
+    take a screenshot of the current view or the minimap, and read the game state in a running game (lines, money).
+  * How: the edits go through the same tool functions as the mouse (`engine/tools.h`, `tool_terrain.cpp`, timeline
+    recording), so undo, the timeline and saving keep working; a local MCP server in the mod (stdio or a localhost
+    port) queues the calls and runs them on the game thread between frames.
+  * Open questions: safety (local only, off by default, a visible indicator while an agent is connected), how much
+    of a map fits in one answer (areas, summaries), and whether it should also drive a running game (lines, vehicles).
+
+* **Template sharing in the OpenCiM Hub (owner's idea 2026-11-07).** A section of the mod manager where players share
+  their editor templates. The file format is ready: a .cimtpl is a GS10 package (template.grid, template.dds as the
+  picture, template.info with size, terrain flag and the DLC packages of its objects); it is mounted as a folder from
+  userdata/templates, and the template window already flags templates whose DLCs are missing.
 
 ## Online
 

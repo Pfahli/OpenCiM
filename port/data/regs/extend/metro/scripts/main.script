@@ -3,12 +3,21 @@
 //   the campaign;
 // * the saves and maps of the original game's folder (Documents\Cities In Motion, read only; engine/user_folders.h)
 //   join the load lists with a note, as "regs-cim:<name>" values, and are copied into the OpenCiM folder when the
-//   player opens one (regsImportOriginal), then loaded from there under the name the copy got.
+//   player opens one (regsImportOriginal), then loaded from there under the name the copy got;
+// * saving a map keeps the editor's undo history for the rest of the session (owner's request 2026-11-07);
+// * content packages (owner's request 2026-11-07): the base game and every installed DLC or mod folder (addons/*,
+//   metro/addons/*, userdata/addons/*). The editor's map attributes pick the packages whose buildings and props the
+//   editor offers ($regsSelectedPackages); a saved map's .scenario lists the packages it needs ($regsPackages: those
+//   of the objects on the map and of its location) and the author's choice. The original game ignores both
+//   variables. Opening such a map (editor list, sandbox) with a package missing asks first (mainmenu.script
+//   extension, regsConfirmPackages); opened anyway, the missing objects stay invisible and are kept in the files.
 //@rename loadSandboxScenario regsBaseLoadSandboxScenario
 //@rename getSaveGamesList regsBaseGetSaveGamesList
 //@rename loadSavedCampaign regsBaseLoadSavedCampaign
 //@rename saveGameData regsBaseSaveGameData
 //@rename startEditor regsBaseStartEditor
+//@rename saveMapData regsBaseSaveMapData
+//@rename setMapData regsBaseSetMapData
 
 //@base
 
@@ -260,6 +269,201 @@ function startEditor($level = "") {
     if ($regsImported != "") $level = $regsImported;
   }
   regsBaseStartEditor($level);
+  // the map's packages: the author's choice, else none beyond the location's own (a new map, or one from before)
+  MAIN.$regsSelectedPackages = [];
+  if ($level != "") {
+    $regsFile = "userdata/maps/"+changeFileExt($level, ".scenario");
+    if (file_exists($regsFile)) {
+      $regsS = load "/"+$regsFile;
+      if (defined $regsS.$regsSelectedPackages) MAIN.$regsSelectedPackages = $regsS.$regsSelectedPackages;
+      delete $regsS;
+    }
+  }
+}
+
+// the map attributes' OK: the package choice too (the editor.script extension keeps it in $regsSelected); in the
+// running editor the newly picked packages' buildings and props are loaded at once (environment.script extension)
+function setMapData() {
+  $regsOld = 0;
+  if (MAIN.$level : false) $regsOld = MAIN.$grid.width;
+  regsBaseSetMapData();
+  if ($regsOld > 0 && MAIN.$gridCellSize > $regsOld) regsEnlargeMap(MAIN.$gridCellSize, $regsOld);
+  if ($submenu) {
+    if (defined $submenu.$regsSelected) MAIN.$regsSelectedPackages = $submenu.$regsSelected;
+  }
+  if (MAIN.$level : false) {
+    MAIN.$level.regsLoadPackages(MAIN.$regsSelectedPackages);
+  }
+}
+
+// ---- content packages ----
+
+function regsPackageStrings() {
+  $file = "regs/strings/"+MAIN.$language+".strings";
+  if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+  return load "/"+$file;
+}
+
+// "addons/london" for a file of that package, "" for the base game (the engine's contentPackageOf)
+function regsPackageOf($path) {
+  foreach (["addons/", "metro/addons/", "userdata/addons/"]) {
+    if (findstr($path, current) == 0) {
+      $rest = substr($path, #current);
+      $slash = findstr($rest, "/");
+      if ($slash < 0) return $path;
+      return current + substr($rest, 0, $slash);
+    }
+  }
+  return "";
+}
+
+// every installed DLC and mod package
+// The 13 DLCs by release date (Design Classics … Design Quirks), as the game's folders hold them. Munich was a free
+// download for every player, and the map pack (Bucharest, Kapalla, Rivercity) and vehiclepack04 are in no DLC list:
+// those count as the base game (never listed, never required).
+$regsDlcFolders = ["vehiclepack01", "vehiclepack02", "tokyo", "vehiclepack03", "stationpack01", "germany", "usa",
+                   "vehiclepack05", "ulm", "paris", "stpetersburg", "london", "humble"];
+$regsBaseFolders = ["munich", "mappack01", "vehiclepack04"];
+
+function regsIsBasePackage($package) {
+  if ($package == "") return true;
+  if (findstr($package, "addons/") != 0) return false;
+  foreach ($regsBaseFolders) {
+    if ("addons/"+current == $package) return true;
+  }
+  return false;
+}
+
+// the installed DLCs in release order, then the other packages (mods) by folder name; the base game's own folders not
+function regsInstalledPackages() {
+  $result = [];
+  $installed = map [];
+  foreach (list_dirs("addons")) $installed[current] = true;
+  foreach ($regsDlcFolders) {
+    if (defined $installed[current]) $result[] = "addons/"+current;
+  }
+  foreach (list_dirs("addons")) {
+    if (!regsIsBasePackage("addons/"+current) && !regsIsDlc(current)) $result[] = "addons/"+current;
+  }
+  foreach (list_dirs("metro/addons")) $result[] = "metro/addons/"+current;
+  foreach (list_dirs("userdata/addons")) $result[] = "userdata/addons/"+current;
+  return $result;
+}
+
+function regsIsDlc($folder) {
+  foreach ($regsDlcFolders) {
+    if (current == $folder) return true;
+  }
+  return false;
+}
+
+function regsPackageName($package, $strings = null) {
+  $own = $strings == null;
+  if ($own) $strings = regsPackageStrings();
+  $key = extractFileName($package);
+  $name = $key;
+  if (defined $strings.$regs_package_names[$key]) $name = $strings.$regs_package_names[$key];
+  // "Tokyo DLC" (list and dialog), the suffix in grey
+  if (findstr($package, "addons/") == 0 && regsIsDlc($key)) $name = formatText(escapePattern($name) + " {0:DLC}", [0xFF909090]);
+  if ($own) delete $strings;
+  return $name;
+}
+
+// the packages a map (.grid path) needs that are not installed; maps without the list need none
+function regsMissingPackages($gridFile) {
+  $missing = [];
+  $file = changeFileExt($gridFile, ".scenario");
+  if (!file_exists($file)) return $missing;
+  $s = load "/"+$file;
+  if (defined $s.$regsPackages) {
+    $installed = map [];
+    foreach (regsInstalledPackages()) $installed[current] = true;
+    foreach ($s.$regsPackages) {
+      if (!(defined $installed[current]) && !regsIsBasePackage(current)) $missing[] = current;
+    }
+  }
+  delete $s;
+  return $missing;
+}
+
+// asks before a map with missing packages opens: the missing ones by name, "Open anyway" or cancel (call in a thread)
+function regsConfirmPackages($gridFile) {
+  return regsConfirmMissing(regsMissingPackages($gridFile), $gridFile);
+}
+
+// the dialog for a list of missing packages (maps, templates): their names, "Open anyway" or cancel
+function regsConfirmMissing($missing, $what, $text = "") {
+  if (#$missing == 0) return true;
+  $rs = regsPackageStrings();
+  $items = map [];
+  foreach ($missing) $items[current] = regsPackageName(current, $rs);
+  $first = $missing[0];
+  $okText = $strings.$menu_ok_button;
+  $strings.$menu_ok_button = $rs.$regs_packages_openAnyway_button;
+  thread :: {  // the OK button made wide enough for "Open anyway" once the dialog stands
+    skip_frame;
+    if (MAIN.$ui.$currentDialog : null) {
+      $b = MAIN.$ui.$currentDialog.$yesButton;
+      if ($b) $b.width = max($b.width, $b.getTextWidth() + 44);
+    }
+  };
+  if ($text == "") $text = $rs.$regs_packages_missing_dialog;
+  $result = MAIN.$ui.showDialog($text, true, true, false, @$first, null, $items);
+  $strings.$menu_ok_button = $okText;
+  delete $rs;
+  echo "\""+$what+"\" needs missing packages; "+($result ? "opened anyway" : "not opened");
+  return $result;
+}
+
+// the packages a saved map needs: those of its objects and of its location
+function regsRequiredPackages() {
+  $result = [];
+  $seen = map [];
+  foreach (MAIN.$grid.regsGetUsedPackages()) {
+    if (!regsIsBasePackage(current)) {
+      $seen[current] = true;
+      $result[] = current;
+    }
+  }
+  $loc = regsPackageOf(MAIN.$gridLocation : "");
+  if (!regsIsBasePackage($loc) && !(defined $seen[$loc])) $result[] = $loc;
+  return $result;
+}
+
+// Saving on the first day bakes the day's actions into the base grid and drops them (removeDay), which the file needs
+// but which ended the undo history. Port: the map files are written as before, then the day's actions and the old
+// base grid come back in memory, so the undo button keeps taking back edits until the editor closes.
+function saveMapData($mapName) {
+  $regsKeepUndo = MAIN.$mainClock.date == mkdate(1,1,1920) && file_exists("memory/base.grid");
+  if ($regsKeepUndo) {
+    MAIN.$timeline.saveToFile("memory/regs-undo.timeline");
+    copy_file("memory/base.grid", "memory/regs-undo-base.grid");
+  }
+  // a name with folders ("a/b/name", the save dialog allows the slash): the folders first, one level at a time
+  $regsDir = "userdata/maps";
+  mkdir($regsDir);
+  $regsRest = $mapName;
+  $regsSlash = findstr($regsRest, "/");
+  while ($regsSlash > 0) {
+    $regsDir = $regsDir+"/"+substr($regsRest, 0, $regsSlash);
+    mkdir($regsDir);
+    $regsRest = substr($regsRest, $regsSlash + 1);
+    $regsSlash = findstr($regsRest, "/");
+  }
+  regsBaseSaveMapData($mapName);
+  // the packages into the map's .scenario (variables the original ignores)
+  $regsFile = "userdata/maps/"+changeFileExt($mapName, ".scenario");
+  if (file_exists($regsFile)) {
+    $regsS = load "/"+$regsFile;
+    $regsS.$regsPackages = regsRequiredPackages();
+    $regsS.$regsSelectedPackages = MAIN.$regsSelectedPackages : [];
+    $regsS.exportVariablesTo($regsFile, "regsPackages", "regsSelectedPackages");
+    delete $regsS;
+  }
+  if ($regsKeepUndo) {
+    MAIN.$timeline.loadFromFile("memory/regs-undo.timeline");
+    copy_file("memory/regs-undo-base.grid", "memory/base.grid");
+  }
 }
 
 // Graphics page (port, its save() calls this): the scripts' window got a new size (resolution, fullscreen or UI
@@ -310,4 +514,44 @@ function regsCloseGamePage() {
   delete $regsGamePage;
   $regsGamePage = null;
   $menu.$menuArea.visible = true;
+}
+
+// Port: map sizes XXL (1536) and XXXL (2048) after the original's four (owner's request 2026-11-07); the editor's map
+// attributes and the sandbox page read them from this list (editor.script, sandbox.script extensions)
+// parallel to $menu_mapSize_items: the original's four, then XXL, XXXL, tiny and microscopic
+$regsMapSizes = [512, 768, 1024, 1280, 1536, 2048, 256, 128];
+if (#$strings.$menu_mapSize_items == 4) {
+  $regsS = regsPackageStrings();
+  foreach ($regsS.$regs_mapSize_extra) $strings.$menu_mapSize_items[] = current;
+  delete $regsS;
+}
+
+// the size list's entry for a map size (the nearest one)
+function regsMapSizeIndex($size) {
+  $index = 0;
+  for ($i = 0; $i < #$regsMapSizes; ++$i) {
+    if (abs($regsMapSizes[$i] - $size) < abs($regsMapSizes[$index] - $size)) $index = $i;
+  }
+  return $index;
+}
+
+// the editor's map attributes chose a larger size for the open map: the map, the undo base and the timeline move
+// into a grid of that size, centred (the offset rounded down to 8 cells so the road blocks keep their pattern)
+function regsEnlargeMap($size, $old) {
+  $off = int(($size - $old) / 16) * 8;
+  echo "Enlarging map "+$old+" -> "+$size+" (offset "+$off+")";
+  MAIN.$player.resetTool();
+  if (file_exists("memory/base.grid")) {
+    MAIN.$grid.saveToFile("memory/regs-resize.grid");
+    MAIN.$grid.loadFromFile("memory/base.grid");
+    MAIN.$grid.regsResize($size, $size, $off, $off);
+    MAIN.$grid.saveToFile("memory/base.grid");
+    MAIN.$grid.loadFromFile("memory/regs-resize.grid");
+  }
+  MAIN.$grid.regsResize($size, $size, $off, $off);
+  MAIN.$timeline.regsShift($off, $off);
+  if (MAIN.$minimap : false) {
+    MAIN.$minimap.$minimap.scale = -1.0 / (3.0 * MAIN.$grid.width);
+    MAIN.$minimap.update();
+  }
 }

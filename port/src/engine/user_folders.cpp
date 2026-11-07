@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cwctype>
+#include <filesystem>
 #include <map>
 #include <tuple>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/host.h"
+#include "engine/platform.h"
 #include "vfs/archive.h"
 #include "vfs/vfs.h"
 
@@ -376,6 +378,42 @@ void registerUserFolderNatives(VM& vm) {
     for (auto& s : v) a->items.push_back(Value::string(utf8ToUtf16(s)));
     return Value::heap(VT::Array, a.get());
   };
+  // the map manager (extend/metro/ui/menus/mainmenu.script, regs/ui/mapbrowser.script): rename or move a file or
+  // folder, and delete one (a folder with everything in it), only below userdata/maps; the file system is read again
+  // afterwards. Both return true when the disk changed.
+  auto mapsPath = [](VM& v, const Value& val, std::filesystem::path& out) {
+    std::string p = utf16ToUtf8(v.toStr(val));
+    bool maps = p.rfind("userdata/maps/", 0) == 0 && p.size() > 14, templates = p.rfind("userdata/templates/", 0) == 0 && p.size() > 19;
+    if (!(maps || templates) || p.find("..") != std::string::npos) return false;  // the maps and the editor's templates only
+    return v.vfs().writableDiskPath(p, out);
+  };
+  // regsShowInExplorer(path, select): Explorer at a file below userdata/maps or userdata/templates (selected) or at
+  // such a folder (opened): the template window's export and import
+  implementGlobal(vm, u"regsShowInExplorer", [mapsPath](VM& v, Object*, int argc, const Value* a) {
+    std::filesystem::path p;
+    std::string s = utf16ToUtf8(v.toStr(a[0]));
+    bool ok = s == "userdata/templates" || s == "userdata/maps" ? v.vfs().writableDiskPath(s, p) : mapsPath(v, a[0], p);
+    if (!ok) return Value::boolean(false);
+    platformShowInExplorer(p.make_preferred(), argc > 1 && v.truthy(a[1]));
+    return Value::boolean(true);
+  }, 1, 2);
+  implementGlobal(vm, u"regsMapsRename", [mapsPath](VM& v, Object*, int, const Value* a) {
+    std::filesystem::path from, to;
+    std::error_code ec;
+    if (!mapsPath(v, a[0], from) || !mapsPath(v, a[1], to) || !std::filesystem::exists(from, ec) || std::filesystem::exists(to, ec))
+      return Value::boolean(false);
+    std::filesystem::rename(from, to, ec);
+    v.vfs().rescan();
+    return Value::boolean(!ec);
+  }, 2, 2);
+  implementGlobal(vm, u"regsMapsRemove", [mapsPath](VM& v, Object*, int, const Value* a) {
+    std::filesystem::path p;
+    std::error_code ec;
+    if (!mapsPath(v, a[0], p) || !std::filesystem::exists(p, ec)) return Value::boolean(false);
+    std::filesystem::remove_all(p, ec);
+    v.vfs().rescan();
+    return Value::boolean(!ec);
+  }, 1, 1);
   implementGlobal(vm, u"regsOriginalSaves", [stringArray](VM& v, Object*, int, const Value*) {
     std::vector<std::string> out;
     if (!host().originalFolder.empty())
