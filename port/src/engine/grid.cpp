@@ -418,6 +418,51 @@ void registerGridNatives(VM& vm) {
     loadSimulation(v, g, file);
     return Value::boolean(true);
   });
+  // port: regsResize(width, length, offsetX, offsetZ) (the editor's map attributes, owner's request 2026-11-07): the map
+  // in a grid of the new size, its cells and items moved by the offset; new cells flat at 0x200 without flags, cells
+  // and items that fall outside dropped. The simulation starts empty (editor maps have none) and every cache rebuilds.
+  if (ClassInfo* c = vm.findClass("gsGrid")) addMethod(c, u"regsResize", 4, 4);
+  implement(vm, "gsGrid", u"regsResize", [](VM& v, Object* s, int, const Value* a) {
+    auto* g = dynamic_cast<GridObj*>(s);
+    if (!g || !g->data) return Value::boolean(false);
+    const GridData& old = *g->data;
+    int w = std::clamp(v.toInt(a[0]), 16, 8192), l = std::clamp(v.toInt(a[1]), 16, 8192);
+    int ox = v.toInt(a[2]), oz = v.toInt(a[3]);
+    std::vector<uint8_t> file = emptyGridFile(w, l, int(old.bucketShift));
+    auto data = std::make_shared<GridData>();
+    std::string err;
+    if (!parseGridFile(file, *data, &err)) return Value::boolean(false);
+    int shiftOld = 0x200 - int(old.heightBase);
+    for (int z = 0; z < old.length; ++z)
+      for (int x = 0; x < old.width; ++x) {
+        int nx = x + ox, nz = z + oz;
+        if (nx < 0 || nz < 0 || nx >= w || nz >= l) continue;
+        size_t o = size_t(z) * size_t(old.width) + size_t(x), n = size_t(nz) * size_t(w) + size_t(nx);
+        data->height[n] = int16_t(old.height[o] - shiftOld + (0x200 - int(data->heightBase)));
+        data->flags[n] = old.flags[o];
+      }
+    data->types = old.types;
+    std::vector<int64_t> remap(old.items.size(), -1);
+    for (size_t i = 0; i < old.items.size(); ++i) {
+      GridData::Item it = old.items[i];
+      if (it.removed || (it.flags & 0x100000)) continue;  // tombstones and tool previews
+      int nx = it.x + ox, nz = it.z + oz;
+      if (nx < 0 || nz < 0 || nx >= w || nz >= l) continue;
+      it.x = int16_t(nx), it.z = int16_t(nz);
+      it.y = int16_t(it.y + shiftOld - (0x200 - int(data->heightBase)));
+      remap[i] = int64_t(data->items.size());
+      data->items.push_back(it);
+      data->names.push_back(i < old.names.size() ? old.names[i] : std::string());
+    }
+    for (GridData::Item& it : data->items)  // parents by their new index (a dropped parent drops the link)
+      it.parent = it.parent && it.parent <= remap.size() && remap[it.parent - 1] >= 0 ? uint32_t(remap[it.parent - 1] + 1) : 0;
+    LOG_INFO("grid: resized %dx%d -> %dx%d, offset %d,%d, %zu items", old.width, old.length, w, l, ox, oz, data->items.size());
+    g->data = data;
+    g->sourceFile = std::make_shared<const std::vector<uint8_t>>(file);
+    ++g->generation;
+    loadSimulation(v, g, file);
+    return Value::boolean(true);
+  });
   // addCamera(camera): the original keeps a list of cameras for its division culling; the port culls per view.
   implement(vm, "gsGrid", u"addCamera", [](VM&, Object*, int, const Value*) { return Value(); });
   // setSize(width, length, [divisionShift]) (0x100b9a20 → gsGrid::setSize L:0x0813eb50): an empty map, as the editor's

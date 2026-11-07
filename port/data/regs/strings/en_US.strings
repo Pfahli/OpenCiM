@@ -53,3 +53,6 @@ $regs_list_filter_title = "Filter:";
 $regs_list_filter_all = "All content";
 $regs_list_filter_base = "Base game";
 $regs_category_vehicles = "Vehicles";
+// map sizes beyond XL (port): map attributes and the sandbox page
+$regs_mapSize_extra = ["XXL (1536x1536)", "XXXL (2048x2048)", "Tiny (256x256)", "Microscopic (128x128)"];
+$regs_mapSize_enlarge_hint = "Enlarge the map: the current map stays in the middle, the new border is flat grass.";

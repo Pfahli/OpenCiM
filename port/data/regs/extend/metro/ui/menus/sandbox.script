@@ -13,6 +13,7 @@ if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
   $regs = load "/regs/strings/en_US.strings";
 }
 
+//@rename selectMap regsBaseSelectMap
 //@base
 
 // ---- after the original page: the original game's maps at the end of the map list (as addMap, with the note) ----
@@ -70,4 +71,20 @@ $regsPopulationSlider.$action = macro :: regsSetPopulationDensity();
 function regsSetPopulationDensity() {
   $regsPopulationStep = int($regsPopulationSlider.$value);
   $regsPopulationDensity = $regsDensityValues[$regsPopulationStep];
+}
+
+// map sizes XXL and XXXL (main.script extension): the size label by the full list, the preview kept inside its area
+function selectMap($map) {
+  regsBaseSelectMap($map);
+  $regsSize = 1280;
+  $regsScenario = changeFileExt($map, ".scenario");
+  if (file_exists($regsScenario)) {
+    $regsS = load "/"+$regsScenario;
+    if (defined $regsS.$cellSize) $regsSize = $regsS.$cellSize;
+    delete $regsS;
+  }
+  if ($regsSize > 1280 || $regsSize < 512) {
+    $sizeTitle.setArg(0, $strings.$menu_mapSize_items[MAIN.$main.regsMapSizeIndex($regsSize)]);
+    $mapImage.setRect(($mapArea.clientWidth - 192) * 0.5, ($mapArea.clientHeight - 192) * 0.5, 192, 192);
+  }
 }

@@ -100,7 +100,10 @@ function startEditor($level = "") {
 // the map attributes' OK: the package choice too (the editor.script extension keeps it in $regsSelected); in the
 // running editor the newly picked packages' buildings and props are loaded at once (environment.script extension)
 function setMapData() {
+  $regsOld = 0;
+  if (MAIN.$level : false) $regsOld = MAIN.$grid.width;
   regsBaseSetMapData();
+  if ($regsOld > 0 && MAIN.$gridCellSize > $regsOld) regsEnlargeMap(MAIN.$gridCellSize, $regsOld);
   if ($submenu) {
     if (defined $submenu.$regsSelected) MAIN.$regsSelectedPackages = $submenu.$regsSelected;
   }
@@ -279,4 +282,44 @@ function regsRelayoutMenus() {
   this.perform("back");
   this.perform("settings");
   this.perform("graphics");
+}
+
+// Port: map sizes XXL (1536) and XXXL (2048) after the original's four (owner's request 2026-11-07); the editor's map
+// attributes and the sandbox page read them from this list (editor.script, sandbox.script extensions)
+// parallel to $menu_mapSize_items: the original's four, then XXL, XXXL, tiny and microscopic
+$regsMapSizes = [512, 768, 1024, 1280, 1536, 2048, 256, 128];
+if (#$strings.$menu_mapSize_items == 4) {
+  $regsS = regsPackageStrings();
+  foreach ($regsS.$regs_mapSize_extra) $strings.$menu_mapSize_items[] = current;
+  delete $regsS;
+}
+
+// the size list's entry for a map size (the nearest one)
+function regsMapSizeIndex($size) {
+  $index = 0;
+  for ($i = 0; $i < #$regsMapSizes; ++$i) {
+    if (abs($regsMapSizes[$i] - $size) < abs($regsMapSizes[$index] - $size)) $index = $i;
+  }
+  return $index;
+}
+
+// the editor's map attributes chose a larger size for the open map: the map, the undo base and the timeline move
+// into a grid of that size, centred (the offset rounded down to 8 cells so the road blocks keep their pattern)
+function regsEnlargeMap($size, $old) {
+  $off = int(($size - $old) / 16) * 8;
+  echo "Enlarging map "+$old+" -> "+$size+" (offset "+$off+")";
+  MAIN.$player.resetTool();
+  if (file_exists("memory/base.grid")) {
+    MAIN.$grid.saveToFile("memory/regs-resize.grid");
+    MAIN.$grid.loadFromFile("memory/base.grid");
+    MAIN.$grid.regsResize($size, $size, $off, $off);
+    MAIN.$grid.saveToFile("memory/base.grid");
+    MAIN.$grid.loadFromFile("memory/regs-resize.grid");
+  }
+  MAIN.$grid.regsResize($size, $size, $off, $off);
+  MAIN.$timeline.regsShift($off, $off);
+  if (MAIN.$minimap : false) {
+    MAIN.$minimap.$minimap.scale = -1.0 / (3.0 * MAIN.$grid.width);
+    MAIN.$minimap.update();
+  }
 }

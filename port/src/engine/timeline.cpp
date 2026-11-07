@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -832,6 +833,25 @@ void registerTimelineNatives(VM& vm) {
     if (auto it = days.find(uint32_t(currentDayOf(v, s))); it != days.end())
       for (const Action& act : it->second) arr->items.push_back(Value::string(labelOf(act)));
     return Value::heap(VT::Array, arr.get());
+  });
+  // port: regsShift(dx, dz): every action moved by (dx, dz) cells, as the map moved in gsGrid.regsResize (objects and
+  // their parents, brush dabs, port round brushes in 1/8 cell, water cells)
+  if (ClassInfo* c = vm.findClass("gsGridTimeline")) addMethod(c, u"regsShift", 2, 2);
+  implement(vm, "gsGridTimeline", u"regsShift", [](VM& v, Object* s, int, const Value* a) {
+    int dx = v.toInt(a[0]), dz = v.toInt(a[1]);
+    std::function<void(Action&)> shift = [&](Action& act) {
+      act.obj.x = int16_t(act.obj.x + dx), act.obj.z = int16_t(act.obj.z + dz);
+      if (!act.parent.name.empty()) act.parent.x = int16_t(act.parent.x + dx), act.parent.z = int16_t(act.parent.z + dz);
+      int k = (act.brushType & 0x40) ? 8 : 1;
+      for (auto& p : act.points) p.first = int16_t(p.first + dx * k), p.second = int16_t(p.second + dz * k);
+      act.wx = int16_t(act.wx + dx), act.wz = int16_t(act.wz + dz);
+      for (Action& c : act.children) shift(c);
+    };
+    resetRecording(s);
+    for (auto& [day, list] : timelineOf(s).days)
+      for (Action& act : list) shift(act);
+    v.fireEvent(s, u"onChange", {});
+    return Value();
   });
   // clear() (L:0x081a3460): every day gone (the debug console's flatten_timeline)
   implement(vm, "gsGridTimeline", u"clear", [](VM& v, Object* s, int, const Value*) {

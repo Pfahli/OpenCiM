@@ -88,6 +88,31 @@ function regsSelectAllDlcs() {
     }
   }
 }
-with ($regsAllButton = MAIN.$ui.createButton($box.$content, 560, 374, 390, 26, $regsStrings.$regs_packages_allDlcs_button, regsSelectAllDlcs, "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds")) {
-  .setCropRect(16.0 / 128.0, 3.0 / 32.0, 96.0 / 128.0, 25.0 / 32.0);
+// a plain framed button in the style of the lists (the game's button image stretched badly at this width)
+with ($regsAllButton = MAIN.$ui.createButton($box.$content, 560, 376, 200, 22, $regsStrings.$regs_packages_allDlcs_button, regsSelectAllDlcs)) {
+  .background = 0x60777777;
+  .setBorder(0xFF777777, 2);
 }
+
+// map sizes (main.script extension): the list rebuilt in size order, microscopic (128) to XXXL (2048). In the running
+// editor the current size stays chosen and the larger ones enlarge the map on OK (main.script regsEnlargeMap).
+$sizeBox.$content.clear();
+$sizeBox.enabled = true;
+$regsCurrentSize = 0;   // not with ?: (it evaluates both sides)
+if (MAIN.$grid : false) $regsCurrentSize = MAIN.$grid.width;
+$regsY = 0;
+foreach ([128, 256, 512, 768, 1024, 1280, 1536, 2048]) {
+  $regsSize = current;
+  $regsButton = MAIN.$ui.createChoiceButton($sizeBox.$content, $sizeArea, 0, $regsY, $sizeBox.$content.width, 18, $strings.$menu_mapSize_items[MAIN.$main.regsMapSizeIndex($regsSize)], macro($regsSize) :: $cellsize = $0);
+  if ($cellsize == $regsSize) MAIN.$ui.selectChoiceButton($regsButton, $sizeArea);
+  if ($regsCurrentSize > 0) {
+    if ($regsSize < $regsCurrentSize) {
+      $regsButton.enabled = false;
+      $regsButton.visibility = 0.3;
+    } else if ($regsSize > $regsCurrentSize) {
+      MAIN.$ui.setTooltip($regsButton, $regsStrings.$regs_mapSize_enlarge_hint, 1, 0);
+    }
+  }
+  $regsY += 18;
+}
+MAIN.$ui.resetScrollArea($sizeBox);
