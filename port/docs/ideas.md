@@ -13,18 +13,13 @@ it is, what already exists, and the open decisions. Order is not priority.
 * **Night lights for the day/night option.** The base game's buildings, lamps and vehicles have no lights (only the
   New York and Tokyo DLC assets carry illumination maps, `docs/renderer/sky-and-night.md`), so the port's night is
   dark. Port-made lights:
-  * Street lamps: a light cone or pool on the ground and a glow on the lamp head, placed from the lamp props' meshes
-    (the head's position from the model's bounds or a known bone or material).
-  * Vehicles: headlights and tail lights (glow sprites at the front and rear of the body from the model's bounds,
-    a short light pool ahead), tram and metro interior light.
-  * Windows: found from the building textures, by finding the window areas in each facade's diffuse map (dark,
-    rectangular, repeated cells; a one-time analysis step that writes a generated illumination mask per texture into
-    the port's cache, never shipped as game data). At night the masked windows glow, each window lit or dark by a
-    random seed per building and window.
-  * Timing: random buildings light up through the evening, most go dark late at night with only a few windows left
-    lit, and some light up again in the morning before sunrise.
-  * Open: how well the window detection works on the various facades (a manual mask per texture as a fallback for
-    the landmarks), the cost of many light pools (a deferred or clustered light pass in the planned new renderer).
+  * **Done (branch claude/night-lights-bb517b, `docs/renderer/night-lights.md`):** street lamps (pools on the ground
+    from a lamp map, glows on the heads found from the lamp meshes) and lit windows (masks from the buildings'
+    specular maps, made in memory at load; four random groups per building that go on and off over the evening, most
+    dark after midnight, early risers from 5:30).
+  * Vehicles: done on the same branch (lamps found on the models' textures, beams as a light map, high beams on free
+    roads, lights switching on one by one at dusk). Open: tram and metro interior light; better front-lamp finding.
+  * Open: the cost of many vehicle light pools (a deferred or clustered light pass in the planned new renderer).
 * **Seasons and weather.** **A mod, rain started** (user's decision: weather and seasons are a mod, not the base
   port): the built-in mod `data/mods/weather` (`opencim.weather`, disabled by default) has rain spells by game date,
   streaks, wet surfaces, grey light, rain and thunder sounds, all through generic port hooks

@@ -1,0 +1,182 @@
+# Weather mod (`opencim.weather`): requirements, decisions, state
+
+The owner's specification for the weather mod, collected from the design sessions of 2026-11-06, and where the work
+stands. Read this before continuing on the mod. The mod's own README (`port/data/mods/weather/README.md` on the work
+branch) describes its files and switches.
+
+## Where the work is
+
+- Branch `worktree-agent-a7313af0d186ce799` (worktree `.claude/worktrees/agent-a7313af0d186ce799`), **not merged** into
+  `construction-tools`. The owner reviews it before merging.
+- Commits: `54edd6f` (puddles the owner liked + engine hooks + CC0 sounds), `283e73f` (back to known-good transitions),
+  `baf2910` (uniform wetting/drying — **the accepted rain base**), `4d983b7` (snow first version, seasonal rain table),
+  later commits: the snow round (tracks, banks, trails, shelter, slowdown) — check `git log` on the branch; anything
+  marked WIP continues next session.
+- Screenshots of each round: `port/run/weather/` in that worktree (git-ignored).
+- **State at the end of 2026-11-06:** snow done in `4d983b7` (cold spells, cover, thaw, parked cars, season table),
+  `abf78ed` (traffic-dependent street snow, tyre tracks, banks, pedestrian trails), `a9ee280` (snow ~0.87 white, no
+  colour loss, overlays untouched, shelter under roofs ~1 m / rain ~0.5 m, README). **WIP / next session:** the traffic
+  slowdown (speed hook, ticker, `$regsWeatherSlowTraffic`, mods options page) is **not started**; flakes and streaks are
+  still drawn under roofs; sleet and wind drift not done; pedestrian trails faint; spray faint; the lane/overhead maps
+  only refresh when the lane graph changes. The mod README on the branch lists every feature with its state.
+- **Fixed on the branch (2026-11-06 evening):** smooth edges via `regs_laneSoft`, `regs_roadEdge` (linear road
+  mask in the surface map's G channel), `regs_coveredSoft` and a disk-based `regs_shelterDepth`; puddles unchanged.
+  Still 60 fps. The original note:
+- **Owner feedback (end of 2026-11-06): the snow is very angular at its edges.** Cause found, not fixed yet: the
+  surface map has 0.5 m texels and `regs_surfaceAt` reads one texel (blocky class edges, `port/src/render/glsl.cpp`);
+  `weather_edges` in `wet.glsl` searches only 5 fixed radii (0.3/0.6/1.0/1.5/2.2 m) on 8 rays, so banks come out in
+  steps; the top map behind `regs_shelterDepth` is equally coarse. Fix idea: blend the 4 neighbouring texels (a
+  bilinear mask per class instead of one class), interpolate the edge distance between rays/radii (or bake a smooth
+  distance field into the surface map), soften the shelter fade the same way. Check with crops at normal zoom; puddles
+  use the same edges, so their look must stay unchanged.
+
+## Principles (owner's decisions)
+
+- **Weather and seasons are a mod**, not part of the base port. Shipped with the port in `port/data/mods/weather`,
+  disabled by default, enabled in `<user root>\OpenCiM\mods\mods.json`.
+- Mods only use **generic engine hooks** (documented in `port/docs/mod-manager.md` §4.2–4.3); no game files are
+  modified or shipped; shaders are only adjusted in memory.
+- **Visual quality rules** (learned the hard way): transitions are smooth and slow; nothing flashes, pops or brightens
+  (wet ground is never brighter than dry); **no blotchy / round / noisy patterns** anywhere (the owner rejected blotchy
+  wetting, round spray and "blobby" looks); colours stay natural (wet = same hue, darker, slightly more saturated; no
+  grey/blue cast over the scene). Change one thing at a time and commit known-good steps, so a version the owner liked
+  can always be restored. Show before/after crops at normal zoom.
+- Verify visual transitions with a 60 fps recording (ffmpeg gdigrab, see memory `test-windows`) and per-frame
+  brightness curves, not single screenshots. One game window at a time.
+
+## Rain (accepted, base `baf2910`)
+
+- **Drops very fine**: about 1 px streaks at normal zoom, faint, see-through; density makes the rain, not size.
+- **Intensity builds gradually**: a spell starts with a few drops and grows; tapers off at the end.
+- **Season table** (per month: chance per day, typical length, heavy share) in the weather script. **Less rain in
+  summer** (about half of spring/autumn; heavy rain and storms may still happen in summer); most rain in spring and
+  autumn; in winter rain only outside the snow cold spells.
+- **Heavy rain** (rarer, about 1 in 5–6 spells): denser, darker light, closer grey fog, wetter ground, stronger spray,
+  **thunderstorm**: soft lightning flashes at least ~10 s apart (never a strobe, capped at fast forward), thunder
+  0.5–6 s after the flash by distance (close crack / clap / distant rumble). Open: a lightning bolt in the sky.
+- **Getting wet** (accepted after several rounds): first the asphalt darkens **evenly** (one value per surface, no noise
+  pattern), colour = dry colour ×~0.8 and slightly more saturated, grass/earth ×~0.85; the sheen comes **much later**
+  and builds slowly; puddles appear only after a while of steady rain, driven by **accumulated water**, not by the
+  intensity; drizzle barely forms puddles; heavy rain sooner.
+- **Puddles** (owner: "the puddles are great" — do not change their look): small, irregular, scattered patches (car
+  length at most), mostly in the **gutter on the road side of the kerb** (roads lie lower than pavements), fewer in lane
+  centres; **never connected across the kerb** between road and paved areas (separate masks per surface, faded at the
+  kerb); only on streets and paved/asphalt places, **not on grass** (grass only darkens); they reflect the sky; rain
+  ripples while raining.
+- **Drying**: the sheen fades first; puddles shrink in place from their edges (gutter ones last); the darkening lifts
+  slowly and evenly; pavements dry before roads.
+- **Spray behind vehicles**: a soft, low, elongated mist (fine stretched particles, no visible circles), denser with
+  speed, fades within one or two car lengths; tyre hiss sounds near the camera. Open: more visible on fast cars.
+- **Sounds**: CC0 sounds from freesound.org (downloaded with the owner's approval 2026-11-06), with `LICENSES.txt`:
+  light rain loops, heavy rain, three thunders, wet-road car sounds. The heavy-rain recording with built-in thunder is
+  not used (its thunder would not match the flashes). No downloads without asking the owner.
+
+## Snow (in progress)
+
+- **When**: mainly **December, January, February**, as **cold spells of 1–4 weeks**; rarely short ones in late November
+  or early March. Several snowfalls within a cold spell; between them the snow stays (no melting while cold). Outside
+  cold spells: normal rain schedule. Deterministic per save; `REGS_DEBUG_WEATHER=1` logs the winter plan.
+- **Falling snow**: fine, slowly drifting flakes, starting lightly and building up.
+- **Accumulation**: slowly builds up on upward-facing surfaces (ground, grass, pavements, roofs, tree foliage,
+  platforms); walls and steep faces stay clear; starts finely uneven (never blotchy), then an even cover. Snow colour:
+  below pure white, lit by the scene light and shadows, ground texture faintly showing through, cool tint in shade;
+  **only snow-covered parts change colour** (buildings keep their colours) — an early version was blown-out white and
+  washed out the scene.
+- **Parked cars** accumulate snow on roofs and bonnets; moving vehicles stay mostly clear.
+- **Streets depend on traffic**: quiet streets keep more snow, busy streets less (a decaying count of vehicles per lane);
+  **tyre tracks**: two dark strips per lane at the wheel positions, following the lane through curves, stronger with
+  traffic; slush on busy streets. **Snow banks** next to the streets along the kerbs / road edges (whiter, thicker
+  look), melting last.
+- **Pedestrian tracks**: trodden grey paths on busy pavements, faint trails from single walkers that fill in with new
+  snow, desire lines across squares and parks (a low-resolution trodden map from the citizens' walks).
+- **Sheltered areas**: no snow (and no rain wetness or puddles) on surfaces with something above them — under market
+  tents/stalls, in building gateways (Einfahrten). Via a top-down occlusion map (depth from straight above). **Snow
+  reaches about 1 m in** under the edge (a fade from the open edge), rain wetness about half a metre; never puddles
+  under shelter. Roofs and tents themselves do get snow on top.
+- **UI overlays never get snow or wetness**: the transport lines' route strips with arrows keep their colours, as do
+  catchment circles, construction previews, selection markers and the data layer — the hooks apply only to real
+  surface materials.
+- **Thaw**: when the cold spell ends the snow melts over a day or two **into puddles** (the rain mod's water), which
+  then dry as after rain; roads clear first, then pavements, then grass and roofs; banks last.
+- **Sound**: quiet; the city ambience a little muffled; no new sound without the owner's approval.
+
+- **Footprints and trodden paths** (done on the branch, `5b4dac1`): every walker near the camera leaves single shoe
+  prints (left/right, every 0.7 m) via the engine's footprint map; where several people walk the same way the prints
+  merge into a grey trodden path; new snow fills them in (about 10 min of heavy snowfall), they go with the cover.
+- **Snow hills by the kerb** (done, `5b4dac1`): small lumpy heaps on both sides of the kerb, fading softly into the
+  pavement; the owner rejected a hard edge and dark spots around them (no darkening of flat ground).
+
+## Snowplow (done on the branch, owner's request 2026-11-06)
+
+- **Done:** based on the SUV (owner's choice), see the branch commit "snowplows". Engine: `engine/snowplows.cpp`
+  (`gsGrid.regsSnowplows` = how many; the script asks for 6 while snow lies and it is not thawing), plowed lanes and
+  kerb heaps per lane in the traffic maps (`regs_lanePlowed`). Also fixed: the lane map held only 16-bit node numbers,
+  so on large maps (Vienna 125,000 graph nodes) most lanes were missing for every lane effect (tyre tracks, slush);
+  lanes now have their own 18-bit numbers. Checked in screenshots only (cleared strip with a rim behind the plow, a
+  grey chunky windrow on the kerb); the heap's height reads only weakly from the steep default camera.
+- **Owner (2026-11-06): buses and trams on cleared roads drive at full speed again** — done (2026-11-07): plowed
+  lanes use `gsGrid.regsRoadSpeedCleared` (snow does not slow there, heavy rain does).
+- **Easter egg (owner):** the fifth plow on the streets is purple.
+- **2026-11-07 fixes:** the plowed strip was broken into triangles (lanes averaged with lane-change pieces), the tyre
+  tracks zig-zagged: lane changes (flagged and unflagged) are left out of the lane map, and the tracks, slush and
+  plowed strips now follow each lane piece's own Bézier curve (vector lanes, `regs_laneCurve`), the 1 m lane map only
+  lists which lanes are near. Remaining: a few angular track pieces where turning lanes end inside junctions.
+
+## Settings (done 2026-11-07, settings menu > Mods)
+
+- A **Mods** entry in the settings menu (main and pause menu) opens the port's Mods page (`regs/ui/mods.script`);
+  each enabled mod's `options.script` adds headings and checkboxes. The weather mod's: **Enable weather** (rain,
+  storms, snow; off clears them within seconds), **Enable seasons** (off: no winter cold spells, the year's mean rain
+  and temperature every month; later also no autumn colours, bare trees, spring green or summer heat), **Enable
+  day/night cycle** (the port's `$regsDayNight`, same switch as on the graphics page), **Slow traffic in snow and heavy
+  rain**.
+- Found while testing: the script's `a ? b : c` evaluates both sides (two operators, as in the original engine); a
+  division by `$snowFall` killed the weather's frame thread whenever no snow fell (rain runs stopped updating after
+  the first frame since the footprints commit). Guarded.
+
+Original request:
+
+Original request:
+
+- Only in winter while snow lies: a plough vehicle drives the streets; **behind it the street is cleared** (its lanes
+  bare and wet, the cover there reset) and it pushes the snow aside into **higher heaps on the kerb** than the normal
+  hills.
+- No pickup in the base game: candidates `metro/objects/vehicles/era1/lorry`, `era2|era3/lorry-01`, the `truck-cab`
+  tractor units (era 2–4) and the SUVs (`era3/suv-01`, `era4/Suv`); the plough blade can be an engine-made mesh (an
+  angled blade in front of the vehicle), so no game files are shipped. Engine side: a per-lane "cleared at" time that
+  the snow shader reads (like the lane traffic), and a heap amount per lane edge.
+
+## Seasons (after the snow, owner's request 2026-11-06)
+
+- **Autumn**: the foliage of deciduous trees and bushes turns from green to orange, then falls; **falling leaves**
+  drift to the ground and lie there, slowly disappearing after a while.
+- **Winter**: deciduous trees and bushes bare (no leaves).
+- **Spring**: the leaves come back in a bright green.
+- **Summer heat**: on hot days a visible heat shimmer over the ground (the distinct heat haze above asphalt), the
+  scene looking hot.
+
+## Gameplay setting: slower traffic (done on the branch 2026-11-07)
+
+Done as specified: `gsGrid.regsRoadSpeed` × the target speed of cars, buses and trams on road and street-tram lanes
+(engine `roadWeatherFactor`), eased 0.05 per real second; measured mean road speed about 0.72× in snow and 0.85× in
+heavy rain against dry; the ticker texts come from the mod's own strings. Jam relief reacts only to no progress for
+120 s, so it is not triggered. Spec:
+
+- Mod option **"Verkehr bei Schnee und Starkregen verlangsamen" / "Slow traffic in snow and heavy rain"**
+  (`$regsWeatherSlowTraffic`, default on), shown in a **Mods** section of the settings menu (the first mod options
+  page).
+- Road traffic **including buses and trams** slows down: heavy rain ~0.8 of normal speed, snowfall ~0.7, snow-covered
+  roads after snowfall ~0.85 until cleared or melted; smooth ramps. **On lanes a snowplow cleared, buses, trams
+  and cars drive at full speed again** (owner, 2026-11-06). Metro, trains, boats and helicopters unaffected.
+  Generic engine hook (a road-traffic speed factor); must not trigger jam relief falsely.
+- **News ticker**: one message when the slowdown starts (e.g. "Glätte und Schnee: Der Verkehr und der öffentliche
+  Nahverkehr sind langsamer unterwegs." / "Snow and ice: traffic and public transport are slower."), the same for
+  heavy rain, and one when it is over — once per weather event.
+
+## Later (same mod)
+
+- Seasons: autumn colours (grass, fields, foliage), bare deciduous trees in winter, spring green.
+- Optional gameplay effects (more transit riders in rain: hook `MAIN.$weather.$rain`, off).
+- Puddle reflections of buildings and real-time reflections with the planned new renderer.
+- A clean frame-time measurement with no other windows open; the surface map's memory on the largest maps (~37 MB on
+  Vienna).

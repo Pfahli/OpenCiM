@@ -758,6 +758,19 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.hookTrafficRect = at("regs_TrafficRect");
     l.hookFootRect = at("regs_FootRect");
   }
+  l.viewInverse = at("regs_ViewInverse");
+  l.projInverse = at("regs_ProjInverse");
+  l.night = at("regs_Night");
+  l.shop = at("regs_Shop");
+  l.cabin = at("regs_Cabin");
+  l.windowMask = at("regs_WindowMask");
+  l.windowOn = at("regs_WindowOn");
+  l.lampMap = at("regs_LampMap");
+  l.lampMapXf = at("regs_LampMapXf");
+  l.lampHeight = at("regs_LampHeight");
+  l.carMap = at("regs_CarMap");
+  l.carMapXf = at("regs_CarMapXf");
+  l.carLight = at("regs_CarLight");
   return l;
 }
 
@@ -796,6 +809,20 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   gl::UniformMatrix4fv(l.shadowTransform, 1, 0, v.shadowTransform.m);
   gl::UniformMatrix4fv(l.shadowWarp, 1, 0, v.shadowWarp.m);
   gl::Uniform4fv(l.shadowParams, 1, v.shadowParams);
+  // port night lights (docs/renderer/night-lights.md): the world position from clip space (eye z = −w) and the
+  // window and lamp terms of the patched default shader
+  Mat4 vi = inverseRigid(v.view);
+  gl::UniformMatrix4fv(l.viewInverse, 1, 0, vi.m);
+  gl::Uniform4f(l.projInverse, 1.0f / v.proj.at(0, 0), 1.0f / v.proj.at(1, 1), v.proj.at(0, 2), v.proj.at(1, 2));
+  gl::Uniform4fv(l.night, 1, v.night);
+  gl::Uniform1f(l.shop, v.shopShare);
+  gl::Uniform1i(l.windowMask, kNightWindowUnit);
+  gl::Uniform1i(l.lampMap, kNightLampUnit);
+  gl::Uniform4fv(l.lampMapXf, 1, v.lampMapXf);
+  gl::Uniform4f(l.lampHeight, v.lampHeight[0], v.lampHeight[1], 0, 0);
+  gl::Uniform1i(l.carMap, kNightCarUnit);
+  gl::Uniform4fv(l.carMapXf, 1, v.carMapXf);
+  gl::Uniform4f(l.carLight, v.carLight[0], v.carLight[1], v.carMap ? v.carLight[2] : 0.0f, 0);
   if (l.hookOn >= 0) {  // the mods' shader hooks: colour passes of hooked views; shadow-map passes for some (2)
     bool colour = !(v.env & (kEnvShadowMapRender | kEnvShadowRender));
     static const bool shadowHooks = shadowHooksRegistered();
@@ -877,6 +904,17 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   for (int k = 0; k < 4; ++k) tint[k] = it.colorize[k] * float(p.colorize >> (k == 3 ? 24 : 16 - 8 * k) & 0xFF) / 255.0f;
   gl::Uniform4fv(l.colorize, 1, tint);
   gl::Uniform1f(l.reflection, m.reflection);
+  if (l.windowOn >= 0) {  // port night lights: the material's window groups (kNightWindowUnit)
+    float code = !m.windowMask ? 0.0f : m.windowKind == 1 ? it.lampCode
+                 : m.windowKind >= 4 ? (v.night[3] > 0.05f ? float(m.windowKind) : 0.0f)
+                 : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
+    gl::Uniform1f(l.windowOn, code);
+    if (m.windowKind == 1) gl::Uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, 0);
+    if (code > 0) {
+      gl::ActiveTexture(gl::TEXTURE0 + kNightWindowUnit);
+      gl::BindTexture(gl::TEXTURE_2D, m.windowMask);
+    }
+  }
   for (int i = 0; i < 8; ++i) gl::Uniform4fv(l.custom[i], 1, it.layerCustom ? it.layerCustom[i] : m.custom[i]);
   if (it.hasCustom4) gl::Uniform4f(l.custom[4], it.custom4[0], it.custom4[1], m.custom[4][2], m.custom[4][3]);
   gl::UniformMatrix4fv(l.matrix, 1, 0, it.world.m);
@@ -988,6 +1026,16 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   if (v.env & kEnvShadowMap) {
     gl::ActiveTexture(gl::TEXTURE0 + 7);
     gl::BindTexture(gl::TEXTURE_2D, v.shadowMap);
+    gl::ActiveTexture(gl::TEXTURE0);
+  }
+  if (v.lampMap) {  // port night lights: the lamp light map (kNightLampUnit) for the whole pass
+    gl::ActiveTexture(gl::TEXTURE0 + kNightLampUnit);
+    gl::BindTexture(gl::TEXTURE_2D, v.lampMap);
+    gl::ActiveTexture(gl::TEXTURE0);
+  }
+  if (v.carMap) {  // port night lights: the vehicles' headlight map (kNightCarUnit)
+    gl::ActiveTexture(gl::TEXTURE0 + kNightCarUnit);
+    gl::BindTexture(gl::TEXTURE_2D, v.carMap);
     gl::ActiveTexture(gl::TEXTURE0);
   }
   uint32_t current = 0;

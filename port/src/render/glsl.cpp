@@ -359,17 +359,24 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     head += "in vec4 regs_Vertex;\nin vec3 regs_Normal;\nin vec4 regs_Color;\n";
     for (int i = 0; i < 8; ++i) head += "in vec4 regs_MultiTexCoord" + std::to_string(i) + ";\n";
     head += "out vec4 regs_FrontColor;\n";
-    if (withHooks) {  // the clip position for the hooks' world position, the mesh's two texture coordinates
-      sub(R"(\bvoid\s+main\s*\()", "void regs_vmain(");
-      head += "out vec4 regs_HookClip;\nout vec4 regs_HookUV;\n";
-      s += "\nvoid main() {\n  regs_vmain();\n  regs_HookClip = gl_Position;\n"
-           "  regs_HookUV = vec4(regs_MultiTexCoord0.xy, regs_MultiTexCoord1.xy);\n}\n";
-    }
+    // port night lights (docs/renderer/night-lights.md): every vertex stage passes the world position (from clip
+    // space, so skinned and altered vertices are right too) and the vertex colour alpha (merged buildings: a seed);
+    // with the shader hooks also the clip position for the hooks' world position and the mesh's two texture coordinates
+    head += "uniform mat4 regs_ViewInverse;\nuniform vec4 regs_ProjInverse;\nout vec3 regs_WorldPos;\nout float regs_Seed;\nout vec3 regs_ModelPos;\n";
+    if (withHooks) head += "out vec4 regs_HookClip;\nout vec4 regs_HookUV;\n";
+    sub(R"(\bvoid\s+main\s*\()", "void regs_vmain(");
+    s += "\nvoid main() {\n  regs_vmain();\n";
+    if (withHooks)
+      s += "  regs_HookClip = gl_Position;\n  regs_HookUV = vec4(regs_MultiTexCoord0.xy, regs_MultiTexCoord1.xy);\n";
+    s += "  float ze = -gl_Position.w;\n"
+         "  vec3 e = vec3((gl_Position.x - regs_ProjInverse.z * ze) * regs_ProjInverse.x,\n"
+         "                (gl_Position.y - regs_ProjInverse.w * ze) * regs_ProjInverse.y, ze);\n"
+         "  regs_WorldPos = (regs_ViewInverse * vec4(e, 1.0)).xyz;\n  regs_Seed = regs_Color.a;\n  regs_ModelPos = regs_Vertex.xyz;\n}\n";
   } else {
     sub(R"(\bvarying\b)", "in");
     sub(R"(\bgl_Color\b)", "regs_FrontColor");
     sub(R"(\bgl_FragColor\b)", "regs_FragColor");
-    head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\n";
+    head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\nin vec3 regs_WorldPos;\nin float regs_Seed;\nin vec3 regs_ModelPos;\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
     sub(R"(\bvoid\s+main\s*\()", "void regs_main(");
     if (withHooks)

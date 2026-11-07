@@ -17,6 +17,9 @@ constexpr int kHookSurfaceUnit = 9;  // and of the map's surface classes (regs_S
 constexpr int kHookLaneUnit = 10, kHookLaneTrafficUnit = 11, kHookTroddenUnit = 12;  // the traffic maps
 constexpr int kHookTopUnit = 13;     // the top map (regs_TopMap)
 constexpr int kHookFootIndexUnit = 14, kHookFootAtlasUnit = 15;  // the footprint map (regs_footprintAt)
+// the port night lights (engine/night_lights.h): window mask, lamp map, headlight map. Above the 16 units GL 3.3
+// guarantees, which the materials (0-6), the shadow map (7) and the shader hooks (8-15) fill; desktop GPUs have 32.
+constexpr int kNightWindowUnit = 16, kNightLampUnit = 17, kNightCarUnit = 18;
 
 // GpuMaterial::surfaceClass: the map surfaces a shader hook can tell apart (mod-manager.md §4.3)
 enum : uint8_t {
@@ -41,6 +44,9 @@ struct GpuMaterial {
   float specular[4] = {0, 0, 0, 1}, emission[4] = {0, 0, 0, 1};
   float shininess = 1;
   float reflection = 0;   // header byte 0x27 / 255
+  uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
+  float cabinY[2] = {0, 0};  // vehicles: the window band's model height (passenger silhouettes)
+  uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign, 5: clock face
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
   float custom[8][4] = {};    // shader parameters custom0..7
@@ -152,6 +158,16 @@ struct SceneView {
   float hookTrafficRect[4] = {0, 0, 0, 0};
   uint32_t hookFootIndex = 0, hookFootAtlas = 0;  // engine/traffic_maps.h footprints, units 14-15
   float hookFootRect[4] = {0, 0, 0, 0};
+  // port night lights (engine/night_lights.h, docs/renderer/night-lights.md): x = window light, y = share of the window
+  // groups lit, z = street-lamp light, w = night01 of the cycle; x and z are 0 by day and without the cycle
+  float night[4] = {0, 0, 0, 0};
+  float shopShare = 0;  // share of the shop windows lit (their own schedule)
+  uint32_t lampMap = 0;               // lamp light over the map (kNightLampUnit): rgb light, a = lamp head height
+  float lampMapXf[4] = {0, 0, 0, 0};  // uv = (world.xz − (x, y)) · (z, w)
+  float lampHeight[2] = {0, 1};       // head height = [0] + a · [1]
+  uint32_t carMap = 0;                // vehicle headlights around the view (kNightCarUnit): rgb light, a = ground height
+  float carMapXf[4] = {0, 0, 0, 0};   // uv = (world.xz − (x, y)) · (z, w)
+  float carLight[4] = {0, 1, 0, 0};   // ground height = [0] + a · [1]; [2] = strength (0: none)
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms
@@ -170,7 +186,9 @@ struct DrawItem {
   Mat4 world;
   float colorize[4] = {1, 1, 1, 1};
   float alpha = 1;
-  bool shadowOnly = false;  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
+  bool shadowOnly = false;
+  float lampCode = 0;
+  float passengers = 0;  // port night lights: the vehicle's shown occupancy 0..1 (silhouettes in the windows)  // port night lights: vehicle lamps (engine/night_lights.h vehicleLampCode), 0 = off  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
   // a per-instance custom4.xy over the material's (vehicles' animated parts: rotor angle and spin-up, which the engine
   // writes into each vehicle's own material copy, L:0x081adca0.c:604-690); z and w stay the material's
   bool hasCustom4 = false;
@@ -258,6 +276,8 @@ class Renderer3D {
     int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1,
         hookItem = -1, hookTrafficRect = -1, hookFootRect = -1;
     std::map<std::string, int> hookUniforms;
+    int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
+        lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
   };
   std::map<uint32_t, ProgramLocs> locs_;
   const ProgramLocs& locs(uint32_t prog);

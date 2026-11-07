@@ -14,6 +14,7 @@
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
+#include "engine/night_lights.h"
 #include "engine/scene3d.h"
 #include "engine/skinning.h"
 #include "vfs/vfs.h"
@@ -142,6 +143,16 @@ namespace {
 void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
   const GridData& g = *grid->data;
   auto read = [&](const std::string& p, std::vector<uint8_t>& out) { return vm.vfs().read(p, out); };
+  {  // port night lights: the window masks of the new templates' building materials, made in parallel
+    std::vector<std::pair<const ObjectData*, std::string>> objs;
+    for (size_t t = tc.typeTemplate.size(); t < g.types.size(); ++t) {
+      auto it = grid->templates.find(g.types[t]);
+      auto* o = it == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(it->second.get());
+      if (o && o->data)
+        objs.emplace_back(o->data.get(), o->pendingPath);
+    }
+    prepareWindowMasks(d, vm, objs);
+  }
   for (size_t t = tc.typeTemplate.size(); t < g.types.size(); ++t) {
     tc.typeTemplate.push_back(-1);
     auto it = grid->templates.find(g.types[t]);
@@ -181,6 +192,25 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
       // foliage: the materials the trees' wind shader draws (set in the templates' onLoaded)
       if (tc.materials.back().shader.find("shaders/trees/trees.shader") != std::string::npos)
         tc.materials.back().surfaceClass = kSurfaceFoliage;
+      tc.materials.back().windowMask =  // port night lights
+          buildingWindowMask(d, vm, m, o->pendingPath, &o->data->mesh, int(&m - o->data->materials.data()));
+      if (!tc.materials.back().windowMask)
+        if (uint32_t glass = lampGlassMask(d, vm, *o->data, int(&m - o->data->materials.data()), o->pendingPath)) {
+          tc.materials.back().windowMask = glass;  // a street lamp's glass
+          tc.materials.back().windowKind = 2;
+        }
+      if (!tc.materials.back().windowMask)
+        if (uint32_t sign = signMask(d, vm, *o->data, int(&m - o->data->materials.data()), o->pendingPath)) {
+          tc.materials.back().windowMask = sign;  // a lit sign or advertisement
+          tc.materials.back().windowKind = 3;
+        }
+      if (!tc.materials.back().windowMask) {  // market stands and clock faces
+        int kind = 0;
+        if (uint32_t glow = propGlowMask(d, vm, *o->data, int(&m - o->data->materials.data()), o->pendingPath, kind)) {
+          tc.materials.back().windowMask = glow;
+          tc.materials.back().windowKind = uint8_t(kind);
+        }
+      }
     }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");
@@ -204,6 +234,14 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
         known = tc.fileMaterials.emplace(path, index).first;
       }
       tp.variation[n - 1] = known->second;
+      // port night lights: a lit sign keeps its panel mask with the other poster (an own copy of the shared material)
+      if (known->second >= 0 && !o->data->materials.empty() && tc.materials[size_t(tp.materialBase)].windowKind == 3) {
+        GpuMaterial lit = tc.materials[size_t(known->second)];
+        lit.windowMask = tc.materials[size_t(tp.materialBase)].windowMask;
+        lit.windowKind = 3;
+        tp.variation[n - 1] = int(tc.materials.size());
+        tc.materials.push_back(lit);
+      }
     }
     if (auto c = o->fieldValues.find(u"colorMap"); c != o->fieldValues.end())
       if (auto* cm = dynamic_cast<ColormapObj*>(c->second.object()); cm && !cm->argb.empty()) tp.colorMap = cm;
@@ -456,6 +494,9 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
       oz = -x * s + z * c;
     };
     uint32_t tint = tc.itemColor[i] ? tc.itemColor[i] : 0xFFFFFFFFu;
+    // port night lights: buildings with window masks carry a seed in the vertex colour alpha (the default shader does
+    // not read vertex colours), so each building lights its own windows
+    const uint32_t seed = uint32_t(buildingSeed(it.x, it.y, it.z)) << 24;
     bool hasUv1 = mesh->uv1.size() >= mesh->vertexCount() * 2;
     bool hasTangents = mesh->tangents.size() >= mesh->vertexCount() * 4;
     uint32_t vcount = uint32_t(mesh->vertexCount());
@@ -507,7 +548,8 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
         } else {
           gr.tangents.insert(gr.tangents.end(), {1, 0, 0, 1});
         }
-        gr.colors.push_back(mesh->colors[v]);
+        gr.colors.push_back(size_t(mat) < tc.materials.size() && tc.materials[size_t(mat)].windowMask
+                                ? (mesh->colors[v] & 0x00FFFFFFu) | seed : mesh->colors[v]);
       }
       for (uint32_t k = 0; k < sm.indexCount; ++k) gr.indices.push_back(base + mesh->indices[sm.firstIndex + k] - sm.firstVertex);
     }
