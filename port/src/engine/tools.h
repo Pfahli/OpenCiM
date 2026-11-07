@@ -95,6 +95,9 @@ struct ToolMode {
   // the hovered cell): the shift and ruin brushes keep an undo copy of their area, grow trees opens a timeline group.
   // Default: none.
   std::function<void(script::VM&, ControlObj* player, GridObj* grid)> down;
+  // port: the left button's release for modes that apply on their own (the editor's templates) instead of firing
+  // onTryApplyTool to the hover script (no price). Default: none.
+  std::function<void(script::VM&, ControlObj* player, GridObj* grid, float x, float y)> up;
 };
 void registerToolMode(int mode, ToolMode m);
 

@@ -83,3 +83,10 @@ $regs_browser_delete_folder = "Ordner %0 mit allen Karten darin wirklich lösche
 $regs_browser_exists = "Dieser Name ist schon vergeben.";
 $regs_browser_top = "(oberste Ebene)";
 $regs_browser_empty = "(leer)";
+// Vorlagen im Karteneditor (extend/metro/scripts/editor.script, engine/tool_templates.cpp)
+$regs_template_save_hint = "Vorlage speichern\nZiehen Sie einen Bereich auf: Gelände und Objekte darin werden als Vorlage gespeichert.";
+$regs_template_place_hint = "Vorlage platzieren\nWählen Sie eine gespeicherte Vorlage und klicken Sie auf die Karte. Was im Bereich liegt, wird ersetzt.";
+$regs_template_name_dialog = "Name der Vorlage:";
+$regs_template_list_dialog = "Welche Vorlage platzieren?";
+$regs_template_saved_status = "Vorlage gespeichert";
+$regs_template_none = "Noch keine Vorlagen gespeichert.";

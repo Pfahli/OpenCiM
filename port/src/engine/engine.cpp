@@ -22,6 +22,7 @@
 #include "engine/tools.h"
 #include "engine/tool_objects.h"
 #include "engine/tool_addstop.h"
+#include "engine/tool_templates.h"
 #include "engine/tool_terrain.h"
 #include "engine/tool_tracks.h"
 #include "engine/ui_graphs.h"
@@ -66,6 +67,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerAddStopTool(*vm_);
   registerTrackTools(*vm_);
   registerTerrainTools(*vm_);
+  registerTemplateTools(*vm_);
   registerSaveNatives(*vm_);
   registerTimelineNatives(*vm_);
   registerGridEditNatives(*vm_);

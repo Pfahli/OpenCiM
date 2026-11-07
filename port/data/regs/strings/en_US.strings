@@ -83,3 +83,10 @@ $regs_browser_delete_folder = "Really delete the folder %0 with all maps in it?"
 $regs_browser_exists = "This name is already taken.";
 $regs_browser_top = "(top level)";
 $regs_browser_empty = "(empty)";
+// templates in the map editor (extend/metro/scripts/editor.script, engine/tool_templates.cpp)
+$regs_template_save_hint = "Save template\nDrag an area: its terrain and objects are saved as a template.";
+$regs_template_place_hint = "Place template\nPick a saved template and click on the map. What lies in the area is replaced.";
+$regs_template_name_dialog = "Name of the template:";
+$regs_template_list_dialog = "Which template to place?";
+$regs_template_saved_status = "Template saved";
+$regs_template_none = "No templates saved yet.";

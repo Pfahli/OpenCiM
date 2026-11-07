@@ -84,3 +84,71 @@ $regsAutosaveThread = thread :: {
     if (MAIN.$settings.$regsEditorAutosave : true) regsAutosave();
   }
 };
+
+// ---- templates (owner's request 2026-11-07; engine/tool_templates.cpp) ----
+// Two buttons in the objects menu: "save template" (drag an area, then name it; saved to userdata/templates) and
+// "place template" (pick one, then click on the map: its terrain and objects replace what lies in the area).
+
+function regsStringsNow() {
+  $file = "regs/strings/"+MAIN.$language+".strings";
+  if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+  return load "/"+$file;
+}
+
+function regsTemplateCheckName($key) {
+  return $key >= 'a' && $key <= 'z' || $key >= 'A' && $key <= 'Z' || $key >= '0' && $key <= '9' || $key >= ',' && $key <= '.' || $key == '_' || $key == ' ' || $key >= 192;
+}
+
+function regsSaveTemplateTool() {
+  $toolbar.selectTool(REGS_GRIDMODE_SELECT_AREA);
+  regsTakeSelectedArea();
+  thread :: {
+    while ($player.editMode == REGS_GRIDMODE_SELECT_AREA) {
+      skip_frame;
+      $area = regsTakeSelectedArea();
+      if ($area) {
+        $rs = regsStringsNow();
+        $name = "";
+        if (MAIN.$ui.showDialog($rs.$regs_template_name_dialog, true, true, true, @$name, regsTemplateCheckName) && $name != "") {
+          mkdir("userdata/templates");
+          if ($grid.regsSaveTemplate("userdata/templates/"+$name+".grid", $area[0], $area[1], $area[2], $area[3])) {
+            updateFileSystem();
+            MAIN.$ui.showStatusMessage($rs.$regs_template_saved_status);
+          }
+        }
+        delete $rs;
+      }
+    }
+  };
+}
+
+function regsPlaceTemplateTool() {
+  $toolbar.closeSubMenu();
+  thread :: {
+    $rs = regsStringsNow();
+    $items = map [];
+    foreach (list_files("userdata/templates", ".grid")) $items[current] = changeFileExt(current, "");
+    if (#$items == 0) {
+      MAIN.$ui.showInfoDialog($rs.$regs_template_none);
+      delete $rs;
+      return;
+    }
+    $chosen = "";
+    $ok = MAIN.$ui.showDialog($rs.$regs_template_list_dialog, true, true, false, @$chosen, null, $items);
+    delete $rs;
+    if (!$ok || $chosen == "") return;
+    if (regsSetTemplate("userdata/templates/"+$chosen)) $toolbar.selectTool(REGS_GRIDMODE_PLACE_TEMPLATE);
+  };
+}
+
+// the two buttons after the original's in the objects tab, with the menu icons for saving and loading
+$regsObjectsTab = $objectsMenu.$tabs["objects"];
+$regsRs = regsStringsNow();
+foreach ([["/metro/ui/menus/save.dds", regsSaveTemplateTool, $regsRs.$regs_template_save_hint],
+          ["/metro/ui/menus/load.dds", regsPlaceTemplateTool, $regsRs.$regs_template_place_hint]]) {
+  $regsN = $regsObjectsTab.getChildCount();
+  $regsB = MAIN.$ui.createChoiceButton($regsObjectsTab, null, $regsN % 5 * 56, $regsN / 5 * 56, 46, 46, "", current[1], current[0], current[0], current[0]);
+  $regsB.setCropRect(0.1, 0.1, 0.8, 0.8);
+  MAIN.$ui.setTooltip($regsB, current[2], 0, 1);
+}
+delete $regsRs;

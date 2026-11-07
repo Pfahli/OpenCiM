@@ -99,6 +99,25 @@ void writeNetwork(const GridData& g, std::vector<uint8_t>& out) {
 
 }  // namespace
 
+std::vector<uint8_t> gridFileOf(const GridData& g) {
+  std::vector<uint8_t> out;
+  put32(out, 0x07000000);
+  put32(out, 0);
+  put32(out, uint32_t(g.width));
+  put32(out, uint32_t(g.length));
+  uint32_t cs;
+  std::memcpy(&cs, &g.cellSize, 4);
+  put32(out, cs);
+  put32(out, g.bucketShift);
+  put16(out, g.heightBase);
+  put16(out, 0);
+  put32(out, 0);
+  writeTerrain(g, out);
+  writeNetwork(g, out);
+  putU32(out, 4, uint32_t(out.size() - 8));
+  return out;
+}
+
 void setGridSectionWriter(GridSectionWriter writer) { g_sectionWriter = std::move(writer); }
 
 void registerSaveNatives(VM& vm) {

@@ -30,7 +30,10 @@ namespace {
 
 constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x07081010, kCreate = 0x07081020,
                    kCreateWithParent = 0x07081030, kDelete = 0x07081040, kBrush = 0x07081050, kWater = 0x07081060,
-                   kName8 = 0x07081070, kName = 0x07081071, kVariation = 0x07081080;
+                   kName8 = 0x07081070, kName = 0x07081071, kVariation = 0x07081080,
+                   // port: a terrain patch (the editor's templates): i16 x, i16 z, u16 w, u16 l, then w·l × (i16 height,
+                   // u16 flags) row by row; kept in Action::raw. The original game does not know the tag.
+                   kRegsPatch = 0x07081090;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -507,6 +510,22 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       gridEditItemChanged(ap.grid, uint32_t(i));
       break;
     }
+    case kRegsPatch: {
+      if (preview || a.raw.size() < 8) break;
+      auto rd = [&](size_t at) { int16_t v; std::memcpy(&v, a.raw.data() + at, 2); return v; };
+      int x0 = rd(0), z0 = rd(2), w = uint16_t(rd(4)), l = uint16_t(rd(6));
+      if (a.raw.size() < 8 + size_t(w) * size_t(l) * 4) break;
+      for (int z = 0; z < l; ++z)
+        for (int x = 0; x < w; ++x) {
+          int cx = x0 + x, cz = z0 + z;
+          if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length) continue;
+          size_t k = 8 + (size_t(z) * size_t(w) + size_t(x)) * 4, c = size_t(cz) * size_t(g.width) + size_t(cx);
+          g.height[c] = rd(k);
+          g.flags[c] = uint16_t((g.flags[c] & ~0x203Fu) | (uint16_t(rd(k + 2)) & 0x203Fu));
+        }
+      gridEditCellsChanged(ap.grid, x0 - 1, z0 - 1, x0 + w, z0 + l, true);
+      break;
+    }
     default: break;
   }
 }
@@ -540,6 +559,7 @@ std::u16string labelOf(const Action& a) {
     case kWater: return a.on ? u"%!22" : u"%!23";
     case kName: return u"%!24";
     case kVariation: return u"%!25";
+    case kRegsPatch: return u"%!18";  // shown as levelling the terrain
     default: return u"";
   }
 }
@@ -697,6 +717,23 @@ void timelineRecordBrush(VM& vm, Object* s, int type, int radius, int x, int str
   g_recording[s].brushOpen = true;
 }
 
+void timelineRecordPatch(VM& vm, Object* s, int x, int z, int w, int l, const std::vector<int16_t>& heights,
+                         const std::vector<uint16_t>& flags) {
+  if (!s || w <= 0 || l <= 0 || heights.size() < size_t(w) * size_t(l) || flags.size() < heights.size()) return;
+  Action a;
+  a.tag = kRegsPatch;
+  auto put = [&](uint16_t v) { a.raw.push_back(uint8_t(v)); a.raw.push_back(uint8_t(v >> 8)); };
+  put(uint16_t(x));
+  put(uint16_t(z));
+  put(uint16_t(w));
+  put(uint16_t(l));
+  for (size_t i = 0; i < size_t(w) * size_t(l); ++i) {
+    put(uint16_t(heights[i]));
+    put(flags[i]);
+  }
+  recordAction(vm, s, std::move(a));
+}
+
 void timelineRecordWater(VM& vm, Object* s, int x, int z, bool on) {
   if (!s) return;
   Action a;
@@ -845,6 +882,14 @@ void registerTimelineNatives(VM& vm) {
       int k = (act.brushType & 0x40) ? 8 : 1;
       for (auto& p : act.points) p.first = int16_t(p.first + dx * k), p.second = int16_t(p.second + dz * k);
       act.wx = int16_t(act.wx + dx), act.wz = int16_t(act.wz + dz);
+      if (act.tag == kRegsPatch && act.raw.size() >= 4) {  // the patch's corner
+        int16_t px, pz;
+        std::memcpy(&px, act.raw.data(), 2);
+        std::memcpy(&pz, act.raw.data() + 2, 2);
+        px = int16_t(px + dx), pz = int16_t(pz + dz);
+        std::memcpy(act.raw.data(), &px, 2);
+        std::memcpy(act.raw.data() + 2, &pz, 2);
+      }
       for (Action& c : act.children) shift(c);
     };
     resetRecording(s);

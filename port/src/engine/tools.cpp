@@ -529,6 +529,11 @@ void toolMouseDown(VM& vm, ControlObj* player, float x, float y, int key) {
 void toolMouseUp(VM& vm, ControlObj* player, float x, float y, int key) {
   ToolState& t = toolState(player);
   int mode = editMode(vm, player);
+  if (auto m = g_modes.find(mode); m != g_modes.end() && m->second.up && key == kMouseLeft) {
+    if (GridObj* grid = toolGrid(vm, player)) m->second.up(vm, player, grid, x, y);
+    t.inProgress = false;
+    return;
+  }
   uint32_t bit = mode >= 0 && mode < 0x16 ? 1u << mode : 0;
   if (!(bit & 0x2102)) {  // not select, bulldoze or water
     if ((bit & 0x300000) || (bit & 0x4000)) {

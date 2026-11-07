@@ -221,6 +221,11 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   start) names it and offers "Open anyway" or cancel; missing objects stay invisible and are kept in the files.
   Not checked yet: a DLC object actually placed showing up in `$regsPackages`; vehicle packs are not filtered.
 - [x] Undo keeps working after saving (same session).
+- [x] Port additions (owner's requests 2026-11-07): content packages per map, map sizes 128-2048 and enlarging,
+  autosave with 5 versions, the object list's package filter and search, a vehicles category, folders and a map
+  manager window (Karte laden: new folder, rename, move, delete, preview), templates (objects menu: save an area's
+  terrain and objects, stamp it elsewhere; replaces what it touches; recorded on the timeline, so undo works).
+  Templates have no rotation and no preview picture yet.
 - [ ] Open: bridges, tunnels, ramps and map-edge road pieces; the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
