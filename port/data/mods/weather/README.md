@@ -64,7 +64,23 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 | `shaders/wet.glsl` | the ground: wet film, puddles, ripples, sheen; snow |
 | `shaders/seasons.glsl` | the foliage of deciduous trees and bushes through the year (also in the shadow passes) |
 | `shaders/heat.glsl` | the heat shimmer (a post hook, only on hot days) |
+| `scripts/testdialog.script` | the test dialog (F9 in the game) |
 | `sounds/*.mp3`, `sounds/LICENSES.txt` | the CC0 recordings |
+
+## Test dialog (F9)
+
+F9 in the game opens and closes a small window on the right (the mod has to be enabled). It can:
+
+* force a weather: Automatic (the date's schedule), Clear, Rain, Heavy rain, Thunderstorm, Snow, Heavy snow, Heat.
+  Snow puts the temperature below zero, heat at a heat spell's, rain at 4 °C or more;
+* set the ground at once: Dry (also clears the snow), Wet, Puddles (full), Snow cover (full);
+* strike a lightning flash with its thunder, in any weather;
+* fix the season of the trees: Automatic, Spring, Summer, Autumn (colours and falling leaves), Winter (bare);
+* show the state: date, temperature, what falls and how much, wet, puddles, snow cover, thaw, road speed.
+
+Nothing in it is saved: "Automatic" or the next game brings back the schedule. With weather switched off on the Mods
+page the dialog's weather does nothing (the state line says so). `REGS_TEST_WEATHER_DIALOG=1` opens it at the start
+(screenshot tests).
 
 ## Switches
 

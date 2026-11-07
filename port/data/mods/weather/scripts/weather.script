@@ -64,6 +64,11 @@ $debug = getenv("REGS_DEBUG_WEATHER") != "";
 $debugMap = getenv("REGS_DEBUG_WEATHER") == "2" || getenv("REGS_DEBUG_WEATHER") == "3";   // the ground shader shows the surface map and edges (3: the lane map)
 $holdFlash = getenv("REGS_DEBUG_WEATHER") == "flash";  // each flash held at its peak for 3 s (screenshots only)
 if ($mode == "storm") $flashWait = 3.0;
+// the test dialog (F9 in the game, scripts/testdialog.script): a forced weather ("" = the schedule, or one of clear,
+// rain, heavy, storm, snow, heavysnow, heat), set ground states and a fixed season
+$override = "";
+$testDialog = null;
+$testDialogClose = false;   // set by the dialog's close button; the frame deletes the dialog (not from its own handler)
 
 // The schedule: per game day a chance of a spell starting at a random hour, fading in and out over 1.5 game hours.
 // The chance, the length and the share of heavy rain (most heavy spells are thunderstorms) follow the month (the
@@ -200,6 +205,11 @@ function heatSpellOf($d) {
 // month's mean with a little day-to-day change
 $monthTemp = [11.4, 3.0, 4.0, 6.0, 11.0, 15.5, 19.0, 21.0, 20.5, 16.0, 10.5, 6.0, 4.0];
 function temperature($d, $h) {
+  // the test dialog's weather: snow is cold, heat hot, rain never below 4 °C
+  if ($override == "snow" || $override == "heavysnow") return -4.0 + 2.0 * sin(($h - 9.0) * 0.2618);
+  if ($override == "heat") return 28.0 + 3.0 * hash01($d, 51) + 5.5 * sin(($h - 9.0) * 0.2618);
+  if ($override == "rain" || $override == "heavy" || $override == "storm")
+    return max(4.0, $monthTemp[$seasonsOn ? monthOf($d) : 0] + 3.0 * (hash01($d, 50) - 0.5) + 3.0 * sin(($h - 9.0) * 0.2618));
   if (coldSpellOf($d)) return -4.0 + 2.0 * sin(($h - 9.0) * 0.2618);
   if (heatSpellOf($d)) return 28.0 + 3.0 * hash01($d, 51) + 5.5 * sin(($h - 9.0) * 0.2618);
   return $monthTemp[$seasonsOn ? monthOf($d) : 0] + 3.0 * (hash01($d, 50) - 0.5) + 3.0 * sin(($h - 9.0) * 0.2618);
@@ -273,11 +283,13 @@ function logPlan($d) {
 // the scheduled intensity at day $d, hour $h (spells of the two days before can still run); sets $kindNow
 function scheduled($d, $h) {
   $kindNow = 0;
-  if ($mode == "rain") return 1.0;
-  if ($mode == "heavy") { $kindNow = 1; return 1.0; }
-  if ($mode == "storm") { $kindNow = 2; return 1.0; }
-  if ($mode == "snow") { $kindNow = 3; return 1.0; }
-  if ($mode == "dry" || $mode == "heat") return 0.0;
+  $fm = $override != "" ? $override : $mode;   // the test dialog wins over REGS_TEST_WEATHER
+  if ($fm == "rain") return 1.0;
+  if ($fm == "heavy") { $kindNow = 1; return 1.0; }
+  if ($fm == "storm") { $kindNow = 2; return 1.0; }
+  if ($fm == "snow") { $kindNow = 3; return 1.0; }
+  if ($fm == "heavysnow") { $kindNow = 4; return 1.0; }
+  if ($fm == "dry" || $fm == "heat" || $fm == "clear") return 0.0;
   $best = 0.0;
   for ($back = 0; $back <= 2; ++$back) {
     $sp = spellOf($d - $back);
@@ -639,22 +651,25 @@ function updateSnow($dh, $dt, $s, $hv) {
 }
 
 // ---- thunderstorms: flashes paced in real time, at least 10 s apart whatever the game speed ----
+// one flash and its thunder (also the test dialog's lightning button, in any weather)
+function strike() {
+  $flashCount++;
+  $close = hash01($flashCount, 21);                       // 1 = right overhead
+  $flashPeak = 0.35 + 0.45 * $close;                        // never a full white-out
+  $flashAge = 0.0;
+  $delay = 0.5 + 5.5 * (1.0 - $close);                      // sound travels 340 m/s: 0.5-6 s
+  $thunders[] = [$delay, $close, $delay];
+  // the next flash: 10-60 s of real time, a little sooner at fast forward, never under 10 s
+  $flashWait = max(10.0, (10.0 + 50.0 * hash01($flashCount, 22)) / max(1.0, pow(max(gameSpeed(), 0.0), 0.5)));
+  echo "weather: lightning (closeness " + string($close) + "), thunder in " + string($delay) + " s, at " + dateText();
+}
+
 function updateStorm($dt, $w, $h) {
   $speed = gameSpeed();
   $storm = $kindNow == 2 && $w > 0.5;
   if ($storm && $speed > 0.0) {
     $flashWait -= $dt;
-    if ($flashWait <= 0.0) {
-      $flashCount++;
-      $close = hash01($flashCount, 21);                       // 1 = right overhead
-      $flashPeak = 0.35 + 0.45 * $close;                        // never a full white-out
-      $flashAge = 0.0;
-      $delay = 0.5 + 5.5 * (1.0 - $close);                      // sound travels 340 m/s: 0.5-6 s
-      $thunders[] = [$delay, $close, $delay];
-      // the next flash: 10-60 s of real time, a little sooner at fast forward, never under 10 s
-      $flashWait = max(10.0, (10.0 + 50.0 * hash01($flashCount, 22)) / max(1.0, pow($speed, 0.5)));
-      echo "weather: lightning (closeness " + string($close) + "), thunder in " + string($delay) + " s, at " + dateText();
-    }
+    if ($flashWait <= 0.0) strike();
   }
   // the flash: up in 0.05 s, gone over about half a second (one soft pulse, no strobing)
   $flashAge += $dt;
@@ -709,6 +724,10 @@ function updateSound($w, $h) {
 }
 
 function frame($dt) {
+  if ($testDialogClose) {
+    $testDialogClose = false;
+    if ($testDialog) { delete $testDialog; $testDialog = null; }
+  }
   $hour = float($clock.time) / 3600000.0;
   $date = $clock.date;
   $weatherOn = MAIN.$settings.$regsWeatherEnabled : true;
@@ -811,6 +830,48 @@ function tickerText($text) {
   if (MAIN.$petitionbar : false) MAIN.$petitionbar.addTickerText(1, escapePattern($text));
 }
 
+// ---- the test dialog (F9 in the game; scripts/testdialog.script calls these) ----
+function setOverride($k) {
+  $override = $k;
+  echo "weather: test dialog: weather " + ($k == "" ? "by the schedule" : $k);
+}
+
+// the ground at once (the model and the shown values): dry, wet (a water film), puddles (full), snow (a full cover)
+function setGround($what) {
+  if ($what == "dry") {
+    $film = 0.0; $water = 0.0; $snow = 0.0;
+    $wet = 0.0; $puddles = 0.0; $snowShown = 0.0; $thaw = 0.0;
+  } else if ($what == "wet") {
+    $film = 1.0; $wet = 1.0;
+  } else if ($what == "puddles") {
+    $film = 1.0; $wet = 1.0; $water = 3.0; $puddles = 1.0;
+  } else if ($what == "snow") {
+    $snow = 1.2; $snowShown = 1.0; $film = max($film, 0.8);
+  }
+  echo "weather: test dialog: ground " + $what;
+}
+
+// a fixed day of the year for the foliage (spring 110, summer 190, autumn 300, winter 350), or < 0 for the date's
+function setSeason($doy) {
+  $testDayOfYear = $doy;
+  $testSeasonSpeed = 0.0;
+  echo "weather: test dialog: season day " + string($doy);
+}
+
+function toggleTestDialog() {
+  if ($testDialog) {
+    delete $testDialog;
+    $testDialog = null;
+  } else {
+    $testDialog = load $root + "scripts/testdialog.script";
+  }
+}
+
+event MAIN.$player.keyDown::["F9"]() {
+  toggleTestDialog();
+}
+if (getenv("REGS_TEST_WEATHER_DIALOG") != "") toggleTestDialog();   // open from the start (screenshot tests)
+
 echo "weather: on (" + ($mode != "" ? "REGS_TEST_WEATHER=" + $mode : "seed " + string($seed)) + ")";
 if ($debug) logPlan($clock.date);
 $frameThread = thread "gameUI" :: loop {
@@ -819,6 +880,7 @@ $frameThread = thread "gameUI" :: loop {
 
 event this.onDestroy::() {
   if ($frameThread) { delete $frameThread; $frameThread = null; }
+  if ($testDialog) { delete $testDialog; $testDialog = null; }
   $flash = 0.0;
   $heat = 0.0;
   applyLook(0.0, 0.0, 0.0);

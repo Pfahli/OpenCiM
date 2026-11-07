@@ -1,0 +1,118 @@
+﻿// Weather mod (opencim.weather): the test dialog, opened and closed with F9 in the game (weather.script's
+// toggleTestDialog). It forces a weather (or leaves it to the schedule), sets the ground at once (dry, wet, puddles,
+// snow cover), strikes a lightning flash, fixes the foliage's season and shows the weather's state. Nothing it sets
+// is saved: the schedule takes over again with "Automatic" or the next game.
+$weather = MAIN.$weather;
+$texts = $weather.$texts;
+$desktop = MAIN.$desktop;
+
+$boxW = 400;
+$boxH = 600;
+$box = MAIN.$ui.createHudElement($desktop.width - $boxW - 24, 80, $boxW, $boxH, 1 | 2 | 4 | 8);
+$heading = MAIN.$ui.createHeadingBar($box, $texts.$weather_test_title);
+$c = $box.$content;
+
+$closeButton = MAIN.$ui.createButton(MAIN.$hud, $box.left + $box.width - 23, $box.top - 9, 31, 31, "", close, "/metro/ui/close.dds", "/metro/ui/close_se.dds", "/metro/ui/close_ho.dds");
+$closeButton.setCropRect(0, 0, 31.0 / 32.0, 31.0 / 32.0);
+
+function close() {
+  $weather.$testDialogClose = true;   // weather.script deletes this script on its next frame
+}
+
+function label($x, $y, $w, $text, $title) {
+  with ($l = new_control($c)) {
+    .setRect($x, $y, $w, 18);
+    if ($title) MAIN.$ui.setTitleFont(current);
+    else MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $l;
+}
+
+// a radio button with its text; the group's first button is selected by createChoiceButton, $on selects this one
+function radio($group, $x, $y, $text, $action, $on) {
+  $b = MAIN.$ui.createChoiceButton($c, $group, $x, $y + 1, 16, 16, "", $action, "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+  label($x + 22, $y, 150, $text, false);
+  if ($on) MAIN.$ui.selectChoiceButton($b, $group);
+  return $b;
+}
+
+function button($x, $y, $text, $action) {
+  return MAIN.$ui.createButton($c, $x, $y, 88, 25, $text, $action, "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+}
+
+// ---- the weather ----
+$y = 56;
+label(20, $y, 340, $texts.$weather_test_weather, true);
+$kinds = [["", $texts.$weather_test_auto], ["clear", $texts.$weather_test_clear],
+          ["rain", $texts.$weather_test_rain], ["heavy", $texts.$weather_test_heavy],
+          ["storm", $texts.$weather_test_storm], ["snow", $texts.$weather_test_snow],
+          ["heavysnow", $texts.$weather_test_heavysnow], ["heat", $texts.$weather_test_heat]];
+for ($i = 0; $i < #$kinds; ++$i) {
+  radio("opencimWeatherTestKind", 20 + ($i % 2) * 180, $y + 28 + ($i / 2) * 26, $kinds[$i][1],
+        macro($kinds[$i][0]) :: $weather.setOverride($0), $kinds[$i][0] == $weather.$override);
+}
+
+// ---- the ground at once, and a lightning flash ----
+$y = 196;
+label(20, $y, 340, $texts.$weather_test_ground, true);
+button(20, $y + 28, $texts.$weather_test_dry, macro :: $weather.setGround("dry"));
+button(112, $y + 28, $texts.$weather_test_wet, macro :: $weather.setGround("wet"));
+button(204, $y + 28, $texts.$weather_test_puddles, macro :: $weather.setGround("puddles"));
+button(296, $y + 28, $texts.$weather_test_snowCover, macro :: $weather.setGround("snow"));
+button(20, $y + 60, $texts.$weather_test_lightning, macro :: $weather.strike());
+
+// ---- the season of the trees ----
+$y = 298;
+label(20, $y, 340, $texts.$weather_test_season, true);
+$seasons = [[-1.0, $texts.$weather_test_auto], [110.0, $texts.$weather_test_spring], [190.0, $texts.$weather_test_summer],
+            [300.0, $texts.$weather_test_autumn], [350.0, $texts.$weather_test_winter]];
+for ($i = 0; $i < #$seasons; ++$i) {
+  $doy = $seasons[$i][0];
+  radio("opencimWeatherTestSeason", 20 + ($i % 2) * 180, $y + 28 + ($i / 2) * 26, $seasons[$i][1],
+        macro($doy) :: $weather.setSeason($0), $doy >= 0.0 && abs($weather.$testDayOfYear - $doy) < 0.5);
+}
+
+// ---- the state now ----
+$y = 400;
+label(20, $y, 340, $texts.$weather_test_state, true);
+$lines = [];
+for ($i = 0; $i < 6; ++$i) $lines[] = label(20, $y + 26 + $i * 21, 350, "", false);
+
+function pct($v) {
+  return string(int(clamp($v, 0.0, 2.0) * 100.0 + 0.5)) + " %%";   // a control's text is a pattern: %% shows %
+}
+
+function degrees($v) {
+  $r = int(abs($v) + 0.5);
+  return ($v < -0.5 ? "-" : "") + string($r) + " °C";
+}
+
+function updateState() {
+  $w = $weather;
+  $kindTexts = [$texts.$weather_test_rain, $texts.$weather_test_heavy, $texts.$weather_test_storm,
+                $texts.$weather_test_snow, $texts.$weather_test_heavysnow];
+  $falling = $w.$kindNow >= 3 ? $w.$snowFall : $w.$rain;
+  $lines[0].text = $w.dateText() + "   " + degrees($w.$temp);
+  $lines[1].text = !$w.$weatherOn ? $texts.$weather_test_off
+                   : ($w.$target > 0.0 || $falling > 0.01 ? $kindTexts[int(clamp(float($w.$kindNow), 0.0, 4.0))] + " " + pct($falling)
+                                                         : ($w.$heat > 0.05 ? $texts.$weather_test_heat + " " + pct($w.$heat) : $texts.$weather_test_clear));
+  $lines[2].text = $texts.$weather_test_wet + " " + pct($w.$wet) + ",  " + $texts.$weather_test_puddles + " " + pct($w.$puddles);
+  $lines[3].text = $texts.$weather_test_snowCover + " " + pct($w.$snowShown) + ($w.$thaw > 0.3 ? ",  " + $texts.$weather_test_thaw : "");
+  $lines[4].text = $texts.$weather_test_traffic + " " + pct($w.$roadSpeed);
+  $lines[5].text = $texts.$weather_test_hint;
+}
+updateState();
+$stateThread = thread "gameUI" :: loop {
+  wait 0.25;
+  updateState();
+};
+
+event this.onDestroy::() {
+  if ($stateThread) { delete $stateThread; $stateThread = null; }
+  delete $closeButton;
+  delete $box;
+}
