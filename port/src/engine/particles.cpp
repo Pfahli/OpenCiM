@@ -128,6 +128,11 @@ class ParticleEmitterObj : public Object {
   Vec3 emitBox;
   float stretch = 0;
   bool vehicleOnly = false;  // listed in gsGrid.regsVehicleEmitters: emits only behind vehicles, not at its own place
+  // gsGrid.regsTreeEmitters (tickTreeEmitters): the tree objects it emits from (their .object's mesh name, e.g.
+  // "tree01"; empty: every tree), how long its particles lie on the ground once they reach the tree's base height
+  // (regsLand, s; 0: they do not land), and a sideways swing while they fall (regsFlutter, m/s)
+  std::vector<std::string> trees;
+  float land = 0, flutter = 0;
   bool emitting = false;   // gsEmittingParticleEmitter: its particles carry its child emitters
   bool contrail = false;   // gsBoatContrain: a wake ribbon, not particles (not ported)
 
@@ -150,6 +155,10 @@ struct Particle {
   float childTimer = 0;  // +0x58: the child emitters' accumulator
   uint32_t system = 0;
   bool children = false;  // emitted by a gsEmittingParticleEmitter: its child emitters follow the particle
+  // port (regsLand, regsFlutter): lands at floorY and lies there for `lie` s (fading over the last third), swings
+  // sideways with `flutter` m/s while falling
+  bool landed = false;
+  float floorY = -1e30f, lie = 0, flutter = 0, phase = 0;
 };
 
 // gsParticleEngine (ctor L:0x0822cd10, move L:0x0822d180): the scene's particles, moved in steps of at most 0.2 s
@@ -242,6 +251,9 @@ bool emitParticle(VM& vm, ParticleEngineObj* eng, ParticleEmitterObj* e, const V
   p.grav = e->gravitation;
   p.growth = e->growth, p.growStart = e->growStart, p.growEnd = e->growEnd;
   p.size = e->particleSize;
+  p.lie = e->land;
+  p.flutter = e->flutter;
+  p.phase = rnd01() * kTwoPi;
   p.system = eng->systemOf(e);
   p.children = e->emitting;
   eng->particles.push_back(p);
@@ -324,8 +336,23 @@ bool ParticleEngineObj::moveParticle(VM& vm, Particle& p, float dt) {
   p.age += dt;
   ParticleEmitterObj* src = p.children && p.system < systems.size() ? static_cast<ParticleEmitterObj*>(systems[p.system].get()) : nullptr;
   if (p.age < p.life) {
+    if (p.landed) return false;  // lying on the ground (regsLand)
     p.pos = p.pos + p.vel * dt;
     p.vel = p.vel + (p.grav - (p.vel - wind) * p.air) * dt;
+    if (p.flutter > 0) {  // port: a falling leaf's swing and turn
+      float t = p.age + p.phase;
+      p.pos.x += std::cos(t * 2.3f + p.phase) * p.flutter * dt;
+      p.pos.z += std::sin(t * 1.7f) * p.flutter * dt;
+      p.orient += std::sin(t * 1.3f) * 2.0f * dt;
+    }
+    if (p.lie > 0 && p.pos.y <= p.floorY) {  // port: landed; it lies still from now on
+      p.c0 = p.c1 = lerpArgb(p.c0, p.c1, std::clamp(p.age / p.life, 0.0f, 1.0f));
+      p.pos.y = p.floorY;
+      p.landed = true;
+      p.age = 0;
+      p.life = p.lie;
+      return false;
+    }
     if (src)
       for (auto& c : src->children) {
         auto* ce = dynamic_cast<ParticleEmitterObj*>(c.get());
@@ -467,6 +494,15 @@ struct SimParticles {
   std::vector<ItemEffects> items;
   uint64_t itemsGeneration = ~0ull, itemsVersion = ~0ull;
   std::unordered_map<uint64_t, float> sprayTimers;  // port vehicle emitters: (mover << 8 | emitter) → accumulator
+  // port tree emitters (gsGrid.regsTreeEmitters): the map's trees, rebuilt when the items change
+  struct Tree {
+    Vec3 base;
+    float height = 0, radius = 0;
+    uint32_t kind = 0;  // index into treeNames
+  };
+  std::vector<Tree> trees;
+  std::vector<std::string> treeNames;  // the trees' mesh names
+  uint64_t treesGeneration = ~0ull, treesVersion = ~0ull;
   int fireTicks = 0;
   bool fireDone = false;
 
@@ -693,6 +729,123 @@ void tickItems(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimParticles& sp, 
   }
 }
 
+// Port: mod emitters on trees (gsGrid.regsTreeEmitters, an array of emitters; mod-manager.md §4.2): each emits from
+// the crowns of the trees near the camera whose mesh name is in its regsTrees (all trees when empty): density = particles
+// per second and tree, from a random point in the crown (45-90 % of the tree's height, within 0.7 of its radius); with
+// regsLand its particles land at the tree's base height and lie there. At most kMaxEmittingTrees nearest trees within
+// the emitter's maxDistance (200 m when 0); none while the trees are hidden or in the underground view.
+constexpr size_t kMaxEmittingTrees = 500;
+
+void collectTrees(VM& vm, GridObj* grid, SimParticles& sp) {
+  const GridData& g = *grid->data;
+  sp.trees.clear();
+  sp.treeNames.clear();
+  sp.treesGeneration = grid->generation;
+  sp.treesVersion = grid->itemsVersion;
+  struct TypeInfo {
+    int known = 0;  // 0 unknown, 1 not a tree, 2 tree
+    uint32_t kind = 0;
+    float height = 0, radius = 0;
+  };
+  std::vector<TypeInfo> types(g.types.size());
+  for (size_t i = 0; i < g.items.size(); ++i) {
+    const GridData::Item& it = g.items[i];
+    if (it.removed || it.type >= g.types.size()) continue;
+    TypeInfo& ti = types[it.type];
+    if (!ti.known) {
+      ti.known = 1;
+      auto t = grid->templates.find(g.types[it.type]);
+      auto* o = t == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(t->second.get());
+      if (o && o->data && fieldInt(vm, o, u"type", 0) == 0x13) {  // GRID_ITEM_TREE
+        const render::MeshData& m = o->data->mesh;
+        ti.known = 2;
+        ti.height = m.boundsMax[1];
+        ti.radius = std::max({std::fabs(m.boundsMin[0]), std::fabs(m.boundsMax[0]), std::fabs(m.boundsMin[2]), std::fabs(m.boundsMax[2])});
+        auto n = std::find(sp.treeNames.begin(), sp.treeNames.end(), o->data->name);
+        ti.kind = uint32_t(n - sp.treeNames.begin());
+        if (n == sp.treeNames.end()) sp.treeNames.push_back(o->data->name);
+      }
+    }
+    if (ti.known != 2 || ti.height <= 0.5f) continue;
+    SimParticles::Tree tr;
+    tr.base = itemCentre(vm, grid, int(i));
+    tr.height = ti.height;
+    tr.radius = ti.radius;
+    tr.kind = ti.kind;
+    sp.trees.push_back(tr);
+  }
+  if (debugParticles()) {
+    LOG_INFO("particles: %zu trees of %zu kinds for the tree emitters", sp.trees.size(), sp.treeNames.size());
+    for (const std::string& n : sp.treeNames) LOG_INFO("particles:   tree kind %s", n.c_str());
+    std::map<std::pair<int, int>, int> bins;  // the densest 60 m squares (world x/z for the cam:x,z test action)
+    for (const SimParticles::Tree& t : sp.trees) ++bins[{int(std::floor(t.base.x / 60.0f)), int(std::floor(t.base.z / 60.0f))}];
+    std::vector<std::pair<int, std::pair<int, int>>> top;
+    for (auto& [k, n] : bins) top.push_back({n, k});
+    std::sort(top.rbegin(), top.rend());
+    for (size_t k = 0; k < top.size() && k < 8; ++k)
+      LOG_INFO("particles:   %d trees around %d,%d", top[k].first, top[k].second.first * 60 + 30, top[k].second.second * 60 + 30);
+  }
+}
+
+void tickTreeEmitters(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimParticles& sp, const Vec3& eye, float dt) {
+  auto f = grid->fieldValues.find(u"regsTreeEmitters");
+  if (f == grid->fieldValues.end() || !grid->data) return;
+  std::vector<ParticleEmitterObj*> emitters;
+  if (ArrayObj* arr = vm.resolve(f->second).array())
+    for (const Value& e : arr->items)
+      if (auto* pe = dynamic_cast<ParticleEmitterObj*>(vm.resolve(e).object()); pe && !pe->destroyed && pe->autoemit && pe->rate(vm) > 0)
+        emitters.push_back(pe);
+  if (emitters.empty()) return;
+  int viewMode = fieldInt(vm, grid, u"viewMode", 0xfe);
+  if (viewMode == 0x180 || !(viewMode & 0x08)) return;  // underground view, or trees hidden
+  if (sp.treesGeneration != grid->generation || sp.treesVersion != grid->itemsVersion) collectTrees(vm, grid, sp);
+  if (sp.trees.empty()) return;
+  // which tree kinds each emitter takes
+  std::vector<std::vector<char>> takes(emitters.size());
+  float range = 0;
+  for (size_t k = 0; k < emitters.size(); ++k) {
+    ParticleEmitterObj* e = emitters[k];
+    range = std::max(range, e->maxDistance > 0 ? e->maxDistance : 200.0f);
+    takes[k].assign(sp.treeNames.size(), e->trees.empty() ? 1 : 0);
+    for (const std::string& n : e->trees)
+      for (size_t t = 0; t < sp.treeNames.size(); ++t)
+        if (sp.treeNames[t] == n) takes[k][t] = 1;
+  }
+  struct Near {
+    float d2;
+    size_t tree;
+  };
+  std::vector<Near> near;
+  const float r2 = range * range;
+  for (size_t i = 0; i < sp.trees.size(); ++i) {
+    Vec3 q = sp.trees[i].base - eye;
+    float d2 = dot(q, q);
+    if (d2 < r2) near.push_back({d2, i});
+  }
+  if (near.size() > kMaxEmittingTrees) {
+    std::partial_sort(near.begin(), near.begin() + kMaxEmittingTrees, near.end(), [](const Near& a, const Near& b) { return a.d2 < b.d2; });
+    near.resize(kMaxEmittingTrees);
+  }
+  Mat4 basis;
+  for (const Near& n : near) {
+    const SimParticles::Tree& tr = sp.trees[n.tree];
+    for (size_t k = 0; k < emitters.size(); ++k) {
+      ParticleEmitterObj* e = emitters[k];
+      if (!takes[k][tr.kind]) continue;
+      float maxD = e->maxDistance > 0 ? e->maxDistance : 200.0f;
+      if (n.d2 >= maxD * maxD) continue;
+      float want = e->rate(vm) * dt + rnd01();  // a Poisson-like count without a timer per tree
+      int count = std::min(int(want), 50);
+      for (int i = 0; i < count; ++i) {
+        float a = rnd01() * kTwoPi, r = std::sqrt(rnd01()) * 0.7f * tr.radius;
+        Vec3 at = tr.base + Vec3{std::cos(a) * r, tr.height * rnd(0.45f, 0.9f), std::sin(a) * r};
+        if (!emitParticle(vm, eng, e, at, basis, {})) return;
+        eng->particles.back().floorY = tr.base.y + 0.05f + 0.5f * e->particleSize;
+      }
+    }
+  }
+}
+
 // test switch REGS_TEST_FIRE=<item>: a fire (template fire-medium, as maybeFire places it: one cell before the
 // item's corner) at that item after 60 ticks; put the camera there with REGS_DEBUG_CAMERA=<item>
 void testFire(VM& vm, GridObj* grid, SimParticles& sp) {
@@ -734,6 +887,7 @@ void simParticlesTick(VM& vm, GridObj* grid, SimState& s, float dt) {
   tickVehicles(vm, eng, s, sp, s.eye, dt);
   tickItems(vm, eng, grid, sp, s.eye, dt);
   tickVehicleEmitters(vm, eng, grid, s, sp, s.eye, dt);
+  tickTreeEmitters(vm, eng, grid, sp, s.eye, dt);
   stats.simMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -791,6 +945,7 @@ void collectParticles(Display& d, VM& vm, Object* scene, const Vec3& eye, const 
       if (dist >= si.maxDistance) continue;
       a = std::min(a, std::min(1.0f, (si.maxDistance - dist) / si.maxDistance * 10.0f));
     }
+    if (p.landed) a = std::min(a, 3.0f * (1.0f - p.age / p.life));  // a landed particle fades over its last third
     uint32_t col = multAlpha(lerpArgb(p.c0, p.c1, std::clamp(p.age / p.life, 0.0f, 1.0f)), a);
     if ((col >> 24) == 0) continue;
     static const bool marked = std::getenv("REGS_DEBUG_PARTICLES") && std::atoi(std::getenv("REGS_DEBUG_PARTICLES")) == 2;
@@ -862,6 +1017,22 @@ void registerParticleNatives(VM& vm) {
           if (auto* pe = dynamic_cast<ParticleEmitterObj*>(v.resolve(e).object())) pe->vehicleOnly = true;
     };
   }
+  // port: gsGrid.regsTreeEmitters (tickTreeEmitters); the listed emitters stop emitting at their own place too
+  if (ClassInfo* g = vm.findClass("gsGrid")) {
+    FieldInfo& f = g->fields[u"regsTreeEmitters"];
+    f.name = u"regsTreeEmitters";
+    f.get = [](VM&, Object* o) {
+      auto it = o->fieldValues.find(u"regsTreeEmitters");
+      return it == o->fieldValues.end() ? Value::null() : it->second;
+    };
+    f.set = [](VM& v, Object* o, const Value& x) {
+      Value r = v.resolve(x);
+      o->fieldValues[u"regsTreeEmitters"] = r;
+      if (ArrayObj* arr = r.array())
+        for (const Value& e : arr->items)
+          if (auto* pe = dynamic_cast<ParticleEmitterObj*>(v.resolve(e).object())) pe->vehicleOnly = true;
+    };
+  }
   ClassInfo* c = vm.findClass("gsParticleEmitter");
   if (!c) return;
   auto E = [](Object* o) { return dynamic_cast<ParticleEmitterObj*>(o); };
@@ -907,6 +1078,25 @@ void registerParticleNatives(VM& vm) {
   vecField(u"direction", &ParticleEmitterObj::direction, true);  // setDirection normalises (L:0x08175440)
   vecField(u"regsEmitBox", &ParticleEmitterObj::emitBox, false);  // port fields (see ParticleEmitterObj)
   floatField(u"regsStretch", &ParticleEmitterObj::stretch);
+  floatField(u"regsLand", &ParticleEmitterObj::land);
+  floatField(u"regsFlutter", &ParticleEmitterObj::flutter);
+  {  // regsTrees: an array of tree mesh names (strings)
+    FieldInfo& f = c->fields[u"regsTrees"];
+    f.name = u"regsTrees";
+    f.get = [](VM&, Object* o) {
+      auto it = o->fieldValues.find(u"regsTrees");
+      return it != o->fieldValues.end() ? it->second : Value::null();
+    };
+    f.set = [E](VM& v, Object* o, const Value& x) {
+      auto* e = E(o);
+      if (!e) return;
+      Value r = v.resolve(x);
+      o->fieldValues[u"regsTrees"] = r;
+      e->trees.clear();
+      if (ArrayObj* arr = r.array())
+        for (const Value& n : arr->items) e->trees.push_back(utf16ToUtf8(v.toStr(v.resolve(n))));
+    };
+  }
   {
     FieldInfo& f = c->fields[u"particleBlend"];
     f.get = [E](VM&, Object* o) { auto* e = E(o); return Value::integer(e ? e->blend : 1); };

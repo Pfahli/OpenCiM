@@ -29,7 +29,10 @@ void surfaceMapInit(SurfaceMap& m, float originX, float originZ, float sizeX, fl
 void paintTop(SurfaceMap& m, const MeshData& mesh, const Mat4& world, const std::vector<GpuMaterial>& materials) {
   const float inv = 1.0f / m.topTexel;
   for (const Submesh& sm : mesh.submeshes) {
-    if (sm.material >= 0 && size_t(sm.material) < materials.size() && materials[size_t(sm.material)].surfaceClass == kSurfaceOverlay)
+    // overlays are not there; tree crowns are no roof (snow and rain fall through them onto the ground)
+    if (sm.material >= 0 && size_t(sm.material) < materials.size() &&
+        (materials[size_t(sm.material)].surfaceClass == kSurfaceOverlay ||
+         materials[size_t(sm.material)].surfaceClass == kSurfaceFoliage))
       continue;
     for (uint32_t k = 0; k + 2 < sm.indexCount; k += 3) {
       Vec3 p[3];
@@ -72,7 +75,7 @@ void surfaceMapPaint(SurfaceMap& m, const MeshData& mesh, const Mat4& world, con
   for (const Submesh& sm : mesh.submeshes) {
     if (sm.material < 0 || size_t(sm.material) >= materials.size()) continue;
     uint8_t c = materials[size_t(sm.material)].surfaceClass;
-    if (c == kSurfaceOther || c == kSurfaceWater) continue;
+    if (c == kSurfaceOther || c == kSurfaceWater || c == kSurfaceFoliage) continue;
     for (uint32_t k = 0; k + 2 < sm.indexCount; k += 3) {
       Vec3 p[3];
       for (int j = 0; j < 3; ++j) {

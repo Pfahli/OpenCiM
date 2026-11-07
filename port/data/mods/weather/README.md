@@ -2,7 +2,8 @@
 
 A built-in OpenCiM mod: rain, heavy rain and thunderstorms by game date, wet streets with puddles that dry after the
 rain, spray behind vehicles, and the sounds of all that. It ships with the port in `data/mods/weather` and is
-**disabled by default**. Seasons (autumn colours, winter, snow) are planned in this same mod.
+**disabled by default**. It also brings the seasons: snow in winter, autumn colours and falling leaves, bare trees,
+spring green and the summer heat.
 
 ## Enable
 
@@ -60,7 +61,9 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 | `mod.json` | the manifest, with the shader hook |
 | `extend/metro/scripts/game.script` | adds the weather script to the game's `$gameScripts` (loaded and unloaded with the game) |
 | `scripts/weather.script` | schedule, rain, light, ground model, spray, storm, sounds; an empty `updateERA` (game.script calls it on every game script at each new year) |
-| `shaders/wet.glsl` | the ground: wet film, puddles, ripples, sheen |
+| `shaders/wet.glsl` | the ground: wet film, puddles, ripples, sheen; snow |
+| `shaders/seasons.glsl` | the foliage of deciduous trees and bushes through the year (also in the shadow passes) |
+| `shaders/heat.glsl` | the heat shimmer (a post hook, only on hot days) |
 | `sounds/*.mp3`, `sounds/LICENSES.txt` | the CC0 recordings |
 
 ## Switches
@@ -68,11 +71,18 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 * `REGS_TEST_WEATHER=rain` (normal rain all the time), `heavy`, `storm` (heavy rain with lightning, the first flash
   after 3 s), `dry` (never), `cycle` (12 game hours from 06:00 every second day, alternating rain and storm: start,
   stop and drying tests), `snow` (cold and snowing all the time), `snowmelt` (two cold days with a day of snow from
-  the start, then the thaw).
+  the start, then the thaw), `heat` (a heat spell all the time, dry: the shimmer in the afternoons).
+* `REGS_TEST_SEASON=<day of the year>` fixes the foliage's day (0 = 1 January; e.g. 200 summer, 290 turning, 305
+  falling, 340 bare, 105 budding, 125 spring green); `<day>+<n>` lets it run on n days per real second (transitions).
+* `REGS_TEST_HEAT=<0..1>`: a fixed heat shimmer (with `REGS_TEST_WEATHER=heat`; the light and haze follow it too).
+* `REGS_DEBUG_SEASONS=1`: the foliage shows how the hook sees it (deciduous leaves red, twigs yellow, conifers, bark
+  and the rest blue); `=2`: the heat shimmer's strength in red.
 * `REGS_DEBUG_TRAFFIC_MAPS=1` (engine): where the parked cars are, walkers and trodden cells, the busiest lane, the
   snowplows and their plowed lanes. `REGS_TEST_PLOWS=<n>`: that many snowplows while the mod asks for any;
   `REGS_DEBUG_FOLLOW_PLOW=<n>` keeps the camera on the n-th plow.
-* Settings: none yet (the slowdown option `$regsWeatherSlowTraffic` is planned with the mods options page).
+* Settings (settings menu > Mods): Enable weather, Enable seasons (off: no cold spells, heat spells, autumn colours,
+  bare trees, spring green or falling leaves; the summer look within seconds), Enable day/night cycle, Slow traffic in
+  snow and heavy rain.
 * `REGS_DEBUG_WEATHER=1`: the scheduled and shown intensity, wetness, water and puddles every game hour; `=2`: the
   ground shows the surface map (roads blue, pavements yellow, platforms magenta, grass green, edges red); `=flash`:
   each flash held at its peak for 3 s (screenshots only).
@@ -98,8 +108,32 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 * **Pedestrians:** trodden grey paths where people walk (the engine's trodden map), single walkers faint, filled in by
   new snow.
 * **Shelter:** no snow, wetness or puddles under roofs, tents and passages (the engine's top map); snow reaches about a
-  metre in under an edge, rain about half a metre.
+  metre in under an edge, rain about half a metre. Tree crowns are no shelter: snow lies under the trees.
 * **Overlays** (route strips, highlights, previews, markers, the catchment layer, people, the sky) are never touched.
+
+## Seasons
+
+* **Foliage** (`shaders/seasons.glsl`, the engine's foliage class 9: every material the trees' wind shader draws). All
+  the base game's trees and bushes share one texture atlas; the hook tells its parts apart by the texture coordinate
+  and the atlas texel: the two conifers (`tree04`, `tree05`) keep their needles all year, bark, tree pits and grass
+  stay as they are; the grey leaves of the deciduous clusters change. Each tree has its own number from the engine
+  (`RegsSurface.uv1.y`), so trees are up to a week apart and each has its autumn colour; each leaf (an 8-texel cell of
+  the atlas) has its own moment, the leaves that turn first fall first.
+  * **Autumn:** from about 19 September the leaves turn yellow (like birches and limes), orange or, on a few trees,
+    red, the same brightness as the green; from mid October they go brown and fall, bare by late November.
+  * **Winter:** bare. A leaf card whose leaves have fallen shows the atlas's bare bush (brown twigs) at the same place,
+    so a winter crown is a net of branches; snow settles on them. The shadows follow (the hook runs in the shadow
+    passes too): bare trees cast thin branch shadows.
+  * **Spring:** the leaves come out from early April (full by the end of April), bright yellowish green, deepening
+    to the summer green by mid June.
+* **Falling leaves** (`gsGrid.regsTreeEmitters`): small yellow to brown leaves drift and swing down from the crowns of
+  the deciduous trees near the camera (mid October to late November, most at the start of November; storms shake off
+  more), lie under the tree for 45 s and fade away.
+* **Summer heat:** one to three heat spells per summer (10 June to 31 August, 3-9 days, no rain), afternoons of
+  30-35 °C. Above 26 °C a heat shimmer (`shaders/heat.glsl`, a post hook: the scene read a fraction of a pixel away
+  along a slowly boiling turbulence anchored on the ground) makes edges over the asphalt wobble gently, less over
+  pavements and grass, fading with distance; a slightly warmer, stronger sun and a pale warm haze in the distance. Only
+  while it shows does the engine run the extra screen pass (`gsScene.regsPostHooks`).
 
 ## Status
 
@@ -120,7 +154,8 @@ Requirements and decisions: `port/docs/weather-mod.md` (construction-tools).
 | Snow by traffic: lane and trodden maps, tyre tracks, banks, trails | done (trails faint with few walkers) | abf78ed |
 | Snow colour, overlays excluded, shelter (top map) | done | the last commit of this round |
 | Snowplows: cleared lanes, kerb windrows; 18-bit lane numbers (all lanes on large maps) | done | this commit |
-| Traffic slowdown in snow and heavy rain, ticker, options page | **open (not started)** | - |
+| Traffic slowdown in snow and heavy rain, ticker, options page | done | 3648968 |
+| Seasons: autumn colours, falling and lying leaves, bare winter trees, spring green, heat shimmer | done | this commit |
 | Falling streaks and flakes skipped under shelter | open | - |
 | Sleet around freezing | open | - |
 
@@ -129,4 +164,5 @@ Requirements and decisions: `port/docs/weather-mod.md` (construction-tools).
 * Gameplay effects stay off. The hooks are `MAIN.$weather.$rain` (0..1) and `$wet`: a later option could raise
   transit ridership or slow walkers in rain from there.
 * Optional lightning bolt in the sky: not drawn.
-* Seasons and snow: the same structure (a `$season` next to `$rain`).
+* Seasons: grass and fields keep their colour all year (autumn and dry-summer grass are not done); trees of other
+  atlases (DLC, community content) are not recognised.

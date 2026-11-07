@@ -30,6 +30,8 @@ enum : uint8_t {
   kSurfaceVehicle = 7,   // simulated vehicles (per draw: DrawItem::surfaceClass; hookValue 1 = parked)
   kSurfaceOverlay = 8,   // not a surface: route strips, highlights, previews, markers, the data layer, the sky,
                          // people: the hooks never run on it
+  kSurfaceFoliage = 9,   // tree and bush foliage: the materials drawn with the trees' wind shader
+                         // (metro/shaders/trees/trees.shader), leaves, needles, twigs and bark of one atlas
 };
 
 struct GpuMaterial {
@@ -201,6 +203,11 @@ class Renderer3D {
   // slots of upload(). 0 on failure (error set).
   // hooks: add the mods' shader hooks (render/glsl.h; the scene combiner variants).
   uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false);
+  // The mods' post hooks (render/glsl.h): a program from the post vertex shader (GLSL 1.10) and postHookFragment();
+  // postHookState puts it in use with the view's hook uniforms and maps, ready for drawQuad (scene colour on unit 0,
+  // its depth on unit 1, custom0 = one texel).
+  uint32_t buildPostHookProgram(const std::string& vs110, std::string* error);
+  void postHookState(const SceneView& v, uint32_t prog);
   GpuMesh upload(const MeshData& m, const SkinLayout& skin = {});
   void destroy(GpuMesh& m);
   bool makeTarget(RenderTarget& t, int w, int h, TargetFormat format = TargetFormat::Rgba8, bool withDepth = true,
@@ -255,6 +262,8 @@ class Renderer3D {
   std::map<uint32_t, ProgramLocs> locs_;
   const ProgramLocs& locs(uint32_t prog);
   void setupProgram(const SceneView& v, uint32_t prog);
+  void hookState(const SceneView& v, uint32_t prog);
+  uint32_t linkProgram(const std::string& vs, const std::string& fs, std::string* error);
   void setupFallback(const SceneView& v);
   void drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m, uint32_t prog,
                     float alphaRef);

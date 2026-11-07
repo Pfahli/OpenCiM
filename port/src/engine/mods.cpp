@@ -272,8 +272,12 @@ void loadShaderHooks(const ModInfo& m) {
     if (code.find("gl_") != std::string::npos)
       LOG_WARN("mods: %s: shader hook %s uses a gl_ built-in; hooks are GLSL 3.30 core (the programs would not build)",
                m.id.c_str(), file.c_str());
-    render::addShaderHook({function, code, m.id + "/" + file});
-    LOG_INFO("mods: %s: shader hook %s (%s)", m.id.c_str(), function.c_str(), file.c_str());
+    render::ShaderHook hook{function, code, m.id + "/" + file};
+    if (const Json* b = h.get("shadowPass"); b && b->t == Json::T::Bool) hook.shadow = b->b;
+    if (const Json* b = h.get("post"); b && b->t == Json::T::Bool) hook.post = b->b;
+    render::addShaderHook(hook);
+    LOG_INFO("mods: %s: %s hook %s (%s)%s", m.id.c_str(), hook.post ? "post" : "shader", function.c_str(), file.c_str(),
+             hook.shadow ? ", also in shadow passes" : "");
   }
 }
 

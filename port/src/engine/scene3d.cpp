@@ -293,9 +293,11 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
 //   regsFogScale       × the fog start and end distances
 //   regsSurfaceDiffuse × every material's ambient and diffuse colour (darker surfaces)
 //   regsSurfaceSpecular × every material's specular colour (only materials with MATERIAL_SPECULAR show it)
+//   regsLightTint      ARGB: the direct light (diffuse, specular) × its RGB / 255, by alpha / 255 (warm or cool light)
+//   regsPostHooks      > 0: the mods' post hooks run on this scene's map views (a full-screen pass; render/glsl.h)
 struct Atmosphere {
   float light = 1, ambient = 1, desaturate = 0, fogScale = 1, surfaceDiffuse = 1, surfaceSpecular = 1;
-  uint32_t fogTint = 0;
+  uint32_t fogTint = 0, lightTint = 0;
 };
 const char16_t* const kAtmosphereFloats[] = {u"regsLightScale", u"regsAmbientScale", u"regsLightDesaturate",
                                              u"regsFogScale", u"regsSurfaceDiffuse", u"regsSurfaceSpecular"};
@@ -315,6 +317,8 @@ Atmosphere atmosphereOf(VM& vm, Object* scene) {
   a.surfaceSpecular = std::max(0.0f, num(u"regsSurfaceSpecular", 1));
   if (auto it = scene->fieldValues.find(u"regsFogTint"); it != scene->fieldValues.end() && it->second.type() == VT::Int)
     a.fogTint = uint32_t(vm.toInt(it->second));
+  if (auto it = scene->fieldValues.find(u"regsLightTint"); it != scene->fieldValues.end() && it->second.type() == VT::Int)
+    a.lightTint = uint32_t(vm.toInt(it->second));
   return a;
 }
 
@@ -327,6 +331,14 @@ void applyAtmosphere(const Atmosphere& a, SceneView& v) {
     grade(l.diffuse, a.light);
     grade(l.specular, a.light);
     grade(l.ambient, a.ambient);
+    if (a.lightTint >> 24) {
+      float t = float(a.lightTint >> 24) / 255.0f, tint[4];
+      argbToFloats(a.lightTint, tint);
+      for (int k = 0; k < 3; ++k) {
+        l.diffuse[k] *= 1.0f + (tint[k] - 1.0f) * t;
+        l.specular[k] *= 1.0f + (tint[k] - 1.0f) * t;
+      }
+    }
   }
   grade(v.lightModelAmbient, a.ambient);
   if (a.fogTint >> 24) {
@@ -578,7 +590,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   }
   // port style effects (game view): the scene, or the bloom composite, goes into the style input first
   const RenderTarget* styled = nullptr;
-  if (!rt && !grids.empty() && styleActive(vm)) styled = styleTarget(d, vm, w, h, hdr ? 0 : d.antialiasing);
+  const bool postHooks = !rt && !grids.empty() && postHooksWanted(vm, scene);  // the mods' post hooks (render/glsl.h)
+  if (!rt && !grids.empty() && (styleActive(vm) || postHooks)) styled = styleTarget(d, vm, w, h, hdr ? 0 : d.antialiasing);
   if (hdr) {
     d.r3d().begin(hdr, 0, hdr->height - h, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);
@@ -610,7 +623,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   }
   if (styled) {
     Vec3 toTarget = look - eye;
-    styleFinish(d, vm, x, y, w, h, bw, bh, nearZ, farZ * viewScale, std::sqrt(dot(toTarget, toTarget)));
+    styleFinish(d, vm, x, y, w, h, bw, bh, nearZ, farZ * viewScale, std::sqrt(dot(toTarget, toTarget)), postHooks ? &v : nullptr);
     d.r3d().end(bw, bh);
   }
   d.r2d().resume();
@@ -664,6 +677,8 @@ void registerSceneNatives(VM& vm) {
     for (const char16_t* n : kAtmosphereFloats)
       stored(n, 4, Value::real(std::u16string_view(n) == u"regsLightDesaturate" ? 0.0f : 1.0f));
     stored(u"regsFogTint", 3, Value::integer(0));
+    stored(u"regsLightTint", 3, Value::integer(0));
+    stored(u"regsPostHooks", 4, Value::real(0.0f));
   }
   if (ClassInfo* c = vm.findClass("gs3DCamera")) {
     auto eyeField = [c](const char16_t* name, bool eyeNotLook) {

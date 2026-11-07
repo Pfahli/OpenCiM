@@ -195,7 +195,7 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   float est = dot(dry, vec3(0.3, 0.59, 0.11)) / albedo;
   float light = mix(0.62, 1.0, smoothstep(0.3, 0.7, est));
   if (cls == 7) light = max(light, 0.85);
-  if (cls == 0) light = max(light, 0.72);
+  if (cls == 0 || cls == 9) light = max(light, 0.72);
   vec3 tint = mix(vec3(0.86, 0.91, 1.0), vec3(1.0, 0.995, 0.985), smoothstep(0.35, 0.8, light));
   // below full white (about 0.87 in the sun), the ground's texture a faint modulation (±6 %), a thaw wetter and greyer
   vec3 snow = vec3(0.86, 0.87, 0.88) * tint * light * (1.0 - 0.15 * weather_snow.z);
@@ -259,8 +259,8 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
     c.rgb = mix(c.rgb, vec3(1.0), 0.8 * plowHeap * (1.0 - plowed));                    // their kerb heap: white
     return;
   }
-  // 0 buildings and props (the scene's regsSurfaceDiffuse darkens them), 6 water
-  if (cls == 0 || cls == 6 || cls == 7 || weather_wet.x + weather_wet.y <= 0.001) return;
+  // 0 buildings and props (the scene's regsSurfaceDiffuse darkens them), 6 water, 7 vehicles, 9 foliage
+  if (cls == 0 || cls == 6 || cls == 7 || cls == 9 || weather_wet.x + weather_wet.y <= 0.001) return;
   float keep = 1.0 - s.fog;  // the game's shader fogged the colour already: the effect fades with the fog
   // Wetting and drying are uniform: the film darkens a whole surface by one value, no pattern. Wet ground is the dry
   // colour a little darker and a little more saturated, the same hue (with the scene's regsSurfaceDiffuse 0.88 at

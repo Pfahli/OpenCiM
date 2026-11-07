@@ -641,6 +641,27 @@ uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& f
     if (error) *error = "unsupported built-in " + why;
     return 0;
   }
+  return linkProgram(vs, fs, error);
+}
+
+uint32_t Renderer3D::buildPostHookProgram(const std::string& vs110, std::string* error) {
+  std::string why;
+  std::string vs = translateGlsl110(vs110, false, &why, false);
+  if (vs.empty()) {
+    if (error) *error = "unsupported built-in " + why;
+    return 0;
+  }
+  return linkProgram(vs, postHookFragment(), error);
+}
+
+void Renderer3D::postHookState(const SceneView& v, uint32_t prog) {
+  gl::UseProgram(prog);
+  hookState(v, prog);
+  Mat4 inv = inverse(v.proj * v.view);
+  gl::UniformMatrix4fv(gl::GetUniformLocation(prog, "regs_PostInvViewProj"), 1, 0, inv.m);
+}
+
+uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, std::string* error) {
   uint32_t v = compile(gl::VERTEX_SHADER, vs.c_str(), error), f = v ? compile(gl::FRAGMENT_SHADER, fs.c_str(), error) : 0;
   if (!v || !f) return 0;
   uint32_t prog = gl::CreateProgram();
@@ -727,7 +748,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.shadowParams = at("shadowParams");
   l.bones = at("bones");
   l.hookOn = at("regs_HookOn");
-  if (l.hookOn >= 0) {
+  if (l.hookOn >= 0 || at("regs_PostInvViewProj") >= 0) {  // a hooked program or the post program
     l.surfaceClass = at("regs_SurfaceClass");
     l.hookInvViewProj = at("regs_HookInvViewProj");
     l.hookEye = at("regs_HookEye");
@@ -775,42 +796,51 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   gl::UniformMatrix4fv(l.shadowTransform, 1, 0, v.shadowTransform.m);
   gl::UniformMatrix4fv(l.shadowWarp, 1, 0, v.shadowWarp.m);
   gl::Uniform4fv(l.shadowParams, 1, v.shadowParams);
-  if (l.hookOn >= 0) {  // the mods' shader hooks: colour passes of hooked views only
-    bool on = v.hooks && !(v.env & (kEnvShadowMapRender | kEnvShadowRender));
-    gl::Uniform1f(l.hookOn, on ? 1.0f : 0.0f);
+  if (l.hookOn >= 0) {  // the mods' shader hooks: colour passes of hooked views; shadow-map passes for some (2)
+    bool colour = !(v.env & (kEnvShadowMapRender | kEnvShadowRender));
+    static const bool shadowHooks = shadowHooksRegistered();
+    bool on = v.hooks && (colour || ((v.env & kEnvShadowMapRender) && shadowHooks));
+    gl::Uniform1f(l.hookOn, on ? (colour ? 1.0f : 2.0f) : 0.0f);
     if (on) {
-      Mat4 inv = inverse(v.proj * v.view);
-      gl::UniformMatrix4fv(l.hookInvViewProj, 1, 0, inv.m);
-      gl::Uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
-      gl::Uniform1f(l.hookTime, v.timer);
-      ProgramLocs& lw = locs_[prog];
-      for (const auto& [name, value] : shaderHookUniforms()) {
-        auto it = lw.hookUniforms.find(name);
-        if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, gl::GetUniformLocation(prog, name.c_str())).first;
-        if (it->second >= 0) gl::Uniform4fv(it->second, 1, value.data());
-      }
-      gl::Uniform4fv(l.hookSurfaceRect, 1, v.hookSurfaceRect);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookEnvUnit);
-      gl::BindTexture(gl::TEXTURE_CUBE_MAP, v.hookEnvCube);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookSurfaceUnit);
-      gl::BindTexture(gl::TEXTURE_2D, v.hookSurfaceMap);
-      gl::Uniform4fv(l.hookTrafficRect, 1, v.hookTrafficRect);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookLaneUnit);
-      gl::BindTexture(gl::TEXTURE_2D, v.hookLaneMap);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookLaneTrafficUnit);
-      gl::BindTexture(gl::TEXTURE_2D, v.hookLaneTraffic);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookTroddenUnit);
-      gl::BindTexture(gl::TEXTURE_2D, v.hookTrodden);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookTopUnit);
-      gl::BindTexture(gl::TEXTURE_2D, v.hookTopMap);
-      gl::Uniform4fv(l.hookFootRect, 1, v.hookFootRect);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookFootIndexUnit);
-      gl::BindTexture(gl::TEXTURE_2D, v.hookFootIndex);
-      gl::ActiveTexture(gl::TEXTURE0 + kHookFootAtlasUnit);
-      gl::BindTexture(gl::TEXTURE_2D, v.hookFootAtlas);
-      gl::ActiveTexture(gl::TEXTURE0);
+      hookState(v, prog);
     }
   }
+}
+
+// the shader hooks' uniforms and maps (units 8-15) for a program in use: the view's inverse, eye, timer, the mods'
+// uniforms (regsShaderUniform) and the engine's maps
+void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
+  const ProgramLocs& l = locs(prog);
+  Mat4 inv = inverse(v.proj * v.view);
+  gl::UniformMatrix4fv(l.hookInvViewProj, 1, 0, inv.m);
+  gl::Uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
+  gl::Uniform1f(l.hookTime, v.timer);
+  ProgramLocs& lw = locs_[prog];
+  for (const auto& [name, value] : shaderHookUniforms()) {
+    auto it = lw.hookUniforms.find(name);
+    if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, gl::GetUniformLocation(prog, name.c_str())).first;
+    if (it->second >= 0) gl::Uniform4fv(it->second, 1, value.data());
+  }
+  gl::Uniform4fv(l.hookSurfaceRect, 1, v.hookSurfaceRect);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookEnvUnit);
+  gl::BindTexture(gl::TEXTURE_CUBE_MAP, v.hookEnvCube);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookSurfaceUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookSurfaceMap);
+  gl::Uniform4fv(l.hookTrafficRect, 1, v.hookTrafficRect);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookLaneUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookLaneMap);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookLaneTrafficUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookLaneTraffic);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookTroddenUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookTrodden);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookTopUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookTopMap);
+  gl::Uniform4fv(l.hookFootRect, 1, v.hookFootRect);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookFootIndexUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookFootIndex);
+  gl::ActiveTexture(gl::TEXTURE0 + kHookFootAtlasUnit);
+  gl::BindTexture(gl::TEXTURE_2D, v.hookFootAtlas);
+  gl::ActiveTexture(gl::TEXTURE0);
 }
 
 void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,

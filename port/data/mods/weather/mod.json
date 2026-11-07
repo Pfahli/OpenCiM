@@ -4,11 +4,15 @@
   "version": "0.1.0",
   "authors": ["OpenCiM"],
   "description": {
-    "en_US": "Rain, heavy rain and thunderstorms by game date: fine rain around the camera, wet streets with puddles that dry after the rain, spray behind vehicles, grey light and fog, lightning, rain and thunder sounds. Seasons will follow.",
-    "de": "Regen, Starkregen und Gewitter nach Spieldatum: feiner Regen um die Kamera, nasse Straßen mit Pfützen, die nach dem Regen trocknen, Gischt hinter Fahrzeugen, graues Licht und Nebel, Blitze, Regen und Donner. Jahreszeiten folgen."
+    "en_US": "Rain, heavy rain and thunderstorms by game date: fine rain around the camera, wet streets with puddles that dry after the rain, spray behind vehicles, grey light and fog, lightning, rain and thunder sounds; snow in winter; seasons: autumn colours and falling leaves, bare winter trees, spring green, heat shimmer on hot summer days.",
+    "de": "Regen, Starkregen und Gewitter nach Spieldatum: feiner Regen um die Kamera, nasse Straßen mit Pfützen, die nach dem Regen trocknen, Gischt hinter Fahrzeugen, graues Licht und Nebel, Blitze, Regen und Donner; Schnee im Winter; Jahreszeiten: Herbstfarben und fallendes Laub, kahle Bäume im Winter, Frühlingsgrün, Hitzeflimmern an heißen Sommertagen."
   },
   "requires": { "regs": ">=0.1" },
-  "shaderHooks": [ { "file": "shaders/wet.glsl", "function": "weather_wet_surface" } ],
+  "shaderHooks": [
+    { "file": "shaders/seasons.glsl", "function": "seasons_foliage", "shadowPass": true },
+    { "file": "shaders/wet.glsl", "function": "weather_wet_surface" },
+    { "file": "shaders/heat.glsl", "function": "weather_heat", "post": true }
+  ],
   "saves": "none",
   "repository": ""
 }

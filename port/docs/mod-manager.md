@@ -111,7 +111,13 @@ classes; unset means the original behaviour, so nothing changes without a mod.
 | `gsScene` | `regsFogScale` (1) | × the fog start and end distance |
 | `gsScene` | `regsSurfaceDiffuse` (1) | × every material's ambient and diffuse colour (wet, darker surfaces) |
 | `gsScene` | `regsSurfaceSpecular` (1) | × every material's specular colour (glossier; only materials with `MATERIAL_SPECULAR` show highlights) |
+| `gsScene` | `regsLightTint` (0) | ARGB: the direct light (diffuse, specular) × this RGB / 255, by alpha / 255 (a warm summer sun) |
+| `gsScene` | `regsPostHooks` (0) | > 0: the mods' post hooks (§4.3) run on this scene's map views; a full-screen pass, so a mod sets it only while its effect shows |
 | `gsGrid` | `regsVehicleEmitters` (array of emitters) | each emits behind the rear of every moving road and rail vehicle near the camera (at most 24, within the emitter's `maxDistance`, not boats, aircraft or tunnels): `position` is an offset in the vehicle's frame (x right, y up, z back from the rear end), `direction` turns with the vehicle, the owner velocity is the vehicle's, `density` is particles per second at 10 m/s, scaled with the square of the speed. Listed emitters stop emitting at their own place (`engine/particles.cpp`) |
+| `gsGrid` | `regsTreeEmitters` (array of emitters) | each emits from the crowns of the trees near the camera (at most 500 nearest within the emitter's `maxDistance`, 200 m when 0; none while trees are hidden or in the underground view): `density` is particles per second and tree (per game second: the grid's tick), from a random point at 45-90 % of the tree's mesh height within 0.7 of its radius. Listed emitters stop emitting at their own place (`engine/particles.cpp`) |
+| `gsParticleEmitter` | `regsTrees` (array of strings) | the tree meshes a tree emitter takes, by their `.object` mesh name (`"tree01"`, `"bush02"`; empty: every tree) |
+| `gsParticleEmitter` | `regsLand` (s, 0) | tree emitters: a particle that falls to its tree's base height lands there and lies still for this long, fading over the last third (falling leaves) |
+| `gsParticleEmitter` | `regsFlutter` (m/s, 0) | a sideways swing and a slow turn while the particle falls (leaves) |
 | `gsGrid` | `regsVehicleSound` (a loaded 3D `gsSound`), `regsVehicleSoundGain` (0) | the sound plays as a one-shot following moving vehicles near the listener (at most 5 at a time, each vehicle again after the sound's length plus 2-8 s, faster than 3 m/s, inside the sound's `maxDistance`), volume × gain × speed / 15 (0.3-1), Effects group (`engine/sim_sounds.cpp`) |
 
 The scene fields apply when the scene is drawn (`engine/scene3d.cpp` `applyAtmosphere`), after the location's light
@@ -128,18 +134,34 @@ A mod declares GLSL hooks in its manifest: `"shaderHooks": [{"file": "shaders/we
 Each file is GLSL 3.30 core (no `gl_` built-ins) defining `void <function>(inout vec4 color, RegsSurface s)`; the
 engine appends every enabled mod's hooks to all combiner programs (the game's own shaders, translated by
 `render/glsl.cpp`) and calls them, in load order, on the final colour (after the game's fog, before the alpha test) in
-the colour passes of map views; never in shadow passes, never in menus. Without a registered hook the programs are
-exactly the plain translation. Hooks are fixed at start-up, before any program is built.
+the colour passes of map views; never in menus. Without a registered hook the programs are exactly the plain
+translation. Hooks are fixed at start-up, before any program is built.
+
+* `"shadowPass": true` in a hook's entry: it also runs in the shadow-map passes (`RegsSurface.shadow` = 1; only its
+  alpha counts there: alpha at or under the alpha test's reference casts no shadow), so a hook that cuts away
+  geometry (bare winter trees) cuts its shadow too. In those passes `pos`, `normal` and `view` are the light's.
+* `"post": true`: a post hook, `void <function>(inout vec3 color, RegsPost p)`, run per screen pixel on the finished
+  map view (after bloom, before the port's colour styles and lens blur) while the scene's `regsPostHooks` is set.
+  `RegsPost`: `uv` (0..1, bottom left), `pos` (world), `view`, `dist`, `depth` (0..1), `sky` (1 where nothing was
+  drawn), `time`, `texel` (one pixel in uv). `vec3 regs_postColor(uv)`, `float regs_postDepth(uv)` and
+  `vec3 regs_postWorld(uv)` read the scene anywhere; the surface hooks' files, uniforms and the engine's maps and
+  helpers below are there too (`render/glsl.cpp` `postHookFragment`, `engine/effects.cpp` `styleFinish`).
 
 * `RegsSurface`: `pos` (world, from the interpolated clip position: correct for terrain, merged items and skinned
   meshes alike), `normal` (world, from screen derivatives, facing the eye), `view` (unit, eye → point), `dist`,
   `fog` (0..1 at this distance: a hook fades its change by `1 - fog`, since the colour is already fogged),
-  `surfaceClass`, `time` (the effect timer, s).
+  `surfaceClass`, `time` (the effect timer, s), `item` (below), `uv` and `uv1` (the mesh's texture coordinates 0
+  and 1 as the vertex shader received them; merged trees carry (base height, a per-tree number 0..1 from the tree's
+  cell) in `uv1`, so a hook can vary trees one by one), `shadow` (1 in a shadow-map pass).
+* `vec4 regs_texel0(vec2 uv)`: the material's first texture (texture unit 0, the diffuse map of the game's
+  materials) at a texture coordinate, as stored (before the shader's colorize and lighting): a hook can tell parts of a
+  texture atlas apart, or read another part of it.
 * `surfaceClass` (`GpuMaterial::surfaceClass`, `render/renderer3d.h`): 0 other (buildings, props, vehicles, people),
   1 terrain (grass, earth, sea floor, cliffs), 2 field, 3 pavement (yard cells, and the walkways of road items: the
   materials a texture variation replaces), 4 road (the carriageway materials of road, alley and street-tram items,
   types 1-7 and 10-12, those with the keep-on-variation flag), 5 platform (stations, docks, heliports, PAVEMENT items),
-  6 water.
+  6 water, 9 foliage (the materials drawn with the trees' wind shader, `metro/shaders/trees/trees.shader`: the leaves,
+  needles, twigs and bark of the base game's trees and bushes, one atlas).
 * `int regs_surfaceAt(vec2 xz)`: the class of the walkable surface seen from above at a world point, from the map's
   surface map (`engine/surface_map.cpp`: 0.5 m texels painted from the division meshes as they are built, items over
   terrain; -1 outside the map), so a hook can measure the distance to its surface's edge (a kerb, a square's
@@ -157,13 +179,15 @@ exactly the plain translation. Hooks are fixed at start-up, before any program i
   cleared, filling in at the footprints' pace, and the heap pushed out of the nearest lanes up to `reach` m beyond
   them; cleared with the footprints), `float regs_roadEdge(xz)`,
   `float regs_troddenAt(xz)` (engine/traffic_maps.h: the road lanes with their exact lateral offset and direction,
-  the recent traffic per lane, where people walked) and `float regs_shelterDepth(pos)` (the top map: 0 in the open,
+  the recent traffic per lane, where people walked) and `float regs_shelterDepth(pos)` (the top map, painted from
+  everything with an area seen from above except overlays and foliage, so tree crowns are no roof: 0 in the open,
   else the distance to the nearest open spot, up to 1.5 m, for snow or rain reaching in under an edge).
 * `samplerCube regs_EnvMap` (the game's `textures/envmap.dds`, unit 8) and the hook's own uniforms
   (`regsShaderUniform`). `REGS_DEBUG_WEATHER=2` shows the surface map in the weather mod.
 
 Cost (RTX 3080, 1600×900, the weather mod in rain): within the frame-time noise of the other test windows; the hook
-returns at once for class 0 and when the mod's wetness is 0.
+returns at once for class 0 and when the mod's wetness is 0. The seasons hook (class 9 only) and the heat post hook
+(only on hot days) keep the game at 60 fps as well.
 
 ## 5. Manager UI
 

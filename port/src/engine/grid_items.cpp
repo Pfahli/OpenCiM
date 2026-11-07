@@ -178,6 +178,9 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
       tc.materials.push_back(objectMaterial(d, vm, o, m));
       tc.materials.back().surfaceClass =
           road && carriageway && !(m.flags & kMatKeepOnVariation) ? kSurfacePavement : surface;
+      // foliage: the materials the trees' wind shader draws (set in the templates' onLoaded)
+      if (tc.materials.back().shader.find("shaders/trees/trees.shader") != std::string::npos)
+        tc.materials.back().surfaceClass = kSurfaceFoliage;
     }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");
@@ -406,6 +409,15 @@ bool gridItemVisible(const GridData& g, const TerrainCache& tc, uint32_t item, u
   return (viewMode & 0x20) != 0;
 }
 
+// a tree's own number in [0, 1) from its cell (merged tree vertices carry it in uv1.y)
+static float treeSeed(const GridData::Item& it) {
+  uint32_t h = uint32_t(it.x) * 73856093u ^ uint32_t(it.z) * 19349663u ^ uint32_t(it.y) * 83492791u;
+  h ^= h >> 13;
+  h *= 0x5bd1e995u;
+  h ^= h >> 15;
+  return float(h & 0xFFFFFF) / 16777216.0f;
+}
+
 void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int lod, MeshData& out) {
   const int n = tc.n;
   const float cs = g.cellSize;
@@ -479,9 +491,11 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
         place(nrm.x, nrm.z, nx, nz);
         gr.normals.insert(gr.normals.end(), {nx, nrm.y, nz});
         gr.uv0.insert(gr.uv0.end(), {mesh->uv0[size_t(v) * 2], mesh->uv0[size_t(v) * 2 + 1]});
-        // trees: uv1 = (base height, 0), the engine's own layout for merged trees (§3.2.3); the wind shader subtracts
-        // it to get the height above the tree's base (shaders.cpp, portShaderPatch)
-        if (tp.type == kTypeTree) gr.uv1.insert(gr.uv1.end(), {T.y, 0.0f});
+        // trees: uv1 = (base height, seed), the engine's own layout for merged trees (§3.2.3), whose y is 0; the wind
+        // shader subtracts x to get the height above the tree's base (shaders.cpp, portShaderPatch). Port: y is a
+        // per-tree number in [0, 1) from the item's cell, so the mods' shader hooks can vary trees one by one
+        // (RegsSurface.uv1, mod-manager.md §4.3)
+        if (tp.type == kTypeTree) gr.uv1.insert(gr.uv1.end(), {T.y, treeSeed(it)});
         else if (hasUv1) gr.uv1.insert(gr.uv1.end(), {mesh->uv1[size_t(v) * 2], mesh->uv1[size_t(v) * 2 + 1]});
         else gr.uv1.insert(gr.uv1.end(), {0.0f, 0.0f});
         if (hasTangents) {

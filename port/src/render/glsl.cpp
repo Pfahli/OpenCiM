@@ -1,6 +1,7 @@
 #include "render/glsl.h"
 
 #include <regex>
+#include <set>
 
 namespace regs::render {
 
@@ -37,12 +38,11 @@ std::vector<ShaderHook>& hooks() {
   return h;
 }
 
-// the fragment side of the hooks: the world position from the interpolated clip position (any vertex transform:
-// terrain, merged items, skinning), the surface record, then each hook in registration order
-std::string hookFragmentCode() {
+// the hooks' library: their uniforms, the engine's maps and helpers, then the hook files in registration order (the
+// surface hooks' programs get the surface hooks' files, the post program those and the post hooks' files)
+std::string hookLibraryCode(bool post) {
   std::string s = R"(
-in vec4 regs_HookClip;
-uniform float regs_HookOn = 0.0;
+uniform float regs_HookOn = 0.0;    // 1 colour pass, 2 shadow-map pass (only the hooks that asked for it)
 uniform int regs_SurfaceClass = 8;  // draws that do not set it (particles, effect quads) are overlays
 uniform float regs_HookItem = 0.0;
 uniform mat4 regs_HookInvViewProj;
@@ -51,7 +51,12 @@ uniform float regs_HookTime;
 uniform samplerCube regs_EnvMap;
 uniform sampler2D regs_SurfaceMap;
 uniform vec4 regs_SurfaceMapRect;
-struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; int surfaceClass; float time; float item; };
+uniform sampler2D regs_HookTexture0;  // texture unit 0: the material's first texture (its diffuse map)
+struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; int surfaceClass; float time; float item;
+                     vec2 uv; vec2 uv1; float shadow; };
+// the material's first texture (unit 0, the diffuse map of the game's materials) at a texture coordinate, as stored
+// (before the shader's colorize and lighting)
+vec4 regs_texel0(vec2 uv) { return texture(regs_HookTexture0, uv); }
 // the surface class seen from above at a world point (engine/surface_map.h; 0 where nothing walkable was painted,
 // -1 outside the map or while there is no map)
 int regs_surfaceAt(vec2 xz) {
@@ -281,7 +286,18 @@ float regs_troddenAt(vec2 xz) {
   return texture(regs_Trodden, (xz - regs_TrafficRect.xy) * regs_TrafficRect.zw).r;
 }
 )";
-  for (const ShaderHook& h : hooks()) s += "// hook " + h.function + " (" + h.origin + ")\n" + h.code + "\n";
+  std::set<std::string> files;  // a file several hooks name is included once
+  for (int pass = 0; pass < (post ? 2 : 1); ++pass)
+    for (const ShaderHook& h : hooks())
+      if (h.post == (pass == 1) && files.insert(h.origin).second) s += "// hook file " + h.origin + "\n" + h.code + "\n";
+  return s;
+}
+
+// the fragment side of the surface hooks: the world position from the interpolated clip position (any vertex
+// transform: terrain, merged items, skinning), the texture coordinates, the surface record, then each hook in
+// registration order; in shadow-map passes only the hooks that asked for them ("shadowPass"), for their alpha
+std::string hookFragmentCode() {
+  std::string s = "\nin vec4 regs_HookClip;\nin vec4 regs_HookUV;\n" + hookLibraryCode(false);
   s += R"(void regs_hooks(inout vec4 c) {
   if (regs_SurfaceClass == 8) return;  // kSurfaceOverlay: route strips, highlights, previews, markers, sky, people
   vec4 w = regs_HookInvViewProj * regs_HookClip;
@@ -296,8 +312,16 @@ float regs_troddenAt(vec2 xz) {
   s.surfaceClass = regs_SurfaceClass;
   s.time = regs_HookTime;
   s.item = regs_HookItem;
+  s.uv = regs_HookUV.xy;
+  s.uv1 = regs_HookUV.zw;
+  s.shadow = regs_HookOn > 1.5 ? 1.0 : 0.0;
+  if (s.shadow > 0.5) {
 )";
-  for (const ShaderHook& h : hooks()) s += "  " + h.function + "(c, s);\n";
+  for (const ShaderHook& h : hooks())
+    if (h.shadow && !h.post) s += "    " + h.function + "(c, s);\n";
+  s += "    return;\n  }\n";
+  for (const ShaderHook& h : hooks())
+    if (!h.post) s += "  " + h.function + "(c, s);\n";
   s += "}\n";
   return s;
 }
@@ -335,10 +359,11 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     head += "in vec4 regs_Vertex;\nin vec3 regs_Normal;\nin vec4 regs_Color;\n";
     for (int i = 0; i < 8; ++i) head += "in vec4 regs_MultiTexCoord" + std::to_string(i) + ";\n";
     head += "out vec4 regs_FrontColor;\n";
-    if (withHooks) {  // the clip position for the hooks' world position
+    if (withHooks) {  // the clip position for the hooks' world position, the mesh's two texture coordinates
       sub(R"(\bvoid\s+main\s*\()", "void regs_vmain(");
-      head += "out vec4 regs_HookClip;\n";
-      s += "\nvoid main() {\n  regs_vmain();\n  regs_HookClip = gl_Position;\n}\n";
+      head += "out vec4 regs_HookClip;\nout vec4 regs_HookUV;\n";
+      s += "\nvoid main() {\n  regs_vmain();\n  regs_HookClip = gl_Position;\n"
+           "  regs_HookUV = vec4(regs_MultiTexCoord0.xy, regs_MultiTexCoord1.xy);\n}\n";
     }
   } else {
     sub(R"(\bvarying\b)", "in");
@@ -363,6 +388,56 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     return "";
   }
   return head + s;
+}
+
+bool postHooksRegistered() {
+  for (const ShaderHook& h : hooks())
+    if (h.post) return true;
+  return false;
+}
+
+bool shadowHooksRegistered() {
+  for (const ShaderHook& h : hooks())
+    if (h.shadow && !h.post) return true;
+  return false;
+}
+
+std::string postHookFragment() {
+  std::string s = "#version 330 core\n";
+  s += kBuiltins;
+  s += R"(in vec4 texCoord;
+out vec4 regs_FragColor;
+uniform sampler2D texture0;  // the scene's colour
+uniform sampler2D texture1;  // and depth
+uniform vec4 custom0;        // texel size x, y
+uniform mat4 regs_PostInvViewProj;
+struct RegsPost { vec2 uv; vec3 pos; vec3 view; float dist; float depth; float sky; float time; vec2 texel; };
+// the scene's colour, depth (0..1, 1 = nothing drawn) and world position at an image coordinate (0..1, bottom left)
+vec3 regs_postColor(vec2 uv) { return texture(texture0, uv).rgb; }
+float regs_postDepth(vec2 uv) { return texture(texture1, uv).r; }
+vec3 regs_postWorld(vec2 uv) {
+  vec4 w = regs_PostInvViewProj * vec4(uv * 2.0 - 1.0, texture(texture1, uv).r * 2.0 - 1.0, 1.0);
+  return w.xyz / w.w;
+}
+)";
+  s += hookLibraryCode(true);
+  s += R"(void main() {
+  RegsPost p;
+  p.uv = texCoord.xy;
+  p.depth = regs_postDepth(p.uv);
+  p.sky = p.depth >= 0.99999 ? 1.0 : 0.0;
+  p.pos = regs_postWorld(p.uv);
+  vec3 e = p.pos - regs_HookEye;
+  p.dist = length(e);
+  p.view = e / max(p.dist, 1e-4);
+  p.time = regs_HookTime;
+  p.texel = custom0.xy;
+  vec3 c = regs_postColor(p.uv);
+)";
+  for (const ShaderHook& h : hooks())
+    if (h.post) s += "  " + h.function + "(c, p);\n";
+  s += "  regs_FragColor = vec4(c, 1.0);\n}\n";
+  return s;
 }
 
 }  // namespace regs::render

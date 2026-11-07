@@ -159,10 +159,49 @@ function coldSpellOf($d) {
   return null;
 }
 
-// the air temperature now, roughly (°C): -6..-2 in a cold spell, else the month's mean with a little day-to-day change
+// ---- summer: heat spells ----
+// Per summer (10 June to 31 August of year Y) one to three hot spells of 3-9 days, planned like the cold spells and
+// cached per year: [[first day, end day (exclusive)], ...]. Inside them the afternoons reach about 30-35 °C (the heat
+// shimmer over the asphalt, a warm light); no rain falls on their days.
+$heatYears = [];
+$heatList = [];
+function heatPlan($y) {
+  for ($i = 0; $i < #$heatYears; ++$i)
+    if ($heatYears[$i] == $y) return $heatList[$i];
+  $plan = [];
+  if ($mode == "heat") {
+    $plan[] = [mkdate(1, 1, $y), mkdate(1, 1, $y + 1)];   // the test: hot all year
+  } else if ($mode == "") {
+    $from = mkdate(10, 6, $y);
+    $span = mkdate(1, 9, $y) - $from;
+    $n = 1 + int(hash01($y, 70) * 2.4);
+    $seg = int($span / $n);
+    for ($k = 0; $k < $n; ++$k) {
+      $len = min($seg - 2, 3 + int(hash01($y, 71 + $k) * 7.0));
+      $start = $from + $k * $seg + int(hash01($y, 75 + $k) * float($seg - $len));
+      $plan[] = [$start, $start + $len];
+    }
+  }
+  $heatYears[] = $y;
+  $heatList[] = $plan;
+  return $plan;
+}
+
+// the heat spell [first, end] holding day $d, or null
+function heatSpellOf($d) {
+  if (!$seasonsOn) return null;   // seasons off: no summer heat
+  foreach (heatPlan($clock.years)) {
+    if ($d >= current[0] && $d < current[1]) return current;
+  }
+  return null;
+}
+
+// the air temperature now, roughly (°C): -6..-2 in a cold spell, 22..35 in a heat spell (hottest at 15:00), else the
+// month's mean with a little day-to-day change
 $monthTemp = [11.4, 3.0, 4.0, 6.0, 11.0, 15.5, 19.0, 21.0, 20.5, 16.0, 10.5, 6.0, 4.0];
 function temperature($d, $h) {
   if (coldSpellOf($d)) return -4.0 + 2.0 * sin(($h - 9.0) * 0.2618);
+  if (heatSpellOf($d)) return 28.0 + 3.0 * hash01($d, 51) + 5.5 * sin(($h - 9.0) * 0.2618);
   return $monthTemp[$seasonsOn ? monthOf($d) : 0] + 3.0 * (hash01($d, 50) - 0.5) + 3.0 * sin(($h - 9.0) * 0.2618);
 }
 
@@ -177,6 +216,7 @@ function spellOf($d) {
     if ($d != $testDay) return null;
     return [6.0, 30.0, 1.0, 3];
   }
+  if (heatSpellOf($d)) return null;   // hot and dry
   $cold = coldSpellOf($d);
   if ($cold) {  // snowfalls: hours to a day or two, the first on the spell's first day
     if ($d != $cold[0] && hash01($d, 60) >= 0.35) return null;
@@ -208,6 +248,10 @@ function logPlan($d) {
       echo "weather: cold spell " + dayText($cs[0]) + " - " + dayText($cs[1] - 1) + " (" + string($cs[1] - $cs[0]) +
            " days), snowfalls:" + $falls;
     }
+  if ($seasonsOn)
+    foreach (heatPlan($y)) {
+      echo "weather: heat spell " + dayText(current[0]) + " - " + dayText(current[1] - 1) + " (" + string(current[1] - current[0]) + " days)";
+    }
   for ($m = 1; $m <= 12; ++$m) {
     $first = mkdate(1, $m, $y);
     $last = $m == 12 ? mkdate(1, 1, $y + 1) : mkdate(1, $m + 1, $y);
@@ -233,7 +277,7 @@ function scheduled($d, $h) {
   if ($mode == "heavy") { $kindNow = 1; return 1.0; }
   if ($mode == "storm") { $kindNow = 2; return 1.0; }
   if ($mode == "snow") { $kindNow = 3; return 1.0; }
-  if ($mode == "dry") return 0.0;
+  if ($mode == "dry" || $mode == "heat") return 0.0;
   $best = 0.0;
   for ($back = 0; $back <= 2; ++$back) {
     $sp = spellOf($d - $back);
@@ -333,6 +377,105 @@ with ($spray = new_particleEmitter($scene)) {
 $grid = MAIN.$grid;
 $grid.regsVehicleEmitters = [$spray];
 
+// ---- seasons: the foliage (shaders/seasons.glsl), falling leaves, summer heat (shaders/heat.glsl) ----
+// The foliage follows the day of the year (seasons_time.x; each tree a few days earlier or later in the shader):
+// autumn colours from late September, leaves falling from mid October, bare from late November to early April, the
+// leaves coming back bright green in April. Seasons off (the Mods page): the summer look within a few seconds.
+// REGS_TEST_SEASON=<day of the year>[+<days per real second>] fixes the foliage's day (and lets it run on).
+// REGS_DEBUG_SEASONS=1: the foliage shows its classes (leaves red, twigs yellow, the rest blue); =2: the heat
+// shimmer's strength in red.
+$seasonsShown = $seasonsOn ? 1.0 : 0.0;
+$heat = 0.0;            // shown heat shimmer 0..1 (eased)
+$testSeason = getenv("REGS_TEST_SEASON");
+$testDayOfYear = -1.0;
+$testSeasonSpeed = 0.0;
+if ($testSeason != "") {
+  $plus = findstr($testSeason, "+");
+  if ($plus >= 0) {
+    $testDayOfYear = float(substr($testSeason, 0, $plus));
+    $testSeasonSpeed = float(substr($testSeason, $plus + 1, 20));
+  } else {
+    $testDayOfYear = float($testSeason);
+  }
+}
+$debugSeasons = getenv("REGS_DEBUG_SEASONS");
+$testHeat = getenv("REGS_TEST_HEAT");   // a fixed heat shimmer 0..1 (tests)
+// the deciduous trees and bushes of the base game (their mesh names; tree04 and tree05 are conifers)
+$deciduous = ["tree01", "tree02", "tree03", "tree06", "tree07", "street-tree", "bush", "bush01", "bush02", "bush03",
+              "bush-small"];
+
+// the day of the year now (0 = 1 January 0:00, with the hour)
+function dayOfYear($d, $h) {
+  return float($d - mkdate(1, 1, $clock.years)) + $h / 24.0;
+}
+
+// how many leaves fall now, 0..1: a bump over the falling weeks (mid October to late November)
+function leafFall($doy) {
+  $x = clamp(($doy - 280.0) / 52.0, 0.0, 1.0);
+  return 4.0 * $x * (1.0 - $x);
+}
+
+// ---- falling leaves: from the crowns of the deciduous trees near the camera (gsGrid.regsTreeEmitters), small,
+// yellow to brown, drifting and swinging down at a metre or two per second; they lie under the tree for 45 s and
+// fade away (at the peak about 13 000 leaves near the camera, under the engine's 24 000 particles with the rain) ----
+with ($leaves = new_particleEmitter($scene)) {
+  .setTexture($softDot);
+  .particleBlend = 1;            // BLEND_ALPHA
+  .autoemit = false;
+  .density = 0.0;
+  .direction = vector(0.4, -1.0, 0.25);
+  .minParticleAngle = 0.3;
+  .maxParticleAngle = 1.3;
+  .particleSize = 0.22;
+  .maxDistance = 200.0;
+  .regsTrees = $deciduous;
+  .minParticleOrient = 0.0;
+  .maxParticleOrient = 6.28;
+  .addColorRange(0xF0D29A2E, 0xF0C88A28);   // yellow
+  .addColorRange(0xF0D07A26, 0xF0BC6A22);   // orange
+  .addColorRange(0xF0A8502A, 0xF0985028);   // red-brown
+  .addColorRange(0xF08E6434, 0xF0805C30);   // brown
+}
+$grid.regsTreeEmitters = [$leaves];
+
+function placeLeaves($doy, $dt) {
+  $ts = max(1.0, $scene.particleEngine.timeSpeed);   // the engine runs particles faster at high game speed
+  $storm = 1.0 + 2.0 * $heavy * $rain;                  // a storm shakes them off
+  // per tree and second (the engine's tick runs on game time): about one leaf every two seconds at the peak
+  $rate = 0.5 * leafFall($doy) * $seasonsShown * $storm / max(1.0, gameSpeed());
+  with ($leaves) {
+    .density = $rate;
+    .autoemit = $rate > 0.001;
+    .minParticleSpeed = 0.2 / $ts;
+    .maxParticleSpeed = 0.9 / $ts;
+    .gravitation = vector(0.0, -3.0 / ($ts * $ts), 0.0);  // with the drag about 1.2 m/s down
+    .particleAirResist = 2.5 / $ts;
+    .regsFlutter = 0.7 / $ts;
+    .minParticleLife = 60.0 * $ts;                     // falling: long enough to reach the ground
+    .maxParticleLife = 60.0 * $ts;
+    .regsLand = 45.0 * $ts;                            // lying: 45 s, fading over the last 15
+    .visible = (MAIN.$grid.viewMode : 0) != 0x180;
+  }
+}
+
+// the seasons each frame: the foliage's day, the heat (afternoons of a heat spell, none in rain), the hooks' uniforms
+function updateSeasons($dt, $date, $hour) {
+  $seasonsShown += clamp(($seasonsOn ? 1.0 : 0.0) - $seasonsShown, -0.5 * $dt, 0.5 * $dt);
+  $doy = dayOfYear($date, $hour);
+  if ($testDayOfYear >= 0.0) {
+    $testDayOfYear += $testSeasonSpeed * $dt;
+    if ($testDayOfYear >= 365.0) $testDayOfYear -= 365.0;
+    $doy = $testDayOfYear;
+  }
+  $heatWant = $seasonsOn ? clamp(($temp - 26.0) / 6.0, 0.0, 1.0) * (1.0 - clamp($rain * 3.0, 0.0, 1.0)) : 0.0;
+  if ($testHeat != "") $heatWant = float($testHeat);
+  $heat += clamp($heatWant - $heat, -0.05 * $dt, 0.05 * $dt);
+  placeLeaves($doy, $dt);
+  regsShaderUniform("seasons_time", quat($doy, $seasonsShown, $debugSeasons == "1" ? 1.0 : 0.0, 0.0));
+  regsShaderUniform("weather_hot", quat($heat, $debugSeasons == "2" ? 1.0 : 0.0, 0.0, 0.0));
+  $scene.regsPostHooks = ($heat > 0.002 || $debugSeasons == "2") ? 1.0 : 0.0;   // the shimmer's screen pass only when it shows
+}
+
 // ---- sounds: CC0 recordings from freesound.org (sounds/LICENSES.txt); the loops are cut seamless by the build ----
 // 2D loops and thunder in the Ambience group (new_music), the wet tyre hiss as the grid's vehicle sound (Effects)
 function newLoop($file) {
@@ -368,11 +511,13 @@ function applyLook($w, $h, $wetness) {
   // brighten the ground as the rain sets in: the ambient never rises (shaded streets are lit by it alone), and the
   // fog, which the nearer fog brings onto the ground, is darker than the location's
   // snowfall: a slightly softer light and a nearer fog, no tint and no loss of colour (only the snow is white)
-  $scene.regsLightScale = 1.0 - 0.35 * $w - 0.17 * $h - 0.1 * $snowFall + 1.1 * $flash;
+  // summer heat: a slightly stronger, warmer sun and a pale warm haze in the distance
+  $scene.regsLightScale = 1.0 - 0.35 * $w - 0.17 * $h - 0.1 * $snowFall + 1.1 * $flash + 0.06 * $heat;
+  $scene.regsLightTint = (int(120.0 * $heat) << 24) | 0xFFEAD0;
   $scene.regsAmbientScale = 1.0 - 0.08 * $w - 0.1 * $h + 1.6 * $flash;
   $scene.regsLightDesaturate = 0.45 * $w + 0.2 * $h;
-  $scene.regsFogTint = (int(200.0 * $w + 40.0 * $h) << 24) | 0x5A5F64;
-  $scene.regsFogScale = 1.0 - 0.25 * $w - 0.2 * $h - 0.3 * $snowFall;
+  $scene.regsFogTint = $heat > $w ? ((int(90.0 * $heat) << 24) | 0xD9D2C2) : ((int(200.0 * $w + 40.0 * $h) << 24) | 0x5A5F64);
+  $scene.regsFogScale = 1.0 - 0.25 * $w - 0.2 * $h - 0.3 * $snowFall - 0.12 * $heat;
   $scene.regsSurfaceDiffuse = 1.0 - 0.12 * $wetness;
   $scene.regsSurfaceSpecular = 1.0 + 1.5 * $wetness;
 }
@@ -598,9 +743,10 @@ function frame($dt) {
     $lastHour = int($hour);
     echo "weather: " + dateText() + " scheduled " + string($target) + " " + kindName($kindNow) + " rain " + string($rain) +
          " heavy " + string($heavy) + " snowfall " + string($snowFall) + " temp " + string($temp) + " snow " +
-         string($snow) + " wet " + string($wet) + " water " + string($water) + " puddles " + string($puddles) + " look " +
+         string($snow) + " wet " + string($wet) + " water " + string($water) + " puddles " + string($puddles) + " heat " + string($heat) + " look " +
          string($camera.regsLookPosition);
   }
+  updateSeasons($dt, $date, $hour);
   applyLook($rain, $heavy, $wet);
   placeRain($rain, $heavy);
   placeSnow($snowFall, $kindNow == 4 ? 1.0 : 0.0);
@@ -673,15 +819,21 @@ $frameThread = thread "gameUI" :: loop {
 event this.onDestroy::() {
   if ($frameThread) { delete $frameThread; $frameThread = null; }
   $flash = 0.0;
+  $heat = 0.0;
   applyLook(0.0, 0.0, 0.0);
   regsShaderUniform("weather_wet", quat(0.0, 0.0, 0.0, 0.0));
   regsShaderUniform("weather_misc", quat(0.0, 0.0, 0.0, 0.0));
   regsShaderUniform("weather_snow", quat(0.0, 0.0, 0.0, 0.0));
+  regsShaderUniform("seasons_time", quat(180.0, 0.0, 0.0, 0.0));
+  regsShaderUniform("weather_hot", quat(0.0, 0.0, 0.0, 0.0));
+  $scene.regsPostHooks = 0.0;
+  $scene.regsLightTint = 0;
   if (MAIN.$ambience : false) MAIN.$ambience.$ambienceVolume = 0.2;
   if ($flakes) { delete $flakes; $flakes = null; }
   if ($texts) { delete $texts; $texts = null; }
   if ($grid) {
     $grid.regsVehicleEmitters = [];
+    $grid.regsTreeEmitters = [];
     $grid.regsFootprints = 0.0;
     $grid.regsSnowplows = 0;
     $grid.regsRoadSpeed = 1.0;
@@ -697,6 +849,7 @@ event this.onDestroy::() {
     if (current) delete current;
   }
   if ($spray) { delete $spray; $spray = null; }
+  if ($leaves) { delete $leaves; $leaves = null; }
   if ($emitter) { delete $emitter; $emitter = null; }
   MAIN.$weather = null;
 }
