@@ -141,6 +141,12 @@ headlights, its trailing end the tail lights (reversed units use their other end
   stays dark: on cab cars (head lamps found at the front) the light fades from 0 at 1.5 m to full 4.5 m behind the
   front; rail vehicles (names with tram, metro, train) have a cab at the rear too, so it also fades towards a rear
   with tail lamps. Middle sections are lit evenly.
+* **Passengers**: silhouettes in the lit windows, drawn in the shader in the vehicle's model space (`regs_ModelPos`,
+  every vertex stage passes the model position): per side a seat every 0.85 m with a seated head-and-shoulders shape
+  at 40-50 % of the window band's height (the band: 10th-90th percentile of the glass texels' model height, per
+  material), standing figures between the seats (head at 80-92 %) once the vehicle is over 50-95 % full. Each figure
+  has a random rank and shows when the occupancy (line vehicle passengers ÷ capacity) passes it; the occupancy is
+  eased per vehicle (0.8/s), so figures fade in and out as people board and leave. Darkens the cabin light by 85 %.
 * **Beam on the road** (headlight light map): each frame the beams are splatted on the CPU into a 1024² map (0.625 m
   texels) around the point the camera looks at, snapped to whole texels; the default shader samples it like the lamp
   map (unit 10, `regs_CarMap`) and lights whatever is there between 1.5 m below and ~3 m above the vehicle's ground:
@@ -175,6 +181,7 @@ sprites are a few hundred quads. Vienna, 1600×900, vsync off: 2646 FPS at 14:00
 * `veh1-2950.png` (first vehicle lights), `veh2-2950/3250.png` (lamps on the models, light-map beams), `dusk-*.png`
   (vehicles switching on one by one), `hb-*.png` with `hb.log` (high beams on the outskirts).
 * `ls1-*.png`, `ls3-2950.png` (all signs lit for the check), `fin-2950.png`: lamp glass, shop windows, signs at 21:00.
+* `sil-3100.png`, `sil-3350.png`: passenger silhouettes in a tram.
 * `tram4-3100.png` (`REGS_DEBUG_FOLLOW=1`): tram cabin light, both cabs dark. `tl-2950.png`: stand lamps at 20:00.
   `ck-2950.png`: the clock dial on the square.
 * `t2-3200.png`: underground view, no lamp light. `fps14/fps23-3350.png`: frame rate.

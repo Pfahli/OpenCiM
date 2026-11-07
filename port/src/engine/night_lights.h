@@ -60,6 +60,7 @@ void prepareWindowMasks(Display& d, script::VM& vm,
 struct VehicleLampInfo {
   int frontLamps = 0, rearLamps = 0;  // lamp areas found
   int windows = 0;                    // window glass areas (channel B: interior light)
+  float windowY0 = 0, windowY1 = 0;   // the window band's model height (passenger silhouettes), 0 0 = unknown
 };
 bool makeVehicleLampMask(const render::MeshData& mesh, int material, const render::Image& diffuse,
                          const render::Image* specular, render::Image& out, VehicleLampInfo* info, bool rail = false);

@@ -923,6 +923,7 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
   // every texel the material's triangles cover: which end it faces, at lamp height
   std::vector<uint8_t> side(size_t(w) * size_t(h), 0);  // 1 front, 2 rear
   // the cabin light fades towards the front: the driver's cab stays dark (0 up to 1.5 m from the front, full at 4.5 m)
+  std::vector<float> texY(size_t(w) * size_t(h), -1e30f);  // model height of the face using the texel
   std::vector<float> fade(size_t(w) * size_t(h), 1.0f), fadeRear(size_t(w) * size_t(h), 1.0f);  // rail: a cab at each end
   for (const Submesh& sm : mesh.submeshes) {
     if (sm.material != material) continue;
@@ -951,6 +952,7 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
             pz += bb[j] * mesh.positions[t[j] * 3 + 2];
             nz += bb[j] * mesh.normals[t[j] * 3 + 2];
           }
+          texY[size_t(y) * size_t(w) + size_t(x)] = py3;
           float& fd = fade[size_t(y) * size_t(w) + size_t(x)];
           fd = std::min(fd, smooth(zFront + 1.5f, zFront + 4.5f, pz));
           float& fr = fadeRear[size_t(y) * size_t(w) + size_t(x)];
@@ -1074,6 +1076,15 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       for (size_t p : comp) win[p] = uint8_t(std::lround(255.0f * smooth(T, T + 0.1f, sv[p]) * (st.frontLamps ? fade[p] : 1.0f) *
                                                          (rail && st.rearLamps ? fadeRear[p] : 1.0f)));
       ++st.windows;
+    }
+  }
+  {  // the window band's height on the model (10th to 90th percentile of the glass): where the passengers show
+    std::vector<float> ys;
+    for (size_t i = 0; i < win.size(); ++i)
+      if (win[i] > 128 && texY[i] > -1e29f) ys.push_back(texY[i]);
+    if (ys.size() > 20) {
+      std::sort(ys.begin(), ys.end());
+      st.windowY0 = ys[ys.size() / 10], st.windowY1 = ys[ys.size() * 9 / 10];
     }
   }
   if (!st.frontLamps && !st.rearLamps && !st.windows) return false;

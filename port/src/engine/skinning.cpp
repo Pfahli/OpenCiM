@@ -232,7 +232,9 @@ void collectSkinned(Display& d, VM& vm, ObjectObj* model, const Mat4& world, con
       GpuMaterial g = objectMaterial(d, vm, model, m);
       if (skinned) g.meshFlags = kMeshSkinned;
       if (vehicle) {  // port night lights: the vehicle's own lamps
-        g.windowMask = vehicleLampMask(d, vm, *model->data, int(&m - model->data->materials.data()));
+        VehicleLampInfo li;
+        g.windowMask = vehicleLampMask(d, vm, *model->data, int(&m - model->data->materials.data()), &li);
+        g.cabinY[0] = li.windowY0, g.cabinY[1] = li.windowY1;
         g.windowKind = 1;
       }
       sm.materials.push_back(g);

@@ -712,6 +712,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.projInverse = at("regs_ProjInverse");
   l.night = at("regs_Night");
   l.shop = at("regs_Shop");
+  l.cabin = at("regs_Cabin");
   l.windowMask = at("regs_WindowMask");
   l.windowOn = at("regs_WindowOn");
   l.lampMap = at("regs_LampMap");
@@ -807,6 +808,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
                  : m.windowKind >= 4 ? (v.night[3] > 0.05f ? float(m.windowKind) : 0.0f)
                  : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
     gl::Uniform1f(l.windowOn, code);
+    if (m.windowKind == 1) gl::Uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, 0);
     if (code > 0) {
       gl::ActiveTexture(gl::TEXTURE0 + 8);
       gl::BindTexture(gl::TEXTURE_2D, m.windowMask);

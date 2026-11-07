@@ -2391,7 +2391,9 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       o->materials = std::make_shared<std::vector<render::GpuMaterial>>();
       for (size_t i = 0; i < o->data->materials.size(); ++i) {
         o->materials->push_back(objectMaterial(d, vm, o, o->data->materials[i]));
-        o->materials->back().windowMask = vehicleLampMask(d, vm, *o->data, int(i));  // port night lights
+        VehicleLampInfo li;
+        o->materials->back().windowMask = vehicleLampMask(d, vm, *o->data, int(i), &li);  // port night lights
+        o->materials->back().cabinY[0] = li.windowY0, o->materials->back().cabinY[1] = li.windowY1;
         o->materials->back().windowKind = 1;
       }
     }
@@ -2415,6 +2417,16 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       // buses, trams and trains: the interior is lit, so their windows glow
       float code = vehicleLampCode(front, rear, m.transit || m.train, vehicleLightsOn(seed, night));
       for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code;
+      // passengers in the windows: the line vehicle's load, eased so the silhouettes fade in and out
+      if (m.transit && m.vehicle >= 0) {
+        static std::vector<float> shown;
+        size_t mi = size_t(&m - s->movers.data());
+        if (shown.size() <= mi) shown.resize(mi + 1, 0.0f);
+        const VehicleState& vs = s->vehicles[size_t(m.vehicle)];
+        float target = vs.capacity > 0 ? std::clamp(float(vs.passengerCount) / float(vs.capacity), 0.0f, 1.0f) : 0.0f;
+        if (unit == 0) shown[mi] += (target - shown[mi]) * std::min(1.0f, vm.frameDt() * 0.8f);
+        for (size_t k = first; k < items.size(); ++k) items[k].passengers = shown[mi];
+      }
     }
     for (size_t k = first; k < items.size(); ++k) {  // animated parts: custom4 = (angle, spin), stepAnimatedParts
       items[k].hasCustom4 = true;
