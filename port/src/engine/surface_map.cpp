@@ -20,6 +20,7 @@ void surfaceMapInit(SurfaceMap& m, float originX, float originZ, float sizeX, fl
   m.topW = std::max(1, int(std::ceil(sizeX / m.topTexel)));
   m.topH = std::max(1, int(std::ceil(sizeZ / m.topTexel)));
   m.top.assign(size_t(m.topW) * size_t(m.topH), 0);
+  m.trodden.assign(size_t(m.topW) * size_t(m.topH), 0);
   m.topX0 = 0, m.topZ0 = 0, m.topX1 = m.topW - 1, m.topZ1 = m.topH - 1;
   m.dirtyX0 = 0, m.dirtyZ0 = 0, m.dirtyX1 = m.w - 1, m.dirtyZ1 = m.h - 1;  // the empty map once
   LOG_INFO("surface map: %dx%d texels of %.1f m", m.w, m.h, m.texel);
@@ -122,28 +123,51 @@ void surfaceMapPaint(SurfaceMap& m, const MeshData& mesh, const Mat4& world, con
 
 void uploadTop(SurfaceMap& m) {
   if (m.topW <= 0 || m.topX1 < m.topX0) return;
+  auto pack = [&](int x0, int z0, int w, int h) {  // r = top height, g = trodden (0..255 → 0..65535)
+    std::vector<uint16_t> rect(size_t(w) * size_t(h) * 2);
+    for (int z = 0; z < h; ++z)
+      for (int x = 0; x < w; ++x) {
+        size_t i = size_t(z0 + z) * size_t(m.topW) + size_t(x0 + x), o = (size_t(z) * size_t(w) + size_t(x)) * 2;
+        rect[o] = m.top[i];
+        rect[o + 1] = uint16_t(m.trodden[i] * 257u);
+      }
+    return rect;
+  };
   gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
   if (!m.topTexture) {
     gl::GenTextures(1, &m.topTexture);
     gl::BindTexture(gl::TEXTURE_2D, m.topTexture);
-    // linear: regs_shelterDepth's quick "anything overhead nearby?" test; the exact reads use texelFetch
+    // linear: regs_shelterDepth's quick "anything overhead nearby?" test and the trodden map; the exact reads use
+    // texelFetch
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, 0x822A /* GL_R16 */, m.topW, m.topH, 0, gl::RED, 0x1403 /* GL_UNSIGNED_SHORT */,
-                   m.top.data());
+    std::vector<uint16_t> all = pack(0, 0, m.topW, m.topH);
+    gl::TexImage2D(gl::TEXTURE_2D, 0, 0x822C /* GL_RG16 */, m.topW, m.topH, 0, 0x8227 /* GL_RG */,
+                   0x1403 /* GL_UNSIGNED_SHORT */, all.data());
   } else {
     int w = m.topX1 - m.topX0 + 1, h = m.topZ1 - m.topZ0 + 1;
-    std::vector<uint16_t> rect(size_t(w) * size_t(h));
-    for (int z = 0; z < h; ++z)
-      std::copy_n(&m.top[size_t(m.topZ0 + z) * size_t(m.topW) + size_t(m.topX0)], size_t(w), &rect[size_t(z) * size_t(w)]);
+    std::vector<uint16_t> rect = pack(m.topX0, m.topZ0, w, h);
     gl::BindTexture(gl::TEXTURE_2D, m.topTexture);
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, m.topX0, m.topZ0, w, h, gl::RED, 0x1403, rect.data());
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, m.topX0, m.topZ0, w, h, 0x8227 /* GL_RG */, 0x1403, rect.data());
   }
   gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
   gl::BindTexture(gl::TEXTURE_2D, 0);
   m.topX0 = 0, m.topZ0 = 0, m.topX1 = -1, m.topZ1 = -1;
+}
+
+void surfaceMapTrodden(SurfaceMap& m, const uint8_t* bytes, int w, float originX, float originZ, int x0, int z0, int x1,
+                       int z1) {
+  if (m.topW <= 0 || x1 < x0 || z1 < z0) return;
+  const int dx = int(std::lround((originX - m.originX) / m.topTexel)), dz = int(std::lround((originZ - m.originZ) / m.topTexel));
+  int tx0 = std::max(0, x0 + dx), tx1 = std::min(m.topW - 1, x1 + dx);
+  int tz0 = std::max(0, z0 + dz), tz1 = std::min(m.topH - 1, z1 + dz);
+  if (tx1 < tx0 || tz1 < tz0) return;
+  for (int z = tz0; z <= tz1; ++z)
+    for (int x = tx0; x <= tx1; ++x) m.trodden[size_t(z) * size_t(m.topW) + size_t(x)] = bytes[size_t(z - dz) * size_t(w) + size_t(x - dx)];
+  if (m.topX1 < m.topX0) m.topX0 = tx0, m.topX1 = tx1, m.topZ0 = tz0, m.topZ1 = tz1;
+  else m.topX0 = std::min(m.topX0, tx0), m.topX1 = std::max(m.topX1, tx1), m.topZ0 = std::min(m.topZ0, tz0), m.topZ1 = std::max(m.topZ1, tz1);
 }
 
 void surfaceMapUpload(SurfaceMap& m) {

@@ -525,8 +525,15 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     auto* env = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/envmap.dds").get());
     if (env && env->cube) v.hookEnvCube = d.texture(vm, env);
     gridSurfaceMap(grids[0], v.hookSurfaceMap, v.hookSurfaceRect, &v.hookTopMap);
-    gridTrafficMaps(grids[0], v.hookLaneMap, v.hookLaneTraffic, v.hookTrodden, v.hookTrafficRect);
+    gridTrafficMaps(grids[0], v.hookLaneTraffic, v.hookTrafficRect, v.hookLaneCells);
     gridFootprints(grids[0], v.hookFootAtlas, v.hookFootRect);
+    for (auto& t : shaderHookTextures())  // the mods' own textures (regsShaderTexture), loaded once
+      if (!t.tried) {
+        t.tried = true;
+        auto* tex = dynamic_cast<TextureObj*>(getTexture(vm, utf8ToUtf16(t.path)).get());
+        t.texture = tex ? d.texture(vm, tex) : 0;
+        if (!t.texture) LOG_WARN("mods: texture %s for %s not found", t.path.c_str(), t.sampler.c_str());
+      }
   }
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
   ParticleDrawList particles;

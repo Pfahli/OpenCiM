@@ -16,6 +16,7 @@
 #include "engine/host.h"
 #include "engine/user_folders.h"
 #include "render/glsl.h"
+#include "render/renderer3d.h"
 #include "vfs/vfs.h"
 
 namespace regs::engine {
@@ -366,6 +367,33 @@ void registerModNatives(VM& vm) {
     }
     render::shaderHookUniforms()[name] = f;
     return Value();
+  });
+  // regsShaderTexture(sampler, path): a texture of the mod's own for its shader hooks, read as `uniform sampler2D
+  // <sampler>;` (declared in the hook file). It gets one of the texture units kept for mods (render/renderer3d.h:
+  // kModUnitFirst, kModUnitCount: all fits the 16 units every GL 3.3 GPU has). Returns true, or false when they are
+  // taken (the hook then reads the sampler as unbound: black) and logs which mods hold them. The same sampler again
+  // replaces its texture.
+  implementGlobal(vm, u"regsShaderTexture", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc < 2) return Value::boolean(false);
+    std::string sampler = utf16ToUtf8(v.toStr(a[0])), path = utf16ToUtf8(v.toStr(a[1]));
+    auto& list = render::shaderHookTextures();
+    for (auto& t : list)
+      if (t.sampler == sampler) {
+        t.path = path, t.texture = 0, t.tried = false;
+        return Value::boolean(true);
+      }
+    if (int(list.size()) >= render::kModUnitCount) {
+      std::string held;
+      for (const auto& t : list) held += " " + t.sampler;
+      LOG_WARN("mods: no texture unit left for %s (%s); all %d taken by:%s", sampler.c_str(), path.c_str(),
+               render::kModUnitCount, held.c_str());
+      return Value::boolean(false);
+    }
+    render::ShaderHookTexture t;
+    t.sampler = sampler, t.path = path, t.unit = render::kModUnitFirst + int(list.size());
+    list.push_back(t);
+    LOG_INFO("mods: texture %s for %s on unit %d", path.c_str(), sampler.c_str(), t.unit);
+    return Value::boolean(true);
   });
 }
 

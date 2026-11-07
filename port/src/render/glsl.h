@@ -43,5 +43,14 @@ bool shadowHooksRegistered();
 std::string postHookFragment();
 // regsShaderUniform(name, value): vec4 uniforms of the hooks, applied to every hooked program per pass
 std::map<std::string, std::array<float, 4>>& shaderHookUniforms();
+// the mods' own textures for their hooks (regsShaderTexture): a sampler2D uniform name, the texture's game path, the
+// unit it got (kModUnitFirst.., render/renderer3d.h) and its GL texture once loaded (engine/scene3d.cpp)
+struct ShaderHookTexture {
+  std::string sampler, path;
+  int unit = -1;
+  uint32_t texture = 0;
+  bool tried = false;
+};
+std::vector<ShaderHookTexture>& shaderHookTextures();
 
 }  // namespace regs::render

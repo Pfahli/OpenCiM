@@ -29,7 +29,10 @@ struct SurfaceMap {
   int topW = 0, topH = 0;
   float topTexel = 1.0f;
   std::vector<uint16_t> top;
-  uint32_t topTexture = 0;         // GL R16, LINEAR (exact reads: texelFetch)
+  // the trodden map (engine/traffic_maps.h, recent pedestrians 0..255) on the same 1 m cells: it shares the top map's
+  // texture (a texture unit fewer for the shader hooks)
+  std::vector<uint8_t> trodden;
+  uint32_t topTexture = 0;         // GL RG16 (r top, g trodden), LINEAR (exact reads: texelFetch)
   int topX0 = 0, topZ0 = 0, topX1 = -1, topZ1 = -1;
 };
 
@@ -39,6 +42,10 @@ void surfaceMapInit(SurfaceMap& m, float originX, float originZ, float sizeX, fl
 // items: an item mesh (over terrain), else terrain cells (only where no item painted)
 void surfaceMapPaint(SurfaceMap& m, const render::MeshData& mesh, const render::Mat4& world,
                      const std::vector<render::GpuMaterial>& materials, bool items);
+// copies the rect x0..x1, z0..z1 of a trodden map (w texels wide, its texel (0, 0) at originX, originZ, 1 m texels)
+// into the top map's second channel
+void surfaceMapTrodden(SurfaceMap& m, const uint8_t* bytes, int w, float originX, float originZ, int x0, int z0, int x1,
+                       int z1);
 // uploads the painted texels (creates the texture on first use)
 void surfaceMapUpload(SurfaceMap& m);
 

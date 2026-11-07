@@ -10,18 +10,22 @@
 
 namespace regs::render {
 
-// A material as the renderer binds it: flags, textures in unit order and the fixed-function colours the engine
-// sets with glMaterial (docs/renderer/interfaces-3d.md §2.10).
-constexpr int kHookEnvUnit = 8;      // texture unit of the shader hooks' environment cube (regs_EnvMap)
-constexpr int kHookSurfaceUnit = 9;  // and of the map's surface classes (regs_SurfaceMap)
-constexpr int kHookLaneUnit = 10, kHookLaneTrafficUnit = 11, kHookTroddenUnit = 12;  // the traffic maps
-constexpr int kHookTopUnit = 13;     // the top map (regs_TopMap)
-constexpr int kHookFootAtlasUnit = 14;  // the footprint map, atlas and tile index in one (regs_footprintAt)
-// the port night lights (engine/night_lights.h): window mask, lamp map, headlight map. All fits the 16 units GL 3.3
-// guarantees (Macs, Raspberry Pi and many ARM GPUs have no more): the materials use 0-4 (no game shader samples
-// texture5 or texture6, checked over all 95 shader files with the DLCs), the shadow map 7, the shader hooks 8-14.
-constexpr int kNightWindowUnit = 5, kNightLampUnit = 6, kNightCarUnit = 15;
-constexpr int kMaterialUnits = 5;  // material textures bound per draw (units 0-4)
+// Texture units: all fits the 16 GL 3.3 guarantees (Macs, Raspberry Pi and many ARM GPUs have no more).
+// 0-5: the material's own textures (up to 6: the New York and Tokyo buildings have diffuse, specular, normal,
+//      illumination, ambient occlusion and the environment cube; `regs-tool materials` counts them); a material's
+//      night-light window mask goes to the first unit after its textures
+// 6:   the night lights' light map (lamp map and headlight map in one texture, engine/night_lights.cpp)
+// 7:   the shadow map (the game's shaders: sampler2DShadow texture7)
+// 8-12: the shader hooks' maps (render/glsl.h)
+// 13-15: free for the mods' own textures (engine/mods.h, regsShaderTexture)
+constexpr int kMaterialUnits = 6;
+constexpr int kNightMapUnit = 6;
+constexpr int kHookEnvUnit = 8;           // the environment cube (regs_EnvMap)
+constexpr int kHookSurfaceUnit = 9;       // the map's surface classes (regs_SurfaceMap)
+constexpr int kHookLaneTrafficUnit = 10;  // the lanes, their lists and cells (regs_LaneTraffic)
+constexpr int kHookTopUnit = 11;          // the top map and the trodden map (regs_TopMap: r top, g trodden)
+constexpr int kHookFootAtlasUnit = 12;    // the footprint map, atlas and tile index in one (regs_footprintAt)
+constexpr int kModUnitFirst = 13, kModUnitCount = 3;  // the mods' texture units
 
 // shader programs linked so far and the seconds spent (load-time measurements, REGS_LOG_TIME)
 extern int gProgramsLinked;
@@ -43,6 +47,8 @@ enum : uint8_t {
                          // (metro/shaders/trees/trees.shader), leaves, needles, twigs and bark of one atlas
 };
 
+// A material as the renderer binds it: flags, textures in unit order and the fixed-function colours the engine
+// sets with glMaterial (docs/renderer/interfaces-3d.md §2.10).
 struct GpuMaterial {
   uint32_t flags = 0;
   std::vector<uint32_t> textures;  // GL names, unit i = textures[i]
@@ -160,7 +166,8 @@ struct SceneView {
   uint32_t hookSurfaceMap = 0;  // the map's surface classes (engine/surface_map.h) on unit 9
   uint32_t hookTopMap = 0;      // and its top map (overhead heights) on unit 13
   float hookSurfaceRect[4] = {0, 0, 0, 0};
-  uint32_t hookLaneMap = 0, hookLaneTraffic = 0, hookTrodden = 0;  // engine/traffic_maps.h, units 10-12
+  uint32_t hookLaneTraffic = 0;                   // engine/traffic_maps.h: the lanes, their lists and cells
+  float hookLaneCells[4] = {0, 0, 0, 0};          // the lane cells: count x, z, first texel in the lane texture
   float hookTrafficRect[4] = {0, 0, 0, 0};
   uint32_t hookFootAtlas = 0;  // engine/traffic_maps.h footprints (atlas and tile index), unit 14
   float hookFootRect[4] = {0, 0, 0, 0};
@@ -168,10 +175,10 @@ struct SceneView {
   // groups lit, z = street-lamp light, w = night01 of the cycle; x and z are 0 by day and without the cycle
   float night[4] = {0, 0, 0, 0};
   float shopShare = 0;  // share of the shop windows lit (their own schedule)
-  uint32_t lampMap = 0;               // lamp light over the map (kNightLampUnit): rgb light, a = lamp head height
+  uint32_t lampMap = 0;               // the light map (kNightMapUnit): lamp light over the map, rgb, a = head height
   float lampMapXf[4] = {0, 0, 0, 0};  // uv = (world.xz − (x, y)) · (z, w)
-  float lampHeight[2] = {0, 1};       // head height = [0] + a · [1]
-  uint32_t carMap = 0;                // vehicle headlights around the view (kNightCarUnit): rgb light, a = ground height
+  float lampHeight[4] = {0, 1, 0, 0};  // head height = [0] + a · [1]; [2], [3] the lamp map's size in the light map
+  uint32_t carMap = 0;                // the same light map's other half: headlights around the view
   float carMapXf[4] = {0, 0, 0, 0};   // uv = (world.xz − (x, y)) · (z, w)
   float carLight[4] = {0, 1, 0, 0};   // ground height = [0] + a · [1]; [2] = strength (0: none)
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
@@ -245,7 +252,8 @@ class Renderer3D {
                        TargetFormat format = TargetFormat::Rgba16f);
   // Additive (ONE, ONE) draw of a mesh with a plain program into a target cleared to 0: no depth, no culling. Ends
   // with the back buffer bound and the back-buffer viewport.
-  void splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH);
+  // regionH > 0: only the target's rows 0..regionH-1 are cleared and drawn into
+  void splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH, int regionH = 0);
   void resolve(const RenderTarget& t);  // multisample → texture (NEAREST blit, depth too); no-op without MSAA
   // resolves t and copies its bottom-left w×h colour into the back-buffer rect (x, y top-left origin)
   void blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH);
@@ -284,7 +292,7 @@ class Renderer3D {
     int shadowTransform = -1, shadowWarp = -1, shadowParams = -1, bones = -1;
     // shader hooks (render/glsl.h): -1 in programs without them
     int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1,
-        hookItem = -1, hookTrafficRect = -1, hookFootRect = -1, hookNight = -1;
+        hookItem = -1, hookTrafficRect = -1, hookFootRect = -1, hookNight = -1, hookLaneCells = -1;
     std::map<std::string, int> hookUniforms;
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;

@@ -540,6 +540,43 @@ int cmdSound(int argc, char** argv) {
 }
 
 // texpng <gameDir> <vfs path> <out.png> [level]: one level of a DDS texture as a PNG
+// regs-tool materials <gameDir>: how many textures the game's materials have (every .material and .object in the
+// archives, DLCs too): the texture units the default shader needs (render/renderer3d.h kMaterialUnits)
+int cmdMaterials(int argc, char** argv) {
+  if (argc < 3) return 2;
+  Vfs vfs;
+  vfs.setInstallRoot(widen(argv[2]));
+  vfs.rescan();
+  auto read = [&](const std::string& p, std::vector<uint8_t>& out) { return vfs.read(p, out); };
+  std::map<size_t, size_t> histogram;
+  size_t files = 0;
+  for (const auto& [path, rec] : vfs.records()) {
+    std::vector<render::MaterialDef> defs;
+    if (path.size() > 9 && path.compare(path.size() - 9, 9, ".material") == 0) {
+      render::MaterialDef def;
+      if (render::loadMaterialFile(path, read, def)) defs.push_back(def);
+    } else if (path.size() > 7 && path.compare(path.size() - 7, 7, ".object") == 0) {
+      render::ObjectData obj;
+      std::string err;
+      if (render::loadObject(path, read, obj, &err)) defs = obj.materials;
+    } else {
+      continue;
+    }
+    ++files;
+    for (const render::MaterialDef& d : defs) {
+      ++histogram[d.textures.size()];
+      if (d.textures.size() >= 5) {
+        std::printf("%zu textures: %s / %s:", d.textures.size(), path.c_str(), d.name.c_str());
+        for (const auto& t : d.textures) std::printf(" %s", t.c_str());
+        std::printf("\n");
+      }
+    }
+  }
+  std::printf("%zu files\n", files);
+  for (const auto& [n, c] : histogram) std::printf("%zu textures: %zu materials\n", n, c);
+  return 0;
+}
+
 int cmdTexPng(int argc, char** argv) {
   if (argc < 5) return 2;
   Vfs vfs;
@@ -775,6 +812,7 @@ int main(int argc, char** argv) {
     else if (cmd == "softdot") rc = cmdSoftDot(argc, argv);
     else if (cmd == "leaf") rc = cmdLeaf(argc, argv);
     else if (cmd == "texpng") rc = cmdTexPng(argc, argv);
+    else if (cmd == "materials") rc = cmdMaterials(argc, argv);
     else if (cmd == "windowmask") rc = cmdWindowMask(argc, argv);
     else if (cmd == "lamps") rc = cmdLamps(argc, argv);
     else if (cmd == "vehiclelamps") rc = cmdVehicleLamps(argc, argv);

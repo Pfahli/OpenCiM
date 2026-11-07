@@ -40,7 +40,7 @@ struct TrafficMaps {
   int listW = 0, listH = 0;        // the lane lists' cells (2 m)
   std::vector<uint16_t> lanes;     // per cell: list start (low, high 16 bits), near count, all count
   std::vector<float> listIds;      // the lists: lane numbers, nearest first
-  uint32_t laneTexture = 0;
+  uint32_t cellBase = 0;  // the lane texture's first texel of the cells (gridTrafficMaps)
   bool lanesBuilt = false, lanesUploaded = false;
   size_t graphNodes = 0;
   std::vector<int32_t> laneId;   // per graph node: its lane number in the maps (−1: not a painted lane)
@@ -57,7 +57,8 @@ struct TrafficMaps {
   // trodden map
   std::unordered_map<uint32_t, float> trodden;  // cell (z << 16 | x) → seconds
   std::vector<uint8_t> troddenBytes;            // laneW × laneH
-  uint32_t troddenTexture = 0;
+  bool troddenSynced = false;  // copied into the top map's texture once (then the dirty rects)
+  const void* troddenTarget = nullptr;  // the surface map it was copied into
   int dirtyX0 = 0, dirtyZ0 = 0, dirtyX1 = -1, dirtyZ1 = -1;
   float age = 0;
   bool laneTrafficDirty = false;
@@ -91,7 +92,7 @@ struct TrafficMaps {
 void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt);
 // at drawing time (render thread, engine/scene3d.cpp): uploads what changed (at most 5 times a second) and hands out
 // the textures and the world rect (originX, originZ, 1 / sizeX, 1 / sizeZ); false when there are none
-bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint32_t& trodden, float rect[4]);
+bool gridTrafficMaps(GridObj* grid, uint32_t& laneTraffic, float rect[4], float cells[4]);
 // the footprint map's textures and rect (originX, originZ, texel size in m, 0); false when there are no steps
 bool gridFootprints(GridObj* grid, uint32_t& atlas, float rect[4]);
 // gsGrid.regsFootprints (see TrafficMaps::footFill)

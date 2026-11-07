@@ -8,6 +8,8 @@
 
 #include "core/log.h"
 #include "engine/grid.h"
+#include "engine/grid_render.h"
+#include "engine/surface_map.h"
 #include "engine/sim.h"
 #include "engine/sim_graph.h"
 #include "engine/sim_state.h"
@@ -436,7 +438,7 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   }
 }
 
-bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint32_t& trodden, float rect[4]) {
+bool gridTrafficMaps(GridObj* grid, uint32_t& laneTraffic, float rect[4], float cells[4]) {
   SimState* s = simOf(grid);
   if (!s || !s->trafficMaps || !s->trafficMaps->lanesBuilt) return false;
   TrafficMaps& t = *s->trafficMaps;
@@ -473,32 +475,24 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
       }
       gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
       if (full) {
-        // the lists after the lanes' rows, 4 lane numbers per texel; the lane map's starts count from the texture's
-        // first float (start = rows · 1024 · 4 + the list's own start)
+        // one RGBA32F texture, 1024 texels wide (a texture unit fewer for the shader hooks): the lanes' rows (values,
+        // curve, curve), then the lists (4 lane numbers per texel), then the cells (2 per texel: the list's first
+        // float counted from the texture's first float, and near + 64 · all)
         int listRows = std::max(1, int((t.listIds.size() + 4095) / 4096));
         uint32_t base = uint32_t(rows) * 1024u * 4u;
-        std::vector<uint16_t> cells(t.lanes);
-        for (size_t k = 0; k < cells.size(); k += 4)
-          if (cells[k + 3]) {
-            uint32_t st = (uint32_t(cells[k]) | uint32_t(cells[k + 1]) << 16) + base;
-            cells[k] = uint16_t(st & 0xffff), cells[k + 1] = uint16_t(st >> 16);
-          }
-        if (!t.laneTexture) {
-          gl::GenTextures(1, &t.laneTexture);
-          gl::BindTexture(gl::TEXTURE_2D, t.laneTexture);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
-        } else {
-          gl::BindTexture(gl::TEXTURE_2D, t.laneTexture);
-        }
-        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
-        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8D76 /* GL_RGBA16UI */, t.listW, t.listH, 0, 0x8D99 /* GL_RGBA_INTEGER */, 0x1403 /* GL_UNSIGNED_SHORT */, cells.data());
-        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+        size_t cellCount = size_t(t.listW) * size_t(t.listH);
+        int cellRows = std::max(1, int((cellCount + 2047) / 2048));
+        t.cellBase = uint32_t(rows + listRows) * 1024u;  // the cells' first texel
         t.lanesUploaded = true;
-        std::vector<float> all(size_t(rows + listRows) * 1024 * 4, 0.0f);
+        std::vector<float> all(size_t(rows + listRows + cellRows) * 1024 * 4, 0.0f);
         std::copy(t.listIds.begin(), t.listIds.end(), all.begin() + base);
+        for (size_t k = 0; k < cellCount; ++k) {
+          const uint16_t* c = &t.lanes[k * 4];
+          if (!c[3]) continue;
+          float* o = &all[size_t(t.cellBase) * 4 + k * 2];
+          o[0] = float((uint32_t(c[0]) | uint32_t(c[1]) << 16) + base);
+          o[1] = float(c[2] + 64 * c[3]);
+        }
         for (size_t l = 0; l < t.laneNodes.size(); ++l) {
           const LaneNode& n = G.nodes[size_t(t.laneNodes[l])];
           float L = n.length / 3.0f;
@@ -519,7 +513,7 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
         } else {
           gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
         }
-        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, 1024, rows + listRows, 0, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, all.data());
+        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, 1024, rows + listRows + cellRows, 0, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, all.data());
         t.laneTrafficRows = rows;
         t.laneCurvesDirty = false;
       } else {
@@ -536,25 +530,23 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& lanes, uint32_t& laneTraffic, uint
       t.dirtyX0 = std::min(t.dirtyX0, x), t.dirtyX1 = std::max(t.dirtyX1, x);
       t.dirtyZ0 = std::min(t.dirtyZ0, z), t.dirtyZ1 = std::max(t.dirtyZ1, z);
     }
-    if (!t.troddenTexture) {
-      upload(t.troddenTexture, t.laneW, t.laneH, 0x8229, gl::RED, t.troddenBytes.data(), true);
-    } else if (t.dirtyX1 >= t.dirtyX0) {  // only the rectangle the walkers touched
-      int w = t.dirtyX1 - t.dirtyX0 + 1, h = t.dirtyZ1 - t.dirtyZ0 + 1;
-      std::vector<uint8_t> rectBytes(size_t(w) * size_t(h));
-      for (int z = 0; z < h; ++z)
-        std::copy_n(&t.troddenBytes[size_t(t.dirtyZ0 + z) * size_t(t.laneW) + size_t(t.dirtyX0)], size_t(w),
-                    &rectBytes[size_t(z) * size_t(w)]);
-      gl::BindTexture(gl::TEXTURE_2D, t.troddenTexture);
-      gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-      gl::TexSubImage2D(gl::TEXTURE_2D, 0, t.dirtyX0, t.dirtyZ0, w, h, gl::RED, gl::UNSIGNED_BYTE, rectBytes.data());
-      gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-      gl::BindTexture(gl::TEXTURE_2D, 0);
+    // the trodden map goes into the top map's texture (engine/surface_map.h, its second channel): first all of it,
+    // then only the rectangle the walkers touched; kept for later while the map has no surface map yet
+    SurfaceMap* sm = grid->terrain ? grid->terrain->surfaceMap.get() : nullptr;
+    if (sm != t.troddenTarget) t.troddenSynced = false, t.troddenTarget = sm;  // a new surface map: all again
+    if (sm && sm->topW > 0) {
+      if (!t.troddenSynced) {
+        surfaceMapTrodden(*sm, t.troddenBytes.data(), t.laneW, t.originX, t.originZ, 0, 0, t.laneW - 1, t.laneH - 1);
+        t.troddenSynced = true;
+      } else {
+        surfaceMapTrodden(*sm, t.troddenBytes.data(), t.laneW, t.originX, t.originZ, t.dirtyX0, t.dirtyZ0, t.dirtyX1,
+                          t.dirtyZ1);
+      }
+      t.dirtyX0 = 0, t.dirtyZ0 = 0, t.dirtyX1 = -1, t.dirtyZ1 = -1;
     }
-    t.dirtyX0 = 0, t.dirtyZ0 = 0, t.dirtyX1 = -1, t.dirtyZ1 = -1;
   }
-  lanes = t.laneTexture;
   laneTraffic = t.laneTrafficTexture;
-  trodden = t.troddenTexture;
+  cells[0] = float(t.listW), cells[1] = float(t.listH), cells[2] = float(t.cellBase), cells[3] = 0;
   rect[0] = t.originX;
   rect[1] = t.originZ;
   rect[2] = 1.0f / (float(t.laneW) * kTexel);

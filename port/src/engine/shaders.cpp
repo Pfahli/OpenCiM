@@ -191,7 +191,7 @@ const char16_t* kNightColorDecl =
     u"  if (regs_CarLight.z <= 0.0) return vec3(0.0);\n"
     u"  vec2 uv = (regs_WorldPos.xz - regs_CarMapXf.xy) * regs_CarMapXf.zw;\n"
     u"  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec3(0.0);\n"
-    u"  vec4 l = texture2D(regs_CarMap, uv);\n"
+    u"  vec4 l = texture2D(regs_CarMap, vec2(uv.x, min(uv.y * 0.5, 0.5 - 0.5 / 4096.0)));\n"  // the light map's lower half
     u"  if (l.r <= 0.0005) return vec3(0.0);\n"
     u"  float g = regs_CarLight.x + l.b / l.r;\n"
     u"  vec3 tint = mix(vec3(1.0, 0.93, 0.8), vec3(1.0, 0.74, 0.45), clamp(l.g / l.r, 0.0, 1.0));\n"
@@ -202,7 +202,7 @@ const char16_t* kNightColorDecl =
     u"  if (regs_Night.z <= 0.0) return regs_carLight();\n"
     u"  vec2 uv = (regs_WorldPos.xz - regs_LampMapXf.xy) * regs_LampMapXf.zw;\n"
     u"  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return regs_carLight();\n"
-    u"  vec4 l = texture2D(regs_LampMap, uv);\n"
+    u"  vec4 l = texture2D(regs_LampMap, vec2(uv.x * regs_LampHeight.z, 0.5 + max(uv.y * regs_LampHeight.w, 0.5 / 4096.0)));\n"  // upper half
     u"  float head = regs_LampHeight.x + l.a * regs_LampHeight.y;\n"
     u"  float y = regs_WorldPos.y;\n"
     u"  return l.rgb * (smoothstep(head + 0.5, head - 1.0, y) * smoothstep(head - 18.0, head - 11.0, y) * regs_Night.z) + regs_carLight();\n"

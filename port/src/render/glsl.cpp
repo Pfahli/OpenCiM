@@ -145,9 +145,10 @@ float regs_shelterDepth(vec3 p) {
   return clamp(1.5 * (share - 0.5) + 2.5 * max(share - 0.85, 0.0), 0.0, 1.5);
 }
 // the traffic maps (engine/traffic_maps.h)
-uniform usampler2D regs_LaneMap;    // the lane lists' cells (2 m): list start (low, high 16 bits), near count, all count
-uniform sampler2D regs_LaneTraffic; // the lanes (values, curves) and after them the lists
-uniform sampler2D regs_Trodden;
+// regs_LaneTraffic, 1024 texels wide: the lanes (values, curves), after them the lists, then the lane lists' cells
+// (2 m, two per texel: the list's first float, near + 64 · all)
+uniform sampler2D regs_LaneTraffic;
+uniform vec4 regs_LaneCells;  // cells across x, z; the cells' first texel
 uniform vec4 regs_TrafficRect;
 // a lane's data: k = 0 its values (traffic, plowed, heap), 1 and 2 its curve's Bézier control points (p0.xz, b.xz),
 // (c.xz, p1.xz)
@@ -157,9 +158,12 @@ vec4 regs_laneData(int i, int k) { return texelFetch(regs_LaneTraffic, ivec2(i %
 ivec3 regs_laneCell(vec2 xz) {
   if (regs_TrafficRect.z <= 0.0) return ivec3(0);
   ivec2 c = ivec2(floor((xz - regs_TrafficRect.xy) / 2.0));
-  if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, textureSize(regs_LaneMap, 0)))) return ivec3(0);
-  uvec4 v = texelFetch(regs_LaneMap, c, 0);
-  return ivec3(int(v.x | (v.y << 16u)), int(v.z), int(v.w));
+  if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, ivec2(regs_LaneCells.xy)))) return ivec3(0);
+  int k = c.y * int(regs_LaneCells.x) + c.x, tx = int(regs_LaneCells.z) + k / 2;
+  vec4 t = texelFetch(regs_LaneTraffic, ivec2(tx % 1024, tx / 1024), 0);
+  vec2 v = (k & 1) == 0 ? t.xy : t.zw;
+  int counts = int(v.y + 0.5);
+  return ivec3(int(v.x + 0.5), counts & 63, counts >> 6);
 }
 // entry e of the lists: a lane number
 int regs_laneListEntry(int e) {
@@ -289,8 +293,8 @@ float regs_footprintAt(vec2 xz) {
 }
 // how trodden the ground is at a world point (0..1, recent pedestrians)
 float regs_troddenAt(vec2 xz) {
-  if (regs_TrafficRect.z <= 0.0) return 0.0;
-  return texture(regs_Trodden, (xz - regs_TrafficRect.xy) * regs_TrafficRect.zw).r;
+  if (regs_SurfaceMapRect.z <= 0.0) return 0.0;
+  return texture(regs_TopMap, (xz - regs_SurfaceMapRect.xy) * regs_SurfaceMapRect.zw).g;  // the top map's second channel
 }
 )";
   std::set<std::string> files;  // a file several hooks name is included once
@@ -337,6 +341,10 @@ std::string hookFragmentCode() {
 
 void addShaderHook(const ShaderHook& h) { hooks().push_back(h); }
 const std::vector<ShaderHook>& shaderHooks() { return hooks(); }
+std::vector<ShaderHookTexture>& shaderHookTextures() {
+  static std::vector<ShaderHookTexture> t;
+  return t;
+}
 std::map<std::string, std::array<float, 4>>& shaderHookUniforms() {
   static std::map<std::string, std::array<float, 4>> u;
   return u;
