@@ -131,12 +131,43 @@ function regsPackageOf($path) {
 }
 
 // every installed DLC and mod package
+// The 13 DLCs by release date (Design Classics … Design Quirks), as the game's folders hold them. Munich was a free
+// download for every player, and the map pack (Bucharest, Kapalla, Rivercity) and vehiclepack04 are in no DLC list:
+// those count as the base game (never listed, never required).
+$regsDlcFolders = ["vehiclepack01", "vehiclepack02", "tokyo", "vehiclepack03", "stationpack01", "germany", "usa",
+                   "vehiclepack05", "ulm", "paris", "stpetersburg", "london", "humble"];
+$regsBaseFolders = ["munich", "mappack01", "vehiclepack04"];
+
+function regsIsBasePackage($package) {
+  if ($package == "") return true;
+  if (findstr($package, "addons/") != 0) return false;
+  foreach ($regsBaseFolders) {
+    if ("addons/"+current == $package) return true;
+  }
+  return false;
+}
+
+// the installed DLCs in release order, then the other packages (mods) by folder name; the base game's own folders not
 function regsInstalledPackages() {
   $result = [];
-  foreach (list_dirs("addons")) $result[] = "addons/"+current;
+  $installed = map [];
+  foreach (list_dirs("addons")) $installed[current] = true;
+  foreach ($regsDlcFolders) {
+    if (defined $installed[current]) $result[] = "addons/"+current;
+  }
+  foreach (list_dirs("addons")) {
+    if (!regsIsBasePackage("addons/"+current) && !regsIsDlc(current)) $result[] = "addons/"+current;
+  }
   foreach (list_dirs("metro/addons")) $result[] = "metro/addons/"+current;
   foreach (list_dirs("userdata/addons")) $result[] = "userdata/addons/"+current;
   return $result;
+}
+
+function regsIsDlc($folder) {
+  foreach ($regsDlcFolders) {
+    if (current == $folder) return true;
+  }
+  return false;
 }
 
 function regsPackageName($package, $strings = null) {
@@ -159,7 +190,7 @@ function regsMissingPackages($gridFile) {
     $installed = map [];
     foreach (regsInstalledPackages()) $installed[current] = true;
     foreach ($s.$regsPackages) {
-      if (!(defined $installed[current])) $missing[] = current;
+      if (!(defined $installed[current]) && !regsIsBasePackage(current)) $missing[] = current;
     }
   }
   delete $s;
@@ -195,11 +226,13 @@ function regsRequiredPackages() {
   $result = [];
   $seen = map [];
   foreach (MAIN.$grid.regsGetUsedPackages()) {
-    $seen[current] = true;
-    $result[] = current;
+    if (!regsIsBasePackage(current)) {
+      $seen[current] = true;
+      $result[] = current;
+    }
   }
   $loc = regsPackageOf(MAIN.$gridLocation : "");
-  if ($loc != "" && !(defined $seen[$loc])) $result[] = $loc;
+  if (!regsIsBasePackage($loc) && !(defined $seen[$loc])) $result[] = $loc;
   return $result;
 }
 
