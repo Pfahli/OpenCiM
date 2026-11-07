@@ -72,6 +72,8 @@ VehicleLampInfo vehicleLamps(Display& d, script::VM& vm, const render::ObjectDat
 float vehicleLightsOn(uint32_t seed, float night01);
 // The cycle's night01 as the last frame's night lights saw it (0 without the cycle or in the underground view).
 float& vehicleNight01();
+// The day/night cycle is on (and not the underground view): line vehicles' cabin light by day at half strength.
+bool& vehicleCycleOn();
 // DrawItem::lampCode of a vehicle part: 10 + 4·front + rear (+ 100 with the interior lit) + 0.9·on, front/rear (the
 // model's ends) 0 off, 1 head, 2 tail, 3 braking tail; 0 = all off.
 inline float vehicleLampCode(int front, int rear, bool interior, float on) {

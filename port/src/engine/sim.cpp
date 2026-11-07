@@ -2428,15 +2428,20 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       it.world = poseMatrix(p);
       items.push_back(it);
     }
-    if (float night = vehicleNight01(); night > 0 && !m.parked && !m.boat && !m.aircraft) {
+    if (float night = vehicleNight01(); vehicleCycleOn() && !m.parked && !m.boat && !m.aircraft) {
       // port night lights: the lamps at the consist's leading and trailing ends (the model's own ends if reversed)
       uint32_t seed = uint32_t(m.colorSeed) * 2654435761u ^ uint32_t(&m - s->movers.data()) * 40503u;
       int front = 0, rear = 0;
       if (unit == 0) (u.reversed ? rear : front) = 1;
       if (size_t(unit) + 1 == m.units.size()) (u.reversed ? front : rear) = m.speed < 0.5f ? 3 : 2;
-      // buses, trams and trains: the interior is lit, so their windows glow
-      float code = vehicleLampCode(front, rear, m.transit || m.train, vehicleLightsOn(seed, night));
-      for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code;
+      // buses, trams and trains: the interior is lit, so their windows glow, at half strength by day and full when
+      // the vehicle's lights are on
+      bool cabin = m.transit || m.train;
+      float on = night > 0 ? vehicleLightsOn(seed, night) : 0.0f;
+      if (on <= 0.01f) front = rear = 0;
+      float code = vehicleLampCode(front, rear, cabin, std::max(on, cabin ? 0.02f : 0.0f));
+      float cabinLight = cabin ? 0.5f + 0.5f * on : 0.0f;
+      for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code, items[k].cabinLight = cabinLight;
       // passengers in the windows: the line vehicle's load, eased so the silhouettes fade in and out
       if (m.transit && m.vehicle >= 0) {
         static std::vector<float> shown;

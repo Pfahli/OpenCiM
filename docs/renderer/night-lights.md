@@ -129,7 +129,9 @@ headlights, its trailing end the tail lights (reversed units use their other end
   where it sits on the model. Texels on front-facing faces at the front surface and at lamp height that are bright,
   nearly white and clearly brighter than the rest of the front (or very shiny in the specular map) are head lamps;
   texels on the rear faces that are clearly red are tail lamps. Only compact spots count (no thin chrome trims, nothing
-  over 3 % of the texture), of each kind those at least a quarter of the largest. The mask (R front, G rear) goes
+  over 3 % of the texture), of each kind those at least a quarter of the largest. Found lamps grow by one texel (on the same
+  end's faces), and the shader keeps a lamp's light when it is smaller than a pixel (its emission × the squared texel
+  footprint, up to 16×): the 1-3-texel lamps of the base-game cars otherwise flickered in and out as the cars moved. The mask (R front, G rear) goes
   through the window path of the shader (`windowKind` 1, `DrawItem::lampCode` per part: head white, tail red,
   brighter red while standing). `regs-tool vehiclelamps <game> <outDir> <.object>…` shows what is found.
   Rear lamps are found reliably (red); front lamps are 1–3 texels on most base-game textures and are missed on some
@@ -137,22 +139,27 @@ headlights, its trailing end the tail lights (reversed units use their other end
   sprite on the bumper instead (the only sprites left).
 * **Cabin light** (buses, trams, trains; not cars): the window glass on the vehicle's texture, from its specular map
   (above 60 % of its brightest level; the paint is shiny too, but well below the glass; window-sized areas only),
-  mask channel B, lit warm (0.78, 0.7, 0.56) on every car of the consist while its lights are on. The driver's cab
+  mask channel B, lit warm (0.78, 0.7, 0.56) on every car of the consist: at half strength by day while the cycle is on
+  (`DrawItem::cabinLight` 0.5), rising to full as the vehicle switches its lights on. The driver's cab
   stays dark: on cab cars (head lamps found at the front) the light fades from 0 at 1.5 m to full 4.5 m behind the
   front; rail vehicles (names with tram, metro, train) have a cab at the rear too, so it also fades towards a rear
   with tail lamps. Middle sections are lit evenly.
 * **Passengers**: silhouettes in the lit windows, drawn in the shader in the vehicle's model space (`regs_ModelPos`,
-  every vertex stage passes the model position): per side a seat every 0.85 m with a seated head-and-shoulders shape
-  at 40-50 % of the window band's height (the band: 10th-90th percentile of the glass texels' model height, per
-  material), standing figures between the seats (head at 80-92 %) once the vehicle is over 50-95 % full. Each figure
+  every vertex stage passes the model position), at the game's character scale (its people are ~1.6x life size): per
+  side a seat every 1.3 m with a seated head-and-shoulders shape (head radius 0.15-0.18 m) at 48-58 % of the window
+  band's height (the band: 10th-90th percentile of the glass texels' model height, per
+  material), standing figures between the seats (head at 84-94 %) once the vehicle is over 50-95 % full. Each figure
   has a random rank and shows when the occupancy (line vehicle passengers ÷ capacity) passes it; the occupancy is
   eased per vehicle (0.8/s), so figures fade in and out as people board and leave. Darkens the cabin light by 85 %.
 * **Beam on the road** (headlight light map): each frame the beams are splatted on the CPU into a 1024² map (0.625 m
   texels) around the point the camera looks at, snapped to whole texels; the default shader samples it like the lamp
   map (unit 18, `regs_CarMap`) and lights whatever is there between 1.5 m below and ~3 m above the vehicle's ground:
   road, kerbs, cars and walls ahead, with soft edges. (A flat additive quad was tried first; kerbs and raised
-  surfaces cut it with a hard line.) Low beam 15 m (buses 17 m), cone 3.4 m half width; a beam stops at the first
-  building cell ahead.
+  surfaces cut it with a hard line.) Low beam 15 m (buses 17 m), cone 3.4 m half width. A beam stops at the first building
+  cell on its centre line (not the walls beside the road), its reach eased per vehicle so it never jumps; beams fade
+  out between 520 and 650 m from the eye and within 90 m of the map window's edge (960 m across, 0.94 m texels), and
+  the height encoding moves in whole 16 m steps, so nothing clips or jitters from frame to frame (measured with
+  `fl-*.png`, every 2nd frame: the only one-frame changes are the game's ticker, route arrows and walkers).
 * **High beam (Fernlicht)**, road vehicles only: on when no building cell (±6 m) and no lamp-lit street is in the 56 m
   ahead and no other vehicle (front or back point, either direction) is in a cone 90 m ahead; the beam then reaches
   42 m and is wider and brighter; the switch eases over ~⅓ s. Test: `REGS_DEBUG_NIGHT=1` logs the count every 120

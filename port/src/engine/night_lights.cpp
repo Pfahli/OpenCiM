@@ -374,6 +374,10 @@ struct BuiltUp {
     uint32_t seed = 0;
   };
   std::vector<Tent> tents;  // market stands: a lamp under each canopy
+  bool cellAt(float x, float z) const {  // a building on the cell of (x, z)
+    int cx = int(std::floor((x - ox) / cs)), cz = int(std::floor((z - oz) / cs));
+    return cx >= 0 && cz >= 0 && cx < w && cz < h && cell[size_t(cz) * size_t(w) + size_t(cx)];
+  }
   bool at(float x, float z) const {  // a building within one cell of (x, z)
     int cx = int(std::floor((x - ox) / cs)), cz = int(std::floor((z - oz) / cs));
     for (int dz = -1; dz <= 1; ++dz)
@@ -438,11 +442,12 @@ float beamProfile(float along, float across) {
 
 // the vehicles' light map: headlight beams splatted each frame into a window around the camera's view centre
 constexpr int kCarMap = 1024;
-constexpr float kCarMapSize = 640.0f;  // metres across: 0.625 m texels
+constexpr float kCarMapSize = 960.0f;  // metres across: 0.94 m texels; beams fade out before its edge
 
 struct VehicleLightState {
   std::map<const GridObj*, BuiltUp> builtUp;
-  std::vector<float> beam;  // per mover: 0 low beam … 1 high beam, eased
+  std::vector<float> beam;     // per mover: 0 low beam … 1 high beam, eased
+  std::vector<float> beamLen;  // per mover: the beam's reach, eased (a building ahead shortens it smoothly)
   std::vector<VehicleLightSource> sources;
   std::vector<float> light, wy, prov, warm;  // per texel: light, light-weighted ground height, a height for unlit
                                              // texels, the part of the light from the stands' lamps
@@ -554,16 +559,23 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
       }
     }
     // the beam into the light map: low beam 15-17 m, high beam 42 m, stopped by the first building ahead
-    float len = (L.bus ? 17.0f : 15.0f) + 27.0f * b;
-    for (float a = 1.5f; a < len; a += 1.5f) {
-      Vec3 p = L.front + f * a;
-      if (bu.at(p.x, p.z)) {
-        len = a + 2.0f;
+    // the reach stops at the first building on the beam's centre line (its own cell, so walls beside the road do
+    // not cut it), eased per vehicle so it never jumps
+    float reach = (L.bus ? 17.0f : 15.0f) + 27.0f * b;
+    for (float a = 1.0f; a < reach; a += 0.75f)
+      if (Vec3 p = L.front + f * a; bu.cellAt(p.x, p.z)) {
+        reach = std::max(4.0f, a + 1.5f);
         break;
       }
-    }
+    if (L.mover >= int(st.beamLen.size())) st.beamLen.resize(size_t(L.mover) + 1, -1.0f);
+    float& len = st.beamLen[size_t(L.mover)];
+    len = len < 0 ? reach : len + (reach - len) * std::min(1.0f, dt * 4.0f);
     float w0 = std::max(0.7f, L.halfWidth * 0.95f), w1 = 3.4f + 1.4f * b;
-    float gain = (1.0f + 0.25f * b) * strength;
+    // fading out towards the edge of the vehicles' range and of the map window instead of a cut
+    Vec3 te = L.front - v.eye;
+    float edge = std::min({L.front.x - ox, ox + kCarMapSize - L.front.x, L.front.z - oz, oz + kCarMapSize - L.front.z});
+    float gain = (1.0f + 0.25f * b) * strength * smooth(650.0f, 520.0f, std::sqrt(dot(te, te))) * smooth(40.0f, 90.0f, edge);
+    if (gain <= 0) continue;
     Vec3 o = L.front + f * 0.1f;
     float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
     for (const Vec3& q : {o - side * w0, o + side * w0, o + f * len - side * w1, o + f * len + side * w1})
@@ -618,7 +630,8 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
     }
   if (!anyBeam) return;
   // pack: rgb = warm white × light (softly limited), a = ground height of the light (or of the box around it)
-  float y0 = yMin - 4.0f, ys = std::max(16.0f, yMax - yMin + 8.0f);
+  // a height encoding that stays put from frame to frame (whole 16 m steps), so the lit band does not jitter
+  float y0 = std::floor((yMin - 4.0f) / 16.0f) * 16.0f, ys = std::max(32.0f, std::ceil((yMax + 8.0f - y0) / 16.0f) * 16.0f);
   st.px.assign(N * 4, 0);
   for (size_t k = 0; k < N; ++k) {
     float l = st.light[k];
@@ -1037,6 +1050,22 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     for (size_t p : sp.texels) keep[p] = 1;
     (sp.kind == 1 ? st.frontLamps : st.rearLamps)++;
   }
+  {  // lamps are 1-3 texels: one texel more around them (on the same end's faces) so they survive minification
+    std::vector<uint8_t> grow = keep;
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x) {
+        size_t k = size_t(y) * size_t(w) + size_t(x);
+        if (!keep[k]) continue;
+        for (int dy = -1; dy <= 1; ++dy)
+          for (int dx = -1; dx <= 1; ++dx) {
+            int xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            size_t kk = size_t(yy) * size_t(w) + size_t(xx);
+            if (!keep[kk] && side[kk] == lamp[k]) grow[kk] = 1, lamp[kk] = lamp[k];
+          }
+      }
+    keep.swap(grow);
+  }
   // window glass (interior light of buses, trams and trains): the specular map's bright areas, above 60 % of its
   // brightest level (the paint is shiny too, but well below the glass); window-sized areas only (no lamp lenses)
   std::vector<uint8_t> win(lamp.size(), 0);
@@ -1144,6 +1173,11 @@ VehicleLampInfo vehicleLamps(Display& d, VM& vm, const ObjectData& od) {
 float vehicleLightsOn(uint32_t seed, float night01) {
   float onAt = 0.12f + 0.43f * hash01(seed);
   return smooth(onAt, onAt + 0.03f, night01);
+}
+
+bool& vehicleCycleOn() {
+  static bool on = false;
+  return on;
 }
 
 float& vehicleNight01() {
@@ -1561,6 +1595,7 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
                     ParticleDrawList& particles, std::vector<DrawItem>& items) {
   NightState ns = skyNightState(sky);
   vehicleNight01() = 0;
+  vehicleCycleOn() = false;
   if (!ns.on) return;
   float windows = smooth(0.18f, 0.72f, ns.night01);
   float lamps = smooth(0.32f, 0.62f, ns.night01);
@@ -1602,6 +1637,7 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
     // no sprites on the heads: the lamps' own glass glows (lampGlassMask, the shader's window path)
   }
   vehicleNight01() = ns.night01;
+  vehicleCycleOn() = true;
   if (ns.night01 > 0.08f) addVehicleLights(d, vm, grid, lc, v, ns.night01, float(ns.hours), batch, glows);
   // additive: order does not matter among them; drawn before the scene's own particles (smoke in front stays in front)
   particles.sprites.insert(particles.sprites.begin(), glows.begin(), glows.end());
