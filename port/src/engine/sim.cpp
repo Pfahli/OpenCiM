@@ -2412,7 +2412,8 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       int front = 0, rear = 0;
       if (unit == 0) (u.reversed ? rear : front) = 1;
       if (size_t(unit) + 1 == m.units.size()) (u.reversed ? front : rear) = m.speed < 0.5f ? 3 : 2;
-      float code = vehicleLampCode(front, rear, vehicleLightsOn(seed, night));
+      // buses, trams and trains: the interior is lit, so their windows glow
+      float code = vehicleLampCode(front, rear, m.transit || m.train, vehicleLightsOn(seed, night));
       for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code;
     }
     for (size_t k = first; k < items.size(); ++k) {  // animated parts: custom4 = (angle, spin), stepAnimatedParts

@@ -20,7 +20,7 @@ struct GpuMaterial {
   float shininess = 1;
   float reflection = 0;   // header byte 0x27 / 255
   uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
-  uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign
+  uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign, 5: clock face
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
   float custom[8][4] = {};    // shader parameters custom0..7

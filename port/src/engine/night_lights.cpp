@@ -115,6 +115,17 @@ float shopShare(float hours) {
   return k[n - 1][1];
 }
 
+// the market's opening hours: share of the stands lit (evening and early morning, when it is dark at the stands)
+float tentShare(float hours) {
+  static const float k[][2] = {{0, 0}, {4.5f, 0}, {5.5f, 0.6f}, {6.5f, 0.9f}, {8, 0.85f}, {8.75f, 0}, {16, 0},
+                               {17, 0.6f}, {18, 0.9f}, {20.5f, 0.8f}, {21.5f, 0.3f}, {22.25f, 0}, {24, 0}};
+  const int n = int(sizeof k / sizeof k[0]);
+  hours = std::fmod(std::fmod(hours, 24.0f) + 24.0f, 24.0f);
+  for (int i = 0; i + 1 < n; ++i)
+    if (hours <= k[i + 1][0]) return k[i][1] + (k[i + 1][1] - k[i][1]) * (hours - k[i][0]) / (k[i + 1][0] - k[i][0]);
+  return 0;
+}
+
 constexpr float kCarGain = 3.2f;     // headlight light at the beam's brightest, in units of the surface colour
 constexpr float kLampGain = 1.9f;     // lamp light at the pool centre, in units of the surface colour
 constexpr float kLampTexel = 1.5f;    // metres per lamp-map texel (capped by kLampMapMax)
@@ -357,6 +368,12 @@ struct BuiltUp {
   int w = 0, h = 0;
   float ox = 0, oz = 0, cs = 3;
   std::vector<uint8_t> cell;
+  struct Tent {
+    Vec3 pos;  // the stand's ground centre
+    float radius = 3;
+    uint32_t seed = 0;
+  };
+  std::vector<Tent> tents;  // market stands: a lamp under each canopy
   bool at(float x, float z) const {  // a building within one cell of (x, z)
     int cx = int(std::floor((x - ox) / cs)), cz = int(std::floor((z - oz) / cs));
     for (int dz = -1; dz <= 1; ++dz)
@@ -386,9 +403,27 @@ void updateBuiltUp(GridObj* grid, BuiltUp& bu) {
     int8_t& b = building[size_t(ti)];
     if (b < 0) b = tp.object && tp.object->pendingPath.find("/buildings/") != std::string::npos;
     if (!b) continue;
-    ItemFootprint f = itemFootprint(tp.width, tp.length, 0, it.orient);
+    ItemFootprint f = itemFootprint(tp.width, tp.length, 0, it.orient);  // (buildings only from here)
     for (int z = std::max(0, int(it.z)); z < std::min(bu.h, it.z + f.sz); ++z)
       for (int x = std::max(0, int(it.x)); x < std::min(bu.w, it.x + f.sx); ++x) bu.cell[size_t(z) * size_t(bu.w) + size_t(x)] = 1;
+  }
+  bu.tents.clear();
+  for (uint32_t i = 0; i < g.items.size(); ++i) {
+    const GridData::Item& it = g.items[i];
+    if (it.removed || it.type >= tc.typeTemplate.size() || tc.typeTemplate[it.type] < 0) continue;
+    const GridTemplate& tp = tc.templates[size_t(tc.typeTemplate[it.type])];
+    if (!tp.object || !tp.object->data) continue;
+    const std::string& p = tp.object->pendingPath;
+    if (p.find("marketstand") == std::string::npos) continue;
+    int div = itemDivision(g, tc, i);
+    if (div < 0) continue;
+    const MeshData& me = tp.object->data->mesh;
+    Mat4 world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
+    BuiltUp::Tent t;
+    t.pos = transformPoint(world, Vec3{0.5f * (me.boundsMin[0] + me.boundsMax[0]), me.boundsMin[1], 0.5f * (me.boundsMin[2] + me.boundsMax[2])});
+    t.radius = 1.3f * 0.5f * std::max(me.boundsMax[0] - me.boundsMin[0], me.boundsMax[2] - me.boundsMin[2]) + 1.0f;
+    t.seed = uint32_t(it.x) * 73856093u ^ uint32_t(it.z) * 19349663u;
+    bu.tents.push_back(t);
   }
 }
 
@@ -409,7 +444,8 @@ struct VehicleLightState {
   std::map<const GridObj*, BuiltUp> builtUp;
   std::vector<float> beam;  // per mover: 0 low beam … 1 high beam, eased
   std::vector<VehicleLightSource> sources;
-  std::vector<float> light, wy, prov;  // per texel: light, light-weighted ground height, a height for unlit texels
+  std::vector<float> light, wy, prov, warm;  // per texel: light, light-weighted ground height, a height for unlit
+                                             // texels, the part of the light from the stands' lamps
   std::vector<uint8_t> px;
   uint32_t texture = 0;
 };
@@ -418,12 +454,11 @@ VehicleLightState& vehicleState() {
   return s;
 }
 
-void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, SceneView& v, float night01,
+void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, SceneView& v, float night01, float hours,
                       uint32_t batch, std::vector<ParticleSprite>& glows) {
   VehicleLightState& st = vehicleState();
   simVehicleLights(grid, v.eye, 650.0f, st.sources);
   const auto& src = st.sources;
-  if (src.empty()) return;
   BuiltUp& bu = st.builtUp[grid];
   if (bu.generation != grid->generation || bu.itemsVersion != grid->itemsVersion) updateBuiltUp(grid, bu);
   // other vehicles near a point: a hash of the fronts and backs on a 32 m grid
@@ -449,6 +484,7 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
   st.light.assign(N, 0.0f);
   st.wy.assign(N, 0.0f);
   st.prov.assign(N, -1e30f);
+  st.warm.assign(N, 0.0f);
   float yMin = 1e30f, yMax = -1e30f;
   bool anyBeam = false;
   Vec3 up{0, 1, 0};
@@ -552,6 +588,34 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
         st.wy[k] += l * g;
       }
   }
+  // market stands: a warm lamp under the canopy, in the evening and early morning, each stand at its own time; it
+  // lights the goods and the ground under and around the stand, not the canopy above it (its height lies 0.6 m
+  // below the ground, so the map's height window ends ~2.6 m up)
+  if (float share = tentShare(hours); share > 0)
+    for (const BuiltUp::Tent& t : bu.tents) {
+      float open = 0.1f + 0.85f * hash01(t.seed);
+      float on = smooth(open - 0.05f, open + 0.05f, share) * smooth(0.1f, 0.4f, night01);
+      if (on <= 0) continue;
+      const float R = t.radius;
+      int ix0 = std::max(0, int((t.pos.x - R - ox) / texel)), ix1 = std::min(kCarMap - 1, int((t.pos.x + R - ox) / texel) + 1);
+      int iz0 = std::max(0, int((t.pos.z - R - oz) / texel)), iz1 = std::min(kCarMap - 1, int((t.pos.z + R - oz) / texel) + 1);
+      if (ix0 > ix1 || iz0 > iz1) continue;
+      float g = t.pos.y - 0.6f;
+      yMin = std::min(yMin, g), yMax = std::max(yMax, g);
+      anyBeam = true;
+      for (int z = iz0; z <= iz1; ++z)
+        for (int x = ix0; x <= ix1; ++x) {
+          float dx = ox + (float(x) + 0.5f) * texel - t.pos.x, dz = oz + (float(z) + 0.5f) * texel - t.pos.z;
+          float q = 1.0f - (dx * dx + dz * dz) / (R * R);
+          size_t k = size_t(z) * size_t(kCarMap) + size_t(x);
+          if (st.prov[k] < -1e29f) st.prov[k] = g;
+          if (q <= 0) continue;
+          float l = q * q * 0.75f * on;
+          st.light[k] += l;
+          st.wy[k] += l * g;
+          st.warm[k] += l;
+        }
+    }
   if (!anyBeam) return;
   // pack: rgb = warm white × light (softly limited), a = ground height of the light (or of the box around it)
   float y0 = yMin - 4.0f, ys = std::max(16.0f, yMax - yMin + 8.0f);
@@ -562,7 +626,8 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
     if (gy < -1e29f) continue;
     float lim = l / (1.0f + 0.4f * l);
     uint8_t* p = &st.px[k * 4];
-    p[0] = uint8_t(std::lround(255.0f * lim * 0.8f)), p[1] = uint8_t(std::lround(255.0f * lim * 0.93f));
+    float wf = l > 0 ? st.warm[k] / l : 0;  // headlights (1, 0.93, 0.8), stand lamps (1, 0.74, 0.45)
+    p[0] = uint8_t(std::lround(255.0f * lim * (0.8f - 0.35f * wf))), p[1] = uint8_t(std::lround(255.0f * lim * (0.93f - 0.19f * wf)));
     p[2] = uint8_t(std::lround(255.0f * lim));
     p[3] = uint8_t(std::lround(255.0f * std::clamp((gy - y0) / ys, 0.0f, 1.0f)));
   }
@@ -835,7 +900,7 @@ uint32_t buildingWindowMask(Display& d, VM& vm, const MaterialDef& m, const std:
 // ---- vehicle lamps ----
 
 bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffuse, const Image* specular, Image& out,
-                         VehicleLampInfo* info) {
+                         VehicleLampInfo* info, bool rail) {
   VehicleLampInfo local;
   VehicleLampInfo& st = info ? *info : local;
   std::vector<uint8_t> dif, spe;
@@ -857,6 +922,8 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
   const float depth = std::max(0.25f, 0.06f * (zRear - zFront));
   // every texel the material's triangles cover: which end it faces, at lamp height
   std::vector<uint8_t> side(size_t(w) * size_t(h), 0);  // 1 front, 2 rear
+  // the cabin light fades towards the front: the driver's cab stays dark (0 up to 1.5 m from the front, full at 4.5 m)
+  std::vector<float> fade(size_t(w) * size_t(h), 1.0f), fadeRear(size_t(w) * size_t(h), 1.0f);  // rail: a cab at each end
   for (const Submesh& sm : mesh.submeshes) {
     if (sm.material != material) continue;
     for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size(); k += 3) {
@@ -884,6 +951,10 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
             pz += bb[j] * mesh.positions[t[j] * 3 + 2];
             nz += bb[j] * mesh.normals[t[j] * 3 + 2];
           }
+          float& fd = fade[size_t(y) * size_t(w) + size_t(x)];
+          fd = std::min(fd, smooth(zFront + 1.5f, zFront + 4.5f, pz));
+          float& fr = fadeRear[size_t(y) * size_t(w) + size_t(x)];
+          fr = std::min(fr, smooth(zRear - 1.5f, zRear - 4.5f, pz));
           if (py3 < minY + 0.08f * height || py3 > minY + 0.58f * height) continue;
           uint8_t& sd = side[size_t(y) * size_t(w) + size_t(x)];
           if (nz < -0.45f && pz < zFront + depth) sd = 1;
@@ -964,10 +1035,53 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     for (size_t p : sp.texels) keep[p] = 1;
     (sp.kind == 1 ? st.frontLamps : st.rearLamps)++;
   }
-  if (!st.frontLamps && !st.rearLamps) return false;
-  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);  // BGRA: R = front lamps, G = rear lamps
-  for (size_t i = 0; i < lamp.size(); ++i)
+  // window glass (interior light of buses, trams and trains): the specular map's bright areas, above 60 % of its
+  // brightest level (the paint is shiny too, but well below the glass); window-sized areas only (no lamp lenses)
+  std::vector<uint8_t> win(lamp.size(), 0);
+  if (haveSpec) {
+    std::vector<float> sv(lamp.size());
+    std::vector<int> hist(256, 0);
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x) {
+        const uint8_t* q = &spe[(size_t(y * sh / h) * size_t(sw) + size_t(x * sw / w)) * 4];
+        uint8_t m = std::max({q[0], q[1], q[2]});
+        sv[size_t(y) * size_t(w) + size_t(x)] = m / 255.0f;
+        ++hist[m];
+      }
+    int top = 255;
+    for (size_t acc = 0; top > 0 && (acc += size_t(hist[size_t(top)])) < lamp.size() / 200;) --top;
+    float T = std::max(0.3f, 0.6f * float(top) / 255.0f);
+    std::vector<int> lab(lamp.size(), -1);
+    for (size_t i = 0; i < lamp.size(); ++i) {
+      if (sv[i] <= T || keep[i] || lab[i] >= 0) continue;
+      std::vector<size_t> comp;
+      stack.assign(1, i);
+      lab[i] = 1;
+      while (!stack.empty()) {
+        size_t p = stack.back();
+        stack.pop_back();
+        comp.push_back(p);
+        int x = int(p % size_t(w)), y = int(p / size_t(w));
+        const int nb[4][2] = {{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}};
+        for (const auto& q : nb) {
+          if (q[0] < 0 || q[1] < 0 || q[0] >= w || q[1] >= h) continue;
+          size_t kk = size_t(q[1]) * size_t(w) + size_t(q[0]);
+          if (sv[kk] > T && !keep[kk] && lab[kk] < 0) lab[kk] = 1, stack.push_back(kk);
+        }
+      }
+      if (comp.size() * 1000 < lamp.size() * 15 || comp.size() * 100 > lamp.size() * 15) continue;
+      // the fade only on a cab car (head lamps at its front); middle sections are lit evenly
+      for (size_t p : comp) win[p] = uint8_t(std::lround(255.0f * smooth(T, T + 0.1f, sv[p]) * (st.frontLamps ? fade[p] : 1.0f) *
+                                                         (rail && st.rearLamps ? fadeRear[p] : 1.0f)));
+      ++st.windows;
+    }
+  }
+  if (!st.frontLamps && !st.rearLamps && !st.windows) return false;
+  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);  // BGRA: R = front lamps, G = rear lamps, B = windows
+  for (size_t i = 0; i < lamp.size(); ++i) {
     if (keep[i]) px[i * 4 + (lamp[i] == 1 ? 2 : 1)] = 255;
+    px[i * 4] = win[i];
+  }
   out = Image();
   out.format = Image::Format::BGRA8;
   out.width = w, out.height = h;
@@ -993,10 +1107,14 @@ uint32_t vehicleLampMask(Display& d, VM& vm, const ObjectData& od, int material,
     bool haveSpec = (m.flags & kMatSpecularMap) && at < m.textures.size() && vm.vfs().read(m.textures[at], data) &&
                     parseDds(data, si, nullptr);
     Image mask;
-    if (makeVehicleLampMask(od.mesh, material, di, haveSpec ? &si : nullptr, mask, &li)) tex = d.r2d().createTexture(mask);
+    std::string n = od.name;
+    std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    bool rail = n.find("tram") != std::string::npos || n.find("metro") != std::string::npos || n.find("train") != std::string::npos;
+    if (makeVehicleLampMask(od.mesh, material, di, haveSpec ? &si : nullptr, mask, &li, rail)) tex = d.r2d().createTexture(mask);
   }
   if (debugNight())
-    LOG_INFO("night: vehicle lamps %s / %s: %d front, %d rear", od.name.c_str(), m.name.c_str(), li.frontLamps, li.rearLamps);
+    LOG_INFO("night: vehicle lamps %s / %s: %d front, %d rear, %d windows", od.name.c_str(), m.name.c_str(), li.frontLamps,
+             li.rearLamps, li.windows);
   cache.emplace(keyv, std::make_pair(tex, li));
   if (info) *info = li;
   return tex;
@@ -1232,6 +1350,83 @@ uint32_t signMask(Display& d, VM& vm, const ObjectData& od, int material, const 
   return tex;
 }
 
+// ---- market tents and clock faces ----
+
+int propGlowKind(const std::string& objectPath) {
+  std::string p = objectPath;
+  std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+  std::string stem = p.substr(p.find_last_of('/') + 1);
+  if (stem.find("clock") != std::string::npos) return 5;
+  return 0;
+}
+
+bool makePropGlowMask(const MeshData& mesh, int material, int kind, const Image& diffuse, Image& out, int* texels) {
+  std::vector<uint8_t> dif;
+  int w = 0, h = 0;
+  if (!decodeAtMost(diffuse, 512, dif, w, h)) return false;
+  const size_t nv = mesh.vertexCount();
+  if (!nv || mesh.uv0.size() < nv * 2) return false;
+  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);
+  int count = 0;
+  for (const Submesh& sm : mesh.submeshes) {
+    if (sm.material != material) continue;
+    for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size(); k += 3) {
+      uint32_t t[3] = {mesh.indices[k], mesh.indices[k + 1], mesh.indices[k + 2]};
+      if (t[0] >= nv || t[1] >= nv || t[2] >= nv) continue;
+      float u[3], v[3];
+      float ub = std::floor(std::min({mesh.uv0[t[0] * 2], mesh.uv0[t[1] * 2], mesh.uv0[t[2] * 2]}));
+      float vb = std::floor(std::min({mesh.uv0[t[0] * 2 + 1], mesh.uv0[t[1] * 2 + 1], mesh.uv0[t[2] * 2 + 1]}));
+      for (int j = 0; j < 3; ++j) u[j] = (mesh.uv0[t[j] * 2] - ub) * float(w), v[j] = (mesh.uv0[t[j] * 2 + 1] - vb) * float(h);
+      float area = (u[1] - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (v[1] - v[0]);
+      if (std::fabs(area) < 1e-6f) continue;
+      int x0 = std::max(0, int(std::floor(std::min({u[0], u[1], u[2]})))), x1 = std::min(w - 1, int(std::ceil(std::max({u[0], u[1], u[2]}))));
+      int y0 = std::max(0, int(std::floor(std::min({v[0], v[1], v[2]})))), y1 = std::min(h - 1, int(std::ceil(std::max({v[0], v[1], v[2]}))));
+      for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+          float qx = float(x) + 0.5f, qy = float(y) + 0.5f;
+          float b1 = ((qx - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (qy - v[0])) / area;
+          float b2 = ((u[1] - u[0]) * (qy - v[0]) - (qx - u[0]) * (v[1] - v[0])) / area;
+          if (b1 < -0.01f || b2 < -0.01f || 1 - b1 - b2 < -0.01f) continue;
+          size_t i = size_t(y) * size_t(w) + size_t(x);
+          if (kind == 5) {  // the clock: its dial, light and unsaturated
+            const uint8_t* p = &dif[i * 4];
+            float mx = std::max({p[0], p[1], p[2]}) / 255.0f, mn = std::min({p[0], p[1], p[2]}) / 255.0f;
+            float lum = (0.3f * p[0] + 0.59f * p[1] + 0.11f * p[2]) / 255.0f;
+            if (lum < 0.55f || (mx > 0 && (mx - mn) / mx > 0.25f)) continue;
+          }
+          if (!px[i * 4 + 2]) px[i * 4 + 2] = 255, ++count;
+        }
+    }
+  }
+  if (texels) *texels = count;
+  if (!count) return false;
+  out = Image();
+  out.format = Image::Format::BGRA8;
+  out.width = w, out.height = h;
+  out.levels.push_back(std::move(px));
+  buildMips(out);
+  return true;
+}
+
+uint32_t propGlowMask(Display& d, VM& vm, const ObjectData& od, int material, const std::string& objectPath, int& kind) {
+  kind = propGlowKind(objectPath);
+  if (!kind) return 0;
+  const MaterialDef& m = od.materials[size_t(material)];
+  if (!(m.flags & kMatDiffuseMap) || m.textures.empty()) return 0;
+  static std::map<std::pair<const ObjectData*, int>, uint32_t> cache;
+  auto keyv = std::make_pair(&od, material);
+  if (auto it = cache.find(keyv); it != cache.end()) return it->second;
+  uint32_t tex = 0;
+  int count = 0;
+  std::vector<uint8_t> data;
+  Image di, mask;
+  if (vm.vfs().read(m.textures[0], data) && parseDds(data, di, nullptr) && makePropGlowMask(od.mesh, material, kind, di, mask, &count))
+    tex = d.r2d().createTexture(mask);
+  if (debugNight()) LOG_INFO("night: glow %s / %s (kind %d): %d texels", objectPath.c_str(), m.name.c_str(), kind, count);
+  cache.emplace(keyv, tex);
+  return tex;
+}
+
 uint8_t buildingSeed(int x, int y, int z) {
   return uint8_t(1 + hash32(uint32_t(x) * 73856093u ^ uint32_t(z) * 19349663u ^ uint32_t(y) * 83492791u) % 255);
 }
@@ -1396,7 +1591,7 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
     // no sprites on the heads: the lamps' own glass glows (lampGlassMask, the shader's window path)
   }
   vehicleNight01() = ns.night01;
-  if (ns.night01 > 0.12f) addVehicleLights(d, vm, grid, lc, v, ns.night01, batch, glows);
+  if (ns.night01 > 0.08f) addVehicleLights(d, vm, grid, lc, v, ns.night01, float(ns.hours), batch, glows);
   // additive: order does not matter among them; drawn before the scene's own particles (smoke in front stays in front)
   particles.sprites.insert(particles.sprites.begin(), glows.begin(), glows.end());
 }

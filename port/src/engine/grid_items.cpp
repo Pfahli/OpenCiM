@@ -189,6 +189,13 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
           tc.materials.back().windowMask = sign;  // a lit sign or advertisement
           tc.materials.back().windowKind = 3;
         }
+      if (!tc.materials.back().windowMask) {  // market stands and clock faces
+        int kind = 0;
+        if (uint32_t glow = propGlowMask(d, vm, *o->data, int(&m - o->data->materials.data()), o->pendingPath, kind)) {
+          tc.materials.back().windowMask = glow;
+          tc.materials.back().windowKind = uint8_t(kind);
+        }
+      }
     }
     for (int n = 1; n <= 4; ++n) {
       auto v = o->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(n)) + u">");

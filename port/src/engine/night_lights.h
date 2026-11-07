@@ -59,9 +59,10 @@ void prepareWindowMasks(Display& d, script::VM& vm,
 // clearly red at the rear. Mask channels: R = front lamps, G = rear lamps.
 struct VehicleLampInfo {
   int frontLamps = 0, rearLamps = 0;  // lamp areas found
+  int windows = 0;                    // window glass areas (channel B: interior light)
 };
 bool makeVehicleLampMask(const render::MeshData& mesh, int material, const render::Image& diffuse,
-                         const render::Image* specular, render::Image& out, VehicleLampInfo* info);
+                         const render::Image* specular, render::Image& out, VehicleLampInfo* info, bool rail = false);
 // The GL lamp mask of a vehicle model's material (cached), 0 when it has no lamps; the lamps of the whole model.
 uint32_t vehicleLampMask(Display& d, script::VM& vm, const render::ObjectData& od, int material,
                          VehicleLampInfo* info = nullptr);
@@ -70,10 +71,12 @@ VehicleLampInfo vehicleLamps(Display& d, script::VM& vm, const render::ObjectDat
 float vehicleLightsOn(uint32_t seed, float night01);
 // The cycle's night01 as the last frame's night lights saw it (0 without the cycle or in the underground view).
 float& vehicleNight01();
-// DrawItem::lampCode of a vehicle part: 10 + 4·front + rear + 0.9·on, front/rear (the model's ends) 0 off, 1 head,
-// 2 tail, 3 braking tail; 0 = all off.
-inline float vehicleLampCode(int front, int rear, float on) {
-  return on > 0.01f && (front || rear) ? 10.0f + float(4 * front + rear) + 0.9f * std::min(on, 1.0f) : 0.0f;
+// DrawItem::lampCode of a vehicle part: 10 + 4·front + rear (+ 100 with the interior lit) + 0.9·on, front/rear (the
+// model's ends) 0 off, 1 head, 2 tail, 3 braking tail; 0 = all off.
+inline float vehicleLampCode(int front, int rear, bool interior, float on) {
+  return on > 0.01f && (front || rear || interior)
+             ? 10.0f + float(4 * front + rear) + (interior ? 100.0f : 0.0f) + 0.9f * std::min(on, 1.0f)
+             : 0.0f;
 }
 
 // Street-lamp glass: on a lamp model's texture, the texels of its heads (within 0.8 m of a light point, from 1.5 m
@@ -90,6 +93,14 @@ uint32_t lampGlassMask(Display& d, script::VM& vm, const render::ObjectData& od,
 bool isSignTemplate(const std::string& objectPath);
 bool makeSignMask(const render::MeshData& mesh, int material, int w, int h, render::Image& out, int* texels);
 uint32_t signMask(Display& d, script::VM& vm, const render::ObjectData& od, int material, const std::string& objectPath);
+
+// Clocks (*clock*): the light, unsaturated dial glows at night (glow only, no light cast around). (The market stands
+// get a lamp under the canopy in the vehicles' light map instead.)
+int propGlowKind(const std::string& objectPath);  // 5 clock, 0 none
+bool makePropGlowMask(const render::MeshData& mesh, int material, int kind, const render::Image& diffuse,
+                      render::Image& out, int* texels);
+uint32_t propGlowMask(Display& d, script::VM& vm, const render::ObjectData& od, int material,
+                      const std::string& objectPath, int& kind);
 
 // A per-building seed (1..255) for the vertex colour alpha of merged building vertices.
 uint8_t buildingSeed(int x, int y, int z);

@@ -804,6 +804,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   gl::Uniform1f(l.reflection, m.reflection);
   if (l.windowOn >= 0) {  // port night lights: the material's window groups on unit 8
     float code = !m.windowMask ? 0.0f : m.windowKind == 1 ? it.lampCode
+                 : m.windowKind >= 4 ? (v.night[3] > 0.05f ? float(m.windowKind) : 0.0f)
                  : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
     gl::Uniform1f(l.windowOn, code);
     if (code > 0) {

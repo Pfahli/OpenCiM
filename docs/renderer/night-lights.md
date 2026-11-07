@@ -135,6 +135,12 @@ headlights, its trailing end the tail lights (reversed units use their other end
   Rear lamps are found reliably (red); front lamps are 1–3 texels on most base-game textures and are missed on some
   models, and a tram's white destination board can count as one. Ends of models without found lamps get a small glow
   sprite on the bumper instead (the only sprites left).
+* **Cabin light** (buses, trams, trains; not cars): the window glass on the vehicle's texture, from its specular map
+  (above 60 % of its brightest level; the paint is shiny too, but well below the glass; window-sized areas only),
+  mask channel B, lit warm (0.78, 0.7, 0.56) on every car of the consist while its lights are on. The driver's cab
+  stays dark: on cab cars (head lamps found at the front) the light fades from 0 at 1.5 m to full 4.5 m behind the
+  front; rail vehicles (names with tram, metro, train) have a cab at the rear too, so it also fades towards a rear
+  with tail lamps. Middle sections are lit evenly.
 * **Beam on the road** (headlight light map): each frame the beams are splatted on the CPU into a 1024² map (0.625 m
   texels) around the point the camera looks at, snapped to whole texels; the default shader samples it like the lamp
   map (unit 10, `regs_CarMap`) and lights whatever is there between 1.5 m below and ~3 m above the vehicle's ground:
@@ -146,12 +152,22 @@ headlights, its trailing end the tail lights (reversed units use their other end
   42 m and is wider and brighter; the switch eases over ~⅓ s. Test: `REGS_DEBUG_NIGHT=1` logs the count every 120
   frames (Vienna centre: 235 lit, 12-18 on high beam; outskirts: 2, 1 on high beam).
 
-## 4. Cost
+## 4. Market stands and clocks
+
+* **Market stands** (`marketstand*`): a warm lamp (1, 0.74, 0.45) under each canopy, in the same per-frame light map as
+  the headlights: a pool of the stand's size × 1.3 + 1 m, its height set 0.6 m below the ground so the map's height
+  window ends ~2.6 m up: goods, counter and the ground around are lit, the canopy is not. On in the evening and early
+  morning (share of stands 0.6-0.9 from 17:00 to 21:30 and 5:30 to 8:00), each stand at its own point (seed), and only
+  while it is dark (night01 0.1…0.4).
+* **Clocks** (`*clock*`, e.g. `streetclock`): the dial (light, unsaturated texels of the model) glows (1.3, 1.2, 0.95) ×
+  surface colour at night (night01 0.3…0.5). Glow only.
+
+## 5. Cost
 
 One texture read per default-shader fragment (lamp map) and one more on building materials (window mask); the glow
 sprites are a few hundred quads. Vienna, 1600×900, vsync off: 2646 FPS at 14:00 (terms idle) vs 2607 FPS at 23:00.
 
-## 5. Checks (port/run/night/, run.ps1 there)
+## 6. Checks (port/run/night/, run.ps1 there)
 
 * `t1-22-3000.png`: first result at 22:00; `zoom2-2900/3150/3420.png`: default, far and close view at 23:00.
 * `cyc-*.png`: the cycle running from 18:30 (2-minute days), dusk to night, smooth (mean luminance per shot).
@@ -159,4 +175,6 @@ sprites are a few hundred quads. Vienna, 1600×900, vsync off: 2646 FPS at 14:00
 * `veh1-2950.png` (first vehicle lights), `veh2-2950/3250.png` (lamps on the models, light-map beams), `dusk-*.png`
   (vehicles switching on one by one), `hb-*.png` with `hb.log` (high beams on the outskirts).
 * `ls1-*.png`, `ls3-2950.png` (all signs lit for the check), `fin-2950.png`: lamp glass, shop windows, signs at 21:00.
+* `tram4-3100.png` (`REGS_DEBUG_FOLLOW=1`): tram cabin light, both cabs dark. `tl-2950.png`: stand lamps at 20:00.
+  `ck-2950.png`: the clock dial on the square.
 * `t2-3200.png`: underground view, no lamp light. `fps14/fps23-3350.png`: frame rate.
