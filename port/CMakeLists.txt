@@ -1,5 +1,5 @@
 ﻿cmake_minimum_required(VERSION 3.20)
-project(regs VERSION 0.1.0 LANGUAGES CXX)
+project(regs VERSION 0.2.0 LANGUAGES CXX)
 
 # ReGS: a from-source reimplementation of the GSystem engine that runs Cities in Motion from an installed copy.
 # No game data is part of this tree; everything is read from the user's install at run time.
