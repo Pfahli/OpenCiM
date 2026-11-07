@@ -18,6 +18,22 @@ if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
 
 // ---- after the original page: the original game's maps at the end of the map list (as addMap, with the note) ----
 
+// maps in folders below userdata/maps (the editor's folder system; autosaves left out), as "folder/name"
+function regsAddFolderMaps($dir, $prefix) {
+  foreach (list_dirs($dir)) {
+    $sub = current;
+    if (!($prefix == "" && $sub == "autosave")) {
+      foreach (list_files($dir+"/"+$sub, ".grid")) {
+        $file = $dir+"/"+$sub+"/"+current;
+        $button = MAIN.$ui.createChoiceButton($itemsBox.$content, $itemsArea, 0, $y, $itemsBox.$content.width, 18, $prefix+$sub+"/"+changeFileExt(current, ""), macro($file) :: selectMap($0));
+        $y += 18;
+      }
+      regsAddFolderMaps($dir+"/"+$sub, $prefix+$sub+"/");
+    }
+  }
+}
+regsAddFolderMaps("userdata/maps", "");
+
 foreach (regsOriginalMaps()) {
   regsAddOriginalMap("regs-cim/maps/"+current);
 }

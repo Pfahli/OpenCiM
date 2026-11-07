@@ -61,3 +61,10 @@ $regs_autosave_option = "Autosave (every 5 minutes, 5 versions)";
 $regs_autosave_status = "Map autosaved";
 $regs_autosave_note = "Autosave %0 %1";
 $regs_autosave_unnamed = "Unnamed";
+// folders in "Load map" and when saving (extend/metro/ui/menus/mainmenu.script)
+$regs_maps_up = ".. (back)";
+$regs_maps_folder = "[%0]";
+$regs_maps_original_folder = "Cities in Motion (original)";
+$regs_maps_autosave_folder = "Autosaves";
+$regs_maps_folder_hint = "Folder: %0";
+$regs_maps_save_hint = "Folders with a slash: folder/name";

@@ -61,3 +61,10 @@ $regs_autosave_option = "Automatisch speichern (alle 5 Minuten, 5 Versionen)";
 $regs_autosave_status = "Karte automatisch gesichert";
 $regs_autosave_note = "Autosave %0 %1";
 $regs_autosave_unnamed = "Unbenannt";
+// Ordner in "Karte laden" und beim Speichern (extend/metro/ui/menus/mainmenu.script)
+$regs_maps_up = ".. (zurück)";
+$regs_maps_folder = "[%0]";
+$regs_maps_original_folder = "Cities in Motion (Original)";
+$regs_maps_autosave_folder = "Autosaves";
+$regs_maps_folder_hint = "Ordner: %0";
+$regs_maps_save_hint = "Ordner mit Schrägstrich: Ordner/Name";

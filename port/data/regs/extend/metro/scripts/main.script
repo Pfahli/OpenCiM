@@ -250,6 +250,17 @@ function saveMapData($mapName) {
     MAIN.$timeline.saveToFile("memory/regs-undo.timeline");
     copy_file("memory/base.grid", "memory/regs-undo-base.grid");
   }
+  // a name with folders ("a/b/name", the save dialog allows the slash): the folders first, one level at a time
+  $regsDir = "userdata/maps";
+  mkdir($regsDir);
+  $regsRest = $mapName;
+  $regsSlash = findstr($regsRest, "/");
+  while ($regsSlash > 0) {
+    $regsDir = $regsDir+"/"+substr($regsRest, 0, $regsSlash);
+    mkdir($regsDir);
+    $regsRest = substr($regsRest, $regsSlash + 1);
+    $regsSlash = findstr($regsRest, "/");
+  }
   regsBaseSaveMapData($mapName);
   // the packages into the map's .scenario (variables the original ignores)
   $regsFile = "userdata/maps/"+changeFileExt($mapName, ".scenario");

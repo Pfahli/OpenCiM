@@ -48,27 +48,67 @@ $regsVersionLine = regsCornerLine(62, expandPattern($regsStrings.$regs_menu_vers
 $regsBuildLine = regsCornerLine(44, expandPattern($regsStrings.$regs_menu_build, REGS_BUILD, REGS_COMMIT, REGS_BUILD_DATE), 0xB0C8C8C8);
 $regsInfoLine = regsCornerLine(26, $regsStrings.$regs_menu_info, 0xB0C8C8C8);
 
-// main.script's LoadMapMenu passes the OpenCiM maps (key = file name); the original's maps without a copy in OpenCiM
-// follow them, keyed "~<name>|regs-cim:<file>" so they sort last and the dialog returns the part after the bar
+// Folders (owner's request 2026-11-07). "Load map" in the editor shows one folder of userdata/maps at a time: ".."
+// to go up, its sub folders, then its maps; choosing a folder opens it (buttonClick). The original game's maps are a
+// folder of their own ("regs-cim:<file>" values, copied into OpenCiM when opened), the editor's autosaves are the
+// folder "autosave" (shown with their time). Keys sort the entries: 0 up, 1 folders, 2 maps; the dialog returns the
+// part after the bar. "Save map" takes "folder/name" (a slash makes folders) and suggests the map's own folder.
+$regsMapFolder = "";          // the folder shown: "" the top, "a/b", or "~cim" for the original's maps
+
+function regsFolderLabel($folder) {
+  if ($folder == "~cim") return $regsStrings.$regs_maps_original_folder;
+  if ($folder == "autosave") return $regsStrings.$regs_maps_autosave_folder;
+  return extractFileName($folder);
+}
+
+function regsMapFolderItems() {
+  $items = map [];
+  $dir = "userdata/maps";
+  if ($regsMapFolder != "") {
+    $up = "";
+    $slash = -1;
+    for ($i = 0; $i < #$regsMapFolder; ++$i) {
+      if (substr($regsMapFolder, $i, 1) == "/") $slash = $i;
+    }
+    if ($slash > 0) $up = substr($regsMapFolder, 0, $slash);
+    $items["0|regs-folder:"+$up] = formatText("{0:"+escapePattern($regsStrings.$regs_maps_up)+"}", [0xFFBBBBBB]);
+  }
+  if ($regsMapFolder == "~cim") {
+    foreach (regsOriginalMaps()) $items["2"+current+"|regs-cim:"+current] = changeFileExt(current, "");
+    return $items;
+  }
+  if ($regsMapFolder != "") $dir = $dir+"/"+$regsMapFolder;
+  $prefix = $regsMapFolder == "" ? "" : $regsMapFolder+"/";
+  foreach (list_dirs($dir)) {
+    $f = $prefix+current;
+    $items["1"+(current == "autosave" ? "~" : "")+current+"|regs-folder:"+$f] = formatText("{0:"+escapePattern(expandPattern($regsStrings.$regs_maps_folder, regsFolderLabel($f)))+"}", [0xFFE8C860]);
+  }
+  $originals = regsOriginalMaps();
+  if ($regsMapFolder == "" && #$originals > 0) {
+    $items["1~~|regs-folder:~cim"] = formatText("{0:"+escapePattern(expandPattern($regsStrings.$regs_maps_folder, $regsStrings.$regs_maps_original_folder))+"}", [0xFFE8C860]);
+  }
+  foreach (list_files($dir, ".grid")) {
+    $label = changeFileExt(current, "");
+    $time = "";
+    if (file_exists($dir+"/"+changeFileExt(current, ".scenario"))) {
+      $s = load "/"+$dir+"/"+changeFileExt(current, ".scenario");
+      $time = $s.$regsAutosaveLabel : "";
+      delete $s;
+    }
+    if ($time != "") $label = formatText(escapePattern($label)+" {0:"+escapePattern($time)+"}", [0x80FFFFFF]);
+    $items["2"+current+"|"+$prefix+current] = $label;
+  }
+  return $items;
+}
+
 function showDialog($text, $inputText = false, $default = "", $items = null) {
   if (!$inputText && $items != null && $text == $strings.$menu_loadMap_dialog) {
-    foreach (regsOriginalMaps()) {
-      $items["~"+current+"|regs-cim:"+current] = changeFileExt(current, "")+" "+$regsStrings.$regs_fromOriginal_note;
-    }
-    // the editor's autosaves (editor.script extension), after the maps, greyed, with their time
-    foreach (list_files("userdata/maps/autosave", ".grid")) {
-      $regsLabel = "";
-      $regsScenario = "userdata/maps/autosave/"+changeFileExt(current, ".scenario");
-      if (file_exists($regsScenario)) {
-        $regsS = load "/"+$regsScenario;
-        $regsLabel = $regsS.$regsAutosaveLabel : "";
-        delete $regsS;
-      }
-      $items["~~"+current+"|autosave/"+current] = formatText(escapePattern(changeFileExt(current, "")) + " {0:" + escapePattern($regsLabel) + "}", [0x80FFFFFF]);
-    }
+    $items = regsMapFolderItems();
+    if ($regsMapFolder != "") $text = $text+"\n"+expandPattern($regsStrings.$regs_maps_folder_hint, regsFolderLabel($regsMapFolder));
   }
   regsBaseShowDialog($text, $inputText, $default, $items);
 }
+
 
 // the map an OK opens: the editor's load list hands over "<name>.grid", the sandbox page's start button its map
 function regsPickedMap($text, $actionName) {
@@ -82,6 +122,14 @@ function regsPickedMap($text, $actionName) {
 }
 
 function buttonClick($text, $actionName) {
+  if ($actionName == "ok" && findstr($text, "regs-folder:") == 0) {
+    $regsMapFolder = substr($text, 12);
+    thread :: {
+      skip_frame;
+      showDialog($strings.$menu_loadMap_dialog, false, "", map []);
+    };
+    return;
+  }
   $map = regsPickedMap($text, $actionName);
   if ($map == "" || #MAIN.$main.regsMissingPackages($map) == 0) {
     regsBaseButtonClick($text, $actionName);
