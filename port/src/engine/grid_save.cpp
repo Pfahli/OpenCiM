@@ -11,6 +11,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/grid.h"
 #include "vfs/vfs.h"
 
@@ -139,6 +140,7 @@ void registerSaveNatives(VM& vm) {
       std::vector<uint8_t> chunk;
       if (tag == 0x07010000 && g->data) writeTerrain(*g->data, out);
       else if (tag == 0x07020000 && g->data) writeNetwork(*g->data, out);
+      else if (tag == kCurveSectionTag && g->data) writeCurveSection(*g->data, out);  // port: curved roads
       else if (g_sectionWriter && g_sectionWriter(v, g, tag, chunk)) out.insert(out.end(), chunk.begin(), chunk.end());
       else out.insert(out.end(), src.begin() + std::ptrdiff_t(p), src.begin() + std::ptrdiff_t(end));
       seen.push_back(tag);
@@ -149,6 +151,9 @@ void registerSaveNatives(VM& vm) {
       if (std::find(seen.begin(), seen.end(), tag) == seen.end() && g_sectionWriter && g_sectionWriter(v, g, tag, chunk))
         out.insert(out.end(), chunk.begin(), chunk.end());
     }
+    // port: the curved roads' section when the loaded file had none (new maps, maps from the original)
+    if (g->data && !g->data->curves.empty() && std::find(seen.begin(), seen.end(), kCurveSectionTag) == seen.end())
+      writeCurveSection(*g->data, out);
     putU32(out, 4, uint32_t(out.size() - 8));
     return Value::boolean(v.vfs().write(path, out));
   });

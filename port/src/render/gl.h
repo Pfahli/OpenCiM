@@ -77,6 +77,7 @@ enum : GLenum {
   X(void, TexParameterf, GLenum, GLenum, GLfloat)                                                           \
   X(void, TexParameterfv, GLenum, GLenum, const GLfloat*)                                                   \
   X(void, TexImage2D, GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*)           \
+  X(void, TexSubImage2D, GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void*)        \
   X(void, CompressedTexImage2D, GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void*)       \
   X(void, ActiveTexture, GLenum)                                                                            \
   X(void, DrawArrays, GLenum, GLint, GLsizei)                                                               \

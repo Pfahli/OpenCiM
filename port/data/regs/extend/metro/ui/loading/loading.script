@@ -1,0 +1,17 @@
+// ReGS extension of metro/ui/loading/loading.script (used as installed; see VM::extendSource): when every game script
+// has loaded, the port builds the map's cache (materials, textures, night-light masks, grid items) while the loading
+// screen still shows, before the Spielen button; otherwise the first frame after the button stayed black for seconds.
+
+//@base
+
+event this.enter::["Completed"]() {
+  regsPrewarmGrid();
+}
+
+// port start flags (main.script extension, REGS_START=save:...): the Spielen button presses itself
+event this.enter::["Completed"]() {
+  if (MAIN.$main.$regsStartPlay : false) {
+    MAIN.$main.$regsStartPlay = false;
+    buttonClick();
+  }
+}

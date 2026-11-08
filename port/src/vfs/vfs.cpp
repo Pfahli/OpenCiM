@@ -53,9 +53,24 @@ void Vfs::rescan() {
   archives_.clear();
   scanTree(installRoot_, "", true);
   if (overlayRoot_) scanTree(*overlayRoot_, "", true);
+  overrides_.clear();
+  for (const ModLayer& m : modLayers_) {
+    scanTree(m.dir, m.prefix, true);
+    std::error_code ec;
+    if (fs::is_directory(m.dir / "files", ec)) scanTree(m.dir / "files", "", true, &m.id);
+  }
   if (userdataRoot_) scanTree(*userdataRoot_, "userdata/", false);
   scanOriginal();
   LOG_INFO("vfs: %zu archives, %zu records", archives_.size(), records_.size());
+  if (!overrides_.empty()) {
+    std::map<std::string, int> per;
+    for (const Override& o : overrides_) ++per[o.mod];
+    for (auto& [mod, n] : per) LOG_INFO("vfs: mod %s overrides %d files", mod.c_str(), n);
+  }
+}
+
+void Vfs::addModLayer(const fs::path& dir, const std::string& keyPrefix, const std::string& id) {
+  modLayers_.push_back({dir, keyPrefix, id});
 }
 
 void Vfs::initUserdata(const fs::path& root) {
@@ -89,15 +104,17 @@ void Vfs::scanOriginal() {
   }
 }
 
-void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skipUserdata) {
+void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skipUserdata, const std::string* overrideBy) {
   // depth-first in directory order
   bool install = root == installRoot_;
+  bool overlay = overlayRoot_ && root == *overlayRoot_;
   std::function<void(const fs::path&, const std::string&)> walk = [&](const fs::path& dir, const std::string& rel) {
     for (auto& e : sortedEntries(dir)) {
       std::string name = pathToUtf8(e.path().filename());
       std::string relPath = rel.empty() ? name : rel + "/" + name;
       std::string key = keyPrefix + relPath;
       if (skipUserdata && key.rfind("userdata", 0) == 0) continue;
+      if (overlay && relPath == "mods") continue;  // the port's built-in mods mount only when enabled (engine/mods.cpp)
       std::error_code ec;
       if (e.is_directory(ec)) {
         // community content (setCommunityContent): every folder of the install, and userdata/addons
@@ -126,6 +143,7 @@ void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skip
         Record r;
         r.kind = Kind::Loose;
         r.disk = e.path();
+        if (overrideBy && records_.count(key)) overrides_.push_back({key, *overrideBy});
         records_[key] = std::move(r);  // loose files replace archive entries
       }
     }

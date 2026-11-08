@@ -38,6 +38,21 @@ $regs_menu_info = "Inoffizielle Portierung, benötigt Cities in Motion";
 $regs_newsticker_jamMoved_text = ["Ein festsitzender Bus der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Eine festsitzende Straßenbahn der Linie %0 wurde zwei Haltestellen weiter gesetzt.", "Ein festsitzender U-Bahnzug der Linie %0 wurde zwei Stationen weiter gesetzt.", "Ein festsitzendes Wassertaxi der Linie %0 wurde zwei Anlegestellen weiter gesetzt.", "Ein festsitzender Hubschrauber der Linie %0 wurde zwei Landeplätze weiter gesetzt."];
 // Spielstände und Karten aus dem Ordner des Originals (Dokumente\Cities In Motion), hinter dem Namen in den Ladelisten
 $regs_fromOriginal_note = "(aus Cities in Motion)";
+// Spielstand-Ordner in den Speichern- und Laden-Listen (main.script-Erweiterung)
+$regs_saves_up = "eine Ebene höher";
+$regs_saves_newFolder_item = "Neuer Ordner";
+$regs_saves_newFolder_dialog = "Name des neuen Ordners:";
+// Seite „Spiel" im Einstellungsmenü (regs/ui/game.script): automatisches Speichern
+$regs_game_button = "Spiel";
+$regs_game_title = "Spiel";
+$regs_autosave_heading = "Automatisch speichern";
+$regs_autosave_interval_label = "Speichern alle";
+$regs_autosave_off_item = "Aus";
+$regs_autosave_minutes_item = "%0 Min.";
+$regs_autosave_keep_label = "Behalten";
+$regs_autosave_keep_item = "die letzten %0";
+$regs_autosave_note1 = "Die automatischen Spielstände liegen im Ordner Autosave der Spielstandliste.";
+$regs_autosave_note2 = "Gespeichert wird nur, wenn kein Bauwerkzeug und kein Dialog offen ist.";
 // Suchfeld im Fahrzeughandel (extend/metro/ui/vehiclepanel/vehiclepanel.script): Platzhalter und Tooltip
 $regs_vehicles_search = "Suchen...";
 $regs_vehicles_search_hint = "Fahrzeuge nach Namen filtern";
@@ -133,3 +148,40 @@ $regs_osm_attribution = "Bilder © Esri, Maxar, Earthstar Geographics · Kartend
 $regs_osm_steps = ["", "Höhendaten laden …", "Kartendaten laden …", "Satellitenbild laden …", "Daten vorbereiten …", "Gelände formen …", "Straßen bauen …", "Gebäude setzen …", "Bäume pflanzen …"];
 $regs_osm_failed = "Der Import ist fehlgeschlagen: %0";
 $regs_osm_overlay = "Satellitenbild am Boden zeigen";
+// die Seite Mods im Einstellungsmenü (regs/ui/mods.script): die Einstellungen der aktivierten Mods
+$regs_mods_button = "Mods";
+$regs_mods_title = "Mods";
+$regs_mods_none = "Die aktivierten Mods haben keine Einstellungen.";
+// curved roads in the map editor (extend/metro/scripts/editor.script, engine/tool_curves.cpp)
+$regs_curve_button = "Kurve";
+$regs_curve_hint = "Straße frei ziehen: gerade, als Kurve oder freihändig (wie in Cities: Skylines)";
+$regs_curve_panel_title = "Straße ziehen";
+$regs_curve_mode_straight = "Gerade (beliebiger Winkel)";
+$regs_type_oneway_hint = "Einbahnstraßen";
+$regs_curve_mode_curved = "Kurve";
+$regs_curve_mode_freeform = "Freihand";
+$regs_curve_panel_hint1 = "Endet an Sackgassen, Gleisenden und freien Straßenenden.";
+$regs_curve_panel_hint2 = "Rechtsklick: Zeichnen beenden.";
+$regs_curve_mode_remove = "Entfernen";
+$regs_curve_row_shape = "Form";
+$regs_curve_row_way = "Richtung (kleine Straßen)";
+$regs_round_row_lanes = "Spuren";
+$regs_oneway1_hint = "Einbahnstraße mit 1 Spur: in Zeichenrichtung, Gleise nur in eine Richtung (halber Preis)";
+$regs_oneway2_hint = "Einbahnstraße mit 2 Spuren: in Zeichenrichtung, Gleise nur in eine Richtung (halber Preis)";
+$regs_curve_way_both = "Beide Richtungen";
+$regs_curve_way_one1 = "Einbahnstraße, 1 Spur";
+$regs_curve_way_one2 = "Einbahnstraße, 2 Spuren";
+$regs_round_button = "Kreisel";
+$regs_round_tooltip = "Kreisverkehr bauen";
+$regs_round_title = "Kreisverkehr";
+$regs_round_one = "Kreisverkehr mit 1 Spur";
+$regs_round_two = "Kreisverkehr mit 2 Spuren";
+$regs_round_hint1 = "Straßen mit 'Kurve' an den Kreis anschließen.";
+$regs_curve_info_centre = "Klicken: Mitte des Kreisverkehrs setzen";
+$regs_curve_info_radius = "Radius %0 m, %1 Spur(en). Klicken: bauen";
+$regs_curve_info_pick = "Straße zum Entfernen zeigen";
+$regs_curve_info_start = "Klicken: Anfang setzen";
+$regs_curve_info_bend = "Klicken: Knickpunkt setzen";
+$regs_curve_info_remove = "Klicken: diese Straße entfernen";
+$regs_curve_info_length = "Länge %0 m, Winkel %1°";
+$regs_curve_info_bad = "(passt nicht)";

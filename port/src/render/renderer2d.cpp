@@ -105,7 +105,10 @@ bool Renderer2D::init(std::string* error) {
   gl::VertexAttribPointer(2, 4, gl::UNSIGNED_BYTE, 1, sizeof(GuiVertex), reinterpret_cast<void*>(offsetof(GuiVertex, rgba)));
   const auto* ver = reinterpret_cast<const char*>(gl::GetString(gl::VERSION));
   const auto* ren = reinterpret_cast<const char*>(gl::GetString(gl::RENDERER));
-  info = std::string("OpenGL ") + (ver ? ver : "?") + " / " + (ren ? ren : "?");
+  gl::GLint units = 0;
+  gl::GetIntegerv(0x8872 /* GL_MAX_TEXTURE_IMAGE_UNITS */, &units);
+  info = std::string("OpenGL ") + (ver ? ver : "?") + " / " + (ren ? ren : "?") + " / " + std::to_string(units) +
+         " texture units" + (units < 16 ? " (fewer than the 16 the port needs)" : "");
   return true;
 }
 

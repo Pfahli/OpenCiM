@@ -308,6 +308,12 @@ void gridEditEnd(VM& vm, GridObj* grid) {
   std::vector<uint32_t> simAdded = real(added), simRemoved = real(removed);
   if (!simAdded.empty() || !simRemoved.empty()) simItemsChanged(vm, grid, simAdded, simRemoved);
   if (!heights.empty()) simTerrainChanged(vm, grid, heights.x0, heights.z0, heights.x1, heights.z1);
+  if (grid->curvesDirty) {  // port curved roads: their lanes and pavements after the items' (engine/curve_roads.h)
+    grid->curvesDirty = false;
+    std::vector<std::array<int, 4>> rects;
+    rects.swap(grid->curveRects);
+    simCurvesChanged(vm, grid, rects);
+  }
   for (uint32_t i : removed) gridItemControllerRemoved(vm, grid, i);
 }
 

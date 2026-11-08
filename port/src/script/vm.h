@@ -113,8 +113,12 @@ class VM {
   // ---- scripts ----
   // load / load g :: path (semantics.md §6): always returns a script object (empty after any error).
   Value load(const std::u16string& path, const LoadOptions& opt = {});
-  // merges a port extension (regs/extend/<path>) into a game script's source before compiling (see vm.cpp)
+  // merges the extensions of a game script (<root><path> for each of extensionRoots, in order) into its source
+  // before compiling (see vm.cpp)
   void extendSource(const std::u16string& path, std::u16string& source);
+  // VFS folders holding script extensions, applied in this order: the port's own first, then each enabled mod's
+  // (engine/mods.cpp adds "regs/mods/<id>/extend/")
+  std::vector<std::string> extensionRoots{"regs/extend/"};
   std::u16string resolvePath(const std::u16string& path, const Object* caller) const;
 
   // ---- calls ----

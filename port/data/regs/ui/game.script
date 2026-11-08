@@ -1,0 +1,94 @@
+// ReGS Game options page (settings menu > Game; opened by the main.script extension, regsOpenGamePage): the port's
+// game options that fit none of the original pages. For now the autosave (main.script extension, "autosave"):
+//   $settings.$regsAutosaveMinutes   0 (off), 5, 10 (default), 15 or 30 minutes of real time in the game
+//   $settings.$regsAutosaveKeep      how many autosaves are kept: 3 (default), 5 or 10
+// OK stores and exports the settings, Cancel drops the changes; both close the page.
+$desktop = MAIN.$desktop;
+$settings = MAIN.$settings;
+
+$file = "regs/strings/" + MAIN.$language + ".strings";
+if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+$regs = load "/" + $file;
+
+$box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - 600) * 0.5), 1000, 600, 1 | 2 | 4 | 8, $desktop);
+$title = MAIN.$ui.createHeadingBar($box, $regs.$regs_game_title);
+$c = $box.$content;
+
+$minutes = int($settings.$regsAutosaveMinutes : 10);
+$keep = int($settings.$regsAutosaveKeep : 3);
+
+function label($x, $y, $w, $text, $title) {
+  with ($l = new_control($c)) {
+    .setRect($x, $y, $w, 18);
+    if ($title) MAIN.$ui.setTitleFont(current);
+    else MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $l;
+}
+
+// a row of radio buttons: the values, their texts, the one shown as chosen
+function radioRow($group, $y, $values, $texts, $chosen) {
+  for ($i = 0; $i < #$values; ++$i) {
+    $x = 260 + $i * 120;
+    $b = MAIN.$ui.createChoiceButton($c, $group, $x, $y + 1, 16, 16, "", macro($group, $values[$i]) :: pick($0, $1), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+    label($x + 22, $y, 96, $texts[$i], false);
+    if ($values[$i] == $chosen) MAIN.$ui.selectChoiceButton($b, $group);
+  }
+}
+
+function pick($group, $v) {
+  if ($group == "regsAutosaveMinutes") $minutes = $v;
+  else $keep = $v;
+}
+
+$y = 60;
+label(40, $y, 600, $regs.$regs_autosave_heading, true);
+$y += 34;
+label(40, $y, 210, $regs.$regs_autosave_interval_label, false);
+$minuteValues = [0, 5, 10, 15, 30];
+$minuteTexts = [$regs.$regs_autosave_off_item];
+for ($i = 1; $i < #$minuteValues; ++$i) $minuteTexts[] = expandPattern($regs.$regs_autosave_minutes_item, $minuteValues[$i]);
+radioRow("regsAutosaveMinutes", $y, $minuteValues, $minuteTexts, $minutes);
+$y += 30;
+label(40, $y, 210, $regs.$regs_autosave_keep_label, false);
+$keepValues = [3, 5, 10];
+$keepTexts = [];
+foreach ($keepValues) $keepTexts[] = expandPattern($regs.$regs_autosave_keep_item, current);
+radioRow("regsAutosaveKeep", $y, $keepValues, $keepTexts, $keep);
+$y += 34;
+foreach ([$regs.$regs_autosave_note1, $regs.$regs_autosave_note2]) {
+  with (label(40, $y, $c.width - 80, current, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
+  $y += 22;
+}
+
+function pageButton($text, $action) {
+  with ($b = MAIN.$ui.createButton($c, 4, 0, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+    .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  MAIN.$ui.setTitleFont($b);
+  return $b;
+}
+with ($okButton = pageButton(MAIN.$strings.$menu_ok_button, macro :: save())) {
+  .setRect(40, $c.height - .height - 20, .width, .height);
+}
+with ($backButton = pageButton(MAIN.$strings.$menu_cancel_button, macro :: MAIN.$main.regsCloseGamePage())) {
+  .setRect($c.width - .width - 40, $c.height - .height - 20, .width, .height);
+}
+
+function save() {
+  $settings.setVariable("regsAutosaveMinutes", $minutes);
+  $settings.setVariable("regsAutosaveKeep", $keep);
+  $settings.exportVariables("regsAutosaveMinutes");
+  $settings.exportVariables("regsAutosaveKeep");
+  MAIN.$main.regsCloseGamePage();
+}
+
+event this.onDestroy::() {
+  delete $regs;
+  delete $box;
+}

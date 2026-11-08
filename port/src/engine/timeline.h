@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/grid.h"
 #include "script/vm.h"
 
 namespace regs::engine {
@@ -39,5 +40,7 @@ void timelineRecordBrush(script::VM& vm, script::Object* timeline, int type, int
 void timelineRecordPatch(script::VM& vm, script::Object* timeline, int x, int z, int w, int l,
                          const std::vector<int16_t>& heights, const std::vector<uint16_t>& flags);
 void timelineRecordWater(script::VM& vm, script::Object* timeline, int x, int z, bool on);
+// port: a curved road added or removed (engine/curve_roads.h)
+void timelineRecordCurve(script::VM& vm, script::Object* timeline, const GridData::CurveRoad& c, bool add);
 
 }  // namespace regs::engine

@@ -55,6 +55,9 @@ uint32_t combinerProgram(Display& d, script::VM& vm, const std::string& shader, 
 // Renders the 3D scene of a gsViewPort control into its texture target, if it has a scene, a camera and a
 // gsTextureTarget_OGL effect. Called by the GUI pass when it reaches the viewport.
 void renderViewportScene(Display& d, script::VM& vm, ControlObj* viewport);
+// seconds per frame phase (load-time measurements): 1 scene nodes, 2 grid, 3 sim vehicles, 4 particles, 5 night lights,
+// 6 programs
+extern double gPhaseSeconds[8];
 
 void registerSceneNatives(script::VM& vm);
 

@@ -161,10 +161,12 @@ void VM::link(Code& code, Object* self) {
 // "//@rename <name> <newName>" renames a function definition of the original so the extension can wrap it. The
 // game's file is used as installed, so only port-written code ships. Error lines of the original shift by the
 // prefix's line count.
-void VM::extendSource(const std::u16string& path, std::u16string& source) {
-  std::vector<uint8_t> data;
-  if (!vfs_.read("regs/extend/" + u8(path), data)) return;
-  std::u16string ext = u"\n" + decodeTextFile(data), prefix, suffix = ext;  // directives start a line
+// Mods (port/docs/mod-manager.md §3.3) chain: each root of extensionRoots is applied to the result of the previous
+// one, so a mod's prefix comes before the port's and its suffix after it, and its renames see the accumulated source
+// (a mod renaming f wraps the port's f where the port already wrapped it).
+namespace {
+void applyExtension(const std::u16string& extText, std::u16string& source) {
+  std::u16string ext = u"\n" + extText, prefix, suffix = ext;  // directives start a line
   if (size_t base = ext.find(u"\n//@base"); base != std::u16string::npos) {
     prefix = ext.substr(0, base);
     suffix = ext.substr(base);
@@ -181,6 +183,14 @@ void VM::extendSource(const std::u16string& path, std::u16string& source) {
     if (size_t f = source.find(def); f != std::u16string::npos) source.replace(f, def.size(), u"function " + to + u"(");
   }
   source = prefix + u"\n" + source + u"\n" + suffix;
+}
+}  // namespace
+
+void VM::extendSource(const std::u16string& path, std::u16string& source) {
+  for (const std::string& root : extensionRoots) {
+    std::vector<uint8_t> data;
+    if (vfs_.read(root + u8(path), data)) applyExtension(decodeTextFile(data), source);
+  }
 }
 
 Value VM::load(const std::u16string& rawPath, const LoadOptions& opt) {

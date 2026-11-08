@@ -5,6 +5,7 @@
 // every sub-step (no far-away round robin), platoons queue on one node instead of the leader's whole chain, a crash
 // drifts the whole consist by one offset and leaves no crash marker or emergency vehicle (§6.6 crashSettled).
 #include "engine/sim.h"
+#include "engine/night_lights.h"
 
 #include <algorithm>
 #include <chrono>
@@ -20,6 +21,7 @@
 #include "engine/api.h"
 #include "engine/display.h"
 #include "engine/grid.h"
+#include "engine/curve_roads.h"
 #include "engine/grid_edit.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
@@ -27,6 +29,8 @@
 #include "engine/sim_state.h"
 #include "engine/sim_sounds.h"
 #include "engine/particles.h"
+#include "engine/snowplows.h"
+#include "engine/traffic_maps.h"
 
 namespace regs::engine {
 
@@ -450,6 +454,19 @@ void crash(SimState& s, int id, int nd, float dt) {
   for (int c : s.graph.nodes[size_t(nd)].crossings) startCrash(s, s.rt[size_t(c)].occupant, dt);
 }
 
+// the mods' road speed (SimState::roadSpeed, engine/snowplows.h) for a mover's head node: road and street-tram lanes
+// only (not in tunnels: metro, trains, boats and aircraft keep their speed), the cleared factor where a snowplow
+// drove lately (TrafficMaps::lanePlow above 0.5)
+float roadWeatherFactor(const SimState& s, const Mover& m) {
+  if (s.roadSpeed >= 0.999f && s.roadSpeedCleared >= 0.999f) return 1.0f;
+  if (m.boat || m.aircraft || m.train || m.track.nodes.empty()) return 1.0f;
+  int node = m.track.nodes[m.track.at(m.dist)];
+  uint32_t f = s.graph.nodes[size_t(node)].flags;
+  if (!(f & (kPathRoad | kPathTram)) || (f & (kPathTrain | kPathMetro | 0x800000u))) return 1.0f;
+  bool cleared = s.trafficMaps && size_t(node) < s.trafficMaps->lanePlow.size() && s.trafficMaps->lanePlow[size_t(node)] > 0.5f;
+  return std::clamp(cleared ? s.roadSpeedCleared : s.roadSpeed, 0.3f, 1.0f);
+}
+
 // one update of a mover (grid-traffic.md §6.2): claims, speed, distance, release behind the last car
 void moveMover(SimState& s, int id, float dt) {
   Mover& m = s.movers[size_t(id)];
@@ -466,6 +483,7 @@ void moveMover(SimState& s, int id, float dt) {
     const UnitModel& um = s.models[size_t(u.model)];
     target = std::min(target, nodeCap(s.graph.nodes[size_t(m.track.nodes[at])], um) * um.speed);
   }
+  target *= roadWeatherFactor(s, m);  // the mods' road speed (snow, heavy rain; full on plowed lanes)
   if (!m.crashing) {
     float cand = m.speed + hm.acceleration * dt;
     m.speed = cand <= target ? cand : std::max(target, 0.0f);
@@ -541,6 +559,7 @@ void despawn(VM& vm, SimState& s, int id) {
   if (m.train) --s.trainsLive;
   else if (m.boat) --s.boatsLive, m.boat = false;
   else if (m.aircraft) --s.aircraftLive, m.aircraft = false;
+  else if (m.plow) --s.plowsLive, m.plow = false;
   else if (!m.transit && !m.parked) --s.roadLive;
   if (m.extra) --s.extraLive, m.extra = false;
   if (Object* o = m.controller.get()) {
@@ -1816,6 +1835,7 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
     });
   }
   buildLaneGraph(vm, grid, *grid->data, s->graph, fileFlags.empty() ? nullptr : &fileFlags);
+  rebuildCurveNodes(vm, grid, *grid->data, s->graph);  // port curved roads: their lanes after the items'
   s->rt.assign(s->graph.nodes.size(), NodeRt());
   collectSources(*s);
   buildDoors(vm, grid, *s);
@@ -1970,6 +1990,8 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   syncCharacterFields(*s);
   simSoundsTick(vm, grid, *s, x);
   simParticlesTick(vm, grid, *s, x);
+  stepSnowplows(vm, grid, *s, x);       // the mods' snowplows (engine/snowplows.h)
+  simTrafficMapsTick(vm, grid, *s, x);  // the mods' shader hooks: recent traffic (engine/traffic_maps.h)
   if (debugSim()) {
     static int frames = 0;
     if (++frames % 600 == 0) {
@@ -2096,6 +2118,43 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   }
 }
 
+// vehicles on removed lane nodes: traffic despawns, a citizen's car ends its drive, parked cars go, line vehicles
+// leave the line and come back at a platform; the nodes' run-time state is cleared. Returns how many were taken off.
+int takeOffRemovedNodes(VM& vm, SimState& s, const std::vector<uint8_t>& nodeGone) {
+  int despawned = 0;
+  for (size_t id = 0; id < s.movers.size(); ++id) {
+    Mover& m = s.movers[id];
+    if (!m.live) continue;
+    bool hit = false;
+    for (size_t k = size_t(std::max(0, m.holdBegin)); k < m.track.nodes.size() && !hit; ++k) hit = nodeGone[size_t(m.track.nodes[k])] != 0;
+    if (!hit) continue;
+    ++despawned;
+    if (m.transit) {
+      VehicleState& v = s.vehicles[size_t(m.vehicle)];
+      for (auto& st : s.lines[size_t(v.line)].stops)
+        if (st.docked == m.vehicle) st.docked = -1;
+      vm.fireEvent(v.object.get(), u"onUnspawn", {});
+      despawn(vm, s, int(id));
+      v.stopTime = 0;
+      v.halted = v.brokenHalted = false;
+    } else if (m.parked) {
+      if (m.citizen >= 0) {
+        Citizen& c = s.citizens[size_t(m.citizen)];
+        if (c.car == int(id)) c.car = -1, c.flags &= ~0x100000u;
+      }
+      m.citizen = -1;
+      despawn(vm, s, int(id));
+    } else if (m.citizen >= 0) {
+      carArrived(vm, s, int(id), true);
+    } else {
+      despawn(vm, s, int(id));
+    }
+  }
+  for (size_t n = 0; n < nodeGone.size(); ++n)
+    if (nodeGone[n]) s.rt[n] = NodeRt();
+  return despawned;
+}
+
 void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, const std::vector<uint32_t>& removed) {
   if (!grid || !grid->sim || !grid->data || (added.empty() && removed.empty())) return;
   SimState& s = *grid->sim;
@@ -2142,38 +2201,7 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
 
   // 2. vehicles on removed nodes: traffic despawns, a citizen's car ends its drive, parked cars go, line vehicles
   //    leave the line and come back at a platform
-  int despawned = 0;
-  for (size_t id = 0; id < s.movers.size(); ++id) {
-    Mover& m = s.movers[id];
-    if (!m.live) continue;
-    bool hit = false;
-    for (size_t k = size_t(std::max(0, m.holdBegin)); k < m.track.nodes.size() && !hit; ++k) hit = nodeGone[size_t(m.track.nodes[k])] != 0;
-    if (!hit) continue;
-    ++despawned;
-    if (m.transit) {
-      VehicleState& v = s.vehicles[size_t(m.vehicle)];
-      for (auto& st : s.lines[size_t(v.line)].stops)
-        if (st.docked == m.vehicle) st.docked = -1;
-      vm.fireEvent(v.object.get(), u"onUnspawn", {});
-      despawn(vm, s, int(id));
-      v.stopTime = 0;
-      v.halted = v.brokenHalted = false;
-    } else if (m.parked) {
-      if (m.citizen >= 0) {
-        Citizen& c = s.citizens[size_t(m.citizen)];
-        if (c.car == int(id)) c.car = -1, c.flags &= ~0x100000u;
-      }
-      m.citizen = -1;
-      despawn(vm, s, int(id));
-    } else if (m.citizen >= 0) {
-      carArrived(vm, s, int(id), true);
-    } else {
-      despawn(vm, s, int(id));
-    }
-  }
-  for (size_t n = 0; n < nodeGone.size(); ++n)
-    if (nodeGone[n]) s.rt[n] = NodeRt();
-
+  int despawned = takeOffRemovedNodes(vm, s, nodeGone);
   // 3. stops: new stop items join the stop vector; stops on removed items leave their lines (removeItem :55-104)
   for (uint32_t i : added)
     if (i < g.items.size()) registerStop(vm, grid, s, i);
@@ -2262,12 +2290,52 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   LOG_INFO("sim: map edit, %zu items added, %zu removed: %zu lane nodes now, %d vehicles taken off, lines %s, %zu walk areas, %.0f ms",
            added.size(), removed.size(), G.nodes.size(), despawned, linesChanged ? "changed" : "unchanged", rects.size(), ms);
+  // port curved roads: a road or tram piece added or removed next to a curve changes the lanes its ends meet (a street
+  // tram block laid up to a curve with tracks: the curve's tram lanes take that block's height and link with it)
+  if (!g.curves.empty()) {
+    bool near = false;
+    for (const auto* list : {&added, &removed})
+      for (uint32_t i : *list) {
+        if (near || i >= g.items.size()) continue;
+        int type = gridItemShape(vm, grid, i).type;
+        if (type < 1 || type > 12) continue;
+        for (const CurveRoad& c : g.curves) {
+          int x0, z0, x1, z1;
+          curveCells(g, c, x0, z0, x1, z1);
+          const auto& it = g.items[i];
+          if (it.x >= x0 - 8 && it.x <= x1 + 8 && it.z >= z0 - 8 && it.z <= z1 + 8) near = true;
+        }
+      }
+    if (near) simCurvesChanged(vm, grid, {});
+  }
 }
 
 void simTerrainChanged(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
   (void)vm;
   if (!grid || !grid->sim || !grid->data) return;
   restampWalk(*grid->sim, x0, z0, x1, z1);
+}
+
+void simCurvesChanged(VM& vm, GridObj* grid, const std::vector<std::array<int, 4>>& rects) {
+  if (!grid || !grid->sim || !grid->data) return;
+  SimState& s = *grid->sim;
+  LaneGraph& G = s.graph;
+  std::vector<uint8_t> nodeGone(G.nodes.size(), 0);
+  for (int n : G.curveNodes) nodeGone[size_t(n)] = 1;
+  rebuildCurveNodes(vm, grid, *grid->data, G);
+  s.rt.resize(G.nodes.size());
+  nodeGone.resize(G.nodes.size(), 0);
+  int despawned = takeOffRemovedNodes(vm, s, nodeGone);
+  for (LineState& line : s.lines) relinkLine(vm, grid, s, line);
+  s.roadStarts.clear(), s.roadEnds.clear(), s.waterStarts.clear(), s.waterEnds.clear();
+  s.airEntries.clear(), s.airGatesIn.clear(), s.airGatesOut.clear(), s.airExits.clear();
+  s.landing = s.departing = AirPending();
+  for (int k = 0; k < 2; ++k) s.trainStarts[k].clear(), s.trainEnds[k].clear();
+  collectSources(s);
+  buildDoors(vm, grid, s);
+  for (const auto& r : rects) restampWalk(s, r[0], r[1], r[2], r[3]);
+  LOG_INFO("sim: curved roads changed: %zu curves, %zu curve lane nodes, %d vehicles taken off",
+           grid->data->curves.size(), G.curveNodes.size(), despawned);
 }
 
 // gsGridVehicle::updateVisibility (L:0x081ad310, docs/renderer/underground.md §5): in the underground view a car of a
@@ -2280,6 +2348,89 @@ bool unitOnTunnel(const SimState& s, const Mover& m, int k) {
   return at < m.track.nodes.size() && (s.graph.nodes[size_t(m.track.nodes[at])].flags & 0x800000) != 0;
 }
 
+// the body at light height (the vertices between 20 % and 55 % of the model's height, within 75 % of its half width):
+// front and rear surface (model z; the front is −Z), half width and height. Mirrors, roof parts and anything else
+// the bounding box reaches stay out, so the lights sit on the bumpers.
+struct LightFrame {
+  float front = 0, rear = 0, halfWidth = 0.8f, minY = 0, height = 1.5f;
+};
+const LightFrame& lightFrame(const render::ObjectData& od) {
+  static std::unordered_map<const render::ObjectData*, LightFrame> cache;
+  if (auto it = cache.find(&od); it != cache.end()) return it->second;
+  const render::MeshData& me = od.mesh;
+  LightFrame f;
+  f.minY = me.boundsMin[1];
+  f.height = std::max(0.1f, me.boundsMax[1] - me.boundsMin[1]);
+  float hw = 0.5f * (me.boundsMax[0] - me.boundsMin[0]), cx = 0.5f * (me.boundsMax[0] + me.boundsMin[0]);
+  float lo = f.minY + 0.2f * f.height, hi = f.minY + 0.55f * f.height;
+  float zMin = 1e30f, zMax = -1e30f, xMax = 0;
+  for (size_t i = 0; i < me.vertexCount(); ++i) {
+    float x = me.positions[i * 3] - cx, y = me.positions[i * 3 + 1], z = me.positions[i * 3 + 2];
+    if (y < lo || y > hi) continue;
+    xMax = std::max(xMax, std::fabs(x));
+    if (std::fabs(x) > 0.75f * hw) continue;
+    zMin = std::min(zMin, z), zMax = std::max(zMax, z);
+  }
+  if (zMin > zMax) zMin = me.boundsMin[2], zMax = me.boundsMax[2], xMax = hw;
+  f.front = zMin, f.rear = zMax, f.halfWidth = std::max(0.3f, xMax);
+  return cache.emplace(&od, f).first->second;
+}
+
+void simVehicleLights(GridObj* grid, const Vec3& eye, float range, std::vector<VehicleLightSource>& out) {
+  out.clear();
+  SimState* s = simOf(grid);
+  if (!s) return;
+  auto light = [&](const Mover& m) {
+    if (m.parked || m.boat || m.aircraft || m.units.empty() || m.track.nodes.empty()) return;
+    VehicleLightSource L;
+    L.mover = int(&m - s->movers.data());
+    L.rail = m.train || (m.transit && m.units.size() > 1);
+    L.speed = m.speed;
+    L.seed = uint32_t(m.colorSeed) * 2654435761u ^ uint32_t(L.mover) * 40503u;
+    float r = m.dist;
+    bool any = false;
+    for (size_t k = 0; k < m.units.size(); ++k) {
+      const Unit& u = m.units[k];
+      if (k > 0) r -= unitLength(*s, u);
+      if (u.model < 0 || (k == 0 || k + 1 == m.units.size()) == false) continue;
+      if (unitOnTunnel(*s, m, int(k))) return;
+      const UnitModel& um = s->models[size_t(u.model)];
+      PlacedPose p = unitPose(*s, m, u, r);
+      Vec3 dir = p.forward * (u.reversed ? -1.0f : 1.0f);  // travel direction (model front is −Z)
+      if (!um.object || !um.object->data) return;
+      const LightFrame& lf = lightFrame(*um.object->data);
+      Mat4 w = poseMatrix(p);
+      float h = lf.height;
+      float cx = 0.5f * (um.boundsMin.x + um.boundsMax.x);
+      if (k == 0) {
+        L.front = render::transformPoint(w, Vec3{cx, lf.minY, u.reversed ? lf.rear : lf.front});
+        L.forward = dir;
+        L.halfWidth = lf.halfWidth;
+        L.frontData = um.object->data.get();
+        L.frontIsModelRear = u.reversed;
+        L.frontY = std::clamp(0.3f * h, 0.55f, 1.0f);
+        L.bus = !L.rail && h > 2.4f;
+        any = true;
+      }
+      if (k + 1 == m.units.size()) {
+        L.back = render::transformPoint(w, Vec3{cx, lf.minY, u.reversed ? lf.front : lf.rear});
+        L.backData = um.object->data.get();
+        L.backIsModelFront = u.reversed;
+        L.backForward = dir;
+        L.backY = std::clamp(0.4f * h, 0.7f, 1.2f);
+      }
+    }
+    if (!any) return;
+    Vec3 e = L.front - eye;
+    if (dot(e, e) > range * range) return;
+    out.push_back(L);
+  };
+  for (const VehicleState& v : s->vehicles)
+    if (v.mover >= 0 && s->movers[size_t(v.mover)].live) light(s->movers[size_t(v.mover)]);
+  for (const Mover& m : s->movers)
+    if (m.live && !m.transit) light(m);
+}
+
 void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ,
                         std::vector<DrawItem>& items) {
   SimState* s = simOf(grid);
@@ -2290,6 +2441,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
   if (s->followShots > 0 && ++s->followFrame % (s->followShotName.rfind("halt-", 0) == 0 ? 4 : 12) == 0)
     d.requestScreenshot(s->followShotName + std::to_string(16 - s->followShots--) + ".png");
   const bool underground = grid->underground();
+  const double clockNow = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
   forEachUnit(*s, [&](const Mover& m, int unit, const Unit& u, const PlacedPose& p) {
     Vec3 e = p.position - eye;
     if (dot(e, e) > farZ * farZ) return;
@@ -2305,7 +2457,13 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
     if (!o->gpu) {
       o->gpu = std::make_shared<render::GpuMesh>(d.r3d().upload(o->data->mesh));
       o->materials = std::make_shared<std::vector<render::GpuMaterial>>();
-      for (const auto& mat : o->data->materials) o->materials->push_back(objectMaterial(d, vm, o, mat));
+      for (size_t i = 0; i < o->data->materials.size(); ++i) {
+        o->materials->push_back(objectMaterial(d, vm, o, o->data->materials[i]));
+        VehicleLampInfo li;
+        o->materials->back().windowMask = vehicleLampMask(d, vm, *o->data, int(i), &li);  // port night lights
+        o->materials->back().cabinY[0] = li.windowY0, o->materials->back().cabinY[1] = li.windowY1;
+        o->materials->back().windowKind = 1;
+      }
     }
     size_t first = items.size();
     if (isSkinnedModel(vm, o)) {
@@ -2318,10 +2476,37 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       it.world = poseMatrix(p);
       items.push_back(it);
     }
+    if (float night = vehicleNight01(); vehicleCycleOn() && !m.parked && !m.boat && !m.aircraft) {
+      // port night lights: the lamps at the consist's leading and trailing ends (the model's own ends if reversed)
+      uint32_t seed = uint32_t(m.colorSeed) * 2654435761u ^ uint32_t(&m - s->movers.data()) * 40503u;
+      int front = 0, rear = 0;
+      if (unit == 0) (u.reversed ? rear : front) = 1;
+      if (size_t(unit) + 1 == m.units.size()) (u.reversed ? front : rear) = m.speed < 0.5f ? 3 : 2;
+      // buses, trams and trains: the interior is lit, so their windows glow, at half strength by day and full when
+      // the vehicle's lights are on
+      bool cabin = m.transit || m.train;
+      float on = night > 0 ? vehicleLightsOn(seed, night) : 0.0f;
+      if (on <= 0.01f) front = rear = 0;
+      float code = vehicleLampCode(front, rear, cabin, std::max(on, cabin ? 0.02f : 0.0f));
+      float cabinLight = cabin ? 0.5f + 0.5f * on : 0.0f;
+      for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code, items[k].cabinLight = cabinLight;
+      // passengers in the windows: the line vehicle's load, eased so the silhouettes fade in and out
+      if (m.transit && m.vehicle >= 0) {
+        static std::vector<float> shown;
+        size_t mi = size_t(&m - s->movers.data());
+        if (shown.size() <= mi) shown.resize(mi + 1, 0.0f);
+        const VehicleState& vs = s->vehicles[size_t(m.vehicle)];
+        float target = vs.capacity > 0 ? std::clamp(float(vs.passengerCount) / float(vs.capacity), 0.0f, 1.0f) : 0.0f;
+        if (unit == 0) shown[mi] += (target - shown[mi]) * std::min(1.0f, vm.frameDt() * 0.8f);
+        for (size_t k = first; k < items.size(); ++k) items[k].passengers = shown[mi];
+      }
+    }
     for (size_t k = first; k < items.size(); ++k) {  // animated parts: custom4 = (angle, spin), stepAnimatedParts
       items[k].hasCustom4 = true;
       items[k].custom4[0] = m.rotorAngle;
       items[k].custom4[1] = m.rotorSpin;
+      items[k].surfaceClass = render::kSurfaceVehicle;  // the mods' shader hooks: a vehicle, 1 when parked
+      items[k].hookValue = m.parked ? 1.0f : 0.0f;
     }
     uint32_t argb = u.tint;
     // line vehicles: the line colour tints the colorize materials (gsTransportLine.color, 0x10114ec0)
@@ -2337,6 +2522,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
         items[k].colorize[1] = float((argb >> 8) & 0xFF) / 255.0f;
         items[k].colorize[2] = float(argb & 0xFF) / 255.0f;
       }
+    if (m.plow && unit == 0) collectPlowParts(d, s->models[size_t(u.model)], p, clockNow, items);  // the mods' plough
   });
 }
 

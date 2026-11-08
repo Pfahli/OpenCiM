@@ -19,6 +19,8 @@ struct Host {
   bool forceWindowed = false;       // ignore the settings' fullscreen flag
   std::filesystem::path dataDir;    // the port's overlay files (empty = none)
   bool communityAddons = false;     // mount community addons and loose install overrides (Vfs::setCommunityContent)
+  std::filesystem::path modsDir;    // --mods: the user mods folder (default <user root>\mods, engine/mods.h)
+  bool noMods = false;              // --no-mods: no mod is mounted (safe mode)
   std::vector<platform::InputEvent> input;  // OS events of this frame, pumped by the host before the tick
 };
 

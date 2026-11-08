@@ -54,6 +54,22 @@ $regsInfoLine = regsCornerLine(26, $regsStrings.$regs_menu_info, 0xB0C8C8C8);
 $regsMapFolder = "";
 
 function showDialog($text, $inputText = false, $default = "", $items = null) {
+  // a save list (main.script's getSaveGamesList): with folders (main.script's regsRunSaveDialog)
+  if ($items != null && MAIN.$main.$regsSaveDialog) {
+    MAIN.$main.$regsSaveDialog = false;
+    $inDialog = true;
+    $regsResult = MAIN.$main.regsRunSaveDialog($text, $inputText, $default, $items, checkInputKey);
+    buttonClick($regsResult[1], $regsResult[0] ? "ok" : "cancel");
+    $inDialog = false;
+    return;
+  }
+  MAIN.$main.$regsSaveDialog = false;
+  if (!$inputText && $items != null && $text == $strings.$menu_loadMap_dialog && (MAIN.$main.$regsStartMap : "") != "") {
+    $regsValue = MAIN.$main.$regsStartMap;  // the start flag REGS_START=editor:<map file> answers the map browser
+    MAIN.$main.$regsStartMap = "";
+    buttonClick($regsValue, "ok");
+    return;
+  }
   if (!$inputText && $items != null && $text == $strings.$menu_loadMap_dialog) {
     $inDialog = true;
     MAIN.$regsOsmPending = false;   // an OpenStreetMap area belongs only to a new map

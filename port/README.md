@@ -25,6 +25,16 @@ $game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
 .\build\x64-Release\regs.exe $game --windowed
 ```
 
+Start flags for tests (environment variables; the intro is skipped, the load dialogs answer themselves and the
+loading screen's Spielen button presses itself; `data/regs/extend/metro/scripts/main.script`):
+
+| Variable | Effect |
+|---|---|
+| `REGS_START=save:<name>` | loads a save (`<folder>/<name>` for one in a folder) |
+| `REGS_START=map:<map file>` | a sandbox game on a map (`testmap.grid` = `userdata/maps/testmap.grid`) |
+| `REGS_START=editor:<map file>` | opens a map in the map editor |
+| `REGS_START_RUN=1` | with save or map: the game clock runs from the start |
+
 ### Where data lives
 
 OpenCiM keeps all player data in its own folder, `Documents\OpenCiM`: `settings.script`, `controls.keys`, the game
@@ -44,6 +54,20 @@ content, the copy is named `<name> (CiM)` (then `<name> (CiM 2)`, …; a renamed
 in OpenCiM (same size and content hash, or an unchanged copy recorded in `OpenCiM\regs-imports.txt`) are listed only
 once, as the OpenCiM file. Disk changes by scripts (`write`, `delete_file`, `mkdir`, `fappend`, `freset`) are refused
 outside the OpenCiM folder.
+
+Saves can be sorted into folders below `saves\` (`saves\<folder>\<name>.gs`, folders inside folders too). The save
+and load dialogs list the open folder's folders first (`[ name ]`, a click opens it; `..` goes up), then its saves;
+the save dialog also offers "New folder" and saves a typed name into the open folder. The dialogs open in the folder
+of the save last loaded or saved. The original's saves are listed in `saves\` itself only. Folders are made and
+listed on disk (`regsSaveEntries`, `engine/user_folders.cpp`); the dialogs are the original's, run by the main.script
+extension (`regsRunSaveDialog`) through the main and pause menus' `showDialog`. Moving a save to another folder outside
+the game breaks it, as renaming one did in the original: its `level.scenario` names its own path.
+
+Autosave (settings menu > Game, `regs/ui/game.script`): every 5, 10 (default), 15 or 30 minutes of real time in the
+game, or off (`$regsAutosaveMinutes`), the game is saved to `saves\Autosave\Autosave <n>.gs`, replacing the oldest of
+the last 3, 5 or 10 (`$regsAutosaveKeep`). It waits while a construction tool or a dialog is open (saving resets the
+tool) and leaves the player's own save name, folder and unsaved-progress state alone. `REGS_TEST_AUTOSAVE=<seconds>`
+sets a short interval for tests.
 
 `--documents <dir>` stands in for the Documents folder (tests): the same layout lives under it, `<dir>\OpenCiM` and
 `<dir>\Cities In Motion`, so test runs never touch the real folders. Without it the real Documents folder is used.
@@ -107,6 +131,29 @@ followed vehicle breaks down after that much simulated time), `REGS_TEST_FIRE=<i
 `REGS_TEST_FIREWORKS=1` (the new-year fireworks bit stays on). Runs with `--at` actions ignore the real mouse, keyboard and
 window focus, so scripted clicks land the same with or without focus.
 
+### Mods
+
+OpenCiM mods (`docs/mod-manager.md`; first step: no manager page yet) are folders with a `mod.json` manifest. They
+are found in the user mods folder `<user root>\mods` (`Documents\OpenCiM\mods`) and in the port's built-in mods
+folder `data\mods` next to `regs.exe` (shipped with the port, all disabled). The user mods folder's `mods.json` lists
+the enabled mods in load order:
+
+```json
+{ "enabled": ["opencim.weather"] }
+```
+
+An enabled mod's folder is mounted as `regs/mods/<id>/`, its `files\` over the game and the port's data, and its
+`extend\<game path>` scripts chain after the port's own (`//@base`, `//@rename`). `--mods <dir>` uses another user
+mods folder (with its own `mods.json`; tests), `--no-mods` mounts none (safe mode); `--print-paths` shows both mods
+folders. The log lists the mods found and enabled (`mods: …`) and the files a mod overrides.
+
+Built-in mods: **Weather** (`data/mods/weather`, id `opencim.weather`): rain, heavy rain and thunderstorms by game
+date, fine streaks around the camera, wet streets with puddles that dry after the rain, spray behind vehicles,
+lightning and thunder, CC0 rain and thunder recordings (`sounds/LICENSES.txt`). Its README is in the mod folder.
+Switches: `REGS_TEST_WEATHER=rain|heavy|storm|dry|cycle` (always normal rain, heavy rain, thunderstorm, never, or
+12 game hours from 06:00 every second day alternating rain and storm) and `REGS_DEBUG_WEATHER=1` (the state every
+game hour), `=2` (the surface map on the ground), `=flash` (flashes held for screenshots).
+
 ### Port files and graphics options
 
 The port needs an installed copy of the game and ships none of its files, like OpenRCT2. Its own files live in
@@ -114,7 +161,8 @@ The port needs an installed copy of the game and ships none of its files, like O
 
 * `data/regs/extend/<game path>` **extends** a game script without replacing it: the part before a line `//@base`
   is compiled before the installed file and the rest after it, in the same script object; `//@rename f g` renames a
-  function of the original so the extension can wrap it (`VM::extendSource`). This is also the planned basis for mods.
+  function of the original so the extension can wrap it (`VM::extendSource`). Mods extend scripts the same way,
+  chained after the port (see Mods above).
 * `data/regs/strings/<language>.strings` (`en_US` is the fallback), `data/regs/shaders/` (the port's post effects).
 
 The game's graphics page is extended this way (`data/regs/extend/metro/ui/menus/graphics.script`):
@@ -236,6 +284,7 @@ node ..\tools\gen-port-operators.mjs ..\docs\script-runtime\operators.json src\s
 | Simulation | a loaded city runs | The save's transport lines, stops and vehicles load into the lane graph (`docs/simulation/`); trams drive their lines, dock with the documented dwell times, follow the speed buttons, and the date advances. Background traffic runs: the save's 771 moving cars, lorries and trains drive their saved routes, claim the lanes ahead (queuing and giving way at junctions, trams included), and new trips keep the count steady; named vehicles (e.g. "Taxi") can be hovered and selected, and the corner preview follows them. Citizens live their days (`docs/simulation/citizens.md`): 32 520 residents fill exactly the save's 32 520 home slots, plan trips, choose walking, car or tram, wait at stops, board, ride and pay fares (the money counter and line statistics move), and pedestrians walk the pavements with skeletal animation (`docs/renderer/skinning.md`; the merry-go-round and Ferris wheel turn too). Hovering a pedestrian shows its kind ("Tourist"); selecting it shows the citizen page (name, portrait, pins) with the preview on the person. Also running: parking, utility trips and company fleets, breakdowns and accidents (`REGS_TEST_CRASH` films one), walk layers for buildings, bridges, tunnels and platforms (no pedestrians over water), boats and aircraft with water bus and helicopter lines, metro platforms and turning at a terminus, animals, vehicle doors and boarding through them in mood order, level crossings (barriers down while a train holds the crossing, cars waiting, the warning bell), city growth from the timeline, and the sandbox densities. Port change: jam relief for buses and trams (stuck for 2 minutes, the cars around turn round one by one; still stuck 30 s later, the vehicle moves on two stops and its riders plan again; `docs/simulation/transport.md` §10). Walk and height maps are turned as the engine turns them (half a turn off the mesh), so station platforms connect to the street by their stairs and waiters stand on the platforms; on Vienna 0.5 % of walks find no path (was 10.7 %). Not yet: the rest of the failed walks (`docs/playable-todo.md` §4); aircraft gear and doors not seen on screen. |
 | Statistics and graphs | graphs panel and annual report draw | `gsGraphCtrl` (`engine/ui_graphs.cpp`, `docs/ui/graphs.md`): ring buffers per series fed by `setArg`/`update`, the range widened by the data, series strips, the major/minor grid and the zero/max/min/current labels laid out as the original's `updateLines`/`updateTexts`. The graphs panel shows all 12 company and economy graphs with the 12–60 month slider and adds a sample each month while open; the annual report's passengers graph opens from its petition icon. The news ticker (script-only) scrolls, colours, plays and jumps to its place. |
 | Particles | smoke, dust, fountains, fire, demolish | `gsParticleEmitter`, `gsEmittingParticleEmitter` and `gsParticleEngine` are native (`engine/particles.cpp`, spec `docs/renderer/particles.md`): emission (density, on/off cycles, cone, ring, colour ranges, scale over age, child emitters for sparks and fireworks), the engine's physics with wind, the grid's emitters on items (factory smoke, fountains, chimneys, fires, new-year fireworks via `effectConditions`) and vehicles (broken-down smoke, crash smoke, helicopter dust while the rotor turns over the pad, ship smoke) near the camera, and the script emitters (the bulldozer's demolish and construction dust). Drawn as sorted camera-facing billboards with `particles.shader` (lit, fogged, shadowed, additive fire), batched into one stream buffer per pass; blended ones cast shadows. Capped at 24 000 particles. Port change: helicopters board with a still rotor and spin up before take-off (`docs/simulation/boats-aircraft.md` §6.3). Not yet: boat wakes (`gsBoatContrain`), fires as a simulation event. |
+| Building tools (port) | curves, junctions, roundabouts, one-way streets | Map editor: curved roads of every road kind, junctions at any angle (5-way, mixed road kinds), one- and two-lane roundabouts, one-way streets with one-way tram tracks, trams through all of them, stops on small-road curves, the bulldozer removing curves; all in the traffic menu with icons in the game's style. Reference and the data model for other code (OSM import): `docs/building-tools.md`; history and test notes: `docs/curved-roads.md`. |
 | Everything else | not started | |
 
 ## Roadmap to a playable build
@@ -340,7 +389,8 @@ is already specified in `docs/`.
    (level crossings), a Prologic encoder with phase shift. `regs-tool sound <game> <path> [seconds] [stream]
    [layout=<name>] [at=x,y,z] [capture=<file.wav>]` plays one file (as a 3D voice with `at=`) for layout checks.
    *Mods:* a mod manager for ReGS mods (manifests, load order, script extensions, options API) is designed in
-   `docs/mod-manager.md`; its base, the script-extension mechanism, already exists.
+   `docs/mod-manager.md`; its first step runs (mod folders, manifests, `mods.json`, VFS layers, chained script
+   extensions; see Mods above), with the built-in weather mod as the first user.
 8. **Parity pass.** The original's saves load in the port (one-way: port saves need not load in the original),
    campaigns run start to finish, and mods load.
 

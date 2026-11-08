@@ -38,6 +38,21 @@ $regs_menu_info = "Unofficial source port, requires Cities in Motion";
 $regs_newsticker_jamMoved_text = ["A stuck bus on line %0 was moved on two stops.", "A stuck tram on line %0 was moved on two stops.", "A stuck metro train on line %0 was moved on two stops.", "A stuck waterbus on line %0 was moved on two stops.", "A stuck helicopter on line %0 was moved on two stops."];
 // saves and maps from the original game's folder (Documents\Cities In Motion), after the name in the load lists
 $regs_fromOriginal_note = "(from Cities in Motion)";
+// save folders in the save and load lists (main.script extension)
+$regs_saves_up = "up one level";
+$regs_saves_newFolder_item = "New folder";
+$regs_saves_newFolder_dialog = "Name of the new folder:";
+// the settings menu's Game page (regs/ui/game.script): autosave
+$regs_game_button = "Game";
+$regs_game_title = "Game";
+$regs_autosave_heading = "Autosave";
+$regs_autosave_interval_label = "Save every";
+$regs_autosave_off_item = "Off";
+$regs_autosave_minutes_item = "%0 min";
+$regs_autosave_keep_label = "Keep";
+$regs_autosave_keep_item = "the last %0";
+$regs_autosave_note1 = "Autosaves go to the folder Autosave in the save list.";
+$regs_autosave_note2 = "The game is only saved while no construction tool and no dialog is open.";
 // search field in the vehicle shop (extend/metro/ui/vehiclepanel/vehiclepanel.script): placeholder and tooltip
 $regs_vehicles_search = "Search...";
 $regs_vehicles_search_hint = "Filter vehicles by name";
@@ -133,3 +148,40 @@ $regs_osm_attribution = "Imagery © Esri, Maxar, Earthstar Geographics · Map da
 $regs_osm_steps = ["", "Loading heights …", "Loading map data …", "Loading the satellite picture …", "Preparing the data …", "Shaping the terrain …", "Building streets …", "Placing buildings …", "Planting trees …"];
 $regs_osm_failed = "The import failed: %0";
 $regs_osm_overlay = "Show the satellite picture on the ground";
+// the settings menu's Mods page (regs/ui/mods.script): the options of the enabled mods
+$regs_mods_button = "Mods";
+$regs_mods_title = "Mods";
+$regs_mods_none = "The enabled mods have no settings.";
+// curved roads in the map editor (extend/metro/scripts/editor.script, engine/tool_curves.cpp)
+$regs_curve_button = "Curve";
+$regs_curve_hint = "Draw a road freely: straight, curved or freeform (as in Cities: Skylines)";
+$regs_curve_panel_title = "Draw road";
+$regs_curve_mode_straight = "Straight (any angle)";
+$regs_type_oneway_hint = "One-way streets";
+$regs_curve_mode_curved = "Curved";
+$regs_curve_mode_freeform = "Freeform";
+$regs_curve_panel_hint1 = "Ends snap to dead ends, track ends and free road ends.";
+$regs_curve_panel_hint2 = "Right click: stop drawing.";
+$regs_curve_mode_remove = "Remove";
+$regs_curve_row_shape = "Shape";
+$regs_curve_row_way = "Direction (small roads)";
+$regs_round_row_lanes = "Lanes";
+$regs_oneway1_hint = "One-way street, 1 lane: the way it is drawn, tram tracks one way only (half price)";
+$regs_oneway2_hint = "One-way street, 2 lanes: the way it is drawn, tram tracks one way only (half price)";
+$regs_curve_way_both = "Both ways";
+$regs_curve_way_one1 = "One-way, 1 lane";
+$regs_curve_way_one2 = "One-way, 2 lanes";
+$regs_round_button = "Round";
+$regs_round_tooltip = "Build a roundabout";
+$regs_round_title = "Roundabout";
+$regs_round_one = "Roundabout, 1 lane";
+$regs_round_two = "Roundabout, 2 lanes";
+$regs_round_hint1 = "Join roads to the ring with the Curve tool.";
+$regs_curve_info_centre = "Click: set the roundabout's centre";
+$regs_curve_info_radius = "Radius %0 m, %1 lane(s). Click: build";
+$regs_curve_info_pick = "Point at a road to remove it";
+$regs_curve_info_start = "Click: set the start";
+$regs_curve_info_bend = "Click: set the bend point";
+$regs_curve_info_remove = "Click: remove this road";
+$regs_curve_info_length = "Length %0 m, angle %1 deg";
+$regs_curve_info_bad = "(does not fit)";

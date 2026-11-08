@@ -15,6 +15,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/display.h"
+#include "engine/curve_roads.h"
 #include "engine/grid_edit.h"
 #include "engine/grid_render.h"
 #include "engine/interaction.h"
@@ -458,6 +459,7 @@ bool stampWalkItem(SimState& s, size_t i, int rx0, int rz0, int rx1, int rz1, bo
   WalkGrid& wg = s.walk;
   const auto& it = g.items[i];
   if ((it.flags & 0x500000) || it.removed) return false;
+  if (g.curveAnchors.count(uint32_t(i))) return false;  // port: a curve stop's anchor (the curve stamps its pavement)
   ItemInfo info = itemInfo(s, int(i));
   if (!info.tpl || info.type == 0x15 || info.type == 0x13) return false;  // markers, trees
   int w = (it.orient & 1) ? info.sz : info.sx, l = (it.orient & 1) ? info.sx : info.sz;  // template size
@@ -559,6 +561,75 @@ bool stampWalkItem(SimState& s, size_t i, int rx0, int rz0, int rx1, int rz1, bo
 }
 
 // the walk layers (pathfinding.md §1.4): every covering item stamps its walk map in file order
+// port curved roads (engine/curve_roads.h): their walk map over the cells of [x0, x1] × [z0, z1], after the items:
+// pavements (code 2) at the item height, the carriageway blocked (0) but for a crossing (1) 3 units wide in the
+// middle; the round ends of free ends alike
+void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
+  const GridData& g = *s.grid->data;
+  WalkGrid& wg = s.walk;
+  const float cs = g.cellSize;
+  for (const CurveRoad& c : g.curves) {
+    int cx0, cz0, cx1, cz1;
+    curveCells(g, c, cx0, cz0, cx1, cz1);
+    cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
+    if (cx0 > cx1 || cz0 > cz1) continue;
+    std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
+    float mid = shape.back().s * 0.5f;
+    const CurveProfile& pf = curveProfile(c.kind);
+    for (int cz = cz0; cz <= cz1; ++cz)
+      for (int cx = cx0; cx <= cx1; ++cx) {
+        size_t ci = size_t(cz) * size_t(g.width) + size_t(cx);
+        uint32_t w = wg.words[ci];
+        bool any = false, pavement = false;
+        float y = 0;
+        for (int q = 0; q < 16; ++q) {
+          int qx = q & 3, qz = q >> 2;
+          float wx = (float(cx) + (float(qx) + 0.5f) * 0.25f - float(g.width) * 0.5f) * cs;
+          float wz = (float(cz) + (float(qz) + 0.5f) * 0.25f - float(g.length) * 0.5f) * cs;
+          float side, at;
+          curveNearest(shape, wx, wz, side, at);
+          float ad = std::fabs(side);
+          if (ad > pf.halfWidth) continue;
+          uint32_t code = ad > pf.carriageway ? 2u : std::fabs(at - mid) <= 1.5f ? 1u : 0u;
+          w = (w & ~(3u << (2 * q))) | (code << (2 * q));
+          any = true;
+          if (code == 2 && !pavement) pavement = true, y = curveAt(shape, at).p.y;
+        }
+        if (!any) continue;
+        wg.words[ci] = w;
+        if (pavement) wg.height[ci] = int32_t(std::lround(y * 256.0f / cs));
+      }
+  }
+  // junctions over the arms' ends: the carriageway crossable (1) anywhere, the pavement corners walkable (2)
+  for (const CurveJunction& j : findCurveJunctions(g)) {
+    int cx0, cz0, cx1, cz1;
+    junctionCells(g, j, cx0, cz0, cx1, cz1);
+    cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
+    if (cx0 > cx1 || cz0 > cz1) continue;
+    std::vector<Vec3> outer = junctionOutline(j, 1, 0.0f, 6);
+    std::vector<Vec3> inner = j.kind != 3 ? junctionOutline(j, 0, 0.0f, 6) : std::vector<Vec3>();
+    for (int cz = cz0; cz <= cz1; ++cz)
+      for (int cx = cx0; cx <= cx1; ++cx) {
+        size_t ci = size_t(cz) * size_t(g.width) + size_t(cx);
+        uint32_t w = wg.words[ci];
+        bool any = false, pavement = false;
+        for (int q = 0; q < 16; ++q) {
+          int qx = q & 3, qz = q >> 2;
+          float wx = (float(cx) + (float(qx) + 0.5f) * 0.25f - float(g.width) * 0.5f) * cs;
+          float wz = (float(cz) + (float(qz) + 0.5f) * 0.25f - float(g.length) * 0.5f) * cs;
+          if (!insideOutline(outer, wx, wz)) continue;
+          uint32_t code = !inner.empty() && insideOutline(inner, wx, wz) ? 1u : 2u;
+          w = (w & ~(3u << (2 * q))) | (code << (2 * q));
+          any = true;
+          pavement = pavement || code == 2;
+        }
+        if (!any) continue;
+        wg.words[ci] = w;
+        if (pavement) wg.height[ci] = int32_t(std::lround(j.centre.y * 256.0f / cs));
+      }
+  }
+}
+
 void buildWalkGrid(SimState& s) {
   const GridData& g = *s.grid->data;
   WalkGrid& wg = s.walk;
@@ -579,6 +650,7 @@ void buildWalkGrid(SimState& s) {
     ++stamped;
     layered += deck;
   }
+  stampWalkCurves(s, 0, 0, g.width - 1, g.length - 1);
   LOG_INFO("citizens: walk surface from %zu items (%zu on their own height), %zu cells with decks, up to %d per cell", stamped,
            layered, wg.decks.size(), wg.maxDecks);
   if (debugSim()) {
@@ -2347,6 +2419,7 @@ void collectCharacters(Display& d, VM& vm, SimState& s, const Vec3& eye, const M
     it.mesh = o->gpu.get();
     it.materials = o->materials.get();
     it.world = world;
+    it.surfaceClass = render::kSurfaceOverlay;  // people: not a surface for the mods' shader hooks
     items.push_back(it);
   }
 }
@@ -2380,6 +2453,7 @@ void restampWalk(SimState& s, int x0, int z0, int x1, int z1) {
     bool deck = false;
     stampWalkItem(s, i, x0, z0, x1, z1, deck, nullptr);
   }
+  stampWalkCurves(s, x0, z0, x1, z1);  // port curved roads, after the items
   // pedestrians whose way crosses the rectangle look for a new one from where they are
   int repathed = 0;
   for (Character& ch : s.characters) {

@@ -2,12 +2,14 @@
 // The native simulation (docs/simulation/): the lane graph built from the items' paths, the transport lines of a
 // loaded save and their vehicles. Slice 1 runs the line vehicles; citizens, passengers and background traffic come
 // later.
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
 #include <vector>
 
 #include "render/math3d.h"
+#include "render/mesh.h"
 #include "render/renderer3d.h"
 #include "script/vm.h"
 
@@ -96,10 +98,28 @@ void simItemsChanged(script::VM& vm, GridObj* grid, const std::vector<uint32_t>&
 
 // Terrain heights or water flags (0x2000) of the cells [x0, x1] × [z0, z1] changed: their walk layers follow.
 void simTerrainChanged(script::VM& vm, GridObj* grid, int x0, int z0, int x1, int z1);
+// port curved roads (engine/curve_roads.h): GridData::curves changed; their lanes are rebuilt (after the items'),
+// vehicles on removed curve lanes taken off, lines relinked, and the walk map stamped again over the rectangles
+void simCurvesChanged(script::VM& vm, GridObj* grid, const std::vector<std::array<int, 4>>& rects);
 
 // Door items (engine/sim_doors.cpp): per door item the skeleton clip time gsGridItem::animate got last (−1 = bind
 // pose); null when the map has none or there is no simulation.
 const std::unordered_map<uint32_t, float>* simDoorTimes(GridObj* grid);
+
+// Port night lights (engine/night_lights.h): the light points of every moving road and rail consist within range of
+// the eye: its leading end (headlights) and trailing end (tail lights), the travel direction, the body's half width
+// and the lights' height above the ground. Parked cars, boats, aircraft and units in tunnels have none.
+struct VehicleLightSource {
+  render::Vec3 front, back, forward, backForward;
+  float halfWidth = 0.8f, frontY = 0.6f, backY = 0.8f;
+  float speed = 0;
+  int mover = -1;
+  uint32_t seed = 0;  // per vehicle: when it switches its lights on
+  const render::ObjectData* frontData = nullptr, *backData = nullptr;  // the leading and trailing unit's models
+  bool frontIsModelRear = false, backIsModelFront = false;              // reversed units
+  bool rail = false, bus = false;
+};
+void simVehicleLights(GridObj* grid, const render::Vec3& eye, float range, std::vector<VehicleLightSource>& out);
 
 // Adds the spawned vehicles within farZ of the eye that are in view to the draw list.
 void collectSimVehicles(Display& d, script::VM& vm, GridObj* grid, const render::Vec3& eye,

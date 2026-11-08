@@ -1,8 +1,11 @@
-// ReGS extension of the pause menu (metro/ui/menus/pausemenu.script, used as installed; see VM::extendSource): the map
-// editor's "Save map" dialog takes folders, "folder/name" (owner's request 2026-11-07; the slash is allowed there
-// only), suggests the open map's own folder, lists every map below userdata/maps with its folder and says so in a
-// second line. main.script's saveMapData (extension) makes the folders. The load list's folders are in the main
-// menu extension.
+// ReGS extension of the pause menu (metro/ui/menus/pausemenu.script, used as installed; see VM::extendSource).
+// * Save and load lists (main.script's getSaveGamesList) open with save folders: main.script's regsRunSaveDialog runs
+//   the dialog (folder clicks reopen it in that folder, "New folder", the typed name saved into the open folder) and
+//   the result goes on to the state machine as the original's showDialog would send it.
+// * The map editor's "Save map" dialog takes folders, "folder/name" (owner's request 2026-11-07; the slash is allowed
+//   there only), suggests the open map's own folder, lists every map below userdata/maps with its folder and says so
+//   in a second line. main.script's saveMapData (extension) makes the folders. The load list's folders are in the main
+//   menu extension.
 //@rename showDialog regsBaseShowDialog
 //@rename checkInputKey regsBaseCheckInputKey
 //@base
@@ -27,6 +30,16 @@ function regsAllMaps($dir = "userdata/maps", $prefix = "") {
 }
 
 function showDialog($text, $inputText = false, $default = "", $items = null) {
+  // a save list (main.script's getSaveGamesList): with save folders
+  if ($items != null && MAIN.$main.$regsSaveDialog) {
+    MAIN.$main.$regsSaveDialog = false;
+    $inDialog = true;
+    $regsResult = MAIN.$main.regsRunSaveDialog($text, $inputText, $default, $items, checkInputKey);
+    buttonClick($regsResult[1], $regsResult[0] ? "ok" : "cancel");
+    $inDialog = false;
+    return;
+  }
+  MAIN.$main.$regsSaveDialog = false;
   if (!$inputText || $text != $strings.$menu_newMapName_dialog) {
     regsBaseShowDialog($text, $inputText, $default, $items);
     return;

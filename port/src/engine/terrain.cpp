@@ -15,12 +15,17 @@
 
 #include "core/log.h"
 #include "core/text.h"
+#include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
+#include "engine/gui.h"
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
+#include "engine/surface_map.h"
+#include "render/glsl.h"
 
 namespace regs::engine {
 
@@ -623,8 +628,9 @@ void prepareTerrainCells(GridData& g) {
     }
 }
 
-void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
-                 float detailScale, std::vector<DrawItem>& items) {
+// the map's cache (divisions, materials, grid items, surface map), rebuilt when the map changed; collectGrid
+// calls it, and regsPrewarmGrid() on the loading screen so the first frame after it does not wait for it
+void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
   if (!grid->data || grid->data->height.empty()) return;
   const GridData& g = *grid->data;
   if (!grid->terrain) grid->terrain = std::make_shared<TerrainCache>();
@@ -652,7 +658,14 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         dv.center = p;
         dv.radius = tc.n * cs * 0.7071f;
       }
-    for (int group = 0; group < kGroupCount; ++group) tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
+    for (int group = 0; group < kGroupCount; ++group) {
+      tc.materials.push_back(scriptMaterial(d, vm, gridMaterialObject(vm, grid, group)));
+      // the surface class for the mods' shader hooks (renderer3d.h)
+      tc.materials.back().surfaceClass = group == kTerrain ? kSurfaceTerrain
+                                         : group >= kYard && group < kField ? kSurfacePavement
+                                         : group >= kField && group < kWater ? kSurfaceField
+                                         : group == kWater ? kSurfaceWater : kSurfaceOther;
+    }
     // the tool highlights (terrain.md §5: positiveMaterial / negativeMaterial, selection.shader decals)
     // and the data layer of the catchment circles (dataMaterial, selection/data.shader decal)
     for (const char16_t* key : {u"positiveMaterial", u"negativeMaterial", u"dataMaterial"}) {
@@ -663,9 +676,16 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
       (key[0] == u'p' ? tc.positiveMaterial : key[0] == u'n' ? tc.negativeMaterial : tc.dataMaterial) = int(tc.materials.size());
       tc.materials.push_back(scriptMaterial(d, vm, m));
+      tc.materials.back().surfaceClass = kSurfaceOverlay;  // highlights and the catchment layer: never hooked
     }
     initGridItems(d, vm, grid, tc);
     fixGridCover(vm, *grid->data, tc, grid->viewMode);
+    if (!shaderHooks().empty()) {  // the surface map for the mods' shader hooks: the divisions' square
+      tc.surfaceMap = std::make_shared<SurfaceMap>();
+      const GridDivision& first = tc.divisions[0];
+      surfaceMapInit(*tc.surfaceMap, first.center.x - tc.n * cs * 0.5f, first.center.z - tc.n * cs * 0.5f,
+                     tc.cols * tc.n * cs, tc.rows * tc.n * cs);
+    }
     LOG_INFO("terrain: %dx%d divisions of %d cells", tc.cols, tc.rows, tc.n);
     if (std::getenv("REGS_DEBUG_BASE")) {  // every division once, for the walled items' list
       for (int index = 0; index < int(tc.divisions.size()); ++index) {
@@ -674,6 +694,170 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       }
     }
   }
+}
+
+// port curved roads (engine/curve_roads.h): every curve in one world-space mesh of the small road's own materials
+// (road_small_basic: asphalt, markings, walkways), rebuilt when they change, and the curve tool's preview tinted green
+// (fits) or red; the surface map learns their asphalt and pavements for the mods' shader hooks
+void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vector<DrawItem>& items) {
+  GridData& g = *grid->data;
+  if (g.curves.empty() && !grid->hasCurvePreview && !tc.curvesBuilt && !tc.curvePreviewBuilt) return;
+  if (tc.curvesVersion != grid->curvesVersion) {
+    tc.curvesVersion = grid->curvesVersion;
+    if (tc.curvesBuilt) d.r3d().destroy(tc.curves);
+    if (tc.curvePreviewBuilt) d.r3d().destroy(tc.curvePreview);
+    tc.curvesBuilt = tc.curvePreviewBuilt = false;
+    // a template's first material in tc.materials and its object (its type joins the map when none of its items is
+    // there yet: a map with curves but no small road or tram track)
+    auto templateOf = [&](const std::string& name, ObjectObj** object) {
+      int type = -1;
+      for (size_t t = 0; t < g.types.size() && type < 0; ++t)
+        if (g.types[t] == name) type = int(t);
+      if (type < 0 && grid->templates.count(name)) {
+        g.types.push_back(name);
+        type = int(g.types.size()) - 1;
+      }
+      syncGridItems(d, vm, grid, tc);
+      int ti = type >= 0 && size_t(type) < tc.typeTemplate.size() ? tc.typeTemplate[size_t(type)] : -1;
+      if (object) *object = ti >= 0 ? tc.templates[size_t(ti)].object : nullptr;
+      return ti >= 0 ? tc.templates[size_t(ti)].materialBase : -1;
+    };
+    int base = templateOf("road_small_basic", nullptr);
+    if (base < 0) {
+      LOG_WARN("curved roads: no template road_small_basic, not drawn");
+    } else {
+      bool tram = false;
+      for (const CurveRoad& c : g.curves) tram = tram || (c.ends & 4);
+      if (grid->hasCurvePreview) tram = tram || (grid->curvePreview.ends & 4);
+      int tramBase = tram ? templateOf("tram_small_basic", nullptr) : -1;
+      auto upload = [&](MeshData& m, GpuMesh& out, bool& built) {
+        if (!m.vertexCount()) return;
+        render::computeTangents(m);
+        m.radius = 1e6f;
+        out = d.r3d().upload(m);
+        built = true;
+      };
+      // a curve with its stops: their stop templates' meshes bent along the curve beside the road (the anchor item's
+      // centre 3 units out, as on a straight block)
+      // the other kinds: copies of their straight piece (cut into 1.5-unit slabs once) bent along the curve, the
+      // street tram piece's likewise when it has tracks, and their dead-end piece at a free end
+      static std::map<const render::ObjectData*, MeshData> sliced;
+      auto slicedOf = [&](const render::ObjectData* o) -> const MeshData& {
+        auto it = sliced.find(o);
+        if (it == sliced.end()) it = sliced.emplace(o, sliceMeshAlongX(o->mesh, 1.5f)).first;
+        return it->second;
+      };
+      auto bentRoad = [&](const CurveRoad& c, MeshData& m, float t0, float t1) {
+        const CurveProfile& pf = curveProfile(c.kind);
+        const float kept = curveLength(c) - t0 - t1;
+        if (kept <= 0.05f) return;
+        CurvePieces cp = curvePieces(c, kept);
+        std::vector<CurveSample> shape = curveShape(c);
+        auto pieces = [&](const char* name) {
+          ObjectObj* o = nullptr;
+          int b = name[0] ? templateOf(name, &o) : -1;
+          if (b < 0 || !o || !o->data) return;
+          const MeshData& sm = slicedOf(o->data.get());
+          for (int i = 0; i < cp.count; ++i)
+            appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
+        };
+        pieces(pf.straight);
+        if (c.ends & 4) pieces(pf.tram);
+        CurveEnds caps = curveFreeEnds(g, c);
+        ObjectObj* dob = nullptr;
+        int db = templateOf(pf.deadend, &dob);
+        if (db < 0 || !dob || !dob->data) return;
+        auto cf = dob->fieldValues.find(u"connections");
+        uint32_t conn = cf == dob->fieldValues.end() || cf->second.isNone() ? 0x40u << pf.shift : uint32_t(vm.toInt(cf->second));
+        bool openPlusX = ((conn >> pf.shift) & 0x40) != 0;
+        for (int end = 0; end < 2; ++end) {
+          if (!(end ? caps.free1 : caps.free0)) continue;
+          Vec3 o, ax, az;
+          curveCapFrame(c, end, openPlusX, o, ax, az);
+          appendPlacedMesh(dob->data->mesh, db, o, ax, az, m);
+        }
+      };
+      auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
+        if (c.kind != 0) {
+          bentRoad(c, m, t0, t1);
+          return;
+        }
+        bool meet0 = false, meet1 = false;
+        if (!noCaps) curveOneWayMeets(g, c, t0, t1, meet0, meet1);
+        buildCurveMesh(c, noCaps ? CurveEnds{} : curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1, meet0, meet1);
+        if (c.stops.empty()) return;
+        std::vector<CurveSample> shape = curveShape(c);
+        for (const CurveRoad::Stop& st : c.stops) {
+          ObjectObj* o = nullptr;
+          int sb = templateOf(stopTemplateName(st), &o);
+          if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), 3.0f, m);
+        }
+      };
+      MeshData all;
+      std::vector<CurveJunction> junctions = findCurveJunctions(g);
+      for (size_t i = 0; i < g.curves.size(); ++i) {
+        float t0, t1;
+        curveTrims(junctions, int(i), t0, t1);
+        curveMesh(g.curves[i], all, t0, t1);
+      }
+      // junctions: roads fill with the small road's asphalt (one texture for all road kinds) and its pavement, footpaths
+      // with the footpath; the fill's texture plane is fitted to the template's own mesh once
+      static std::map<std::string, PlanarUV> fills;
+      auto fillOf = [&](const char* name, int material, int& base0) -> const PlanarUV& {
+        ObjectObj* o = nullptr;
+        base0 = templateOf(name, &o);
+        auto it = fills.find(name);
+        if (it == fills.end() && o && o->data) it = fills.emplace(name, fitPlanarUV(o->data->mesh, material)).first;
+        static const PlanarUV none;
+        return it == fills.end() ? none : it->second;
+      };
+      for (const CurveJunction& j : junctions) {
+        int fb = -1;
+        if (j.kind == 3) {
+          const PlanarUV& uv = fillOf(curveProfile(3).straight, 0, fb);
+          buildJunctionMesh(j, fb, uv, -1, all);
+        } else {
+          const PlanarUV& uv = fillOf("road_small_basic", 0, fb);
+          buildJunctionMesh(j, fb, uv, base + 2, all, base + 1, tramBase);
+        }
+      }
+      if (tc.surfaceMap && all.vertexCount()) surfaceMapPaint(*tc.surfaceMap, all, Mat4(), tc.materials, true);
+      upload(all, tc.curves, tc.curvesBuilt);
+      if (grid->hasCurvePreview) {
+        MeshData p;
+        bool ring = !grid->curvePreviewMore.empty();
+        curveMesh(grid->curvePreview, p, 0.0f, 0.0f, ring);
+        for (const CurveRoad& more : grid->curvePreviewMore) curveMesh(more, p, 0.0f, 0.0f, true);
+        // a little above the map: a preview of a road already there (the bulldozer's, the remove mode's) shows over it
+        for (size_t v = 1; v < p.positions.size(); v += 3) p.positions[v] += 0.04f;
+        upload(p, tc.curvePreview, tc.curvePreviewBuilt);
+      }
+    }
+  }
+  if (tc.curvesBuilt && !tc.curves.parts.empty()) {
+    DrawItem it;
+    it.mesh = &tc.curves;
+    it.materials = &tc.materials;
+    items.push_back(it);
+  }
+  if (grid->hasCurvePreview && tc.curvePreviewBuilt && !tc.curvePreview.parts.empty()) {
+    DrawItem it;
+    it.mesh = &tc.curvePreview;
+    it.materials = &tc.materials;
+    const float good[4] = {0.75f, 1.0f, 0.75f, 1.0f}, bad[4] = {1.0f, 0.35f, 0.3f, 1.0f};
+    for (int k = 0; k < 4; ++k) it.colorize[k] = grid->curvePreviewBad ? bad[k] : good[k];
+    items.push_back(it);
+  }
+}
+
+void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
+                 float detailScale, std::vector<DrawItem>& items) {
+  if (!grid->data || grid->data->height.empty()) return;
+  ensureGridCache(d, vm, grid);
+  const GridData& g = *grid->data;
+  if (!grid->terrain) grid->terrain = std::make_shared<TerrainCache>();
+  TerrainCache& tc = *grid->terrain;
+  float cs = g.cellSize;
   // live map edits (engine/grid_edit.h): new types and items, then the touched divisions rebuilt at once where built
   syncGridItems(d, vm, grid, tc);
   applyItemColors(*grid, tc);
@@ -760,12 +944,14 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       buildTerrain(g, tc, index, lod, out);
       dv.terrain[lod] = d.r3d().upload(out);
       dv.terrainBuilt[lod] = true;
+      if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, out, dv.world, tc.materials, false);  // mods' shader hooks
     }
     if (!dv.itemsBuilt[lod]) {
       MeshData out;
       buildGridItems(g, tc, index, lod, out);
       dv.items[lod] = d.r3d().upload(out);
       dv.itemsBuilt[lod] = true;
+      if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, out, dv.world, tc.materials, true);
     }
   };
   struct Pending {
@@ -886,11 +1072,68 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     DrawItem it;
     it.mesh = &tc.highlight;
     it.materials = &tc.materials;
+    it.surfaceClass = kSurfaceOverlay;  // tool highlights keep their colours under the mods' shader hooks
     items.push_back(it);
   }
+  collectCurves(d, vm, grid, tc, items);  // port curved roads
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame
+  if (tc.surfaceMap) surfaceMapUpload(*tc.surfaceMap);
+}
+
+bool gridSurfaceMap(GridObj* grid, uint32_t& texture, float rect[4], uint32_t* topTexture) {
+  if (!grid || !grid->terrain || !grid->terrain->surfaceMap || !grid->terrain->surfaceMap->texture) return false;
+  const SurfaceMap& m = *grid->terrain->surfaceMap;
+  texture = m.texture;
+  if (topTexture) *topTexture = m.topTexture;
+  rect[0] = m.originX;
+  rect[1] = m.originZ;
+  rect[2] = 1.0f / (float(m.w) * m.texel);
+  rect[3] = 1.0f / (float(m.h) * m.texel);
+  return true;
+}
+
+void registerTerrainNatives(VM& vm) {
+  // regsPrewarmGrid(): builds the main map's cache (materials, textures, window masks, grid items) now, on the loading
+  // screen before its Spielen button (data/regs/extend/metro/ui/loading/loading.script), instead of in the first
+  // frame after it, which stayed black for seconds
+  implementGlobal(vm, u"regsPrewarmGrid", [](VM& v, Object*, int, const Value*) {
+    Display* d = display();
+    Value* main = v.findGlobal(u"MAIN");
+    Object* m = main ? main->object() : nullptr;
+    Value* g = m ? m->findVar(u"grid") : nullptr;
+    auto* grid = g ? dynamic_cast<GridObj*>(v.resolve(*g).object()) : nullptr;
+    if (d && grid && grid->data) {
+      auto t0 = std::chrono::steady_clock::now();
+      ensureGridCache(*d, v, grid);
+      auto t1 = std::chrono::steady_clock::now();
+      // the first view drawn once, unseen (the loading screen covers it): its shader programs compile now; with a
+      // cold driver cache (a new driver, changed shaders) that took half a minute of black screen after Spielen
+      const int linked = render::gProgramsLinked;
+      Value* vpv = m->findVar(u"viewport");
+      Value* scene = m->findVar(u"scene");
+      Value* camera = m->findVar(u"camera");
+      auto* vp = vpv ? dynamic_cast<ControlObj*>(v.resolve(*vpv).object()) : nullptr;
+      if (vp && scene && camera) {  // the game state gives the viewport its scene and camera only after Spielen
+        Value self = Value::heap(VT::Object, vp);
+        Value oldScene = v.getMember(self, u"scene"), oldCamera = v.getMember(self, u"camera");
+        try {
+          v.setMember(self, u"scene", v.resolve(*scene));
+          v.setMember(self, u"camera", v.resolve(*camera));
+          renderViewportScene(*d, v, vp);
+          v.setMember(self, u"scene", oldScene);
+          v.setMember(self, u"camera", oldCamera);
+        } catch (const ScriptError&) {
+        }
+      }
+      auto t2 = std::chrono::steady_clock::now();
+      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs)",
+               std::chrono::duration<double, std::milli>(t1 - t0).count(),
+               std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked);
+    }
+    return Value();
+  });
 }
 
 }  // namespace regs::engine
