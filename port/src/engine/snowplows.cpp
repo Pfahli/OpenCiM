@@ -221,7 +221,8 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   }
   // test switch REGS_TEST_CURVE_CARS=<n> (curved roads): up to n cars at a time on random trips between two curve road
   // lanes far apart, through the curves' junctions; REGS_DEBUG_CURVES logs each trip
-  // (REGS_TEST_CURVE_TRAMS=<n> likewise with trams on the curves' tram lanes)
+  // (REGS_TEST_CURVE_TRAMS=<n> likewise with trams on the curves' tram lanes, REGS_TEST_CURVE_METRO=<n> with metro cars on
+  // track curves)
   struct TestTrips {
     const char* env;
     uint32_t medium;
@@ -230,8 +231,9 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     float clock = 0, logClock = 0;
     std::vector<int> movers;
   };
-  static TestTrips tests[2] = {{"REGS_TEST_CURVE_CARS", kPathRoad, "era4-suv", "car"},
-                               {"REGS_TEST_CURVE_TRAMS", kPathTram, "tram-01", "tram"}};
+  static TestTrips tests[3] = {{"REGS_TEST_CURVE_CARS", kPathRoad, "era4-suv", "car"},
+                               {"REGS_TEST_CURVE_TRAMS", kPathTram, "tram-01", "tram"},
+                               {"REGS_TEST_CURVE_METRO", kPathMetro, "metro-01", "metro"}};
   for (TestTrips& tt : tests) {
     const char* t = std::getenv(tt.env);
     if (!t) continue;

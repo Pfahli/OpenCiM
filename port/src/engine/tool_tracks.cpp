@@ -1208,7 +1208,7 @@ int roadType(const Ctx& c) {
   if (c.editMode == kGridModeLayAlley) return 1;
   return c.toolMode >= 0 && c.toolMode < 6 ? kRoadType[c.toolMode] : 2;
 }
-int roadShift(int type) { return type == 5 ? 8 : type == 6 ? 16 : type == 7 ? 24 : 0; }
+int roadShift(int type) { return type == 5 ? 8 : type == 6 ? 16 : type == 7 || type == 9 || (type >= 0xd && type <= 0xf) ? 24 : 0; }
 
 void createRoadBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, int variant, int y) {
   (void)variant;

@@ -726,6 +726,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   auto keep = [](const PathRecord& p) { return !(p.flags & (kPathStart | kPathEnd)); };
   auto bentNodes = [&](const CurveRoad& c, float t0, float t1) {
     const CurveProfile& pf = curveProfile(c.kind);
+    const bool track = curveIsTrack(c.kind);  // tracks keep their dead end's START / END paths (trains turn there)
     const float kept = curveLength(c) - t0 - t1;
     CurvePieces cp = curvePieces(c, kept);
     std::vector<CurveSample> shape = curveShape(c);
@@ -734,7 +735,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       for (int i = 0; i < cp.count && kept > 0.05f; ++i) {
         float s0 = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
         for (const auto& [name, p] : ps->paths) {
-          if (!keep(p)) continue;
+          if (!track && !keep(p)) continue;
           CurveSample a = curveAt(shape, s0 + p.p0.x * cp.stretch), b = curveAt(shape, s0 + p.p1.x * cp.stretch);
           LaneNode n;
           n.flags = p.flags & ~kPathStop;
@@ -759,7 +760,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       Vec3 o, ax, az, up{0, 1, 0};
       curveCapFrame(c, end, openPlusX, o, ax, az);
       for (const auto& [name, p] : dp->paths) {
-        if (!keep(p)) continue;
+        if (!track && !keep(p)) continue;
         LaneNode n;
         n.flags = p.flags & ~kPathStop;
         n.item = -1;

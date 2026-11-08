@@ -763,6 +763,18 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         };
         pieces(pf.straight);
         if (c.ends & 4) pieces(pf.tram);
+        if (pf.pillar[0]) {  // elevated tracks: the straight piece's pillar parts (metroe_basic onPlace: a half on each
+                             // side, one cell under the track, at both ends of a piece) under every joint
+          ObjectObj* po = nullptr;
+          int pb = templateOf(pf.pillar, &po);
+          if (pb >= 0 && po && po->data)
+            for (int i = 0; i <= cp.count; ++i) {
+              CurveSample k = curveAt(shape, t0 + float(i) * pf.piece * cp.stretch);
+              Vec3 ax = render::normalize(Vec3{k.dir.x, 0, k.dir.z}), az = k.right, down{0, -3.0f, 0};
+              appendPlacedMesh(po->data->mesh, pb, k.p + az * 3.0f + down, ax, az, m);
+              appendPlacedMesh(po->data->mesh, pb, k.p - az * 3.0f + down, ax * -1.0f, az * -1.0f, m);
+            }
+        }
         CurveEnds caps = curveFreeEnds(g, c);
         ObjectObj* dob = nullptr;
         int db = templateOf(pf.deadend, &dob);

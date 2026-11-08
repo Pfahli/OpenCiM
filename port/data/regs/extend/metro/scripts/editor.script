@@ -429,6 +429,16 @@ for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
 $regsTab = regsAddRoadType("roundabout", $regsRs.$regs_round_tooltip);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout-1", macro :: regsRoundaboutTool(1), $regsRs.$regs_round_one);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout", macro :: regsRoundaboutTool(2), $regsRs.$regs_round_two);
+// tracks on curves (owner's request 2026-11-08): the build menu's metro tab gets the shapes for ground and elevated
+// metro tracks, the traffic menu's track tab those for the railway (curve kinds 4, 5, 6)
+$regsTrackTabs = [$buildMenu.$tabs["metro"], $buildMenu.$tabs["metro"], $trafficMenu.$tabs["track"]];
+$regsTrackNames = [$regsRs.$regs_track_ground, $regsRs.$regs_track_elevated, $regsRs.$regs_track_rail];
+$regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/curve-small", "/regs/ui/toolbar/curve-free"];
+for ($regsI = 0; $regsI < 3; ++$regsI) {
+  for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
+    regsTabButton($regsTrackTabs[$regsI], null, $regsShapeIcons[$regsJ], macro($regsI + 4, $regsJ) :: regsCurveToolFor($0, 0, $1), $regsTrackNames[$regsI] + ": " + $regsShapeTips[$regsJ]);
+  }
+}
 delete $regsRs;
 
 // ---- free turn of objects (owner's request 2026-11-08; engine/tools.cpp toolWheel) ----

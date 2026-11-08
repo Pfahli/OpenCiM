@@ -39,8 +39,16 @@ struct CurveProfile {
   const char* straight;  // templates: the straight piece, the dead end, the street tram piece ("" none)
   const char* deadend;
   const char* tram;
+  float capOffset;       // the dead-end piece's centre beyond a free end
+  const char* pillar;    // elevated tracks: the pillar template set under every joint of their pieces ("" none)
 };
-constexpr int kCurveKinds = 4;
+constexpr int kCurveKinds = 7;
+// tracks (owner's request 2026-11-08): 4 metro on the ground, 5 elevated metro, 6 the editor's railway (double track);
+// bent like the road kinds, joined smoothly to their own kind only (no junctions), never under tram tracks or stops
+inline bool curveIsTrack(int kind) { return kind >= 4; }
+inline bool curveIsElevated(int kind) { return kind == 5; }
+// which curve ends may meet: roads of all kinds, footpaths, and each track kind on its own
+inline int curveJoinClass(int kind) { return kind >= 3 ? kind : 0; }
 const CurveProfile& curveProfile(int kind);
 // the driving lanes' offsets right of the centre line (one direction; the other mirrors), and their medium
 struct CurveLanes {
