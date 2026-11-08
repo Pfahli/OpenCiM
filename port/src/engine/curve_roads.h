@@ -89,7 +89,8 @@ struct CurveJunction {
   float radius = 0;
   std::vector<CurveArm> arms;  // counter-clockwise (by the angle of mouth − centre)
 };
-std::vector<CurveJunction> findCurveJunctions(const GridData& g);
+// near: only the junctions at those points (within 1 unit; the same ones the whole search finds there)
+std::vector<CurveJunction> findCurveJunctions(const GridData& g, const std::vector<render::Vec3>* near = nullptr);
 // a curve cut in two at arc length s (exactly the same road); end flags and stops go with their halves. Returns the
 // cut point.
 render::Vec3 splitCurve(const CurveRoad& c, float s, CurveRoad& first, CurveRoad& second);

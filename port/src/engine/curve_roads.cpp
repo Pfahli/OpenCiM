@@ -847,7 +847,7 @@ bool curveFromActionBytes(const std::vector<uint8_t>& raw, CurveRoad& c, bool& a
 
 // ---- junctions ----
 
-std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
+std::vector<CurveJunction> findCurveJunctions(const GridData& g, const std::vector<Vec3>* near) {
   struct End {
     int curve, end, kind;
     Vec3 p, out;
@@ -860,13 +860,29 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
   }
   std::vector<uint8_t> used(ends.size(), 0);
   std::vector<CurveJunction> out;
+  // the ends by x (the groups as before, found in a window: maps with thousands of curves, the OSM import)
+  std::vector<size_t> byX(ends.size());
+  for (size_t i = 0; i < byX.size(); ++i) byX[i] = i;
+  std::sort(byX.begin(), byX.end(), [&](size_t x, size_t y) { return ends[x].p.x < ends[y].p.x; });
+  std::vector<size_t> rank(ends.size());
+  for (size_t i = 0; i < byX.size(); ++i) rank[byX[i]] = i;
   for (size_t a = 0; a < ends.size(); ++a) {
     if (used[a]) continue;
+    if (near) {  // only the junctions at these points
+      bool close = false;
+      for (const Vec3& q : *near) close = close || (std::fabs(q.x - ends[a].p.x) < 1.0f && std::fabs(q.z - ends[a].p.z) < 1.0f);
+      if (!close) continue;
+    }
     std::vector<size_t> group{a};
-    for (size_t b = a + 1; b < ends.size(); ++b)
-      if (!used[b] && (ends[b].kind == 3) == (ends[a].kind == 3) && std::fabs(ends[b].p.x - ends[a].p.x) < 0.2f &&
+    size_t lo = rank[a];
+    while (lo > 0 && ends[byX[lo - 1]].p.x > ends[a].p.x - 0.2f) --lo;
+    for (size_t k = lo; k < byX.size() && ends[byX[k]].p.x < ends[a].p.x + 0.2f; ++k) {
+      size_t b = byX[k];
+      if (b > a && !used[b] && (ends[b].kind == 3) == (ends[a].kind == 3) && std::fabs(ends[b].p.x - ends[a].p.x) < 0.2f &&
           std::fabs(ends[b].p.z - ends[a].p.z) < 0.2f)
         group.push_back(b);
+    }
+    std::sort(group.begin() + 1, group.end());
     for (size_t k : group) used[k] = 1;
     if (group.size() < 2) continue;
     if (group.size() == 2 && dot(ends[group[0]].out, ends[group[1]].out) < -0.985f) continue;  // a smooth join
@@ -1311,8 +1327,9 @@ void junctionCells(const GridData& g, const CurveJunction& j, int& x0, int& z0, 
 // the junctions with an arm ending where one of c's ends is
 static std::vector<CurveJunction> junctionsAt(const GridData& g, const CurveRoad& c) {
   std::vector<CurveJunction> r;
-  for (const CurveJunction& j : findCurveJunctions(g))
-    for (const Vec3& e : {Vec3{c.x0, 0, c.z0}, Vec3{c.x1, 0, c.z1}})
+  const std::vector<Vec3> at{Vec3{c.x0, 0, c.z0}, Vec3{c.x1, 0, c.z1}};
+  for (const CurveJunction& j : findCurveJunctions(g, &at))
+    for (const Vec3& e : at)
       if ((j.kind == 3) == (c.kind == 3) && std::fabs(j.centre.x - e.x) < 0.3f && std::fabs(j.centre.z - e.z) < 0.3f) {
         r.push_back(j);
         break;

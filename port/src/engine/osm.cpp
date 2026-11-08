@@ -30,6 +30,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
@@ -38,6 +39,7 @@
 #include "engine/interaction.h"
 #include "engine/platform.h"
 #include "engine/timeline.h"
+#include "engine/tool_tracks.h"
 #include "engine/tools.h"
 #include "render/renderer2d.h"
 
@@ -569,6 +571,7 @@ struct Way {
 struct RoadIn {
   int kind = 0;  // 0 small road, 1 large road (multi-lane), 2 alley, 3 avenue (trees in the median), 4 express road
   bool bridge = false, oneway = false, treeLined = false, dropped = false;
+  bool ring = false;  // junction=roundabout
   int cls = 0;   // 0 minor, 1 tertiary, 2 secondary, 3 primary, 4 trunk/motorway
   int lanes = 0;
   double width = 0;  // metres (0 unknown)
@@ -613,21 +616,42 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
     return l > 0 ? std::pair<double, double>{dx / l, dz / l} : std::pair<double, double>{0, 0};
   };
   const double maxGap = 50.0 / cellM, minGap = 3.0 / cellM;  // carriageways 3-50 m apart
+  // the merged carriageways' points moved to the centre line: the streets ending on them follow (they stay joined)
+  auto key = [](std::pair<double, double> q) { return std::pair<long long, long long>{std::llround(q.first * 64), std::llround(q.second * 64)}; };
+  std::map<std::pair<long long, long long>, std::pair<double, double>> moved;
+  int pairsMerged = 0;
+  std::set<const RoadIn*> centred;  // ways made a centre line (no carriageway any more)
+  // the distance of q to a way where q lies beside it (its foot not beyond the way's ends)
+  auto beside = [](std::pair<double, double> q, const RoadIn& w, double& dist) {
+    dist = 1e30;
+    bool in = false;
+    for (size_t i = 0; i + 1 < w.pts.size(); ++i) {
+      auto a = w.pts[i], b = w.pts[i + 1];
+      double dx = b.first - a.first, dz = b.second - a.second, l2 = dx * dx + dz * dz;
+      double tr = l2 > 0 ? ((q.first - a.first) * dx + (q.second - a.second) * dz) / l2 : 0, t = std::clamp(tr, 0.0, 1.0);
+      double d = std::hypot(a.first + t * dx - q.first, a.second + t * dz - q.second);
+      if (d < dist) dist = d, in = !((i == 0 && tr < 0) || (i + 2 == w.pts.size() && tr > 1));
+    }
+    return in;
+  };
   for (auto& [name, group] : byName)
     for (RoadIn* a : group) {
       if (a->dropped) continue;
       auto da = dir(*a);
       std::vector<const RoadIn*> partners;
+      // the other carriageway: ways running the other way beside this one (a carriageway another pair took already
+      // still counts: the two sides are split into ways at different places)
       for (RoadIn* b : group) {
-        if (b == a || b->dropped) continue;
+        if (b == a || centred.count(b)) continue;
         auto db = dir(*b);
         if (da.first * db.first + da.second * db.second > -0.5) continue;  // runs the same way
         std::vector<double> ds;
-        for (auto& q : b->pts) {
-          double d;
-          nearestOn(q.first, q.second, {a}, d);
-          ds.push_back(d);
-        }
+        double d;
+        for (auto& q : b->pts)
+          if (beside(q, *a, d)) ds.push_back(d);
+        for (auto& q : a->pts)
+          if (beside(q, *b, d)) ds.push_back(d);
+        if (ds.empty()) continue;
         std::nth_element(ds.begin(), ds.begin() + std::ptrdiff_t(ds.size() / 2), ds.end());
         double med = ds[ds.size() / 2];
         if (med >= minGap && med <= maxGap) partners.push_back(b);
@@ -640,6 +664,12 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
       for (auto& q : a->pts) {
         double d;
         auto o = nearestOn(q.first, q.second, partners, d);
+        auto known = moved.find(key(q));
+        if (known != moved.end()) {  // a point an earlier pair already moved (the ways of one road meet there)
+          mid.push_back(known->second);
+          if (d <= maxGap) gapSum += d;
+          continue;
+        }
         if (d > maxGap) {
           mid.push_back(q);
           continue;
@@ -647,6 +677,48 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
         mid.push_back({(q.first + o.first) * 0.5, (q.second + o.second) * 0.5});
         gapSum += d;
       }
+      for (size_t i = 0; i < a->pts.size(); ++i) moved.emplace(key(a->pts[i]), mid[i]);
+      // the partners' points onto the centre line (a point of it there, or a new one)
+      {
+        struct Ins {
+          size_t seg;
+          double t;
+          std::pair<double, double> p;
+        };
+        std::vector<Ins> ins;
+        for (const RoadIn* b : partners)
+          for (auto& q : b->pts) {
+            if (moved.count(key(q))) continue;
+            double best = 1e30, bt = 0;
+            size_t bs = 0;
+            std::pair<double, double> bp;
+            for (size_t i = 0; i + 1 < mid.size(); ++i) {
+              double dx = mid[i + 1].first - mid[i].first, dz = mid[i + 1].second - mid[i].second, l2 = dx * dx + dz * dz;
+              double t = l2 > 0 ? std::clamp(((q.first - mid[i].first) * dx + (q.second - mid[i].second) * dz) / l2, 0.0, 1.0) : 0;
+              std::pair<double, double> o{mid[i].first + t * dx, mid[i].second + t * dz};
+              double d = std::hypot(o.first - q.first, o.second - q.second);
+              if (d < best) best = d, bt = t, bs = i, bp = o;
+            }
+            if (best > maxGap) continue;
+            double segLen = std::hypot(mid[bs + 1].first - mid[bs].first, mid[bs + 1].second - mid[bs].second);
+            if (bt * segLen < 0.3) moved[key(q)] = mid[bs];
+            else if ((1 - bt) * segLen < 0.3) moved[key(q)] = mid[bs + 1];
+            else ins.push_back({bs, bt, bp}), moved[key(q)] = bp;
+          }
+        std::sort(ins.begin(), ins.end(), [](const Ins& x, const Ins& y) { return x.seg != y.seg ? x.seg < y.seg : x.t < y.t; });
+        std::vector<std::pair<double, double>> m2;
+        size_t k = 0;
+        for (size_t i = 0; i < mid.size(); ++i) {
+          m2.push_back(mid[i]);
+          while (k < ins.size() && ins[k].seg == i) {
+            if (m2.back() != ins[k].p) m2.push_back(ins[k].p);
+            ++k;
+          }
+        }
+        mid.swap(m2);
+      }
+      ++pairsMerged;
+      centred.insert(a);
       double gap = gapSum / double(a->pts.size());
       for (const RoadIn* b : partners) trees = trees || b->treeLined;
       if (!trees)
@@ -666,11 +738,71 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
       a->kind = a->cls >= 4 ? 4 : trees ? 3 : 1;
       for (const RoadIn* b : partners) const_cast<RoadIn*>(b)->dropped = true;
     }
+  // points of dropped carriageways no centre line took (beyond the part its pair covered): the streets ending there
+  // join the nearest centre line
+  {
+    std::set<std::pair<long long, long long>> gone;
+    for (RoadIn& r : roads)
+      if (r.dropped)
+        for (auto& q : r.pts) gone.insert(key(q));
+    for (RoadIn& r : roads) {
+      if (r.dropped || centred.count(&r)) continue;
+      for (auto& q : r.pts) {
+        auto k = key(q);
+        if (!gone.count(k) || moved.count(k)) continue;
+        RoadIn* best = nullptr;
+        double bd = maxGap, bt = 0;
+        size_t bs = 0;
+        for (const RoadIn* cp : centred) {
+          RoadIn* c = const_cast<RoadIn*>(cp);
+          for (size_t i = 0; i + 1 < c->pts.size(); ++i) {
+            auto a = c->pts[i], b = c->pts[i + 1];
+            double dx = b.first - a.first, dz = b.second - a.second, l2 = dx * dx + dz * dz;
+            double t = l2 > 0 ? std::clamp(((q.first - a.first) * dx + (q.second - a.second) * dz) / l2, 0.0, 1.0) : 0;
+            double d = std::hypot(a.first + t * dx - q.first, a.second + t * dz - q.second);
+            if (d < bd) bd = d, best = c, bs = i, bt = t;
+          }
+        }
+        if (!best) continue;
+        auto a = best->pts[bs], b = best->pts[bs + 1];
+        double segLen = std::hypot(b.first - a.first, b.second - a.second);
+        if (bt * segLen < 0.3) moved[k] = a;
+        else if ((1 - bt) * segLen < 0.3) moved[k] = b;
+        else {
+          std::pair<double, double> o{a.first + bt * (b.first - a.first), a.second + bt * (b.second - a.second)};
+          best->pts.insert(best->pts.begin() + std::ptrdiff_t(bs + 1), o);
+          moved[k] = o;
+        }
+      }
+    }
+  }
+  // the streets that ended on a carriageway end on the centre line
+  for (RoadIn& r : roads) {
+    if (r.dropped) continue;
+    bool any = false;
+    for (auto& q : r.pts) {
+      auto it = moved.find(key(q));
+      if (it != moved.end() && it->second != q) q = it->second, any = true;
+    }
+    if (!any) continue;
+    std::vector<std::pair<double, double>> pts;
+    for (auto& q : r.pts)
+      if (pts.empty() || std::hypot(q.first - pts.back().first, q.second - pts.back().second) > 0.05) pts.push_back(q);
+    r.pts.swap(pts);
+  }
+  if (std::getenv("REGS_DEBUG_OSM")) {
+    LOG_INFO("osm: %d divided roads merged, %zu points moved", pairsMerged, moved.size());
+    for (RoadIn& r : roads)
+      if (!r.dropped && r.oneway && r.kind != 2 && r.cls >= 1)
+        LOG_INFO("osm: one-way left: '%s' cls %d lanes %d, %zu points", r.name.c_str(), r.cls, r.lanes, r.pts.size());
+  }
   for (RoadIn& r : roads) {
     if (r.dropped || r.kind != 0) continue;
     if (r.cls >= 4) r.kind = 4;
     else if (r.treeLined && r.cls >= 1) r.kind = 3;
-    else if (r.lanes >= (r.oneway ? 3 : 4) || r.width >= 12.0 || r.cls >= 2) r.kind = 1;
+    // a carriageway without its partner: a one-way street (two of them side by side are what the map has)
+    else if (r.oneway) r.lanes = std::max(r.lanes, r.cls >= 1 ? 2 : r.lanes);
+    else if (r.lanes >= 4 || r.width >= 12.0 || r.cls >= 2) r.kind = 1;
   }
   roads.erase(std::remove_if(roads.begin(), roads.end(), [](const RoadIn& r) { return r.dropped; }), roads.end());
 }
@@ -681,11 +813,16 @@ struct BuildingIn {
   std::vector<std::pair<double, double>> pts;
   bool polygon;  // pts is one closed ring (point-in-polygon works)
 };
+// a tree to plant: its cell and what it grows in (0 wood, 1 scrub, 2 park or orchard, 3 a single tree or a row)
+struct TreeIn {
+  int first = 0, second = 0;
+  int kind = 3;
+};
 struct ImportData {
   int W = 0, L = 0, flags = 0;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
-  std::vector<std::pair<int, int>> trees;
+  std::vector<TreeIn> trees;
   std::vector<RoadIn> roads;
   std::vector<BuildingIn> buildings;
   std::vector<uint8_t> satellite;
@@ -976,7 +1113,12 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
   };
   Edges waterEdges, coast, landuseRes, landuseCom, landuseInd;
   std::vector<std::vector<std::pair<double, double>>> treeRows;
-  std::vector<std::pair<Edges, double>> treeAreas;
+  struct TreeArea {
+    Edges edges;
+    double density;
+    int kind;
+  };
+  std::vector<TreeArea> treeAreas;
   std::vector<std::pair<std::vector<std::pair<double, double>>, double>> rivers;  // line, width in cells
   const double cellM = fr.unitsPerCell * metresPerUnit(fr.cmy);
   if (haveOsm)
@@ -1023,6 +1165,9 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           r.bridge = tags.str("bridge") == "yes" || tags.str("bridge") == "viaduct";
           std::string ow = tags.str("oneway");
           r.oneway = ow == "yes" || ow == "1" || ow == "-1" || hw == "motorway";
+          if (ow == "-1") std::reverse(pts.begin(), pts.end());  // one-way against the way's direction
+          std::string jn = tags.str("junction");
+          r.ring = jn == "roundabout" || jn == "circular";
           r.lanes = int(tags.num("lanes", 0));
           r.width = std::atof(tags.str("width").c_str());
           std::string tl = tags.str("tree_lined"), med = tags.str("median");
@@ -1070,11 +1215,13 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           double wm = tags.num("width", ww == "river" ? 15.0 : 10.0);
           rivers.push_back({std::move(pts), wm / cellM});
         } else if (nat == "wood" || lu == "forest") {
-          if (closed) treeAreas.push_back({ringEdges, 0.35});
-        } else if (nat == "scrub" || lu == "orchard") {
-          if (closed) treeAreas.push_back({ringEdges, 0.15});
+          if (closed) treeAreas.push_back({ringEdges, 0.8, 0});  // a forest: full of trees and bushes
+        } else if (nat == "scrub") {
+          if (closed) treeAreas.push_back({ringEdges, 0.5, 1});
+        } else if (lu == "orchard") {
+          if (closed) treeAreas.push_back({ringEdges, 0.25, 2});
         } else if (le == "park" || le == "garden") {
-          if (closed) treeAreas.push_back({ringEdges, 0.06});
+          if (closed) treeAreas.push_back({ringEdges, 0.08, 2});
         }
       }
   osm = Json();
@@ -1166,15 +1313,16 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     std::vector<uint8_t> taken(size_t(W) * size_t(L), 0);
     for (auto& t : data->trees) taken[size_t(t.second) * size_t(W) + size_t(t.first)] = 1;
     uint64_t salt = 0;
-    for (auto& [edges, density] : treeAreas) {
+    for (auto& [edges, density, kind] : treeAreas) {
       ++salt;
       double d = density;
+      int k = kind;
       fillEdges(edges, W, L, [&](int x, int z) {
         size_t i = size_t(z) * size_t(W) + size_t(x);
         if (taken[i] || water[i] || x < 1 || z < 1 || x >= W - 1 || z >= L - 1) return;
         if (double(hash32((uint64_t(x) << 40) ^ (uint64_t(z) << 16) ^ salt) % 10000) >= d * 10000.0) return;
         taken[i] = 1;
-        data->trees.push_back({x, z});
+        data->trees.push_back({x, z, k});
       });
     }
     if (data->trees.size() > 60000) {  // the game's maps hold about 90k objects in all
@@ -1248,6 +1396,8 @@ struct Apply {
   std::vector<uint8_t> used;  // cells taken by roads, buildings, trees, water
   std::vector<int> made;
   Object* timeline = nullptr;
+  bool gridStreets = false;  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
+  int curvesMade = 0;
   int roadsOk = 0, roadsFailed = 0, buildingsPlaced = 0, treesPlaced = 0;
 };
 std::unique_ptr<Apply> g_apply;
@@ -1537,6 +1687,735 @@ void levelUnderRoads(GridData& g, const std::map<std::pair<int, int>, uint32_t>&
   heights = out;
 }
 
+// ---- the streets as curves (owner's request 2026-11-08: the port's curve tools, docs/building-tools.md) ----
+// Every OSM way becomes a chain of curves (one cubic Bézier per leg, Catmull-Rom tangents) through its simplified
+// points; ways sharing an OSM node share the exact point, so the curves meet there in a junction (three and more arms,
+// or a sharp bend) or join smoothly (two arms running on). The limits of the curve tool hold: legs shorter than the
+// junctions at their ends need are merged away (a point dropped, or two junctions made one), arms closer than 30° are
+// spread, bends tighter than the kind's minimum radius become junctions. Ways leaving the map end on two grid blocks at
+// the edge (the game's edge piece, then a straight piece the curve starts on: traffic from outside). Water and the
+// map's border cut ways (bridges later); bridges crossing other streets without a shared node are left out; footpaths
+// keep away from roads (curve junctions take footpaths only among themselves).
+namespace streets {
+
+constexpr double kPiD = 3.14159265358979323846;
+
+struct Node {
+  double x = 0, z = 0;  // world units
+  float y = 0;
+  bool foot = false;
+  int exit = -1;        // the map-edge stub it ends on
+  bool corner = false;  // a sharp bend: its two roads meet as a junction
+  bool alive = true;
+};
+struct Seg {
+  int a = 0, b = 0;   // nodes; a → b is the way one-way streets run
+  int kind = 0;       // CurveRoad::kind
+  uint8_t flags = 0;  // CurveRoad::ends bits 0x20 / 0x40 / 0x80
+  bool alive = true;
+};
+struct Exit {
+  int side = 0;      // 0 west (−x), 1 east, 2 north (−z), 3 south
+  int bx = 0, bz = 0, ex = 0, ez = 0;  // the inner block, the edge block
+  int type = 2;      // the blocks' road item type: 2 small, 5 large
+  double px = 0, pz = 0;  // the expected end point (world)
+  double dx = 0, dz = 0;  // into the map
+  int node = -1;
+};
+struct Plan {
+  std::vector<Node> nodes;
+  std::vector<Seg> segs;
+  std::vector<Exit> exits;
+  int dropped = 0, merged = 0, corners = 0;
+};
+
+float halfWidth(int kind) { return curveProfile(kind).halfWidth; }
+double minLen(int kind) { return kind == 3 ? 3.0 : 6.0; }
+
+using Pt = std::pair<double, double>;
+struct Chain {
+  std::vector<Pt> pts;  // cells
+  int kind = 0;
+  uint8_t flags = 0;
+  bool bridge = false;
+  int exit0 = -1, exit1 = -1;  // the map side the first / last point lies on (clipped there), -1 none
+};
+
+// a polyline's runs where bad() is false, tested every `step` cells; the original points stay (shared nodes keep their
+// exact place), the cuts back off `back` cells from the bad part
+template <class F>
+std::vector<Chain> splitWhere(const Chain& c, F bad, double step, double back) {
+  struct S {
+    Pt p;
+    bool orig, bad;
+  };
+  std::vector<S> ss;
+  for (size_t i = 0; i + 1 < c.pts.size(); ++i) {
+    Pt p = c.pts[i], q = c.pts[i + 1];
+    int n = std::max(1, int(std::ceil(std::hypot(q.first - p.first, q.second - p.second) / step)));
+    for (int k = 0; k < n; ++k) {
+      double t = double(k) / n;
+      Pt s{p.first + (q.first - p.first) * t, p.second + (q.second - p.second) * t};
+      ss.push_back({s, k == 0, false});
+    }
+  }
+  ss.push_back({c.pts.back(), true, false});
+  for (S& x : ss) x.bad = bad(x.p.first, x.p.second);
+  std::vector<Chain> out;
+  auto dist = [](Pt a, Pt b) { return std::hypot(a.first - b.first, a.second - b.second); };
+  for (size_t i = 0; i < ss.size();) {
+    if (ss[i].bad) {
+      ++i;
+      continue;
+    }
+    size_t j = i;
+    while (j + 1 < ss.size() && !ss[j + 1].bad) ++j;
+    size_t from = i, to = j;
+    if (i > 0)
+      while (from < to && dist(ss[from].p, ss[i - 1].p) < back) ++from;
+    if (j + 1 < ss.size())
+      while (to > from && dist(ss[to].p, ss[j + 1].p) < back) --to;
+    if (to > from) {
+      Chain part = c;
+      part.pts.clear();
+      part.exit0 = i == 0 ? c.exit0 : -1;
+      part.exit1 = j + 1 == ss.size() ? c.exit1 : -1;
+      part.pts.push_back(ss[from].p);
+      for (size_t k = from + 1; k < to; ++k)
+        if (ss[k].orig) part.pts.push_back(ss[k].p);
+      part.pts.push_back(ss[to].p);
+      out.push_back(std::move(part));
+    }
+    i = j + 1;
+  }
+  return out;
+}
+
+// the parts of a chain inside [lo, hi] (cells), the cut ends flagged with their side
+std::vector<Chain> clipChain(const Chain& c, double x0, double z0, double x1, double z1) {
+  std::vector<Chain> out;
+  Chain cur = c;
+  cur.pts.clear();
+  cur.exit0 = cur.exit1 = -1;
+  for (size_t i = 0; i + 1 < c.pts.size(); ++i) {
+    Pt p = c.pts[i], q = c.pts[i + 1];
+    double dx = q.first - p.first, dz = q.second - p.second, t0 = 0, t1 = 1;
+    int s0 = -1, s1 = -1;
+    auto clip = [&](double num, double den, int side) {  // num + den·t >= 0
+      if (std::fabs(den) < 1e-12) return num >= 0;
+      double t = -num / den;
+      if (den > 0) {
+        if (t > t0) t0 = t, s0 = side;
+      } else if (t < t1) t1 = t, s1 = side;
+      return true;
+    };
+    bool ok = clip(p.first - x0, dx, 0) && clip(x1 - p.first, -dx, 1) && clip(p.second - z0, dz, 2) && clip(z1 - p.second, -dz, 3);
+    if (!ok || t0 > t1) {
+      if (cur.pts.size() >= 2) out.push_back(cur);
+      cur.pts.clear(), cur.exit0 = cur.exit1 = -1;
+      continue;
+    }
+    Pt a{p.first + dx * t0, p.second + dz * t0}, b{p.first + dx * t1, p.second + dz * t1};
+    if (cur.pts.empty()) {
+      cur.pts.push_back(t0 > 0 ? a : p);
+      cur.exit0 = t0 > 0 ? s0 : -1;
+    }
+    cur.pts.push_back(t1 < 1 ? b : q);
+    if (t1 < 1) {
+      cur.exit1 = s1;
+      if (cur.pts.size() >= 2) out.push_back(cur);
+      cur.pts.clear(), cur.exit0 = cur.exit1 = -1;
+    }
+  }
+  if (cur.pts.size() >= 2) out.push_back(cur);
+  return out;
+}
+
+bool segCross(Pt a, Pt b, Pt c, Pt d) {  // proper crossing (not at the ends)
+  auto cr = [](Pt o, Pt p, Pt q) { return (p.first - o.first) * (q.second - o.second) - (p.second - o.second) * (q.first - o.first); };
+  double d1 = cr(c, d, a), d2 = cr(c, d, b), d3 = cr(a, b, c), d4 = cr(a, b, d);
+  return ((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) && ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9));
+}
+
+Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::vector<uint8_t>& water) {
+  Plan P;
+  // 1. chains in cells: the curve kinds, one-way flags, clipped to the map less the edge stubs, cut at water
+  std::vector<Chain> chains;
+  for (const RoadIn& r : roads) {
+    if (r.pts.size() < 2) continue;
+    Chain c;
+    c.pts = r.pts;
+    c.kind = r.kind == 2 ? 3 : r.kind == 3 ? 2 : (r.kind == 1 || r.kind == 4) ? 1 : 0;
+    c.bridge = r.bridge;
+    if (r.ring) c.kind = 0;  // roundabouts: one-way small roads (large ones are not supported yet)
+    if (c.kind == 0 && (r.oneway || r.ring)) {
+      bool single = r.lanes == 1 || (r.lanes == 0 && (r.ring || r.cls == 0));
+      c.flags = uint8_t(0x20 | (single ? 0x40 : 0) | (r.ring ? 0x80 : 0));
+    }
+    const double m = c.kind == 3 ? 2.0 : c.kind == 0 ? 8.0 : 14.0;
+    for (Chain& part : clipChain(c, m, m, W - m, L - m)) {
+      auto wet = [&](double x, double z) {
+        int cx = int(std::floor(x)), cz = int(std::floor(z));
+        if (cx < 0 || cz < 0 || cx >= W || cz >= L) return true;
+        return water[size_t(cz) * size_t(W) + size_t(cx)] != 0;
+      };
+      for (Chain& dry : splitWhere(part, wet, 0.5, 1.0)) chains.push_back(std::move(dry));
+    }
+  }
+  // 2. bridges crossing other streets without a shared node go (the legs that cross); footpaths keep 1.5 units off roads
+  {
+    const int B = 8;  // a bucket of the road legs per 8 × 8 cells
+    const int bw = W / B + 1, bl = L / B + 1;
+    std::vector<std::vector<std::pair<int, int>>> bucket(size_t(bw) * size_t(bl));
+    auto addLeg = [&](int ci, int li) {
+      const Chain& c = chains[size_t(ci)];
+      Pt p = c.pts[size_t(li)], q = c.pts[size_t(li) + 1];
+      int x0 = std::clamp(int(std::min(p.first, q.first)) / B, 0, bw - 1), x1 = std::clamp(int(std::max(p.first, q.first)) / B, 0, bw - 1);
+      int z0 = std::clamp(int(std::min(p.second, q.second)) / B, 0, bl - 1), z1 = std::clamp(int(std::max(p.second, q.second)) / B, 0, bl - 1);
+      for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) bucket[size_t(z) * size_t(bw) + size_t(x)].push_back({ci, li});
+    };
+    for (size_t ci = 0; ci < chains.size(); ++ci)
+      if (chains[ci].kind != 3)
+        for (size_t li = 0; li + 1 < chains[ci].pts.size(); ++li) addLeg(int(ci), int(li));
+    auto near = [&](double x, double z, double r, auto f) {
+      int bx0 = std::clamp(int((x - r) / B), 0, bw - 1), bx1 = std::clamp(int((x + r) / B), 0, bw - 1);
+      int bz0 = std::clamp(int((z - r) / B), 0, bl - 1), bz1 = std::clamp(int((z + r) / B), 0, bl - 1);
+      for (int bz = bz0; bz <= bz1; ++bz)
+        for (int bx = bx0; bx <= bx1; ++bx)
+          for (auto [ci, li] : bucket[size_t(bz) * size_t(bw) + size_t(bx)])
+            if (f(ci, li)) return true;
+      return false;
+    };
+    std::vector<Chain> kept;
+    for (size_t ci = 0; ci < chains.size(); ++ci) {
+      const Chain& c = chains[ci];
+      if (c.kind == 3) {
+        auto byRoad = [&](double x, double z) {
+          return near(x, z, 6.0, [&](int cj, int lj) {
+            const Chain& o = chains[size_t(cj)];
+            double lim = (halfWidth(o.kind) + 1.5) / cs;
+            return segDist(x, z, o.pts[size_t(lj)], o.pts[size_t(lj) + 1]) < lim;
+          });
+        };
+        for (Chain& part : splitWhere(c, byRoad, 0.5, 0.0)) kept.push_back(std::move(part));
+        continue;
+      }
+      if (!c.bridge) {
+        kept.push_back(c);
+        continue;
+      }
+      // a bridge: its legs crossing another street's leg
+      Chain cur = c;
+      cur.pts.clear();
+      for (size_t li = 0; li + 1 < c.pts.size(); ++li) {
+        Pt p = c.pts[li], q = c.pts[li + 1];
+        bool cross = near((p.first + q.first) / 2, (p.second + q.second) / 2, std::hypot(q.first - p.first, q.second - p.second) / 2 + 1,
+                          [&](int cj, int lj) {
+                            if (size_t(cj) == ci) return false;
+                            const Chain& o = chains[size_t(cj)];
+                            return segCross(p, q, o.pts[size_t(lj)], o.pts[size_t(lj) + 1]);
+                          });
+        if (cross) {
+          if (cur.pts.size() >= 2) cur.exit1 = -1, kept.push_back(cur);
+          cur.pts.clear(), cur.exit0 = -1;
+          continue;
+        }
+        if (cur.pts.empty()) cur.pts.push_back(p);
+        cur.pts.push_back(q);
+      }
+      if (cur.pts.size() >= 2) {
+        if (cur.pts.back() != c.pts.back()) cur.exit1 = -1;
+        kept.push_back(cur);
+      }
+    }
+    chains.swap(kept);
+  }
+  // 3. nodes: shared OSM points are one node (footpaths their own), simplified chains, legs
+  auto key = [](Pt q, bool foot) {
+    return std::tuple<long long, long long, bool>{std::llround(q.first * 64), std::llround(q.second * 64), foot};
+  };
+  std::map<std::tuple<long long, long long, bool>, int> nodeOf;
+  std::map<int, int> chainsAt;  // node → how many chains pass it
+  std::vector<std::vector<int>> ids(chains.size());
+  for (size_t ci = 0; ci < chains.size(); ++ci) {
+    std::set<int> seen;
+    for (Pt q : chains[ci].pts) {
+      auto k = key(q, chains[ci].kind == 3);
+      auto it = nodeOf.find(k);
+      int id;
+      if (it == nodeOf.end()) {
+        id = int(P.nodes.size());
+        Node n;
+        n.x = (q.first - W * 0.5) * cs, n.z = (q.second - L * 0.5) * cs, n.foot = chains[ci].kind == 3;
+        P.nodes.push_back(n);
+        nodeOf[k] = id;
+      } else id = it->second;
+      ids[ci].push_back(id);
+      if (seen.insert(id).second) ++chainsAt[id];
+      else chainsAt[id] += 2;  // a loop closing on itself
+    }
+  }
+  // the map-edge stubs
+  auto makeExit = [&](int nodeId, int side, int kind) {
+    if (kind == 3 || kind == 2) return;  // footpaths and avenues end free at the edge
+    Node& n = P.nodes[size_t(nodeId)];
+    double cx = n.x / cs + W * 0.5, cz = n.z / cs + L * 0.5;
+    Exit e;
+    e.side = side;
+    const bool large = kind == 1;
+    e.type = large ? 5 : 2;
+    const int depth = large ? 8 : 4, reach = large ? 14 : 8;  // the inner block's offset, the end's distance from the edge
+    bool alongX = side >= 2;  // the stub runs along z: the edge is north / south, the free coordinate x
+    double along = alongX ? cx : cz;
+    int edgeAt = side == 0 || side == 2 ? 0 : (alongX ? L : W) - 4;
+    int off = 0;
+    if (large) off = ((-edgeAt) % 8 + 8) % 8;  // (x + z) & 4 == 0 on the block lattice
+    int step = large ? 8 : 4;
+    int a = int(std::lround((along - 2 - off) / step)) * step + off;
+    int lim = alongX ? W : L;
+    if (a < 16 || a > lim - 20) return;  // near a corner
+    int inner = side == 0 || side == 2 ? edgeAt + depth : edgeAt - depth;
+    if (alongX) e.bx = a, e.bz = inner, e.ex = a, e.ez = edgeAt;
+    else e.bx = inner, e.bz = a, e.ex = edgeAt, e.ez = a;
+    for (const Exit& o : P.exits)  // stubs keep a block apart
+      if (o.side == side && std::abs((alongX ? o.bx : o.bz) - a) < (large || o.type == 5 ? 12 : 8)) return;
+    double endCell = side == 0 || side == 2 ? reach : (alongX ? L : W) - reach;
+    double ax = alongX ? a + 2.0 : endCell, az = alongX ? endCell : a + 2.0;
+    e.px = (ax - W * 0.5) * cs, e.pz = (az - L * 0.5) * cs;
+    e.dx = side == 0 ? 1 : side == 1 ? -1 : 0;
+    e.dz = side == 2 ? 1 : side == 3 ? -1 : 0;
+    e.node = nodeId;
+    n.x = e.px, n.z = e.pz;
+    n.exit = int(P.exits.size());
+    P.exits.push_back(e);
+  };
+  for (size_t ci = 0; ci < chains.size(); ++ci) {
+    const Chain& c = chains[ci];
+    std::vector<int>& v = ids[ci];
+    std::vector<char> keep(v.size(), 0);
+    keep.front() = keep.back() = 1;
+    for (size_t i = 0; i < v.size(); ++i)
+      if (chainsAt[v[i]] > 1) keep[i] = 1;
+    // Douglas-Peucker between the kept points (1.2 units)
+    std::vector<std::pair<size_t, size_t>> st;
+    size_t prev = 0;
+    for (size_t i = 1; i < v.size(); ++i)
+      if (keep[i]) st.push_back({prev, i}), prev = i;
+    while (!st.empty()) {
+      auto [ia, ib] = st.back();
+      st.pop_back();
+      const Node &A = P.nodes[size_t(v[ia])], &Bn = P.nodes[size_t(v[ib])];
+      double dx = Bn.x - A.x, dz = Bn.z - A.z, len = std::hypot(dx, dz);
+      size_t best = 0;
+      double bd = 0;
+      for (size_t i = ia + 1; i < ib; ++i) {
+        const Node& Q = P.nodes[size_t(v[i])];
+        double d = len > 1e-9 ? std::fabs((Q.x - A.x) * dz - (Q.z - A.z) * dx) / len : std::hypot(Q.x - A.x, Q.z - A.z);
+        if (d > bd) bd = d, best = i;
+      }
+      if (bd > 1.2) {
+        keep[best] = 1;
+        st.push_back({ia, best});
+        st.push_back({best, ib});
+      }
+    }
+    if (c.exit0 >= 0 && P.nodes[size_t(v.front())].exit < 0 && chainsAt[v.front()] == 1) makeExit(v.front(), c.exit0, c.kind);
+    if (c.exit1 >= 0 && P.nodes[size_t(v.back())].exit < 0 && chainsAt[v.back()] == 1) makeExit(v.back(), c.exit1, c.kind);
+    int last = -1;
+    for (size_t i = 0; i < v.size(); ++i) {
+      if (!keep[i]) continue;
+      if (last >= 0 && last != v[i]) {
+        Seg s;
+        s.a = last, s.b = v[i], s.kind = c.kind, s.flags = c.flags;
+        P.segs.push_back(s);
+      }
+      last = v[i];
+    }
+  }
+  return P;
+}
+
+// ---- the graph's geometry ----
+struct Geo {
+  std::vector<std::vector<int>> arms;  // per node its live segments
+};
+Geo arms(const Plan& P) {
+  Geo g;
+  g.arms.assign(P.nodes.size(), {});
+  for (size_t i = 0; i < P.segs.size(); ++i)
+    if (P.segs[i].alive) g.arms[size_t(P.segs[i].a)].push_back(int(i)), g.arms[size_t(P.segs[i].b)].push_back(int(i));
+  return g;
+}
+int otherEnd(const Seg& s, int n) { return s.a == n ? s.b : s.a; }
+void chordDir(const Plan& P, int from, int to, double& dx, double& dz) {
+  dx = P.nodes[size_t(to)].x - P.nodes[size_t(from)].x, dz = P.nodes[size_t(to)].z - P.nodes[size_t(from)].z;
+  double l = std::hypot(dx, dz);
+  if (l > 1e-9) dx /= l, dz /= l;
+}
+// a node where two roads run on (no junction): two arms, no sharp bend, not an edge stub
+bool smooth(const Plan& P, const Geo& G, int n) {
+  const auto& a = G.arms[size_t(n)];
+  if (a.size() != 2 || P.nodes[size_t(n)].corner || P.nodes[size_t(n)].exit >= 0) return false;
+  double ax, az, bx, bz;
+  chordDir(P, n, otherEnd(P.segs[size_t(a[0])], n), ax, az);
+  chordDir(P, n, otherEnd(P.segs[size_t(a[1])], n), bx, bz);
+  return ax * bx + az * bz < -0.5;  // a bend of at most 60°
+}
+bool junction(const Plan& P, const Geo& G, int n) {
+  return G.arms[size_t(n)].size() >= 3 || (G.arms[size_t(n)].size() == 2 && !smooth(P, G, n));
+}
+// the arms' directions away from a junction (spread to 32° at least) and its radius, as findCurveJunctions finds it
+struct JunctionShape {
+  std::map<int, std::pair<double, double>> dir;  // segment → direction
+  double radius = 0;
+};
+JunctionShape junctionShape(const Plan& P, const Geo& G, int n) {
+  JunctionShape J;
+  struct A {
+    int seg;
+    double ang;
+    float hw;
+  };
+  std::vector<A> as;
+  for (int s : G.arms[size_t(n)]) {
+    double dx, dz;
+    chordDir(P, n, otherEnd(P.segs[size_t(s)], n), dx, dz);
+    as.push_back({s, std::atan2(dz, dx), halfWidth(P.segs[size_t(s)].kind)});
+  }
+  std::sort(as.begin(), as.end(), [](const A& x, const A& y) { return x.ang < y.ang; });
+  const double minGap = 32.0 * kPiD / 180.0;
+  for (int it = 0; it < 6 && as.size() >= 2; ++it) {
+    bool moved = false;
+    for (size_t k = 0; k < as.size(); ++k) {
+      A &p = as[k], &q = as[(k + 1) % as.size()];
+      double gap = k + 1 < as.size() ? q.ang - p.ang : q.ang + 2 * kPiD - p.ang;
+      if (gap >= minGap) continue;
+      double push = (minGap - gap) * 0.5 + 0.005;
+      p.ang -= push, q.ang += push;
+      moved = true;
+    }
+    if (!moved) break;
+    for (A& a : as) a.ang = std::remainder(a.ang, 2 * kPiD);
+    std::sort(as.begin(), as.end(), [](const A& x, const A& y) { return x.ang < y.ang; });
+  }
+  double R = 0;
+  for (const A& a : as) R = std::max(R, double(a.hw));
+  for (size_t k = 0; k < as.size(); ++k) {
+    const A &p = as[k], &q = as[(k + 1) % as.size()];
+    double gap = k + 1 < as.size() ? q.ang - p.ang : q.ang + 2 * kPiD - p.ang;
+    if (gap < kPiD - 0.05 && gap > 0.01) R = std::max(R, double(std::max(p.hw, q.hw)) / std::tan(gap * 0.5));
+  }
+  bool foot = P.nodes[size_t(n)].foot;
+  J.radius = std::min(R + (foot ? 0.5 : 1.0), 40.0);
+  for (const A& a : as) J.dir[a.seg] = {std::cos(a.ang), std::sin(a.ang)};
+  return J;
+}
+
+// merges legs shorter than their ends need: a smooth point dropped (its two legs one), two junctions one, a stub at a
+// free end removed
+void tidy(Plan& P) {
+  for (int round = 0; round < 40; ++round) {
+    Geo G = arms(P);
+    std::vector<double> R(P.nodes.size(), -1);
+    auto radius = [&](int n) {
+      if (R[size_t(n)] < 0) R[size_t(n)] = junction(P, G, n) ? junctionShape(P, G, n).radius : 0.0;
+      return R[size_t(n)];
+    };
+    std::vector<std::pair<double, int>> order;
+    for (size_t i = 0; i < P.segs.size(); ++i)
+      if (P.segs[i].alive) {
+        const Node &A = P.nodes[size_t(P.segs[i].a)], &B = P.nodes[size_t(P.segs[i].b)];
+        order.push_back({std::hypot(B.x - A.x, B.z - A.z), int(i)});
+      }
+    std::sort(order.begin(), order.end());
+    std::vector<char> touched(P.nodes.size(), 0);
+    bool changed = false;
+    for (auto [len, si] : order) {
+      Seg& s = P.segs[size_t(si)];
+      if (!s.alive || touched[size_t(s.a)] || touched[size_t(s.b)]) continue;
+      double ra = radius(s.a), rb = radius(s.b);
+      double need = std::max(minLen(s.kind), (ra > 0 ? ra + 1.0 : 0.0) + (rb > 0 ? rb + 1.0 : 0.0) + 1.0);
+      if (len >= need) continue;
+      // drop a smooth end (a point of the way), joining its two legs
+      bool done = false;
+      for (int n : {s.a, s.b}) {
+        if (done || !smooth(P, G, n)) continue;
+        const auto& as = G.arms[size_t(n)];
+        Seg& s1 = P.segs[size_t(as[0])];
+        Seg& s2 = P.segs[size_t(as[1])];
+        if (s1.kind != s2.kind || s1.flags != s2.flags) continue;
+        // s1 runs into n, s2 out of it (one-way streets keep their way)
+        Seg* in = &s1;
+        Seg* out = &s2;
+        if (in->b != n) std::swap(in, out);
+        if (in->b != n || out->a != n) {
+          if (s1.flags & 0x20) continue;
+          if (s1.b != n) std::swap(s1.a, s1.b);
+          if (s2.a != n) std::swap(s2.a, s2.b);
+          in = &s1, out = &s2;
+        }
+        if (in->a == out->b) continue;  // a loop of two legs
+        in->b = out->b;
+        out->alive = false;
+        P.nodes[size_t(n)].alive = false;
+        touched[size_t(n)] = touched[size_t(in->a)] = touched[size_t(in->b)] = 1;
+        done = changed = true;
+        ++P.merged;
+      }
+      if (done) continue;
+      bool ja = ra > 0, jb = rb > 0;
+      const Node &A = P.nodes[size_t(s.a)], &B = P.nodes[size_t(s.b)];
+      if (ja && jb && A.exit < 0 && B.exit < 0) {  // two junctions: one in the middle
+        int keepN = s.a, gone = s.b;
+        Node& K = P.nodes[size_t(keepN)];
+        K.x = (A.x + B.x) * 0.5, K.z = (A.z + B.z) * 0.5;
+        K.corner = false;
+        for (Seg& o : P.segs) {
+          if (!o.alive) continue;
+          if (o.a == gone) o.a = keepN;
+          if (o.b == gone) o.b = keepN;
+        }
+        s.alive = false;
+        P.nodes[size_t(gone)].alive = false;
+        // no leg from the point to itself, no two legs between the same points
+        std::set<std::pair<int, int>> pairs;
+        for (Seg& o : P.segs) {
+          if (!o.alive) continue;
+          if (o.a == o.b) {
+            o.alive = false;
+            continue;
+          }
+          auto k = std::minmax(o.a, o.b);
+          if (!pairs.insert({k.first, k.second}).second) o.alive = false;
+        }
+        touched[size_t(keepN)] = 1;
+        changed = true;
+        ++P.merged;
+        continue;
+      }
+      // a short stub (a free end, an edge stub's leg, or nothing left to merge): the leg goes
+      if (std::getenv("REGS_DEBUG_OSM"))
+        LOG_INFO("streets: leg dropped at (%.0f,%.0f)-(%.0f,%.0f) kind %d len %.1f need %.1f, arms %zu/%zu, radius %.1f/%.1f, exit %d/%d",
+                 A.x, A.z, B.x, B.z, s.kind, len, need, G.arms[size_t(s.a)].size(), G.arms[size_t(s.b)].size(), ra, rb, A.exit, B.exit);
+      s.alive = false;
+      touched[size_t(s.a)] = touched[size_t(s.b)] = 1;
+      changed = true;
+      ++P.dropped;
+    }
+    if (!changed) break;
+  }
+  Geo G = arms(P);
+  for (size_t n = 0; n < P.nodes.size(); ++n)
+    if (G.arms[n].empty()) P.nodes[n].alive = false;
+  for (Exit& e : P.exits)
+    if (e.node >= 0 && !P.nodes[size_t(e.node)].alive) e.node = -1;
+}
+
+// the curve of a leg: tangents from the neighbours (smooth points), the arms' spread directions (junctions), the
+// chord (free ends), the stub's axis (edge ends)
+CurveRoad curveOf(const Plan& P, const Geo& G, const std::map<int, JunctionShape>& J, int si) {
+  const Seg& s = P.segs[size_t(si)];
+  const Node &A = P.nodes[size_t(s.a)], &B = P.nodes[size_t(s.b)];
+  auto away = [&](int n, double& dx, double& dz) {  // the direction at n into the leg
+    const Node& N = P.nodes[size_t(n)];
+    int o = otherEnd(s, n);
+    if (N.exit >= 0) {
+      dx = P.exits[size_t(N.exit)].dx, dz = P.exits[size_t(N.exit)].dz;
+      return;
+    }
+    auto j = J.find(n);
+    if (j != J.end()) {
+      auto d = j->second.dir.find(si);
+      if (d != j->second.dir.end()) {
+        dx = d->second.first, dz = d->second.second;
+        return;
+      }
+    }
+    if (smooth(P, G, n)) {
+      const auto& as = G.arms[size_t(n)];
+      int other = otherEnd(P.segs[size_t(as[0] == si ? as[1] : as[0])], n);
+      chordDir(P, other, o, dx, dz);
+      return;
+    }
+    chordDir(P, n, o, dx, dz);
+  };
+  double d0x, d0z, d1x, d1z;
+  away(s.a, d0x, d0z);
+  away(s.b, d1x, d1z);
+  double len = std::hypot(B.x - A.x, B.z - A.z);
+  CurveRoad c;
+  c.kind = s.kind;
+  c.x0 = float(A.x), c.y0 = A.y, c.z0 = float(A.z), c.dx0 = float(d0x), c.dz0 = float(d0z);
+  c.x1 = float(B.x), c.y1 = B.y, c.z1 = float(B.z), c.dx1 = float(-d1x), c.dz1 = float(-d1z);
+  c.a = c.b = std::max(0.5f, float(len / 3.0));
+  c.ends = s.flags;
+  if (A.exit >= 0) c.ends |= 1;
+  if (B.exit >= 0) c.ends |= 2;
+  return c;
+}
+
+// tidies the graph and builds its curves; bends tighter than the kind allows become junctions (or the leg goes)
+std::vector<CurveRoad> curves(Plan& P) {
+  std::vector<CurveRoad> out;
+  for (int round = 0; round < 5; ++round) {
+    tidy(P);
+    Geo G = arms(P);
+    std::map<int, JunctionShape> J;
+    for (size_t n = 0; n < P.nodes.size(); ++n)
+      if (P.nodes[n].alive && junction(P, G, int(n))) J[int(n)] = junctionShape(P, G, int(n));
+    out.clear();
+    bool again = false;
+    for (size_t i = 0; i < P.segs.size(); ++i) {
+      if (!P.segs[i].alive) continue;
+      CurveRoad c = curveOf(P, G, J, int(i));
+      const CurveProfile& pf = curveProfile(c.kind);
+      if (curveMinRadius(c) >= pf.minRadius - 0.05f && curveLength(c) >= float(minLen(c.kind)) - 0.01f) {
+        out.push_back(c);
+        continue;
+      }
+      bool marked = false;
+      for (int n : {P.segs[i].a, P.segs[i].b})
+        if (smooth(P, G, n)) P.nodes[size_t(n)].corner = marked = true, ++P.corners;
+      if (marked && round < 4) again = true;
+      else if (round == 4 || !marked) {
+        if (std::getenv("REGS_DEBUG_OSM"))
+          LOG_INFO("streets: curve dropped at (%.0f,%.0f)-(%.0f,%.0f) kind %d radius %.1f length %.1f", c.x0, c.z0, c.x1, c.z1, c.kind,
+                   curveMinRadius(c), curveLength(c));
+        P.segs[i].alive = false, ++P.dropped, again = again || round < 4;
+      }
+    }
+    if (!again) break;
+  }
+  return out;
+}
+
+}  // namespace streets
+
+// the terrain's height at a world point (bilinear over the corners), in world units
+float groundY(const GridData& g, double wx, double wz) {
+  const float cs = g.cellSize;
+  double cx = wx / cs + g.width * 0.5, cz = wz / cs + g.length * 0.5;
+  int x = std::clamp(int(std::floor(cx)), 0, g.width - 2), z = std::clamp(int(std::floor(cz)), 0, g.length - 2);
+  double fx = std::clamp(cx - x, 0.0, 1.0), fz = std::clamp(cz - z, 0.0, 1.0);
+  auto H = [&](int xx, int zz) { return double(g.height[size_t(zz) * size_t(g.width) + size_t(xx)]); };
+  double h = (H(x, z) * (1 - fx) + H(x + 1, z) * fx) * (1 - fz) + (H(x, z + 1) * (1 - fx) + H(x + 1, z + 1) * fx) * fz;
+  return float(h * cs / 256.0);
+}
+
+// all the import's curves at once: the map's curve list, the terrain under them and their junctions levelled, one
+// redraw (the curve tool's applyCurveEdit per curve looks for the junctions each time)
+void addCurvesBulk(VM& vm, GridObj* grid, Object* tl, const std::vector<CurveRoad>& cs) {
+  GridData& g = *grid->data;
+  gridEditBegin(vm, grid);
+  for (const CurveRoad& c : cs) g.curves.push_back(c);
+  const float cell = g.cellSize;
+  // the ground beside the streets: flat at their height 3 units beyond the edge, easing out over 6 more (the nearest
+  // street wins), so slopes across a street do not poke through its pavement (real terrain is hillier than what the
+  // curve tool's own levelling meets when a road is drawn by hand)
+  if (!g.height.empty()) {
+    const size_t N = size_t(g.width) * size_t(g.length);
+    std::vector<float> bestD(N, 1e9f), bestT(N, 0.0f);
+    for (const CurveRoad& c : cs) {
+      const float hw = curveProfile(c.kind).halfWidth;
+      std::vector<CurveSample> shape = curveShape(c);
+      int x0, z0, x1, z1;
+      curveCells(g, c, x0, z0, x1, z1);
+      x0 = std::max(0, x0 - 3), z0 = std::max(0, z0 - 3), x1 = std::min(g.width - 1, x1 + 4), z1 = std::min(g.length - 1, z1 + 4);
+      for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
+          size_t ci = size_t(z) * size_t(g.width) + size_t(x);
+          float wx = (float(x) - float(g.width) * 0.5f) * cell, wz = (float(z) - float(g.length) * 0.5f) * cell;
+          float side, sAt;
+          curveNearest(shape, wx, wz, side, sAt);
+          float ad = std::fabs(side) - hw;
+          if (ad > 9.0f || ad >= bestD[ci]) continue;
+          bestD[ci] = ad, bestT[ci] = (curveAt(shape, sAt).p.y - 0.25f) * 256.0f / cell;
+        }
+    }
+    auto wetCorner = [&](int x, int z) {
+      for (int dz = -1; dz <= 0; ++dz)
+        for (int dx = -1; dx <= 0; ++dx) {
+          int cx = x + dx, cz = z + dz;
+          if (cx >= 0 && cz >= 0 && cx < g.width && cz < g.length && (g.flags[size_t(cz) * size_t(g.width) + size_t(cx)] & 0x2000)) return true;
+        }
+      return false;
+    };
+    for (int z = 0; z < g.length; ++z)
+      for (int x = 0; x < g.width; ++x) {
+        size_t ci = size_t(z) * size_t(g.width) + size_t(x);
+        if (bestD[ci] > 9.0f || (g.flags[ci] & 0x1000) || wetCorner(x, z)) continue;
+        float w = bestD[ci] <= 3.0f ? 1.0f : 1.0f - (bestD[ci] - 3.0f) / 6.0f;
+        w = w * w * (3.0f - 2.0f * w);
+        float h = float(g.height[ci]) + (bestT[ci] - float(g.height[ci])) * w;
+        g.height[ci] = int16_t(std::clamp(int(std::lround(h)), -0x7fff, 0x7fff));
+      }
+  }
+  for (const CurveRoad& c : cs) levelTerrainUnderCurve(grid, c);
+  for (const CurveJunction& j : findCurveJunctions(g)) {
+    std::vector<render::Vec3> outer = junctionOutline(j, 1, 0.0f, 6);
+    int x0, z0, x1, z1;
+    junctionCells(g, j, x0, z0, x1, z1);
+    int16_t target = int16_t(std::lround((j.centre.y - 0.25f) * 256.0f / cell));
+    for (int z = z0; z <= std::min(z1 + 1, g.length - 1); ++z)
+      for (int x = x0; x <= std::min(x1 + 1, g.width - 1); ++x) {
+        size_t ci = size_t(z) * size_t(g.width) + size_t(x);
+        if (g.flags[ci] & 0x1000) continue;
+        float wx = (float(x) - float(g.width) * 0.5f) * cell, wz = (float(z) - float(g.length) * 0.5f) * cell;
+        if (insideOutline(outer, wx, wz)) g.height[ci] = target;
+      }
+  }
+  refreshCurveAnchors(g);
+  grid->curveRects.push_back({0, 0, g.width - 1, g.length - 1});
+  grid->curvesDirty = true;
+  ++grid->curvesVersion;
+  gridEditCellsChanged(grid, 0, 0, g.width - 1, g.length - 1, true);
+  gridEditEnd(vm, grid);
+  if (tl)
+    for (const CurveRoad& c : cs) timelineRecordCurve(vm, tl, c, true);
+}
+
+// debugging: how far the ground pokes above the pavement within a street's width (world units)
+float groundAbovePavement(const GridData& g, const std::vector<CurveRoad>& cs, int& worst) {
+  float m = -1e9f;
+  worst = -1;
+  const float cell = g.cellSize;
+  for (size_t i = 0; i < cs.size(); ++i) {
+    const CurveRoad& c = cs[i];
+    const float hw = curveProfile(c.kind).halfWidth;
+    std::vector<CurveSample> shape = curveShape(c);
+    int x0, z0, x1, z1;
+    curveCells(g, c, x0, z0, x1, z1);
+    for (int z = z0; z <= z1; ++z)
+      for (int x = x0; x <= x1; ++x) {
+        float wx = (float(x) - float(g.width) * 0.5f) * cell, wz = (float(z) - float(g.length) * 0.5f) * cell;
+        float side, sAt;
+        curveNearest(shape, wx, wz, side, sAt);
+        if (std::fabs(side) > hw || sAt <= 0.01f || sAt >= shape.back().s - 0.01f) continue;
+        float d = float(g.height[size_t(z) * size_t(g.width) + size_t(x)]) * cell / 256.0f - curveAt(shape, sAt).p.y;
+        if (d > m) m = d, worst = int(i);
+      }
+  }
+  return m;
+}
+
+// the cells the curves take (buildings and trees keep off them)
+void markCurveCells(const GridData& g, const std::vector<CurveRoad>& cs, std::vector<uint8_t>& used) {
+  const float cell = g.cellSize;
+  for (const CurveRoad& c : cs) {
+    float r = curveProfile(c.kind).halfWidth + 1.5f;
+    for (const CurveSample& s : sampleCurve(c, 1.5f)) {
+      int x0 = int(std::floor((s.p.x - r) / cell + g.width * 0.5f)), x1 = int(std::floor((s.p.x + r) / cell + g.width * 0.5f));
+      int z0 = int(std::floor((s.p.z - r) / cell + g.length * 0.5f)), z1 = int(std::floor((s.p.z + r) / cell + g.length * 0.5f));
+      for (int z = std::max(0, z0); z <= std::min(g.length - 1, z1); ++z)
+        for (int x = std::max(0, x0); x <= std::min(g.width - 1, x1); ++x) {
+          float wx = (float(x) + 0.5f - g.width * 0.5f) * cell - s.p.x, wz = (float(z) + 0.5f - g.length * 0.5f) * cell - s.p.z;
+          if (wx * wx + wz * wz <= (r + 1.0f) * (r + 1.0f)) used[size_t(z) * size_t(g.width) + size_t(x)] = 2;
+        }
+    }
+  }
+}
+
 struct Candidate {
   std::string name;
   int w, l;
@@ -1781,6 +2660,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     a.timeline = playerTimeline(vm, player);
     if (a.timeline) timelineBeginGroup(vm, a.timeline, "%9 OpenStreetMap");
     a.used.assign(size_t(W) * size_t(L), 0);
+    a.gridStreets = std::getenv("REGS_OSM_GRID") != nullptr;
     if (d.flags & kClear) {
       gridEditBegin(vm, grid);
       for (uint32_t i = 0; i < g.items.size(); ++i) {
@@ -1794,7 +2674,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
   }
   if (a.stage == 1) {  // terrain and water: one patch over the whole map
     setP(5, 0);
-    buildNetwork(d.roads, W, L, d.water, a.network, a.drags);
+    if (a.gridStreets) buildNetwork(d.roads, W, L, d.water, a.network, a.drags);
     bool water = (d.flags & kWater) != 0;
     if (!d.heights.empty() || water) {
       std::vector<int16_t> heights(size_t(W) * size_t(L));
@@ -1828,6 +2708,53 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     a.stage = 2;
     a.next = 0;
     if (now() - t0 > budget) return false;
+  }
+  if (a.stage == 2 && !a.gridStreets && !d.roads.empty()) {  // the streets as curves
+    streets::Plan plan = streets::plan(d.roads, W, L, g.cellSize, d.water);
+    streets::tidy(plan);
+    // the map-edge stubs: the edge piece and a straight piece the curve starts on
+    Blocks stubs;
+    for (const streets::Exit& e : plan.exits) {
+      if (e.node < 0) continue;
+      const uint32_t in = e.side == 0 ? 4u : e.side == 1 ? 0x40u : e.side == 2 ? 0x10u : 1u;  // into the map
+      const uint32_t outB = ((in << 4) | (in >> 4)) & 0xff;
+      const int sh = e.type == 5 ? 8 : 0;
+      stubs[{e.ex, e.ez}] |= in << sh;
+      stubs[{e.bx, e.bz}] |= (in | outB) << sh;
+    }
+    if (!stubs.empty()) {
+      std::vector<uint32_t> mounted;
+      a.roadsOk = toolBuildRoadNetwork(vm, player, grid, std::move(stubs), mounted);
+      for (uint32_t m : mounted) a.made.push_back(int(m));
+    }
+    for (streets::Exit& e : plan.exits) {
+      if (e.node < 0) continue;
+      streets::Node& n = plan.nodes[size_t(e.node)];
+      bool found = false;
+      for (const RoadEnd& re : findSmallRoadEnds(vm, player, grid, float(e.px), float(e.pz), 9.0f, e.type)) {
+        if (re.deadEnd || re.tram || re.dir.x * float(e.dx) + re.dir.z * float(e.dz) < 0.9f) continue;
+        n.x = re.point.x, n.z = re.point.z, n.y = re.point.y;
+        found = true;
+        break;
+      }
+      if (!found) n.exit = -1, e.node = -1;  // no stub there: a free end
+    }
+    for (streets::Node& n : plan.nodes)
+      if (n.alive && n.exit < 0) n.y = groundY(g, n.x, n.z) + 0.2f;
+    std::vector<CurveRoad> cs = streets::curves(plan);
+    addCurvesBulk(vm, grid, a.timeline, cs);
+    markCurveCells(g, cs, a.used);
+    if (std::getenv("REGS_DEBUG_OSM")) {
+      int w;
+      float up = groundAbovePavement(g, cs, w);
+      LOG_INFO("osm: ground above pavement: %.2f (curve %d)", up, w);
+    }
+    a.curvesMade = int(cs.size());
+    size_t exits = 0;
+    for (const streets::Exit& e : plan.exits) exits += e.node >= 0;
+    LOG_INFO("osm: streets: %zu curves, %zu edge stubs, %d legs merged, %d dropped, %d bends made junctions", cs.size(), exits,
+             plan.merged, plan.dropped, plan.corners);
+    if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("osm: %zu curve junctions", findCurveJunctions(g).size());
   }
   if (a.stage == 2) {  // the road network at once, then the alleys a drag at a time
     if (!a.network.empty()) {
@@ -1884,20 +2811,36 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         std::string n = utf16ToUtf8(vm.toStr(v));
         if (grid->templates.count(n)) names.push_back(n);
       }
+    if (std::getenv("REGS_DEBUG_OSM") && a.next == 0) {
+      std::string all;
+      for (auto& n : names) all += n + " ";
+      LOG_INFO("osm: tree templates: %s", all.c_str());
+    }
     gridEditBegin(vm, grid);
-    while (!names.empty() && a.next < d.trees.size()) {
-      auto [x, z] = d.trees[a.next++];
+    // trees and bushes only (owner's request 2026-11-08: no stones, grass or stumps in the woods); woods mostly trees
+    // with bushes between, scrub mostly bushes
+    std::vector<std::string> treeNames, bushNames;
+    for (const std::string& n : names)
+      if (n.rfind("bush", 0) == 0) bushNames.push_back(n);
+      else if (n.rfind("tree", 0) == 0 || n == "street-tree") treeNames.push_back(n);
+    if (treeNames.empty()) treeNames = bushNames;
+    if (bushNames.empty()) bushNames = treeNames;
+    while (!treeNames.empty() && a.next < d.trees.size()) {
+      const TreeIn& t = d.trees[a.next++];
+      const int x = t.first, z = t.second;
       size_t i = size_t(z) * size_t(W) + size_t(x);
       if (x < 1 || z < 1 || x >= W - 1 || z >= L - 1 || a.used[i]) continue;
       uint32_t h = hash32((uint64_t(x) << 32) | uint32_t(z));
-      if (addItem(vm, grid, a, names[h % names.size()], x, meanCorner(g, x, z), z, int((h >> 8) & 3)) >= 0) {
+      const int bushPercent = t.kind == 0 ? 35 : t.kind == 1 ? 75 : t.kind == 2 ? 15 : 0;
+      const auto& pool = int((h >> 12) % 100) < bushPercent ? bushNames : treeNames;
+      if (addItem(vm, grid, a, pool[h % pool.size()], x, meanCorner(g, x, z), z, int((h >> 8) & 3)) >= 0) {
         a.used[i] = 4;
         ++a.treesPlaced;
       }
       if (now() - t0 > budget) break;
     }
     gridEditEnd(vm, grid);
-    if (!names.empty() && a.next < d.trees.size()) {
+    if (!treeNames.empty() && a.next < d.trees.size()) {
       setP(8, float(a.next) / float(d.trees.size()));
       return false;
     }
@@ -1907,6 +2850,11 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
   for (int i : a.made)
     if (size_t(i) < g.items.size() && !g.items[size_t(i)].removed) timelineRecordCreate(vm, a.timeline, grid, uint32_t(i));
   if (a.timeline) timelineEndGroup(vm, a.timeline);
+  if (std::getenv("REGS_DEBUG_OSM")) {
+    int w;
+    float up = groundAbovePavement(g, g.curves, w);
+    LOG_INFO("osm: ground above pavement at the end: %.2f (curve %d)", up, w);
+  }
   for (int i : a.made) {
     if (size_t(i) >= g.items.size() || g.items[size_t(i)].removed || g.items[size_t(i)].parent) continue;
     auto t = grid->templates.find(g.types[g.items[size_t(i)].type]);
@@ -1925,8 +2873,8 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     o.visible = true;
     ++o.version;
   }
-  LOG_INFO("osm: applied: %d road pieces, %d blocks without, %d buildings, %d trees", a.roadsOk, a.roadsFailed, a.buildingsPlaced,
-           a.treesPlaced);
+  LOG_INFO("osm: applied: %d curves, %d road pieces, %d blocks without, %d buildings, %d trees", a.curvesMade, a.roadsOk,
+           a.roadsFailed, a.buildingsPlaced, a.treesPlaced);
   {
     std::lock_guard<std::mutex> lk(g_import.mx);
     g_import.state = 5;
