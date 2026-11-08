@@ -828,6 +828,8 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         bool ring = !grid->curvePreviewMore.empty();
         curveMesh(grid->curvePreview, p, 0.0f, 0.0f, ring);
         for (const CurveRoad& more : grid->curvePreviewMore) curveMesh(more, p, 0.0f, 0.0f, true);
+        // a little above the map: a preview of a road already there (the bulldozer's, the remove mode's) shows over it
+        for (size_t v = 1; v < p.positions.size(); v += 3) p.positions[v] += 0.04f;
         upload(p, tc.curvePreview, tc.curvePreviewBuilt);
       }
     }

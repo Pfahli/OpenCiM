@@ -291,7 +291,7 @@ delete $regsRs;
 // ---- curved roads (owner's request 2026-11-07; engine/tool_curves.cpp, like the road tool of Cities: Skylines) ----
 // All in the traffic menu (owner's wish 2026-11-08: no separate panels):
 // * the alley, small-road, large-road and avenue tabs get the curve tool's shapes after their own buttons: straight (at
-//   any angle), curve, freeform, remove;
+//   any angle), curve, freeform (the game's bulldozer removes curves: tool_curves.cpp);
 // * a road type "One-way" (small roads, the way it is drawn): 1 lane / 2 lanes, then the shapes;
 // * a road type "Roundabout": 1 lane / 2 lanes (centre, then size: two clicks).
 // What the next click does, the road's length and angle show under the mouse pointer (below the game's price line).
@@ -409,8 +409,8 @@ $regsCurveKinds = [3, 0, 1, 2];
 $regsCurveIcons = ["curve-alley", "curve-small", "curve-large", "curve-avenue"];
 for ($regsI = 0; $regsI < 4; ++$regsI) {
   $regsTab = $trafficMenu.$tabs[$regsCurveTabs[$regsI]];
-  $regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/" + $regsCurveIcons[$regsI], "/regs/ui/toolbar/curve-free", "/metro/ui/toolbar/bulldoze"];
-  for ($regsJ = 0; $regsJ < 4; ++$regsJ) {
+  $regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/" + $regsCurveIcons[$regsI], "/regs/ui/toolbar/curve-free"];
+  for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
     regsTabButton($regsTab, null, $regsShapeIcons[$regsJ], macro($regsCurveKinds[$regsI], $regsJ) :: regsCurveToolFor($0, 0, $1), $regsShapeTips[$regsJ]);
   }
 }
@@ -418,8 +418,8 @@ for ($regsI = 0; $regsI < 4; ++$regsI) {
 $regsTab = regsAddRoadType("oneway", $regsRs.$regs_type_oneway_hint);
 regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/oneway-1", macro :: regsOneWayLanesSet(1), $regsRs.$regs_oneway1_hint);
 regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/oneway-2", macro :: regsOneWayLanesSet(2), $regsRs.$regs_oneway2_hint);
-$regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/curve-small", "/regs/ui/toolbar/curve-free", "/metro/ui/toolbar/bulldoze"];
-for ($regsJ = 0; $regsJ < 4; ++$regsJ) {
+$regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/curve-small", "/regs/ui/toolbar/curve-free"];
+for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
   // the shapes on the tab's second row
   $regsB = MAIN.$ui.createChoiceButton($regsTab, "regsOneWayShapes", $regsJ * 56, 56, 46, 46, "", macro($regsJ) :: regsOneWayShapeSet($0), $regsShapeIcons[$regsJ] + ".dds", $regsShapeIcons[$regsJ] + "_se.dds", $regsShapeIcons[$regsJ] + "_ho.dds");
   $regsB.setCropRect(9.0 / 64.0, 9.0 / 64.0, 46.0 / 64.0, 46.0 / 64.0);

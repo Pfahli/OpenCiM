@@ -101,7 +101,44 @@ void select(VM& vm, GridObj* grid, uint32_t item, bool bad) {
   g_state.selected.insert(item);
 }
 
+// The preview's cells marked as the game's tools mark theirs (green: it fits, red: it does not or it would be removed):
+// the road materials take no tint, so the preview mesh alone does not show its state.
+VM* g_litVm = nullptr;
+GridObj* g_litGrid = nullptr;
+int g_lit[4] = {0, 0, -1, -1};  // the marked cells' box (x0, z0, x1, z1), empty when x1 < x0
+
+void unlitPreview() {
+  if (!g_litVm || !g_litGrid || g_lit[2] < g_lit[0]) return;
+  gridUnselectArea(*g_litVm, g_litGrid, g_lit[0], g_lit[1], g_lit[2] - g_lit[0] + 1, g_lit[3] - g_lit[1] + 1);
+  g_lit[2] = g_lit[0] - 1;
+}
+
+void litPreview(VM& vm, GridObj* grid, const std::vector<CurveRoad>& curves, bool red) {
+  unlitPreview();
+  g_litVm = &vm, g_litGrid = grid;
+  const GridData& g = *grid->data;
+  const float cs = g.cellSize;
+  int bx0 = 1 << 30, bz0 = 1 << 30, bx1 = -1, bz1 = -1;
+  for (const CurveRoad& c : curves) {
+    int x0, z0, x1, z1;
+    curveCells(g, c, x0, z0, x1, z1);
+    std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
+    const float hw = curveProfile(c.kind).halfWidth;
+    for (int z = z0; z <= z1; ++z)
+      for (int x = x0; x <= x1; ++x) {
+        float side, s;
+        curveNearest(shape, (float(x) + 0.5f - float(g.width) * 0.5f) * cs, (float(z) + 0.5f - float(g.length) * 0.5f) * cs, side, s);
+        if (std::fabs(side) > hw) continue;
+        if ((s <= 0.01f && (c.ends & 1)) || (s >= shape.back().s - 0.01f && (c.ends & 2))) continue;  // the road blocks there
+        gridSelectArea(vm, grid, x, z, 1, 1, red);
+        bx0 = std::min(bx0, x), bz0 = std::min(bz0, z), bx1 = std::max(bx1, x), bz1 = std::max(bz1, z);
+      }
+  }
+  g_lit[0] = bx0, g_lit[1] = bz0, g_lit[2] = bx1, g_lit[3] = bz1;
+}
+
 void clearPreview(GridObj* grid) {
+  unlitPreview();
   grid->curvePreviewMore.clear();
   if (grid->hasCurvePreview) {
     grid->hasCurvePreview = false;
@@ -443,6 +480,7 @@ void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
   grid->hasCurvePreview = true;
   grid->curvePreviewBad = bad;
   ++grid->curvesVersion;
+  litPreview(vm, grid, arcs, bad);
   st.previewOk = !bad;
   st.length = r;  // the panel shows the radius
 }
@@ -503,6 +541,7 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     grid->hasCurvePreview = true;
     grid->curvePreviewBad = true;
     ++grid->curvesVersion;
+    litPreview(vm, grid, {grid->curvePreview}, true);
     st.previewOk = false;
     return;
   }
@@ -554,6 +593,7 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   grid->hasCurvePreview = true;
   grid->curvePreviewBad = bad;
   ++grid->curvesVersion;
+  litPreview(vm, grid, {c}, bad);
   st.preview = c;
   st.previewOk = !bad && !(st.mode == 1 && st.step == 1);
   st.length = curveLength(c);
@@ -672,11 +712,80 @@ void removeCurve(VM& vm, ControlObj* player, GridObj* grid, int index) {
         break;
       }
   }
+  // its stops' anchor items (the stop items lines use) go with it
+  for (const CurveRoad::Stop& st : c.stops) {
+    int ax, az, ao;
+    stopAnchor(g, c, st, ax, az, ao);
+    for (uint32_t i : std::vector<uint32_t>(g.curveAnchors.begin(), g.curveAnchors.end()))
+      if (i < g.items.size() && !g.items[i].removed && g.items[i].x == ax && g.items[i].z == az) {
+        timelineRecordDelete(vm, tl, grid, i);
+        gridEditRemoveItem(vm, grid, i);
+        break;
+      }
+  }
   applyCurveEdit(vm, grid, c, false);
   timelineRecordCurve(vm, tl, c, false);
   if (tl) timelineEndGroup(vm, tl);
   gridEditEnd(vm, grid);
   LOG_INFO("curve tool: road removed, %zu curves now", g.curves.size());
+}
+
+// ---- the game's bulldozer (GRIDMODE_REMOVE_OBJECTS) over curves (owner's wish 2026-11-08) ----
+// Pointing at a curve shows it red; a click removes it in the editor (its blocks become dead ends again, its stops
+// go); in a game curves are refused, as the game refuses roads there (toolMode 1). Elsewhere the bulldozer is the
+// game's own.
+struct Bulldozer {
+  ToolMode orig;
+  int curve = -1;
+} g_bulldozer;
+
+bool bulldozerInGame(VM& vm, ControlObj* player) {
+  auto f = player->fieldValues.find(u"toolMode");
+  return f != player->fieldValues.end() && !f->second.isNone() && vm.toInt(f->second) == 1;
+}
+
+void bulldozerMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
+  if (!grid || !grid->data) return;
+  ToolPick pick = toolPick(vm, player, x, y, false);
+  int k = pick.hit ? curveUnder(*grid->data, pick.point) : -1;
+  if (k >= 0) {
+    if (g_bulldozer.curve != k) {
+      if (g_bulldozer.orig.cancel) g_bulldozer.orig.cancel(vm, player, grid);  // the game's own highlight goes
+      g_bulldozer.curve = k;
+      grid->curvePreview = grid->data->curves[size_t(k)];
+      grid->hasCurvePreview = true;
+      grid->curvePreviewBad = true;  // red, as the bulldozer shows what it takes
+      ++grid->curvesVersion;
+      litPreview(vm, grid, {grid->data->curves[size_t(k)]}, true);
+      if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: curve %d shown", k);
+    }
+    return;
+  }
+  if (g_bulldozer.curve >= 0) {
+    g_bulldozer.curve = -1;
+    clearPreview(grid);
+  }
+  if (g_bulldozer.orig.move) g_bulldozer.orig.move(vm, player, grid, x, y);
+}
+
+bool bulldozerFinish(VM& vm, ControlObj* player, GridObj* grid) {
+  if (grid && g_bulldozer.curve >= 0) {
+    int k = g_bulldozer.curve;
+    g_bulldozer.curve = -1;
+    clearPreview(grid);
+    if (!bulldozerInGame(vm, player)) removeCurve(vm, player, grid, k);
+    return true;
+  }
+  return g_bulldozer.orig.finish ? g_bulldozer.orig.finish(vm, player, grid) : true;
+}
+
+void bulldozerCancel(VM& vm, ControlObj* player, GridObj* grid) {
+  if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: cancel (curve %d)", g_bulldozer.curve);
+  if (grid && g_bulldozer.curve >= 0) {
+    g_bulldozer.curve = -1;
+    clearPreview(grid);
+  }
+  if (g_bulldozer.orig.cancel) g_bulldozer.orig.cancel(vm, player, grid);
 }
 
 void up(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
@@ -1072,6 +1181,14 @@ void registerCurveTool(VM& vm) {
   registerToolMode(kModeCurveRoad, m);
   wrapTool(0x11, g_tram);  // the game's tram track tool and stop tool over curves (registered before this)
   wrapTool(10, g_stop);
+  {  // the bulldozer (GRIDMODE_REMOVE_OBJECTS, registered before this) removes curves too
+    g_bulldozer.orig = toolModeOf(8);
+    ToolMode b = g_bulldozer.orig;
+    b.move = bulldozerMove;
+    b.finish = bulldozerFinish;
+    b.cancel = bulldozerCancel;
+    registerToolMode(8, b);
+  }
   vm.setGlobal(u"REGS_GRIDMODE_CURVE_ROAD", Value::integer(kModeCurveRoad));
   // regsCurveToolMode([mode]): the mode (0 straight, 1 curved, 2 freeform, 3 remove); setting it drops the road being drawn
   implementGlobal(vm, u"regsCurveToolMode", [](VM& v, Object*, int argc, const Value* a) {
