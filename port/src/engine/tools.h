@@ -80,7 +80,19 @@ struct ToolState {
   int orientExtra = 0;
   int brush = 0;
   int buttons = 0;  // the mouse buttons of the mouseMove being handled (gsGridPlayer::mouseMove's mask: 1 = left)
+  // port: the place tool's free turn (Shift + mouse wheel, toolWheel): radians on top of toolMode's steps, within half
+  // a step; turnable when the previewed object may turn freely (no connections, no parts); turnObject: the toolObject
+  // it was set for (another object starts at 0)
+  float yaw = 0;
+  bool turnable = false;
+  const script::Object* turnObject = nullptr;
+  float lastX = 0, lastY = 0;  // the last mouseMove's position (player-local), to rebuild the preview after a turn
 };
+
+// port: Shift + mouse wheel over the player (the control under the mouse; notches, positive away from the user; modifiers: the desktop's 0x100 Shift, 0x200 Ctrl)
+// turns the place tool's object freely, 5° per notch, 0.5° with Ctrl too. False when no tool takes it (the wheel then
+// zooms as usual).
+bool toolWheel(script::VM& vm, ControlObj* player, float notches, int modifiers);
 ToolState& toolState(script::Object* player);
 
 // A mode's functions. Missing ones fall back to the framework's defaults (noted per field).

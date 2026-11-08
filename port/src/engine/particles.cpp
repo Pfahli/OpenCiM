@@ -721,10 +721,10 @@ void tickItems(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimParticles& sp, 
     float dist = std::sqrt(dot(q, q));
     if (dist >= fx.range) continue;
     if (it.timers.size() != fx.emitters.size()) it.timers.assign(fx.emitters.size(), 0.0f);
-    static const float kCos[4] = {-1, 0, 1, 0}, kSin[4] = {0, -1, 0, 1};
-    int o = g.items[it.item].orient & 3;
+    float tc, ts;  // the item's turn, with the port's free turn
+    itemTurn(g.items[it.item], tc, ts);
     Mat4 place = render::translation(c);
-    place.at(0, 0) = kCos[o], place.at(0, 2) = kSin[o], place.at(2, 0) = -kSin[o], place.at(2, 2) = kCos[o];
+    place.at(0, 0) = tc, place.at(0, 2) = ts, place.at(2, 0) = -ts, place.at(2, 2) = tc;
     runInstance(vm, eng, fx, it.timers.data(), dt, dist, place, {}, cond);
   }
 }

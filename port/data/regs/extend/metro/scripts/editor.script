@@ -430,3 +430,37 @@ $regsTab = regsAddRoadType("roundabout", $regsRs.$regs_round_tooltip);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout-1", macro :: regsRoundaboutTool(1), $regsRs.$regs_round_one);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout", macro :: regsRoundaboutTool(2), $regsRs.$regs_round_two);
 delete $regsRs;
+
+// ---- free turn of objects (owner's request 2026-11-08; engine/tools.cpp toolWheel) ----
+// Shift + mouse wheel turns the object being placed without steps (5° per notch, with Ctrl too 0.5°; touchpads turn
+// smoothly); the right button still turns by 90°. Under the pointer: the hint, once turned the angle.
+$regsTurnInfo = null;
+$regsTurnStrings = regsStringsNow();
+$regsTurnThread = thread :: {
+  loop {
+    wait 0.1;
+    $regsTurnShow = false;
+    if ($player.editMode == GRIDMODE_PLACE_OBJECT) {
+      $regsTurnState = regsPlaceToolTurn($player);
+      $regsTurnShow = $regsTurnState[2] == 1;
+    }
+    if ($regsTurnShow) {
+      if (!$regsTurnInfo) {
+        with ($regsTurnInfo = new_control($desktop.mouse)) {
+          .setRect(0, 62, 420, 40);
+          MAIN.$ui.setTextFont(current);
+          .textAlign = ALIGN_TOP | ALIGN_LEFT;
+          .visible = true;
+          .canActivate = false;
+          .clickThrough = true;
+        }
+      }
+      $regsTurnTenths = int($regsTurnState[0] * 10 + 0.5) % 3600;
+      if ($regsTurnState[1] == 0) $regsTurnInfo.text = $regsTurnStrings.$regs_turn_hint;
+      else $regsTurnInfo.text = expandPattern($regsTurnStrings.$regs_turn_info, int($regsTurnTenths / 10), $regsTurnTenths % 10);
+    } else if ($regsTurnInfo) {
+      delete $regsTurnInfo;
+      $regsTurnInfo = null;
+    }
+  }
+};

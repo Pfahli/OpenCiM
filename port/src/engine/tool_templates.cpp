@@ -335,6 +335,7 @@ void upPlace(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     if (idx < 0) continue;
     made[i] = idx;
     g.items[size_t(idx)].variation = it.variation;
+    g.items[size_t(idx)].yaw = it.yaw;  // port: the free turn
     if (i < tp.names.size() && !tp.names[i].empty()) {
       if (g.names.size() <= size_t(idx)) g.names.resize(size_t(idx) + 1);
       g.names[size_t(idx)] = tp.names[i];

@@ -98,6 +98,27 @@ void writeNetwork(const GridData& g, std::vector<uint8_t>& out) {
   LOG_INFO("grid save: %u items of %u types, %zu removed since load", itemCount, typeCount, g.items.size() - itemCount);
 }
 
+// port: the section of free item turns (GridData::Item::yaw, kItemTurnSectionTag); none when no item is turned
+void writeItemTurns(const GridData& g, std::vector<uint8_t>& out) {
+  std::vector<uint32_t> refs = savedItemRefs(g);
+  std::vector<uint8_t> body;
+  put32(body, 0);
+  uint32_t count = 0;
+  for (size_t i = 0; i < g.items.size(); ++i)
+    if (refs[i] && g.items[i].yaw != 0) {
+      uint32_t a;
+      std::memcpy(&a, &g.items[i].yaw, 4);
+      put32(body, refs[i]);
+      put32(body, a);
+      ++count;
+    }
+  if (!count) return;
+  putU32(body, 0, count);
+  put32(out, kItemTurnSectionTag);
+  put32(out, uint32_t(body.size()));
+  out.insert(out.end(), body.begin(), body.end());
+}
+
 }  // namespace
 
 std::vector<uint8_t> gridFileOf(const GridData& g) {
@@ -115,6 +136,7 @@ std::vector<uint8_t> gridFileOf(const GridData& g) {
   put32(out, 0);
   writeTerrain(g, out);
   writeNetwork(g, out);
+  writeItemTurns(g, out);
   putU32(out, 4, uint32_t(out.size() - 8));
   return out;
 }
@@ -141,6 +163,7 @@ void registerSaveNatives(VM& vm) {
       if (tag == 0x07010000 && g->data) writeTerrain(*g->data, out);
       else if (tag == 0x07020000 && g->data) writeNetwork(*g->data, out);
       else if (tag == kCurveSectionTag && g->data) writeCurveSection(*g->data, out);  // port: curved roads
+      else if (tag == kItemTurnSectionTag && g->data) writeItemTurns(*g->data, out);  // port: free item turns
       else if (g_sectionWriter && g_sectionWriter(v, g, tag, chunk)) out.insert(out.end(), chunk.begin(), chunk.end());
       else out.insert(out.end(), src.begin() + std::ptrdiff_t(p), src.begin() + std::ptrdiff_t(end));
       seen.push_back(tag);
@@ -154,6 +177,7 @@ void registerSaveNatives(VM& vm) {
     // port: the curved roads' section when the loaded file had none (new maps, maps from the original)
     if (g->data && !g->data->curves.empty() && std::find(seen.begin(), seen.end(), kCurveSectionTag) == seen.end())
       writeCurveSection(*g->data, out);
+    if (g->data && std::find(seen.begin(), seen.end(), kItemTurnSectionTag) == seen.end()) writeItemTurns(*g->data, out);
     putU32(out, 4, uint32_t(out.size() - 8));
     return Value::boolean(v.vfs().write(path, out));
   });

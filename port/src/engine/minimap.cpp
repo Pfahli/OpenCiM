@@ -15,6 +15,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
@@ -172,6 +173,57 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
           r[15] = uint8_t(s >> 8);
         }
       }
+  }
+  // port: curved roads and their junctions count as road cells (byte 12) where a cell's centre lies on them (footpaths
+  // at least 1.6 units to each side, so their single cell row shows)
+  if (!g.curves.empty() && g.flags.size() == size_t(W) * size_t(L)) {
+    const float cs = g.cellSize;
+    // the minimap is drawn every second: the cells stay cached while the curves are the same
+    static std::vector<uint8_t> road;
+    static uint64_t roadKey = 0;
+    uint64_t key = 1469598103934665603ull ^ uint64_t(W) << 32 ^ uint64_t(L);
+    auto mix = [&key](const void* p, size_t n) {
+      for (size_t i = 0; i < n; ++i) key = (key ^ static_cast<const uint8_t*>(p)[i]) * 1099511628211ull;
+    };
+    for (const CurveRoad& c : g.curves) {
+      mix(&c.x0, sizeof(float) * 12);  // x0 .. b
+      mix(&c.kind, sizeof c.kind);
+      mix(&c.ends, 1);
+    }
+    if (key != roadKey || road.size() != g.flags.size()) {
+    roadKey = key;
+    road.assign(g.flags.size(), 0);
+    auto centre = [&](int x, int z, float& px, float& pz) {
+      px = (float(x) + 0.5f - float(W) * 0.5f) * cs, pz = (float(z) + 0.5f - float(L) * 0.5f) * cs;
+    };
+    for (const CurveRoad& c : g.curves) {
+      int x0, z0, x1, z1;
+      curveCells(g, c, x0, z0, x1, z1);
+      std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
+      float reach = std::max(curveProfile(c.kind).halfWidth, 1.6f);
+      for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
+          float px, pz, side, s;
+          centre(x, z, px, pz);
+          curveNearest(d, px, pz, side, s);
+          if (std::fabs(side) <= reach) road[size_t(z) * size_t(W) + size_t(x)] = 1;
+        }
+    }
+    for (const CurveJunction& j : findCurveJunctions(g)) {
+      int x0, z0, x1, z1;
+      junctionCells(g, j, x0, z0, x1, z1);
+      std::vector<Vec3> outline = junctionOutline(j, 1, 0.0f, 6);
+      for (int z = std::max(0, z0); z <= std::min(L - 1, z1); ++z)
+        for (int x = std::max(0, x0); x <= std::min(W - 1, x1); ++x) {
+          float px, pz;
+          centre(x, z, px, pz);
+          if (insideOutline(outline, px, pz)) road[size_t(z) * size_t(W) + size_t(x)] = 1;
+        }
+    }
+    }
+    for (int z = 0; z < L; ++z)
+      for (int x = 0; x < W; ++x)
+        if (road[size_t(z) * size_t(W) + size_t(x)]) ++rec(x, z)[12];
   }
   w = std::min(w, W);
   h = std::min(h, L);

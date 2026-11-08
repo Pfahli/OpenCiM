@@ -549,11 +549,11 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
   // FUN_100ecbf0: no paths for temporary or hidden items and markers
   if ((it.flags & 0x500000) || tp.type == 0x15) return;
   const float cs = g.cellSize;
-  static const float kCos[4] = {-1, 0, 1, 0}, kSin[4] = {0, -1, 0, 1};
   // the item placement of the renderer (grid-items.md §2.2): turn by (orient + 2)·90°, then to the item centre
   Vec3 T{(2.0f * float(it.x) + float(sx - g.width)) * cs * 0.5f, float(itemHeight(g, it, tp.flags, tp.type)) * cs / 256.0f,
          (2.0f * float(it.z) + float(sz - g.length)) * cs * 0.5f};
-  float c = kCos[it.orient & 3], s = kSin[it.orient & 3];
+  float c, s;
+  itemTurn(it, c, s);  // with the port's free turn
   auto place = [&](const Vec3& v) { return Vec3{v.x * c + v.z * s, v.y, -v.x * s + v.z * c}; };
   auto& list = G.itemNodes[i];
   for (const auto& [name, path] : tp.paths->paths) {

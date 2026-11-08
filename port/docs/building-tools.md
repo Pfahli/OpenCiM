@@ -70,6 +70,25 @@ A ring of four one-way quarter-circle small-road curves, counter-clockwise seen 
 - A two-way street's track running the same way joins a one-way street's track (the one-lane track swings over to it).
 - Drags of the game's track tool across a curve are red; street tracks meeting a curve with tracks are joined.
 
+### Minimap
+
+Curves and junctions are drawn as road cells (a cell counts where its centre lies on the road; footpaths at least one
+cell wide). The cells are cached between the minimap's once-a-second redraws while the curves stay the same.
+
+### Turning objects without steps
+
+In the place tool (buildings, props, vehicles), **Shift + mouse wheel** turns the object 5° per notch, and 0.5° with
+Ctrl held too. Touchpads turn smoothly. The right button still turns by 90° (45° for objects with a diagonal variant).
+Under the pointer: the hint, and once turned, the angle. A new object starts unturned.
+- Only objects that stand alone turn freely: no road, track or station connections, no generated parts.
+- The turn is drawn: mesh, paths and effects turn about the footprint's centre. The cells (conflicts, levelling) stay
+  those of the 90° orientation.
+- A turned object puts no cell cover under itself. Its own base plate shows instead of a grid-aligned square.
+- Data: `GridData::Item::yaw` holds radians on top of `orient`, within half a step. It is saved in map.grid section
+  `0x07F10000` (u32 count, then the saved item index and the float). Undo/redo uses timeline action `0x070810B0`
+  (ObjRef + float) after the item's create. Templates and mounting copy it. Code: `toolWheel` (engine/tools.cpp),
+  `movePlaceObject` (tool_objects.cpp), `itemTurn` (grid.h).
+
 ### Stops
 
 Bus and tram stops on small-road curves: the game's stop tool, the platform bent along the curve (tram stops need

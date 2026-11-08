@@ -13,6 +13,7 @@
 #include "engine/gui.h"
 #include "engine/host.h"
 #include "engine/interaction.h"
+#include "engine/tools.h"
 
 namespace regs::engine {
 
@@ -551,6 +552,9 @@ void dispatchInput(Engine& eng) {
         if (e.button <= 2) key(e.type == T::MouseDown ? u"keyDown" : u"keyUp", e.button == 0 ? kMouseLeft : e.button == 1 ? kMouseRight : kMouseMiddle);
         break;
       case T::MouseWheel:
+        // port: Shift + wheel over the grid player turns the place tool's object freely (tools.h toolWheel)
+        if (auto* desk = dynamic_cast<DesktopObj*>(w->snapshot.get()); desk && !desk->destroyed && (g_modifiers & 0x100))
+          if (ControlObj* h = asControl(desk->hover); h && toolWheel(vm, h, e.wheel, g_modifiers)) break;
         w->wheel += e.wheel;
         for (; w->wheel >= 1; w->wheel -= 1) key(u"keyDown", kWheelUp);
         for (; w->wheel <= -1; w->wheel += 1) key(u"keyDown", kWheelDown);

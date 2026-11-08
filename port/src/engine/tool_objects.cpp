@@ -615,6 +615,7 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
   Object* tobj = objField(player, u"toolObject");
   Object* tobj2 = objField(player, u"toolObject2");
   if (!tobj) return;
+  if (t.turnObject != tobj) t.turnObject = tobj, t.yaw = 0;  // another object starts unturned
   int orient = intField(vm, player, u"toolMode", 0);
   if (tobj2) {
     if (orient & 1) tobj = tobj2;
@@ -687,8 +688,13 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
       }
     }
   }
+  t.turnable = false;
   if (main >= 0) {
     for (size_t k = 0; k < t.newItems.size(); ++k) placeObject(vm, player, grid, t.newItems[k]);
+    // port: the free turn (Shift + mouse wheel, toolWheel) for objects that stand alone: no connections, no parts
+    t.turnable = tp.conn == 0 && tp.conn2 == 0 && tp.type != kTypeMetroStation && tp.type != kTypeMarker &&
+                 t.newItems.size() == 1;
+    if (t.turnable) grid->data->items[size_t(main)].yaw = t.yaw;
     bool conflict = false;
     for (size_t k = 0; k < t.newItems.size(); ++k) {
       if (gridCheckConflict(vm, grid, t.newItems[k], t.replaced)) conflict = true;
@@ -1222,6 +1228,23 @@ void registerObjectTools(VM& vm) {
   remove.cancel = cancelRemove;
   registerToolMode(kGridModeRemoveObjects, remove);
   registerNatives(vm);
+  // port: regsPlaceToolTurn(player): [the place tool's turn in degrees (0 ≤ a < 360: toolMode's steps and the free
+  // turn), the free turn in degrees, turnable (0/1: a preview there that may turn freely)] for the editor's cursor line (Shift + mouse wheel, toolWheel)
+  implementGlobal(vm, u"regsPlaceToolTurn", [](VM& v, Object*, int argc, const Value* a) {
+    auto arr = make<ArrayObj>();
+    Object* player = argc > 0 ? a[0].object() : nullptr;
+    double total = 0, fine = 0;
+    bool turnable = false;
+    if (player) {
+      const ToolState& t = toolState(player);
+      bool eight = objField(player, u"toolObject2") != nullptr;
+      fine = double(t.yaw) * 180.0 / 3.14159265358979;
+      total = std::fmod(intField(v, player, u"toolMode", 0) * (eight ? 45.0 : 90.0) + fine + 720.0, 360.0);
+      turnable = t.turnable && !t.newItems.empty();  // with a preview (none while the mouse is off the map)
+    }
+    arr->items = {Value::real(float(total)), Value::real(float(fine)), Value::integer(turnable ? 1 : 0)};
+    return Value::heap(VT::Array, arr.get());
+  }, 1, 1);
 }
 
 }  // namespace regs::engine

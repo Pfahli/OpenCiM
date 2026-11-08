@@ -352,6 +352,7 @@ void fixGridCover(VM& vm, GridData& g, const TerrainCache& tc, uint32_t viewMode
     const GridTemplate& tp = tc.templates[size_t(ti)];
     uint32_t flags = it.flags | tp.flags, cc = flags;
     if ((flags & 0x500000) || tp.type == kTypeMarker) continue;  // gsGridItem::fixGrid() L:0x08185a40: not temporary or hidden
+    if (it.yaw != 0) continue;  // port: a freely turned item leaves the cells as they are (its square would show)
     if (it.parent && it.parent <= g.items.size() && tp.type >= 10 && tp.type <= 12) {  // tram tracks follow the road
       const GridData::Item& p = g.items[it.parent - 1];
       int pti = p.type < tc.typeTemplate.size() ? tc.typeTemplate[p.type] : -1;
@@ -425,6 +426,7 @@ void fixGridCoverArea(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
     if (it.x < 0 || it.z < 0 || it.x + f.sx > g.width || it.z + f.sz > g.length) continue;
     uint32_t flags = it.flags | tp.flags, cc = flags;
     if ((flags & 0x500000) || tp.type == kTypeMarker) continue;  // as fixGridCover
+    if (it.yaw != 0) continue;  // port: as fixGridCover
     if (it.parent && it.parent <= g.items.size() && tp.type >= 10 && tp.type <= 12) {  // tram tracks follow the road
       const GridData::Item& p = g.items[it.parent - 1];
       if (p.type < info.size() && info[p.type].valid) cc = (cc | 0xC000) & (p.flags | info[p.type].tp.flags);
@@ -498,8 +500,8 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
     // world(p) = p·Ry((orient+2)·90°) + T, in division space (§2.2); the diagonal bake Ry(45°)·scale comes first
     Vec3 T{(2.0f * float(it.x - x0) + float(sx - n)) * cs * 0.5f, float(y) * cs / 256.0f,
            (2.0f * float(it.z - z0) + float(sz - n)) * cs * 0.5f};
-    static const float kCos[4] = {-1, 0, 1, 0}, kSin[4] = {0, -1, 0, 1};
-    float c = kCos[it.orient & 3], s = kSin[it.orient & 3];
+    float c, s;
+    itemTurn(it, c, s);
     float cb = tp.bake ? 0.70710678f : 1.0f, sb = tp.bake ? 0.70710678f : 0.0f;
     float bx = tp.bake ? tp.bakeScaleX : 1.0f, bz = tp.bake ? tp.bakeScaleZ : 1.0f;
     auto bakeDir = [&](float x, float z, float& ox, float& oz) {
@@ -613,8 +615,8 @@ Mat4 itemPlacement(const GridData& g, const TerrainCache& tc, uint32_t item, int
   int sx = (it.orient & 1) ? tp.length : tp.width, sz = (it.orient & 1) ? tp.width : tp.length;
   int y = it.y + (0x200 - int(g.heightBase));
   if ((flags & kFlagAlign4) || tp.type == kTypeMetroStation) y = (y + 0x7f) & ~0x7f;
-  static const float kCos[4] = {-1, 0, 1, 0}, kSin[4] = {0, -1, 0, 1};
-  float c = kCos[it.orient & 3], s = kSin[it.orient & 3];
+  float c, s;
+  itemTurn(it, c, s);
   float cb = tp.bake ? 0.70710678f : 1.0f, sb = tp.bake ? 0.70710678f : 0.0f;
   // the same maps as buildGridItems: x' = x·c + z·s, z' = −x·s + z·c (and with cb, sb for the bake)
   Mat4 place, bake, scale;

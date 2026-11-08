@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -27,6 +28,10 @@ struct GridData {
     uint32_t parent = 0;         // parent index + 1
     uint32_t variation = 0, flags = 0;
     bool removed = false;        // live map edits: a tombstone (indices stay stable while the map is loaded; not saved)
+    // port: a free turn in radians on top of orient (the editor's place tool, Shift + mouse wheel; within ±45°, ±22.5°
+    // for objects with a diagonal variant), saved in the port's section 0x07F10000 of map.grid; only drawn (paths and
+    // effects turn with it), the cells stay those of orient
+    float yaw = 0;
   };
   std::vector<std::string> types;
   std::vector<Item> items;
@@ -63,6 +68,22 @@ struct GridData {
   std::vector<uint8_t> curveCover;
 };
 using CurveRoad = GridData::CurveRoad;
+
+// An item's turn in its placement x' = x·c + z·s, z' = −x·s + z·c (grid-items.md §2.2): (orient + 2)·90° and the port's
+// free turn (GridData::Item::yaw)
+inline void itemTurn(const GridData::Item& it, float& c, float& s) {
+  static const float kCos[4] = {-1, 0, 1, 0}, kSin[4] = {0, -1, 0, 1};
+  if (it.yaw == 0) {
+    c = kCos[it.orient & 3], s = kSin[it.orient & 3];
+    return;
+  }
+  float a = 3.14159265f + float(it.orient & 3) * 1.57079633f + it.yaw;
+  c = std::cos(a), s = std::sin(a);
+}
+
+// port: the items' free turns (GridData::Item::yaw) in map.grid: u32 count, then per turned item its 1-based saved index
+// (savedItemRefs) and the angle as a float
+constexpr uint32_t kItemTurnSectionTag = 0x07F10000;
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);
 
