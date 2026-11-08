@@ -244,11 +244,11 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   merged, arms spread to 32°, too tight bends made junctions; ways leaving the map end on two grid blocks (the edge
   piece, then a straight piece the curve starts on); water cuts ways, bridges crossing streets without a shared
   node are left out, footpaths keep off roads; the ground beside the streets levelled 3 units wide (hills).
-  REGS_OSM_GRID=1 builds the old block-grid network instead. Buildings fitted to footprints by category.
+  REGS_OSM_GRID=1 builds the old block-grid network instead. Buildings fitted to footprints by category, turned to
+  the footprint's angle (yaw and offX/offZ of the free turn; REGS_OSM_NOTURN=1 off).
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); bridges (none on
   curves yet); tram tracks from railway=tram; junctions of large roads at shallow angles (radius capped at 40, the
-  arm goes); one-way large roads (not supported on curves); buildings aligned to the streets (they look
-  scattered); tiny water areas (fountains) left out; the minimap does not draw curves.
+  arm goes); one-way large roads (not supported on curves); tiny water areas (fountains) left out; the minimap does not draw curves.
 - [ ] Open: bridges, tunnels, ramps and map-edge road pieces; the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 

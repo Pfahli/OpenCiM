@@ -2524,6 +2524,13 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   bool swap = deg > 45.0 && deg < 135.0;
   double ex = swap ? eb : ea, ez = swap ? ea : eb;
   if (ex < 0.8 || ez < 0.8) return;
+  // the turn left over from the nearest 90° (owner 2026-11-08: buildings at their footprint's angle; the port's free
+  // turn, GridData::Item::yaw): the rectangle's axes u (its x side) and v (its z side)
+  const double quarter = kPi / 2;
+  double rem = ang - std::round(ang / quarter) * quarter;
+  static const bool noTurn = std::getenv("REGS_OSM_NOTURN") != nullptr;
+  if (noTurn || std::fabs(rem) < 1.0 * kPi / 180.0) rem = 0;
+  const double ux = std::cos(rem), uz = std::sin(rem), vx = -uz, vz = ux;
   // candidates of the category (or its neighbours)
   static const std::map<std::string, std::vector<std::string>> kFallback = {
       {"residential", {"residential", "blockhouses"}}, {"blockhouses", {"blockhouses", "residential"}},
@@ -2591,13 +2598,31 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
         if (a.used[size_t(zz) * size_t(W) + size_t(xx)]) return false;
     return true;
   };
+  // the cells under a turned rectangle sx × sz centred at (cx, cz) (cell centres inside it, a little to spare)
+  auto turnedCells = [&](double cx, double cz, int sx, int sz, std::vector<size_t>& out) {
+    out.clear();
+    double hx = sx * 0.5 + 0.2, hz = sz * 0.5 + 0.2, r = std::hypot(hx, hz);
+    for (int z = int(std::floor(cz - r)); z <= int(std::ceil(cz + r)); ++z)
+      for (int x = int(std::floor(cx - r)); x <= int(std::ceil(cx + r)); ++x) {
+        double dx = x + 0.5 - cx, dz = z + 0.5 - cz;
+        double lu = dx * ux + dz * uz, lv = dx * vx + dz * vz;
+        if (std::fabs(lu) > hx || std::fabs(lv) > hz) continue;
+        if (x < 1 || z < 1 || x >= W - 1 || z >= L - 1) return false;
+        size_t i = size_t(z) * size_t(W) + size_t(x);
+        if (a.used[i]) return false;
+        out.push_back(i);
+      }
+    return true;
+  };
+  std::vector<size_t> cells;
   auto roadAt = [&](int x, int z) {
     return x >= 0 && z >= 0 && x < W && z < L && a.used[size_t(z) * size_t(W) + size_t(x)] == 2;
   };
   double stepX = ex / nx, stepZ = ez / nz;
   for (int iz = 0; iz < nz; ++iz)
     for (int ix = 0; ix < nx; ++ix) {
-      double px = ccx - ex * 0.5 + stepX * (ix + 0.5), pz = ccz - ez * 0.5 + stepZ * (iz + 0.5);
+      double lx = -ex * 0.5 + stepX * (ix + 0.5), lz = -ez * 0.5 + stepZ * (iz + 0.5);
+      double px = ccx + lx * ux + lz * vx, pz = ccz + lx * uz + lz * vz;
       if (nx * nz > 1 && !insidePoly(px, pz)) continue;
       const Candidate& c = *chosen.c;
       int sx = chosen.sx, sz = chosen.sz;
@@ -2608,7 +2633,7 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
           for (int dx = -r; dx <= r && !placed; ++dx) {
             if (std::max(std::abs(dx), std::abs(dz)) != r) continue;
             int x = bx + dx, z = bz + dz;
-            if (!freeRect(x, z, sx, sz)) continue;
+            if (rem == 0 ? !freeRect(x, z, sx, sz) : !turnedCells(px + dx, pz + dz, sx, sz, cells)) continue;
             // the front towards the nearest road: north, east, south or west side
             int dist[4] = {99, 99, 99, 99};
             for (int k = 1; k <= 4; ++k) {
@@ -2627,9 +2652,19 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
             int orient = frontOrient(side);
             if ((orient & 1) != chosen.orient2) orient = (orient + 1) & 3;  // the table must keep the footprint
             int y = maxCorner(g, x, z, sx, sz);
-            if (addItem(vm, grid, a, c.name, x, y, z, orient) >= 0) {
-              for (int zz = z; zz < z + sz; ++zz)
-                for (int xx = x; xx < x + sx; ++xx) a.used[size_t(zz) * size_t(W) + size_t(xx)] = 3;
+            int made = addItem(vm, grid, a, c.name, x, y, z, orient);
+            if (made >= 0) {
+              if (rem != 0) {  // turned about its footprint's centre, shifted onto the OSM one (at most half a cell)
+                GridData::Item& it = g.items[size_t(made)];
+                it.yaw = float(-rem);
+                const float half = g.cellSize * 0.5f;
+                it.offX = std::clamp(float((px + dx - (x + sx * 0.5)) * g.cellSize), -half, half);
+                it.offZ = std::clamp(float((pz + dz - (z + sz * 0.5)) * g.cellSize), -half, half);
+                for (size_t ci : cells) a.used[ci] = 3;
+              } else {
+                for (int zz = z; zz < z + sz; ++zz)
+                  for (int xx = x; xx < x + sx; ++xx) a.used[size_t(zz) * size_t(W) + size_t(xx)] = 3;
+              }
               ++a.buildingsPlaced;
               placed = true;
             }
