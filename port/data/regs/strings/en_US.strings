@@ -184,4 +184,7 @@ $regs_curve_info_start = "Click: set the start";
 $regs_curve_info_bend = "Click: set the bend point";
 $regs_curve_info_remove = "Click: remove this road";
 $regs_curve_info_length = "Length %0 m, angle %1 deg";
+$regs_turn_hint = "Shift + mouse wheel: turn freely (with Ctrl: fine)";
+$regs_turn_info = "Rotation %0.%1 deg  (Shift + mouse wheel, with Ctrl: fine)";
+$regs_turn_snap = "Rotation %0.%1 deg, lined up with the neighbour (hold Ctrl: free)";
 $regs_curve_info_bad = "(does not fit)";

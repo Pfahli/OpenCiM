@@ -70,6 +70,38 @@ A ring of four one-way quarter-circle small-road curves, counter-clockwise seen 
 - A two-way street's track running the same way joins a one-way street's track (the one-lane track swings over to it).
 - Drags of the game's track tool across a curve are red; street tracks meeting a curve with tracks are joined.
 
+### Minimap
+
+Curves and junctions are drawn as road cells (a cell counts where its centre lies on the road; footpaths at least one
+cell wide). The cells are cached between the minimap's once-a-second redraws while the curves stay the same.
+
+### Turning objects without steps
+
+In the place tool (buildings, props, vehicles), **Shift + mouse wheel** turns the object 5° per notch, and 0.5° with
+Ctrl held too. Touchpads turn smoothly. The right button still turns by 90° (45° for objects with a diagonal variant).
+Under the pointer: the hint, and once turned, the angle. A new object starts unturned.
+- Only objects that stand alone turn freely: no road, track or station connections, no generated parts.
+- The turn is drawn: mesh, paths and effects turn about the footprint's centre. The cells (conflicts, levelling) stay
+  those of the 90° orientation.
+- A turned object puts no cell cover under itself. Its own base plate shows instead of a grid-aligned square.
+- **Magnetic placement:** near a turned (or shifted) object, the next freely turnable object takes that object's turn,
+  plus whichever 90° step is nearest the tool's own turn. It stands on the neighbour's grid, turned with it: edges
+  flush with the neighbour's, whole cells along its axes. The pointer line says "am Nachbarn ausgerichtet". Hold Ctrl
+  to place freely. (`snapToNeighbour`, tool_objects.cpp: the nearest such object whose edge is within half the new
+  object's size plus a cell of the pointer.)
+- Such an object usually sits off the cell grid: `GridData::Item::offX` / `offZ` shift it in world units, at most half
+  a cell, off its footprint's centre.
+- Conflicts between items off the grid (`itemOffGrid`) compare their drawn ground rectangles (separating axes, a
+  0.1-unit sliver allowed), not their cells (`gridItemsConflict`, grid_edit.cpp). Snapped neighbours therefore fit
+  side by side. The items checked are still the ones whose cells lie near.
+- Data: `GridData::Item::yaw` holds radians on top of `orient`, within half a step.
+- map.grid section `0x07F10000`: u32 count (bit 31: with shifts), then per item the saved item index, the angle and
+  (bit 31) offX, offZ as floats.
+- Undo/redo: timeline action `0x070810B0` (ObjRef + yaw, offX, offZ) after the item's create. Templates and mounting
+  copy all three.
+- Code: `toolWheel` (engine/tools.cpp), `movePlaceObject` / `snapToNeighbour` (tool_objects.cpp), `itemTurn` and
+  `itemOffGrid` (grid.h).
+
 ### Stops
 
 Bus and tram stops on small-road curves: the game's stop tool, the platform bent along the curve (tram stops need

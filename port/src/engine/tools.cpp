@@ -4,6 +4,7 @@
 #include "engine/tools.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <unordered_map>
 
@@ -354,6 +355,8 @@ int gridMountObject(VM& vm, GridObj* grid, uint32_t temp) {
   int copy = gridEditAddItem(vm, grid, g.types[it.type], it.x, engineY(g, it), it.z, it.orient, flags, parent, true);
   if (copy < 0) return -1;
   g.items[size_t(copy)].variation = it.variation;
+  g.items[size_t(copy)].yaw = it.yaw;  // port: off the grid
+  g.items[size_t(copy)].offX = it.offX, g.items[size_t(copy)].offZ = it.offZ;
   if (!name.empty()) {
     if (g.names.size() <= size_t(copy)) g.names.resize(size_t(copy) + 1);
     g.names[size_t(copy)] = name;
@@ -455,6 +458,7 @@ void toolMouseMove(VM& vm, ControlObj* player, float x, float y, int buttons) {
   ToolState& t = toolState(player);
   if (t.middle) return;  // +0x25a: the camera drags
   t.buttons = buttons;
+  t.lastX = x, t.lastY = y;
   // debugging: REGS_DEBUG_HIGHLIGHT=1 highlights 5×5 cells under the cursor (green) and the item there (red)
   static const bool debugHighlight = std::getenv("REGS_DEBUG_HIGHLIGHT") != nullptr;
   if (debugHighlight)
@@ -474,6 +478,24 @@ void toolMouseMove(VM& vm, ControlObj* player, float x, float y, int buttons) {
   GridObj* grid = toolGrid(vm, player);
   if (!grid) return;
   m->second.move(vm, player, grid, x, y);
+}
+
+bool toolWheel(VM& vm, ControlObj* player, float notches, int modifiers) {
+  if (!player || player->destroyed || !(modifiers & 0x100) || editMode(vm, player) != kGridModePlaceObject) return false;
+  ToolState& t = toolState(player);
+  if (!t.turnable || t.inProgress || t.middle) return false;
+  bool eight = player->fieldValues.count(u"toolObject2") && player->fieldValues[u"toolObject2"].object();
+  const float kPi = 3.14159265f, half = eight ? kPi / 8 : kPi / 4;
+  int o = intField(vm, player, u"toolMode", 0), mask = eight ? 7 : 3;
+  t.yaw += notches * ((modifiers & 0x200) ? 0.5f : 5.0f) * kPi / 180.0f;
+  // beyond half a step: the next step of toolMode (as the right button's turn, the other way: +1 turns as the wheel)
+  for (int guard = 0; guard < 64 && t.yaw > half + 1e-5f; ++guard) t.yaw -= 2 * half, o = (o + 1) & mask;
+  for (int guard = 0; guard < 64 && t.yaw <= -half + 1e-5f; ++guard) t.yaw += 2 * half, o = (o + mask) & mask;
+  if (std::fabs(t.yaw) < 1e-4f) t.yaw = 0;
+  player->fieldValues[u"toolMode"] = Value::integer(o);
+  t.cellX = t.cellZ = -1;  // the preview is rebuilt where it is
+  player->mouseMove(vm, t.lastX, t.lastY, 0, 0, 0);
+  return true;
 }
 
 // gsGridPlayer::mouseDown (L:0x0819c410, selection.md §4.2)
