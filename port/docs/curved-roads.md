@@ -188,10 +188,14 @@ end on a road block as that block (a drag can start there). Not checked: the hal
 
 ## Editor UI (2026-11-08)
 
-- Traffic menu, small-road tab: Curve, One-way 1 lane, One-way 2 lanes, Roundabout (icons; the one-way buttons open the
-  curve tool set to that). Alley, large-road and avenue tabs: Curve.
-- Curve panel: icon rows "Form" (straight = the game's straight road icon, curve, freeform, remove = the game's
-  bulldozer) and "Richtung (kleine Straßen)" (both ways, one-way 1 lane, one-way 2 lanes), tooltips on every icon.
-- Roundabout panel: icons for 1 and 2 lanes.
-- New icons (Magnific, fitted by tools/make-toolbar-icon.ps1; the one-way and two-way tiles zoomed to their middle so
-  the arrows stay readable at 46 px): oneway-1, oneway-2, twoway, curve-free, roundabout-1.
+Everything is in the traffic menu (no separate panels):
+- Alley, small-road, large-road and avenue tabs: after the game's own buttons the curve tool's shapes: straight at any
+  angle, curve (the tab's road kind), freeform, remove (the game's bulldozer icon).
+- Road type "One-way" in the menu's top row (small roads, the way it is drawn): 1 lane / 2 lanes, then the shapes; each
+  click selects the tool with the other choice it remembers.
+- Road type "Roundabout": 1 lane / 2 lanes.
+- What the next click does, the length and the angle show under the mouse pointer, below the game's price line.
+- Icons (Magnific, fitted by tools/make-toolbar-icon.ps1; one-way and two-way tiles zoomed so their arrows stay readable
+  at 46 px): straight-free, curve-free, oneway(-1, -2), twoway, roundabout(-1), curve-small/-large/-avenue/-alley.
+  The road types are added like submenu.script's addTypeButton but by the port's script (the game's strings have no
+  tool_<type>_hint for them).
