@@ -242,9 +242,9 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   2026-11-08 the streets are curves (the curve tools of building-tools.md, owner's request): one Bézier per
   simplified leg, Catmull-Rom tangents, junctions at shared OSM nodes, legs shorter than their junctions need
   merged, arms spread to 32°, too tight bends made junctions; ways leaving the map end on two grid blocks (the edge
-  piece, then a straight piece the curve starts on); water cuts ways, bridges crossing streets without a shared
+  piece, then a straight piece the curve starts on); water cuts ways (streams up to 40 m: a causeway across), bridges crossing streets without a shared
   node are left out, footpaths keep off roads; the ground beside the streets levelled 3 units wide (hills).
-  REGS_OSM_GRID=1 builds the old block-grid network instead. Buildings fitted to footprints by category, turned to
+  REGS_OSM_GRID=1 builds the old block-grid network instead. Buildings fitted to footprints by category (wall-to-wall ones as the city houses / corner houses in rows), turned to
   the footprint's angle (yaw and offX/offZ of the free turn; REGS_OSM_NOTURN=1 off).
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); bridges (none on
   curves yet); tram tracks from railway=tram; junctions of large roads at shallow angles (radius capped at 40, the

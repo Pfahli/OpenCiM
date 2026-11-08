@@ -1831,7 +1831,7 @@ struct Chain {
 // a polyline's runs where bad() is false, tested every `step` cells; the original points stay (shared nodes keep their
 // exact place), the cuts back off `back` cells from the bad part
 template <class F>
-std::vector<Chain> splitWhere(const Chain& c, F bad, double step, double back) {
+std::vector<Chain> splitWhere(const Chain& c, F bad, double step, double back, double bridge = 0) {
   struct S {
     Pt p;
     bool orig, bad;
@@ -1848,6 +1848,16 @@ std::vector<Chain> splitWhere(const Chain& c, F bad, double step, double back) {
   }
   ss.push_back({c.pts.back(), true, false});
   for (S& x : ss) x.bad = bad(x.p.first, x.p.second);
+  // bad stretches no longer than bridge cells between good ones stay (a stream the street crosses on a causeway)
+  if (bridge > 0)
+    for (size_t i = 1; i < ss.size(); ++i) {
+      if (!ss[i].bad || ss[i - 1].bad) continue;
+      size_t j = i;
+      while (j < ss.size() && ss[j].bad) ++j;
+      if (j < ss.size() && std::hypot(ss[j].p.first - ss[i - 1].p.first, ss[j].p.second - ss[i - 1].p.second) <= bridge)
+        for (size_t k = i; k < j; ++k) ss[k].bad = false;
+      i = j;
+    }
   std::vector<Chain> out;
   auto dist = [](Pt a, Pt b) { return std::hypot(a.first - b.first, a.second - b.second); };
   for (size_t i = 0; i < ss.size();) {
@@ -1946,7 +1956,8 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
         if (cx < 0 || cz < 0 || cx >= W || cz >= L) return true;
         return water[size_t(cz) * size_t(W) + size_t(cx)] != 0;
       };
-      for (Chain& dry : splitWhere(part, wet, 0.5, 1.0)) chains.push_back(std::move(dry));
+      // streams up to 40 m wide: the street crosses on a causeway (bridges are not built yet)
+      for (Chain& dry : splitWhere(part, wet, 0.5, 1.0, 40.0 / cs)) chains.push_back(std::move(dry));
     }
   }
   // 2. bridges crossing other streets without a shared node go (the legs that cross); footpaths keep 1.5 units off roads
