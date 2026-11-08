@@ -812,6 +812,7 @@ struct BuildingIn {
   int levels;
   std::vector<std::pair<double, double>> pts;
   bool polygon;  // pts is one closed ring (point-in-polygon works)
+  bool terraced = false;  // wall to wall with a neighbour (or building=terrace): the game's city houses in a row
 };
 // a tree to plant: its cell and what it grows in (0 wood, 1 scrub, 2 park or orchard, 3 a single tree or a row)
 struct TreeIn {
@@ -822,6 +823,7 @@ struct ImportData {
   int W = 0, L = 0, flags = 0;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
+  std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (2 industrial, 3 paving stones)
   std::vector<TreeIn> trees;
   std::vector<RoadIn> roads;
   std::vector<BuildingIn> buildings;
@@ -1056,7 +1058,8 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     std::string b = bbox, q = "[out:json][timeout:120];(";
     if (flags & kStreets)
       q += "way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|"
-           "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$\"]" + b + ";way[\"natural\"=\"tree_row\"]" + b + ";";
+           "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$\"]" + b + ";way[\"natural\"=\"tree_row\"]" + b +
+           ";way[\"place\"=\"square\"]" + b + ";way[\"amenity\"=\"parking\"]" + b + ";way[\"area:highway\"]" + b + ";";
     if (flags & kBuildings)
       q += "way[\"building\"]" + b + ";relation[\"building\"]" + b + ";way[\"landuse\"~\"^(residential|commercial|retail|"
            "industrial)$\"]" + b + ";";
@@ -1119,6 +1122,8 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     int kind;
   };
   std::vector<TreeArea> treeAreas;
+  std::vector<std::pair<Edges, uint8_t>> pavedAreas;
+  std::vector<std::vector<std::pair<double, double>>> pavedLines;
   std::vector<std::pair<std::vector<std::pair<double, double>>, double>> rivers;  // line, width in cells
   const double cellM = fr.unitsPerCell * metresPerUnit(fr.cmy);
   if (haveOsm)
@@ -1156,6 +1161,19 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         if (pts.size() < 2) continue;
         std::string hw = tags.str("highway"), nat = tags.str("natural"), lu = tags.str("landuse"), ww = tags.str("waterway"),
                     le = tags.str("leisure");
+        // paved places (owner 2026-11-08): squares and pedestrian areas in paving stones, car parks in the industrial
+        // pavement, pedestrian streets with a band of paving stones
+        if (flags & kStreets) {
+          bool square = tags.str("place") == "square" || tags.str("area:highway") == "pedestrian" ||
+                        (hw == "pedestrian" && tags.str("area") == "yes");
+          if (closed && square) pavedAreas.push_back({ringEdges, 3});
+          else if (closed && tags.str("amenity") == "parking" && tags.str("parking") != "underground" &&
+                   tags.str("parking") != "multi-storey")
+            pavedAreas.push_back({ringEdges, 2});
+          else if (hw == "pedestrian" && type == "way" && !closed)
+            pavedLines.push_back(pts);
+          if (square || tags.str("amenity") == "parking" || !tags.str("area:highway").empty()) continue;
+        }
         if (!hw.empty() && type == "way") {
           if (tags.str("tunnel") == "yes" || tags.str("tunnel") == "building_passage" || tags.num("layer", 0) < 0) continue;
           if (tags.str("area") == "yes") continue;
@@ -1184,6 +1202,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           if (bi.category.empty()) continue;
           bi.id = uint64_t(el.num("id"));
           bi.polygon = type == "way";
+          bi.terraced = tags.str("building") == "terrace";
           if (bi.polygon && pts.size() > 1 && pts.front() == pts.back()) pts.pop_back();
           bi.pts = std::move(pts);
           data->buildings.push_back(std::move(bi));
@@ -1215,9 +1234,9 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           double wm = tags.num("width", ww == "river" ? 15.0 : 10.0);
           rivers.push_back({std::move(pts), wm / cellM});
         } else if (nat == "wood" || lu == "forest") {
-          if (closed) treeAreas.push_back({ringEdges, 0.8, 0});  // a forest: full of trees and bushes
+          if (closed) treeAreas.push_back({ringEdges, 1.0, 0});  // a forest: full of trees and bushes
         } else if (nat == "scrub") {
-          if (closed) treeAreas.push_back({ringEdges, 0.5, 1});
+          if (closed) treeAreas.push_back({ringEdges, 0.8, 1});
         } else if (lu == "orchard") {
           if (closed) treeAreas.push_back({ringEdges, 0.25, 2});
         } else if (le == "park" || le == "garden") {
@@ -1347,6 +1366,74 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     if (inside(landuseCom)) b.category = "commercial";
     else if (inside(landuseInd)) b.category = "industry";
     else b.category = b.levels >= 4 ? "blockhouses" : "residential";
+  }
+  // the paved places' cells
+  if (!pavedAreas.empty() || !pavedLines.empty()) {
+    data->paving.assign(size_t(W) * size_t(L), 0);
+    for (auto& [edges, t] : pavedAreas)
+      fillEdges(edges, W, L, [&](int x, int z) {
+        size_t i = size_t(z) * size_t(W) + size_t(x);
+        if (!water[i]) data->paving[i] = t;
+      });
+    const double half = 3.0 / cellM;  // a pedestrian street: 6 m of paving stones (4: buildings may stand on it)
+    for (auto& line : pavedLines)
+      for (size_t k = 0; k + 1 < line.size(); ++k) {
+        auto a = line[k], b2 = line[k + 1];
+        int x0 = int(std::floor(std::min(a.first, b2.first) - half)), x1 = int(std::ceil(std::max(a.first, b2.first) + half));
+        int z0 = int(std::floor(std::min(a.second, b2.second) - half)), z1 = int(std::ceil(std::max(a.second, b2.second) + half));
+        for (int z = std::max(0, z0); z <= std::min(L - 1, z1); ++z)
+          for (int x = std::max(0, x0); x <= std::min(W - 1, x1); ++x) {
+            size_t i = size_t(z) * size_t(W) + size_t(x);
+            if (!water[i] && !data->paving[i] && segDist(x + 0.5, z + 0.5, a, b2) <= half) data->paving[i] = 4;
+          }
+      }
+  }
+  // buildings wall to wall (owner 2026-11-08: city houses in a row there): two corners of one on the other's outline
+  {
+    const double tol = 0.5 / cellM;
+    const int B = 16;
+    std::map<std::pair<int, int>, std::vector<size_t>> bucket;
+    for (size_t i = 0; i < data->buildings.size(); ++i)
+      for (auto& q : data->buildings[i].pts) {
+        auto& v = bucket[{int(std::floor(q.first / B)), int(std::floor(q.second / B))}];
+        if (v.empty() || v.back() != i) v.push_back(i);
+      }
+    int rows = 0;
+    for (size_t i = 0; i < data->buildings.size(); ++i) {
+      BuildingIn& b = data->buildings[i];
+      if (!b.polygon || b.category == "industry" || b.category == "farm" || b.category == "government" || b.category == "railway")
+        continue;
+      std::set<size_t> near;
+      for (auto& q : b.pts) {
+        int bx = int(std::floor(q.first / B)), bz = int(std::floor(q.second / B));
+        for (int dz = -1; dz <= 1; ++dz)
+          for (int dx = -1; dx <= 1; ++dx) {
+            auto it = bucket.find({bx + dx, bz + dz});
+            if (it != bucket.end())
+              for (size_t j : it->second)
+                if (j != i) near.insert(j);
+          }
+      }
+      for (size_t j : near) {
+        const BuildingIn& o = data->buildings[j];
+        if (!o.polygon) continue;
+        int touching = 0;
+        for (auto& q : b.pts) {
+          for (size_t k = 0; k < o.pts.size(); ++k)
+            if (segDist(q.first, q.second, o.pts[k], o.pts[(k + 1) % o.pts.size()]) < tol) {
+              ++touching;
+              break;
+            }
+          if (touching >= 2) break;
+        }
+        if (touching >= 2) {
+          b.terraced = true;
+          break;
+        }
+      }
+      rows += b.terraced;
+    }
+    LOG_INFO("osm: %d buildings wall to wall", rows);
   }
   // 3. the satellite picture
   if (flags & kSatellite) {
@@ -2538,8 +2625,22 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
       {"industry", {"industry", "workplace"}}, {"government", {"government", "workplace", "commercial"}},
       {"farm", {"farm", "residential"}}, {"railway", {"railway", "industry"}}};
   std::vector<Candidate> cands;
+  if (b.terraced) {  // the city houses (and corner houses for squarish footprints)
+    auto it = cache.find("blockhouses");
+    if (it == cache.end()) it = cache.emplace("blockhouses", categoryTemplates(vm, grid, buildingsList, "blockhouses")).first;
+    const bool corner = std::min(ex, ez) >= 5.5 && std::max(ex, ez) < 1.4 * std::min(ex, ez);
+    for (const Candidate& c : it->second)
+      if (corner ? c.name.rfind("cornerhouse", 0) == 0 : (c.name.rfind("cityhouse", 0) == 0 || c.name.rfind("small-townbuilding", 0) == 0))
+        cands.push_back(c);
+    // too small a footprint for any of them (a single house wall to wall with its garage): the usual buildings
+    bool fits = false;
+    for (const Candidate& c : cands)
+      fits = fits || (c.w <= ex + 0.6 && c.l <= ez + 0.6) || (c.l <= ex + 0.6 && c.w <= ez + 0.6);
+    if (!fits) cands.clear();
+  }
   auto fb = kFallback.find(b.category);
   for (const std::string& c : fb == kFallback.end() ? std::vector<std::string>{b.category, "residential"} : fb->second) {
+    if (!cands.empty()) break;
     auto it = cache.find(c);
     if (it == cache.end()) it = cache.emplace(c, categoryTemplates(vm, grid, buildingsList, c)).first;
     if (!it->second.empty()) {
@@ -2578,7 +2679,7 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   }
   // a big footprint gets several buildings in a row or grid inside it
   int nx = 1, nz = 1;
-  if (chosen.score < 0.45 && b.polygon) {
+  if (chosen.score < (b.terraced ? 0.7 : 0.45) && b.polygon) {
     nx = std::max(1, int(ex / chosen.sx)), nz = std::max(1, int(ez / chosen.sz));
     while (nx * nz > 16) nx > nz ? --nx : --nz;
   }
@@ -2601,7 +2702,8 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   // the cells under a turned rectangle sx × sz centred at (cx, cz) (cell centres inside it, a little to spare)
   auto turnedCells = [&](double cx, double cz, int sx, int sz, std::vector<size_t>& out) {
     out.clear();
-    double hx = sx * 0.5 + 0.2, hz = sz * 0.5 + 0.2, r = std::hypot(hx, hz);
+    const double spare = b.terraced ? -0.15 : 0.2;  // a row's houses stand wall to wall
+    double hx = sx * 0.5 + spare, hz = sz * 0.5 + spare, r = std::hypot(hx, hz);
     for (int z = int(std::floor(cz - r)); z <= int(std::ceil(cz + r)); ++z)
       for (int x = int(std::floor(cx - r)); x <= int(std::ceil(cx + r)); ++x) {
         double dx = x + 0.5 - cx, dz = z + 0.5 - cz;
@@ -2711,7 +2813,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     setP(5, 0);
     if (a.gridStreets) buildNetwork(d.roads, W, L, d.water, a.network, a.drags);
     bool water = (d.flags & kWater) != 0;
-    if (!d.heights.empty() || water) {
+    if (!d.heights.empty() || water || !d.paving.empty()) {
       std::vector<int16_t> heights(size_t(W) * size_t(L));
       std::vector<uint16_t> flags(heights.size());
       constexpr uint16_t kGround = 0x203F;
@@ -2732,6 +2834,10 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           uint16_t f = g.flags[i];
           if (water) f = uint16_t(d.water[i] ? (f & ~0x3Fu) | 0x2000 : f & ~0x2000u);
           if (!d.heights.empty() && !d.water[i]) f &= uint16_t(~0x3Fu & 0xFFFF);  // new ground: plain grass
+          if (!d.paving.empty() && d.paving[i]) {  // the pavement paint (the terrain menu's tool)
+            f = uint16_t((f & 0xFFD8) | ((d.paving[i] == 4 ? 2 : d.paving[i] - 1) & 7) | 0x8);
+            if (d.paving[i] != 4) a.used[i] = 5;  // no trees or buildings on squares and car parks
+          }
           g.flags[i] = f;
           flags[i] = uint16_t(f & kGround);
           if (d.water[i]) a.used[i] = 1;
@@ -2826,6 +2932,13 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
   if (a.stage == 3) {  // buildings
     static std::map<std::string, std::vector<Candidate>> cache;
     if (a.next == 0) cache.clear();
+    if (a.next == 0 && std::getenv("REGS_DEBUG_OSM_BUILDINGS"))
+      if (MapObj* m = vm.resolve(buildings).map())
+        for (auto& [k, v] : m->entries) {
+          std::string cat = utf16ToUtf8(vm.toStr(k)), all;
+          for (const Candidate& c : categoryTemplates(vm, grid, buildings, cat)) all += c.name + "(" + std::to_string(c.w) + "x" + std::to_string(c.l) + ") ";
+          LOG_INFO("osm: buildings '%s': %s", cat.c_str(), all.c_str());
+        }
     gridEditBegin(vm, grid);
     while (a.next < d.buildings.size()) {
       placeBuilding(vm, grid, a, d.buildings[a.next++], buildings, cache);
