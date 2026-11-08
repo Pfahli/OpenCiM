@@ -500,6 +500,7 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
     // world(p) = p·Ry((orient+2)·90°) + T, in division space (§2.2); the diagonal bake Ry(45°)·scale comes first
     Vec3 T{(2.0f * float(it.x - x0) + float(sx - n)) * cs * 0.5f, float(y) * cs / 256.0f,
            (2.0f * float(it.z - z0) + float(sz - n)) * cs * 0.5f};
+    T.x += it.offX, T.z += it.offZ;  // port: snapped off the grid
     float c, s;
     itemTurn(it, c, s);
     float cb = tp.bake ? 0.70710678f : 1.0f, sb = tp.bake ? 0.70710678f : 0.0f;
@@ -626,6 +627,7 @@ Mat4 itemPlacement(const GridData& g, const TerrainCache& tc, uint32_t item, int
   scale.at(2, 2) = tp.bake ? tp.bakeScaleZ : 1.0f;
   Vec3 T{(2.0f * float(it.x - x0) + float(sx - n)) * cs * 0.5f, float(y) * cs / 256.0f,
          (2.0f * float(it.z - z0) + float(sz - n)) * cs * 0.5f};
+  T.x += it.offX, T.z += it.offZ;  // port: snapped off the grid
   return translation(T) * place * bake * scale;
 }
 

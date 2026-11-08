@@ -37,8 +37,8 @@ constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x0708101
                    kRegsPatch = 0x07081090,
                    // port: a curved road added or removed (engine/curve_roads.h curveActionBytes), kept in Action::raw
                    kRegsCurve = 0x070810A0,
-                   // port: an item's free turn (GridData::Item::yaw): the ObjRef and the angle as a float (kept in
-                   // Action::variation as its bits), after the item's createObject
+                   // port: an item off the grid (GridData::Item::yaw, offX, offZ): the ObjRef, then the angle and the
+                   // shifts as floats (Action::turn; older records only the angle), after the item's createObject
                    kRegsTurn = 0x070810B0;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
@@ -63,6 +63,7 @@ struct Action {
   uint16_t on = 0;
   std::string text;                  // name (UTF-8, as the network's name table)
   uint32_t variation = 0;            // variation
+  float turn[3] = {0, 0, 0};         // port: kRegsTurn (yaw, offX, offZ)
   std::vector<uint8_t> raw;          // unknown tags, kept as read (body)
 };
 
@@ -154,9 +155,12 @@ void readActions(const Reader& r, size_t at, size_t end, std::vector<Action>& ou
         break;
       }
       case kVariation:
-      case kRegsTurn:
         a.obj = readRef(r, body);
         a.variation = r.u32(body + 44);
+        break;
+      case kRegsTurn:
+        a.obj = readRef(r, body);
+        for (int k = 0; k < 3 && body + 48 + size_t(k) * 4 <= stop; ++k) std::memcpy(&a.turn[k], r.d.data() + body + 44 + k * 4, 4);
         break;
       default: a.raw.assign(r.d.begin() + std::ptrdiff_t(body), r.d.begin() + std::ptrdiff_t(stop)); break;
     }
@@ -231,9 +235,16 @@ void writeAction(Writer& w, const Action& a) {
       break;
     }
     case kVariation:
-    case kRegsTurn:
       w.ref(a.obj);
       w.u32(a.variation);
+      break;
+    case kRegsTurn:
+      w.ref(a.obj);
+      for (float f : a.turn) {
+        uint32_t v;
+        std::memcpy(&v, &f, 4);
+        w.u32(v);
+      }
       break;
     default: w.out.insert(w.out.end(), a.raw.begin(), a.raw.end()); break;
   }
@@ -522,9 +533,9 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       if (preview) break;
       int i = findItem(ap, a.obj, true);
       if (i < 0) break;
-      float yaw;
-      std::memcpy(&yaw, &a.variation, 4);
-      g.items[size_t(i)].yaw = std::isfinite(yaw) ? yaw : 0.0f;
+      GridData::Item& it = g.items[size_t(i)];
+      bool ok = std::isfinite(a.turn[0]) && std::fabs(a.turn[1]) < 3 && std::fabs(a.turn[2]) < 3;
+      it.yaw = ok ? a.turn[0] : 0.0f, it.offX = ok ? a.turn[1] : 0.0f, it.offZ = ok ? a.turn[2] : 0.0f;
       gridEditItemChanged(ap.grid, uint32_t(i));
       break;
     }
@@ -692,11 +703,11 @@ void timelineRecordCreate(VM& vm, Object* s, GridObj* grid, uint32_t item) {
   if (it.parent && it.parent <= grid->data->items.size()) a.parent = refOf(grid, it.parent - 1, kFlagAutoChild);
   recordAction(vm, s, std::move(a));
   if (it.variation) timelineRecordVariation(vm, s, grid, item, it.variation);
-  if (it.yaw != 0) {  // port: the free turn
+  if (itemOffGrid(it)) {  // port: turned or shifted
     Action t;
     t.tag = kRegsTurn;
     t.obj = refOf(grid, item, kFlagAutoChild);
-    std::memcpy(&t.variation, &it.yaw, 4);
+    t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ;
     recordAction(vm, s, std::move(t));
   }
 }

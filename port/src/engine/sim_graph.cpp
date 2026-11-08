@@ -552,6 +552,7 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
   // the item placement of the renderer (grid-items.md §2.2): turn by (orient + 2)·90°, then to the item centre
   Vec3 T{(2.0f * float(it.x) + float(sx - g.width)) * cs * 0.5f, float(itemHeight(g, it, tp.flags, tp.type)) * cs / 256.0f,
          (2.0f * float(it.z) + float(sz - g.length)) * cs * 0.5f};
+  T.x += it.offX, T.z += it.offZ;  // port: snapped off the grid
   float c, s;
   itemTurn(it, c, s);  // with the port's free turn
   auto place = [&](const Vec3& v) { return Vec3{v.x * c + v.z * s, v.y, -v.x * s + v.z * c}; };

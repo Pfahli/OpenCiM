@@ -540,6 +540,38 @@ GridItemShape gridItemShape(VM& vm, GridObj* grid, uint32_t item) {
 
 // gsGridItem::checkConflict(a, b) (L:0x08183aa0). Port: the templates' per-cell masks (+0x274), which let some
 // footprints share a cell, are not read; overlapping covered cells at overlapping heights conflict.
+// port: the ground rectangle of an item as drawn (itemTurn, offX / offZ): centre, unit axes and half sizes in world units
+struct GroundRect {
+  float cx = 0, cz = 0, ux = 1, uz = 0, vx = 0, vz = 1, hu = 0, hv = 0;
+};
+static GroundRect groundRect(const EditState& st, const GridData& g, const GridData::Item& it) {
+  const TypeInfo& t = st.types[it.type];
+  const float cs = g.cellSize;
+  int sx = (it.orient & 1) ? t.length : t.width, sz = (it.orient & 1) ? t.width : t.length;
+  GroundRect r;
+  r.cx = (float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs + it.offX;
+  r.cz = (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs + it.offZ;
+  float c, s;
+  itemTurn(it, c, s);
+  r.ux = c, r.uz = -s, r.vx = s, r.vz = c;  // the template's x (width) and z (length) axes in the world
+  r.hu = float(t.width) * cs * 0.5f, r.hv = float(t.length) * cs * 0.5f;
+  return r;
+}
+
+// port: two items' ground rectangles overlap by more than a sliver (separating axes); for items off the grid, whose cells
+// only approximate where they stand
+static bool groundRectsOverlap(const GroundRect& a, const GroundRect& b) {
+  const float dx = b.cx - a.cx, dz = b.cz - a.cz;
+  const float axes[4][2] = {{a.ux, a.uz}, {a.vx, a.vz}, {b.ux, b.uz}, {b.vx, b.vz}};
+  for (const auto& n : axes) {
+    auto reach = [&](const GroundRect& r) {
+      return r.hu * std::fabs(r.ux * n[0] + r.uz * n[1]) + r.hv * std::fabs(r.vx * n[0] + r.vz * n[1]);
+    };
+    if (std::fabs(dx * n[0] + dz * n[1]) >= reach(a) + reach(b) - 0.1f) return false;
+  }
+  return true;
+}
+
 bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   EditState& st = state(vm, grid);
   const GridData& g = *grid->data;
@@ -573,7 +605,10 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   int shift = 0x200 - int(g.heightBase);
   int ya = ia.y + shift, yb = ib.y + shift, topA = ya + sa.height, topB = yb + sb.height;
   int lowA = ya - ta.negHeight * 0x100, lowB = yb - tb.negHeight * 0x100;
-  auto overlap = [&] { return lowB < topA && lowA < topB && coversAny(st, ia, ib); };  // gsGridItem::overlap
+  // port: items off the grid (turned or shifted) by their drawn ground rectangles, not their cells
+  const bool offGrid = itemOffGrid(ia) || itemOffGrid(ib);
+  auto covers = [&] { return offGrid ? groundRectsOverlap(groundRect(st, g, ia), groundRect(st, g, ib)) : coversAny(st, ia, ib); };
+  auto overlap = [&] { return lowB < topA && lowA < topB && covers(); };  // gsGridItem::overlap
   auto roadXZ = [&](const GridData::Item& it, const TypeInfo& t, const GridItemShape& s) {
     switch (it.orient & 3) {
       case 1: return std::pair<int, int>{it.x - t.offz, it.z + t.offx - 4 + s.sz};
@@ -630,6 +665,7 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   } else if (((la & 0x10004) || (lb & 0xc000)) && ((lb & 0x10004) || (la & 0xc000))) {
     // covering and block items: overlapping is a conflict; ground pieces next to each other must meet at their corners
     if (!((tram(sa.type) && sb.type == 1) || (tram(sb.type) && sa.type == 1)) && overlap()) return true;
+    if (offGrid) return false;  // port: no corner heights to match off the grid
     if (!(sa.flags & kLock) || !(sb.flags & kLock)) return false;
     if ((sa.flags & kBase) && (sb.flags & kBase)) return false;
     ItemFootprint fa = footprintOf(st, ia), fb = footprintOf(st, ib);

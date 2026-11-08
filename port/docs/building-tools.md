@@ -84,10 +84,23 @@ Under the pointer: the hint, and once turned, the angle. A new object starts unt
 - The turn is drawn: mesh, paths and effects turn about the footprint's centre. The cells (conflicts, levelling) stay
   those of the 90° orientation.
 - A turned object puts no cell cover under itself. Its own base plate shows instead of a grid-aligned square.
-- Data: `GridData::Item::yaw` holds radians on top of `orient`, within half a step. It is saved in map.grid section
-  `0x07F10000` (u32 count, then the saved item index and the float). Undo/redo uses timeline action `0x070810B0`
-  (ObjRef + float) after the item's create. Templates and mounting copy it. Code: `toolWheel` (engine/tools.cpp),
-  `movePlaceObject` (tool_objects.cpp), `itemTurn` (grid.h).
+- **Magnetic placement:** near a turned (or shifted) object, the next freely turnable object takes that object's turn,
+  plus whichever 90° step is nearest the tool's own turn. It stands on the neighbour's grid, turned with it: edges
+  flush with the neighbour's, whole cells along its axes. The pointer line says "am Nachbarn ausgerichtet". Hold Ctrl
+  to place freely. (`snapToNeighbour`, tool_objects.cpp: the nearest such object whose edge is within half the new
+  object's size plus a cell of the pointer.)
+- Such an object usually sits off the cell grid: `GridData::Item::offX` / `offZ` shift it in world units, at most half
+  a cell, off its footprint's centre.
+- Conflicts between items off the grid (`itemOffGrid`) compare their drawn ground rectangles (separating axes, a
+  0.1-unit sliver allowed), not their cells (`gridItemsConflict`, grid_edit.cpp). Snapped neighbours therefore fit
+  side by side. The items checked are still the ones whose cells lie near.
+- Data: `GridData::Item::yaw` holds radians on top of `orient`, within half a step.
+- map.grid section `0x07F10000`: u32 count (bit 31: with shifts), then per item the saved item index, the angle and
+  (bit 31) offX, offZ as floats.
+- Undo/redo: timeline action `0x070810B0` (ObjRef + yaw, offX, offZ) after the item's create. Templates and mounting
+  copy all three.
+- Code: `toolWheel` (engine/tools.cpp), `movePlaceObject` / `snapToNeighbour` (tool_objects.cpp), `itemTurn` and
+  `itemOffGrid` (grid.h).
 
 ### Stops
 

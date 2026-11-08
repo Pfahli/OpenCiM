@@ -87,6 +87,11 @@ struct ToolState {
   bool turnable = false;
   const script::Object* turnObject = nullptr;
   float lastX = 0, lastY = 0;  // the last mouseMove's position (player-local), to rebuild the preview after a turn
+  // port: the preview snapped to a neighbour off the grid (tool_objects.cpp snapToNeighbour): its orientation, turn and
+  // shift, and the total turn in degrees for the cursor line
+  bool snapped = false;
+  int snapOrient = 0;
+  float snapYaw = 0, snapOffX = 0, snapOffZ = 0, snapAngle = 0;
 };
 
 // port: Shift + mouse wheel over the player (the control under the mouse; notches, positive away from the user; modifiers: the desktop's 0x100 Shift, 0x200 Ctrl)

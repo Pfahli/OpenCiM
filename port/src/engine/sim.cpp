@@ -113,8 +113,8 @@ Vec3 itemCentre(VM& vm, GridObj* grid, int item, int* sxOut, int* szOut) {
   if (sxOut) *sxOut = sx;
   if (szOut) *szOut = sz;
   float cs = g.cellSize;
-  return {(float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs, float(itemHeight(g, it, uint32_t(tf), ty)) * cs / 256.0f,
-          (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs};
+  return {(float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs + it.offX, float(itemHeight(g, it, uint32_t(tf), ty)) * cs / 256.0f,
+          (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs + it.offZ};
 }
 
 int modelFor(VM& vm, GridObj* grid, SimState& s, const std::string& name) {

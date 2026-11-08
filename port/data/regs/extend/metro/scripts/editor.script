@@ -456,7 +456,8 @@ $regsTurnThread = thread :: {
         }
       }
       $regsTurnTenths = int($regsTurnState[0] * 10 + 0.5) % 3600;
-      if ($regsTurnState[1] == 0) $regsTurnInfo.text = $regsTurnStrings.$regs_turn_hint;
+      if ($regsTurnState[3] == 1) $regsTurnInfo.text = expandPattern($regsTurnStrings.$regs_turn_snap, int($regsTurnTenths / 10), $regsTurnTenths % 10);
+      else if ($regsTurnState[1] == 0) $regsTurnInfo.text = $regsTurnStrings.$regs_turn_hint;
       else $regsTurnInfo.text = expandPattern($regsTurnStrings.$regs_turn_info, int($regsTurnTenths / 10), $regsTurnTenths % 10);
     } else if ($regsTurnInfo) {
       delete $regsTurnInfo;

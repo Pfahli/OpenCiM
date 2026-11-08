@@ -70,7 +70,11 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
   g.bucketShift = r.u32(root + 12);
   g.heightBase = r.u16(root + 16);
   size_t cells = size_t(std::max(0, g.width)) * size_t(std::max(0, g.length));
-  std::vector<std::pair<uint32_t, float>> turns;  // port: the items' free turns, set once the items are read
+  struct Turn {
+    uint32_t ref;
+    float yaw, offX, offZ;
+  };
+  std::vector<Turn> turns;  // port: the items' free turns and shifts, set once the items are read
   r.children(root + 24, end, [&](uint32_t tag, size_t body, size_t stop) {
     if (tag == 0x07010000) {  // terrain: i16 height, u16 flags per cell, row-major
       size_t n = std::min(cells, (stop - body) / 4);
@@ -83,12 +87,17 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
       }
     } else if (tag == kCurveSectionTag) {  // port: curved roads (engine/curve_roads.h)
       parseCurveSection(d, body, stop, g);
-    } else if (tag == kItemTurnSectionTag && body + 4 <= stop) {  // port: free turns of items (GridData::Item::yaw)
-      uint32_t count = r.u32(body);
-      for (uint32_t i = 0; i < count && body + 4 + size_t(i + 1) * 8 <= stop; ++i) {
-        float a;
-        std::memcpy(&a, d.data() + body + 8 + size_t(i) * 8, 4);
-        turns.emplace_back(r.u32(body + 4 + size_t(i) * 8), a);
+    } else if (tag == kItemTurnSectionTag && body + 4 <= stop) {  // port: items off the grid (Item::yaw, offX, offZ)
+      uint32_t count = r.u32(body) & 0x7fffffffu;
+      size_t each = (r.u32(body) & 0x80000000u) ? 16 : 8;  // bit 31: with the shifts
+      auto f = [&](size_t at) {
+        float v;
+        std::memcpy(&v, d.data() + at, 4);
+        return v;
+      };
+      for (uint32_t i = 0; i < count && body + 4 + size_t(i + 1) * each <= stop; ++i) {
+        size_t p = body + 4 + size_t(i) * each;
+        turns.push_back({r.u32(p), f(p + 4), each > 8 ? f(p + 8) : 0.0f, each > 8 ? f(p + 12) : 0.0f});
       }
     } else if (tag == 0x07020000) {  // network: type names, 16-byte items, names
       uint32_t typeCount = r.u32(body), itemCount = r.u32(body + 4);
@@ -133,8 +142,11 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
       });
     }
   });
-  for (auto [ref, a] : turns)
-    if (ref >= 1 && ref <= g.items.size() && std::isfinite(a)) g.items[ref - 1].yaw = a;
+  for (const Turn& t : turns)
+    if (t.ref >= 1 && t.ref <= g.items.size() && std::isfinite(t.yaw) && std::fabs(t.offX) < 3 && std::fabs(t.offZ) < 3) {
+      GridData::Item& it = g.items[t.ref - 1];
+      it.yaw = t.yaw, it.offX = t.offX, it.offZ = t.offZ;
+    }
   if (g.height.size() != cells) {
     if (error) *error = "terrain section missing";
     return false;

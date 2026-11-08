@@ -32,6 +32,9 @@ struct GridData {
     // for objects with a diagonal variant), saved in the port's section 0x07F10000 of map.grid; only drawn (paths and
     // effects turn with it), the cells stay those of orient
     float yaw = 0;
+    // port: a shift in world units off the footprint's centre (|x|, |z| ≤ half a cell: an object snapped to a turned
+    // neighbour's grid), saved and drawn with yaw
+    float offX = 0, offZ = 0;
   };
   std::vector<std::string> types;
   std::vector<Item> items;
@@ -81,8 +84,11 @@ inline void itemTurn(const GridData::Item& it, float& c, float& s) {
   c = std::cos(a), s = std::sin(a);
 }
 
-// port: the items' free turns (GridData::Item::yaw) in map.grid: u32 count, then per turned item its 1-based saved index
-// (savedItemRefs) and the angle as a float
+// port: placed off the grid: turned freely or shifted (GridData::Item::yaw, offX, offZ)
+inline bool itemOffGrid(const GridData::Item& it) { return it.yaw != 0 || it.offX != 0 || it.offZ != 0; }
+
+// port: the items' free turns and shifts in map.grid: u32 count (bit 31: with the shifts), then per item off the grid its
+// 1-based saved index (savedItemRefs), the angle and (bit 31) offX, offZ as floats
 constexpr uint32_t kItemTurnSectionTag = 0x07F10000;
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);

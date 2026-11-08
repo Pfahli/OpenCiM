@@ -21,6 +21,7 @@
 #include "engine/grid_edit.h"
 #include "engine/grid_render.h"
 #include "engine/gui.h"
+#include "engine/input.h"
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/timeline.h"
@@ -610,13 +611,76 @@ void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float m
 // the cursor, turned by toolMode, raised by toolType; stations and ALIGN_4 objects snap to the 4-cell grid, elevated
 // ones (BRIDGE) stand 2 cells above the picked point, underground ones (TUNNEL) on the level toolSize·2 cells.
 
+// port: magnetic placement (owner's wish 2026-11-08): near an object off the grid (turned or shifted), a freely
+// turnable object takes that object's turn, plus the 90° steps nearest to the tool's own turn, and stands on its grid
+// turned with it: edges flush with the neighbour's, whole cells along its axes. Ctrl held: no snapping.
+struct Snap {
+  bool on = false;
+  int orient = 0, x = 0, z = 0;
+  float yaw = 0, offX = 0, offZ = 0, angle = 0;  // angle: the total turn in degrees (as regsPlaceToolTurn reports it)
+};
+
+Snap snapToNeighbour(VM& vm, GridObj* grid, const Tpl& tp, const Vec3& m, float toolTheta) {
+  Snap out;
+  const GridData& g = *grid->data;
+  const float cs = g.cellSize, kHalfPi = 1.57079633f;
+  const int mcx = int(std::floor(m.x / cs + float(g.width) * 0.5f)), mcz = int(std::floor(m.z / cs + float(g.length) * 0.5f));
+  const int R = std::max(tp.width, tp.length) + 2;
+  const float reach = float(std::max(tp.width, tp.length)) * cs * 0.5f + cs;  // the mouse this far from its edges
+  float best = 1e30f, ncx = 0, ncz = 0, nc = 1, ns = 0, hu = 0, hv = 0;
+  for (uint32_t o : gridItemsNear(vm, grid, mcx - R, mcz - R, mcx + R, mcz + R)) {
+    const GridData::Item& it = g.items[o];
+    if (it.removed || (it.flags & (kItemTemp | kItemHidden | kItemOptional)) || !itemOffGrid(it)) continue;
+    Tpl ot = tplOf(vm, grid, g.types[it.type]);
+    if (!ot.obj) continue;
+    int sx = (it.orient & 1) ? ot.length : ot.width, sz = (it.orient & 1) ? ot.width : ot.length;
+    float c, s;
+    itemTurn(it, c, s);
+    float cx = (float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs + it.offX;
+    float cz = (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs + it.offZ;
+    float u = (m.x - cx) * c - (m.z - cz) * s, v = (m.x - cx) * s + (m.z - cz) * c;  // along its axes (c, −s), (s, c)
+    float d = std::max({0.0f, std::fabs(u) - float(ot.width) * cs * 0.5f, std::fabs(v) - float(ot.length) * cs * 0.5f});
+    if (d > reach || d >= best) continue;
+    best = d, ncx = cx, ncz = cz, nc = c, ns = s;
+    hu = float(ot.width) * cs * 0.5f, hv = float(ot.length) * cs * 0.5f;
+  }
+  if (best > 1e29f) return out;
+  const float ux = nc, uz = -ns, vx = ns, vz = nc;
+  const float thetaN = std::atan2(ns, nc);
+  float r = std::round((toolTheta - thetaN) / kHalfPi);  // the neighbour's turn plus the nearest quarter turns
+  float theta = thetaN + r * kHalfPi;
+  int ri = ((int(r) % 4) + 4) % 4;
+  float eu = float((ri & 1) ? tp.length : tp.width) * cs, ev = float((ri & 1) ? tp.width : tp.length) * cs;
+  float mu = (m.x - ncx) * ux + (m.z - ncz) * uz, mv = (m.x - ncx) * vx + (m.z - ncz) * vz;
+  float tu = -hu + std::round((mu - eu * 0.5f + hu) / cs) * cs + eu * 0.5f;  // whole cells from its corner
+  float tv = -hv + std::round((mv - ev * 0.5f + hv) / cs) * cs + ev * 0.5f;
+  float tx = ncx + ux * tu + vx * tv, tz = ncz + uz * tu + vz * tv;
+  const float kPi = 3.14159265f;
+  int k = int(std::lround((theta - kPi) / kHalfPi));
+  out.yaw = theta - kPi - float(k) * kHalfPi;
+  if (std::fabs(out.yaw) < 1e-4f) out.yaw = 0;
+  out.orient = ((k % 4) + 4) % 4;
+  int sizeX = (out.orient & 1) ? tp.length : tp.width, sizeZ = (out.orient & 1) ? tp.width : tp.length;
+  out.x = int(std::lround(tx / cs + float(g.width) * 0.5f - float(sizeX) * 0.5f));
+  out.z = int(std::lround(tz / cs + float(g.length) * 0.5f - float(sizeZ) * 0.5f));
+  out.offX = tx - (float(out.x) + float(sizeX) * 0.5f - float(g.width) * 0.5f) * cs;
+  out.offZ = tz - (float(out.z) + float(sizeZ) * 0.5f - float(g.length) * 0.5f) * cs;
+  if (std::fabs(out.offX) < 1e-3f) out.offX = 0;
+  if (std::fabs(out.offZ) < 1e-3f) out.offZ = 0;
+  out.angle = float(std::fmod(double(theta - kPi) * 180.0 / 3.14159265358979 + 720.0, 360.0));
+  out.on = true;
+  return out;
+}
+
 void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   ToolState& t = toolState(player);
   Object* tobj = objField(player, u"toolObject");
   Object* tobj2 = objField(player, u"toolObject2");
   if (!tobj) return;
   if (t.turnObject != tobj) t.turnObject = tobj, t.yaw = 0;  // another object starts unturned
-  int orient = intField(vm, player, u"toolMode", 0);
+  Object* tobjMain = tobj;
+  const int toolMode = intField(vm, player, u"toolMode", 0);
+  int orient = toolMode;
   if (tobj2) {
     if (orient & 1) tobj = tobj2;
     orient >>= 1;
@@ -627,6 +691,7 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
   const GridData& g = *grid->data;
   int y = (tp.flags & kFlagTunnel) ? intField(vm, player, u"toolSize", 0) << 9 : kNoY;
   int cx = -1, cz = -1, hovered = -1;
+  Vec3 mouse;
   if (y != kNoY) {
     ToolPick p = toolPickLevel(vm, player, mx, my, y);  // the subway level: the plane at y, tunnels only
     if (!p.hit) return;
@@ -635,6 +700,7 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
     ToolPick p = toolPick(vm, player, mx, my, false);
     if (!p.hit) return;
     cx = p.cellX, cz = p.cellZ, hovered = p.item;
+    mouse = p.point;
     y = p.y;  // the hit item's height, else the ground's rounded to a cell
   }
   if (hovered >= 0 && (gridItemShape(vm, grid, uint32_t(hovered)).flags & kItemOptional)) hovered = -1;
@@ -659,7 +725,28 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
     x = cx - (sizeX >> 1);
     z = cz - (sizeZ >> 1);
   }
-  if (x == t.cellX && z == t.cellZ) return;
+  // port: snapped to a neighbour off the grid (the main object, never the diagonal variant)
+  Snap snap;
+  {
+    Tpl tm = tobjMain == tobj ? tp : tplOf(vm, grid, templateName(vm, tobjMain));
+    bool canTurn = tm.obj && tm.conn == 0 && tm.conn2 == 0 && tm.type != kTypeMetroStation && tm.type != kTypeMarker &&
+                   !(tm.flags & (kFlagBridge | kFlagTunnel | kFlagAlign4));
+    if (canTurn && !(inputModifiers() & 0x200)) {
+      const float kPi = 3.14159265f;
+      float step = tobj2 ? kPi / 4 : kPi / 2;
+      snap = snapToNeighbour(vm, grid, tm, mouse, kPi + float(toolMode) * step + t.yaw);
+    }
+    if (snap.on) {
+      tp = tm;
+      orient = snap.orient, x = snap.x, z = snap.z;
+      hovered = -1;  // beside the neighbour, never on it
+    }
+  }
+  bool sameSnap = snap.on == t.snapped && (!snap.on || (snap.orient == t.snapOrient && snap.yaw == t.snapYaw &&
+                                                       snap.offX == t.snapOffX && snap.offZ == t.snapOffZ));
+  if (x == t.cellX && z == t.cellZ && sameSnap) return;
+  t.snapped = snap.on, t.snapOrient = snap.orient, t.snapYaw = snap.yaw, t.snapOffX = snap.offX, t.snapOffZ = snap.offZ;
+  t.snapAngle = snap.angle;
 
   gridEditBegin(vm, grid);
   dropPreviews(vm, player, grid);
@@ -694,7 +781,11 @@ void movePlaceObject(VM& vm, ControlObj* player, GridObj* grid, float mx, float 
     // port: the free turn (Shift + mouse wheel, toolWheel) for objects that stand alone: no connections, no parts
     t.turnable = tp.conn == 0 && tp.conn2 == 0 && tp.type != kTypeMetroStation && tp.type != kTypeMarker &&
                  t.newItems.size() == 1;
-    if (t.turnable) grid->data->items[size_t(main)].yaw = t.yaw;
+    if (t.turnable) {
+      GridData::Item& it = grid->data->items[size_t(main)];
+      it.yaw = snap.on ? snap.yaw : t.yaw;
+      it.offX = snap.on ? snap.offX : 0.0f, it.offZ = snap.on ? snap.offZ : 0.0f;
+    }
     bool conflict = false;
     for (size_t k = 0; k < t.newItems.size(); ++k) {
       if (gridCheckConflict(vm, grid, t.newItems[k], t.replaced)) conflict = true;
@@ -1229,20 +1320,22 @@ void registerObjectTools(VM& vm) {
   registerToolMode(kGridModeRemoveObjects, remove);
   registerNatives(vm);
   // port: regsPlaceToolTurn(player): [the place tool's turn in degrees (0 ≤ a < 360: toolMode's steps and the free
-  // turn), the free turn in degrees, turnable (0/1: a preview there that may turn freely)] for the editor's cursor line (Shift + mouse wheel, toolWheel)
+  // turn), the free turn in degrees, turnable (0/1: a preview there that may turn freely), snapped to a neighbour (0/1)] for the editor's cursor line (Shift + mouse wheel, toolWheel)
   implementGlobal(vm, u"regsPlaceToolTurn", [](VM& v, Object*, int argc, const Value* a) {
     auto arr = make<ArrayObj>();
     Object* player = argc > 0 ? a[0].object() : nullptr;
     double total = 0, fine = 0;
-    bool turnable = false;
+    bool turnable = false, snapped = false;
     if (player) {
       const ToolState& t = toolState(player);
       bool eight = objField(player, u"toolObject2") != nullptr;
       fine = double(t.yaw) * 180.0 / 3.14159265358979;
       total = std::fmod(intField(v, player, u"toolMode", 0) * (eight ? 45.0 : 90.0) + fine + 720.0, 360.0);
       turnable = t.turnable && !t.newItems.empty();  // with a preview (none while the mouse is off the map)
+      snapped = turnable && t.snapped;
+      if (snapped) total = t.snapAngle, fine = 1;
     }
-    arr->items = {Value::real(float(total)), Value::real(float(fine)), Value::integer(turnable ? 1 : 0)};
+    arr->items = {Value::real(float(total)), Value::real(float(fine)), Value::integer(turnable ? 1 : 0), Value::integer(snapped ? 1 : 0)};
     return Value::heap(VT::Array, arr.get());
   }, 1, 1);
 }

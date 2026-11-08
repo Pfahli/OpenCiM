@@ -98,22 +98,28 @@ void writeNetwork(const GridData& g, std::vector<uint8_t>& out) {
   LOG_INFO("grid save: %u items of %u types, %zu removed since load", itemCount, typeCount, g.items.size() - itemCount);
 }
 
-// port: the section of free item turns (GridData::Item::yaw, kItemTurnSectionTag); none when no item is turned
+// port: the section of items off the grid (GridData::Item::yaw, offX, offZ; kItemTurnSectionTag), with the shifts
+// (count bit 31); none when every item is on the grid
 void writeItemTurns(const GridData& g, std::vector<uint8_t>& out) {
   std::vector<uint32_t> refs = savedItemRefs(g);
   std::vector<uint8_t> body;
   put32(body, 0);
   uint32_t count = 0;
+  auto putF = [&](float f) {
+    uint32_t a;
+    std::memcpy(&a, &f, 4);
+    put32(body, a);
+  };
   for (size_t i = 0; i < g.items.size(); ++i)
-    if (refs[i] && g.items[i].yaw != 0) {
-      uint32_t a;
-      std::memcpy(&a, &g.items[i].yaw, 4);
+    if (refs[i] && itemOffGrid(g.items[i])) {
       put32(body, refs[i]);
-      put32(body, a);
+      putF(g.items[i].yaw);
+      putF(g.items[i].offX);
+      putF(g.items[i].offZ);
       ++count;
     }
   if (!count) return;
-  putU32(body, 0, count);
+  putU32(body, 0, count | 0x80000000u);
   put32(out, kItemTurnSectionTag);
   put32(out, uint32_t(body.size()));
   out.insert(out.end(), body.begin(), body.end());
