@@ -241,7 +241,11 @@ rebuilding a 50-block preview takes 2-4 ms. `toolBlocks().track(x, z, conn, a, b
 tool's `newItems` (variation: the player's `toolType`). Deviations:
 * `createRoadBlock` (`L:0x08190700`, roads: editor only; the game's objects have no road parts) lays the plain piece
   of the connections without joining its neighbours. The double track's road crossings (createTrackBlock type 9) and
-  the editor's bridge and tunnel modes (0xb, 0xc) are not ported.
+  the editor's bridge and tunnel modes (0xb, 0xc) are ported as `moveLayBridge` (L:0x0819f2a0.c:738-1372): ramps or
+  portals at the ends (connections2 = the block's connections, flags BRIDGE/TUNNEL | SLOPE_1p2, wide roads 1p4), spans
+  between (several blocks per span when the design's gap template is wider), then one height for all: the highest a
+  span needs to clear what is under it by a cell, for tunnels the lowest below what is over it. Port: straight drags
+  only.
 * All preview pieces are TEMP items in the map (the engine adds only bridge, tunnel, stop and auto-child pieces to
   it); `gsGrid::checkConflict` therefore also sees the preview's other pieces through `gridItemsConflict` (related
   and sibling pieces do not conflict).

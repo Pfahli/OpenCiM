@@ -1010,7 +1010,16 @@ uint32_t createTrackBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, i
   // at the map's edge the piece leads off the map (connections2, the SPECIAL0 templates)
   uint32_t c2 = (x == 0 ? 0x40u : 0) | (x == c.g.width - 4 ? 4u : 0) | (z == c.g.length - 4 ? 0x10u : 0) | (z == 0 ? 1u : 0);
   uint32_t flags = c2 ? (E | 0x40000) : E;
-  // editor bridge and tunnel modes (0xb, 0xc) pick other flags; the game has no such tools
+  // the editor's bridge and tunnel modes (0xb, 0xc), as createRoadBlock: ramps or portals at the ends, spans between
+  if ((c.editMode == kGridModeLayBridge || c.editMode == kGridModeLayTunnel) && !(a && b)) {
+    const uint32_t kind = c.editMode == kGridModeLayBridge ? kFlagBridge : kFlagTunnel;
+    c2 = (conn >> 24) & 0xffu;
+    flags = (a || b) ? (kind | 0x80u) : kind;
+    if (!(a || b)) {
+      c.W.push_back(c.createRoadItem(x, y, z, conn, c2, T, c.toolType, flags));
+      return 0;
+    }
+  }
   std::optional<Piece> res;
   int resRepl = -1;  // the track the merged piece replaces (local_30)
   uint32_t b0 = conn, ret = 0, extra = 0;
@@ -1215,6 +1224,18 @@ void createRoadBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, int va
     Piece p = c.createRoadItem(px, py, pz, pc, pc2, type, var, f);
     return p;
   };
+  // the editor's bridges and tunnels (L:0x08190700.c:429-477): unless the drag is a single block, connections2 is the
+  // block's own connections in the low byte; the first and last block are the ramps or portals (BRIDGE / TUNNEL with
+  // SLOPE_1p2, wide roads 1p4), joined to the roads around; the blocks between are the spans, on their own
+  if ((c.editMode == kGridModeLayBridge || c.editMode == kGridModeLayTunnel) && !(a && b)) {
+    const uint32_t kind = c.editMode == kGridModeLayBridge ? kFlagBridge : kFlagTunnel;
+    c2 = (conn >> S) & 0xffu;
+    flags = (a || b) ? (kind | (T >= 5 ? 0x40u : 0x80u)) : kind;
+    if (!(a || b)) {
+      c.W.push_back(make(x, y, z, conn, c2, T, c.toolType, flags));
+      return;
+    }
+  }
   std::optional<Piece> res;
   int resRepl = -1;
   uint32_t b0 = conn, extra = 0;
@@ -1425,6 +1446,115 @@ void moveLayRoad(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) 
   static const bool debugTools = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
   if (debugTools) logPieces(c);
   t.cellX = ex, t.cellZ = ez, t.cellY = y;
+  gridEditEnd(vm, grid);
+  vm.fireEvent(player, u"onHoverConstruct", {});
+}
+
+// mouseMove cases 0xb and 0xc (L:0x0819f2a0.c:738-1372): the editor's bridges and tunnels, for roads (toolMode
+// GRIDROAD_SMALL 0, LARGE 3, AVENUE 4, EXPRESS 5) and the double track (GRIDTRACK_DOUBLE 6); toolType is the design.
+// A straight drag along the longer axis from the start block: a ramp (tunnel: a portal) on the first and the last
+// block, joined to the roads there, and spans between. A bridge span may cover several blocks (its template's width
+// over the plain piece's: rsmall2 four); the drag then ends after the last whole span. A drag of one block lays a
+// plain piece. Heights: a bridge goes up until each span clears what stands under it by a cell (half-cell steps),
+// then every piece takes the highest height, the joined roads too; a tunnel goes down below what stands over it and
+// takes the lowest. Port: the original turns towards the cursor in 45° steps, which no bridge or tunnel piece fits.
+void moveLayBridge(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
+  Ctx c(vm, player, grid);
+  ToolState& t = c.t;
+  const bool tunnel = c.editMode == kGridModeLayTunnel;
+  ToolPick pick = toolPick(vm, player, mx, my, false);
+  if (!pick.hit) return;
+  const bool wide = unsigned(c.toolMode - 3) < 3, track = c.toolMode >= 6;
+  int ex = pick.cellX & ~3, ez = pick.cellZ & ~3;
+  if (wide && ((ex + ez) & 4)) {  // wide roads on every other block, as the road tool
+    int fx = (pick.cellX & 3) * 2 - 3, fz = (pick.cellZ & 3) * 2 - 3;
+    if (std::abs(fz) < std::abs(fx)) ex = (pick.cellX + 4 + (fx < 0 ? -8 : 0)) & ~3;
+    else ez = (pick.cellZ + 4 + (fz < 0 ? -8 : 0)) & ~3;
+  }
+  if (ex == t.cellX && ez == t.cellZ) return;
+  gridEditBegin(vm, grid);
+  if (!t.inProgress) t.startX = ex, t.startZ = ez, t.startY = kNoY;
+  clearPreview(c);
+  const int step = wide ? 8 : 4;
+  const int T = track ? 9 : roadType(c), S = track ? 24 : roadShift(T);
+  int ax = ex - t.startX, az = ez - t.startZ, dx = 0, dz = 0, n = 0;
+  if (std::abs(ax) >= std::abs(az)) dx = sgn(ax), n = std::abs(ax) / step;
+  else dz = sgn(az), n = std::abs(az) / step;
+  int span = 1;  // blocks per bridge span (the mouseMove's gap template over the plain piece, L:.c:828-836)
+  if (!tunnel) {
+    const TInfo* plain = c.lookup(uint32_t(T), 0, 0x44u << S, 0, 0, nullptr);
+    const TInfo* gap = c.lookup(uint32_t(T), uint32_t(c.toolType), 0x44u << S, 0x44, kFlagBridge, nullptr);
+    if (plain && gap) span = std::max(1, gap->width / plain->width);
+  }
+  auto block = [&](int x, int z, uint32_t conn, bool a, bool b) {
+    if (track) createTrackBlock(c, x, z, conn << S, a, b, 0, kNoY);
+    else createRoadBlock(c, x, z, conn << S, a, b, -1, kNoY);
+  };
+  const uint32_t fwd = dirBit(dz, dx), back = dirBit(-dz, -dx);
+  const int x0 = t.startX, z0 = t.startZ;
+  static const bool debugSpan = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  if (debugSpan)
+    LOG_INFO("%s: start %d,%d end %d,%d (%s) blocks %d, %d per span, type %d design %d", tunnel ? "tunnel" : "bridge", x0,
+             z0, ex, ez, t.inProgress ? "dragging" : "hover", n, span, T, c.toolType);
+  if (n == 0) {  // one block: the plain piece (its own variation, not the bridge's design)
+    int design = c.toolType;
+    c.toolType = 0;
+    block(x0, z0, 0, true, true);
+    c.toolType = design;
+  } else {
+    const int gaps = (n - 1 + span - 1) / span, last = 1 + gaps * span;
+    block(x0, z0, fwd, true, false);
+    for (int k = 0; k < gaps; ++k) {  // a span covers its blocks towards +x / +z from its corner
+      int b = 1 + k * span;
+      int bx = x0 + dx * step * b, bz = z0 + dz * step * b;
+      if (dx < 0) bx -= (span - 1) * step;
+      if (dz < 0) bz -= (span - 1) * step;
+      block(bx, bz, back | fwd, false, false);
+    }
+    block(x0 + dx * step * last, z0 + dz * step * last, back, false, true);
+  }
+  auto& W = c.W;
+  if (!tunnel) {  // L:.c:1495-1618
+    int top = 0;
+    for (bool raised = true; raised;) {
+      raised = false;
+      for (Piece& p : W) {
+        int py = p.y;
+        if ((p.flags() & 0x4004) == kFlagBridge)
+          for (const Piece& o : c.getObjects(p.x, p.z, p.sx, p.sz))
+            if (o.type() < 0x15 && !(o.flags() & kItemOptional) && o.y - 0xff <= p.height() + top) {
+              py = (std::max(py, o.y + o.height() + 0x100) + 0x40) & ~0x7f;
+              p.y = py;
+            }
+        if (top < py) top = py, raised = true;
+      }
+    }
+    for (Piece& p : W) p.y = top;
+  } else {  // L:.c:1250-1369
+    int bottom = 0x8000;
+    for (bool lowered = true; lowered;) {
+      lowered = false;
+      for (Piece& p : W) {
+        int py = p.y;
+        if ((p.flags() & 0x8004) == kFlagTunnel)
+          for (const Piece& o : c.getObjects(p.x, p.z, p.sx, p.sz))
+            if (o.type() < 0x15 && !(o.flags() & kItemOptional) && bottom < o.y + o.height()) {
+              py = (std::min(py, o.y - p.height()) + 0x40) & ~0x7f;
+              p.y = py;
+            }
+        if (py < bottom) bottom = py, lowered = true;
+      }
+    }
+    for (Piece& p : W) p.y = bottom;
+  }
+  for (size_t k = 0; k < W.size(); ++k) placeParts(c, k);  // pillars
+  materialize(c);
+  bool error = checkConflicts(c);
+  if (c.W.size() != t.newItems.size()) error = true;
+  for (uint32_t i : t.newItems) gridSelectObjectArea(vm, grid, i, error);
+  static const bool debugTools = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  if (debugTools) logPieces(c);
+  t.cellX = ex, t.cellZ = ez;
   gridEditEnd(vm, grid);
   vm.fireEvent(player, u"onHoverConstruct", {});
 }
@@ -1663,6 +1793,12 @@ void registerTrackTools(VM& vm) {
   road.cancel = cancelLaying;
   registerToolMode(kGridModeLayRoad, road);
   registerToolMode(kGridModeLayAlley, road);
+  ToolMode span;  // the editor's bridges and tunnels
+  span.move = moveLayBridge;
+  span.finish = finishLaying;
+  span.cancel = cancelLaying;
+  registerToolMode(kGridModeLayBridge, span);
+  registerToolMode(kGridModeLayTunnel, span);
   // blocks added to another tool's preview (a station's track parts): the preview so far, then the block, joined to
   // the tracks around; toolType is the block's variation
   toolBlocks().track = [](VM& v, ControlObj* player, GridObj* grid, int x, int z, uint32_t conn, bool a, bool b,
