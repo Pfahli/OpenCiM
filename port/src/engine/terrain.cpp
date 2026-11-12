@@ -846,6 +846,8 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       }
     }
   }
+  // the underground view (viewMode 0x180) hides the surface: curves are all surface roads and tracks (no subway curves)
+  if (tc.viewMode == 0x180) return;
   if (tc.curvesBuilt && !tc.curves.parts.empty()) {
     DrawItem it;
     it.mesh = &tc.curves;

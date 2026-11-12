@@ -64,6 +64,9 @@ menu's track tab with the same three for the railway.
 - A free end gets the track's dead-end piece, where trains turn back.
 - Elevated tracks start two cells over the ground and pass over anything a cell lower than they are.
 - The lanes are the pieces' own paths, bent; metro trains run on them. Test them with `REGS_TEST_CURVE_METRO=<n>`.
+- Checked (2026-11-12): a curve from a grid metro track's dead end joins it seamlessly, its lanes linked both ways
+  (the "tracks: n in, n out" count in the "curved roads:" log line); railway curves; metro cars on ground and elevated
+  curves. Like all curves, track curves are hidden in the underground view.
 
 ### One-way streets
 

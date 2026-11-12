@@ -931,12 +931,15 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   if (!g.curves.empty()) {  // how they joined the items' lanes (both ways at each road block they meet)
     std::vector<uint8_t> isCurve(G.nodes.size(), 0);
     for (int n : G.curveNodes) isCurve[size_t(n)] = 1;
-    int in = 0, out = 0;
+    int in = 0, out = 0, trackIn = 0, trackOut = 0;
     for (size_t i = 0; i < G.nodes.size(); ++i)
       for (int s : G.nodes[i].next)
-        if (isCurve[i] != isCurve[size_t(s)]) ++(isCurve[i] ? out : in);
-    LOG_INFO("curved roads: %zu curves, %zu lane nodes, %d links from the road network into them, %d out", g.curves.size(),
-             G.curveNodes.size(), in, out);
+        if (isCurve[i] != isCurve[size_t(s)]) {
+          ++(isCurve[i] ? out : in);
+          if (G.nodes[i].flags & (kPathMetro | kPathTrain)) ++(isCurve[i] ? trackOut : trackIn);
+        }
+    LOG_INFO("curved roads: %zu curves, %zu lane nodes, %d links from the road network into them, %d out (tracks: %d in, "
+             "%d out)", g.curves.size(), G.curveNodes.size(), in, out, trackIn, trackOut);
   }
 }
 
