@@ -2584,8 +2584,49 @@ int frontOrient(int side) {
   return table[side & 3];
 }
 
-void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
-                   std::map<std::string, std::vector<Candidate>>& cache) {
+// the streets as points every 2 units with their direction (cells), for the buildings to line up along them
+struct StreetIndex {
+  struct P {
+    float x, z, tx, tz, hw;  // cells
+  };
+  std::vector<P> pts;
+  std::map<std::pair<int, int>, std::vector<uint32_t>> bucket;  // 8 × 8 cells
+  void build(const GridData& g) {
+    pts.clear(), bucket.clear();
+    const float cs = g.cellSize;
+    for (const CurveRoad& c : g.curves) {
+      if (c.kind == 3) continue;  // footpaths: houses face the streets
+      const float hw = curveProfile(c.kind).halfWidth / cs;
+      for (const CurveSample& sm : sampleCurve(c, 2.0f)) {
+        float l = std::hypot(sm.dir.x, sm.dir.z);
+        if (l < 1e-4f) continue;
+        P q{sm.p.x / cs + g.width * 0.5f, sm.p.z / cs + g.length * 0.5f, sm.dir.x / l, sm.dir.z / l, hw};
+        bucket[{int(std::floor(q.x / 8)), int(std::floor(q.z / 8))}].push_back(uint32_t(pts.size()));
+        pts.push_back(q);
+      }
+    }
+  }
+  // the nearest street point within r cells of (x, z) (by the distance to its edge)
+  const P* nearest(double x, double z, double r) const {
+    const P* best = nullptr;
+    double bd = r;
+    for (int bz = int(std::floor((z - r) / 8)); bz <= int(std::floor((z + r) / 8)); ++bz)
+      for (int bx = int(std::floor((x - r) / 8)); bx <= int(std::floor((x + r) / 8)); ++bx) {
+        auto it = bucket.find({bx, bz});
+        if (it == bucket.end()) continue;
+        for (uint32_t i : it->second) {
+          const P& q = pts[i];
+          double d = std::hypot(q.x - x, q.z - z) - q.hw;
+          if (d < bd) bd = d, best = &q;
+        }
+      }
+    return best;
+  }
+};
+StreetIndex g_streets;
+
+void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
+                     std::map<std::string, std::vector<Candidate>>& cache, bool alongStreet) {
   GridData& g = *grid->data;
   const int W = g.width, L = g.length;
   if (b.pts.size() < 3) return;
@@ -2625,6 +2666,16 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
       ccx = uc * c - vc * s, ccz = uc * s + vc * c;
     }
   }
+  // the street in front (owner 2026-11-13: buildings along the streets): the nearest street within the building's
+  // half size and 4 cells; its direction (a multiple of 90° off it) turns the building when the footprint is within
+  // 30° of it, so a street's houses stand in one line
+  const StreetIndex::P* street = alongStreet ? g_streets.nearest(ccx, ccz, std::max(ea, eb) * 0.5 + 4.0) : nullptr;
+  if (street) {
+    double ts = std::atan2(double(street->tz), double(street->tx));
+    double k = std::round((ang - ts) / (kPi / 2));
+    double snapped = ts + k * (kPi / 2);
+    if (std::fabs(snapped - ang) < 30.0 * kPi / 180.0) ang = snapped;
+  }
   // the rectangle laid on the cell axes: its sides along x and z
   double deg = std::fmod(std::abs(ang * 180.0 / kPi), 180.0);
   bool swap = deg > 45.0 && deg < 135.0;
@@ -2637,6 +2688,12 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   static const bool noTurn = std::getenv("REGS_OSM_NOTURN") != nullptr;
   if (noTurn || std::fabs(rem) < 1.0 * kPi / 180.0) rem = 0;
   const double ux = std::cos(rem), uz = std::sin(rem), vx = -uz, vz = ux;
+  // the side facing the street: 0 north (−v), 1 east (+u), 2 south (+v), 3 west (−u)
+  int streetSide = -1;
+  if (street) {
+    double dx = street->x - ccx, dz = street->z - ccz, lu = dx * ux + dz * uz, lv = dx * vx + dz * vz;
+    streetSide = std::fabs(lu) > std::fabs(lv) ? (lu > 0 ? 1 : 3) : (lv > 0 ? 2 : 0);
+  }
   // candidates of the category (or its neighbours)
   static const std::map<std::string, std::vector<std::string>> kFallback = {
       {"residential", {"residential", "blockhouses"}}, {"blockhouses", {"blockhouses", "residential"}},
@@ -2688,6 +2745,15 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   std::vector<const Fit*> good;
   for (auto& f : fits)
     if (f.score >= best * 0.85) good.push_back(&f);
+  if (streetSide >= 0) {  // turned so that the front can face the street (orient2 0: north/south, 1: east/west)
+    std::vector<const Fit*> facing;
+    for (const Fit* f : good)
+      if (f->orient2 == (streetSide & 1)) facing.push_back(f);
+    if (facing.empty())
+      for (auto& f : fits)
+        if (f.orient2 == (streetSide & 1) && f.score >= best * 0.6) facing.push_back(&f);
+    if (!facing.empty()) good.swap(facing);
+  }
   Fit chosen{};
   if (good.empty()) {
     if (!smallest || smallest->w * smallest->l > ex * ez * 1.8) return;
@@ -2701,6 +2767,7 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   if (chosen.score < (b.terraced ? 0.7 : 0.45) && b.polygon) {
     nx = std::max(1, int(ex / chosen.sx)), nz = std::max(1, int(ez / chosen.sz));
     while (nx * nz > 16) nx > nz ? --nx : --nz;
+    if (streetSide >= 0 && b.terraced) (streetSide & 1) ? nx = 1 : nz = 1;  // one row along the street
   }
   auto insidePoly = [&](double x, double z) {
     if (!b.polygon) return true;
@@ -2740,15 +2807,24 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
     return x >= 0 && z >= 0 && x < W && z < L && a.used[size_t(z) * size_t(W) + size_t(x)] == 2;
   };
   double stepX = ex / nx, stepZ = ez / nz;
+  // a single depth: the front on the footprint's street-side wall (the street's building line)
+  double frontU = 0, frontV = 0;
+  if (streetSide == 1 || streetSide == 3) {
+    if (nx == 1) frontU = std::max(0.0, (ex - chosen.sx) * 0.5) * (streetSide == 1 ? 1 : -1);
+  } else if (streetSide >= 0 && nz == 1) {
+    frontV = std::max(0.0, (ez - chosen.sz) * 0.5) * (streetSide == 2 ? 1 : -1);
+  }
   for (int iz = 0; iz < nz; ++iz)
     for (int ix = 0; ix < nx; ++ix) {
-      double lx = -ex * 0.5 + stepX * (ix + 0.5), lz = -ez * 0.5 + stepZ * (iz + 0.5);
+      bool placed = false;
+      for (int attempt = 0; attempt < 2 && !placed; ++attempt) {  // on the building line, else where OSM has it
+      if (attempt && frontU == 0 && frontV == 0) break;
+      double lx = -ex * 0.5 + stepX * (ix + 0.5) + (attempt ? 0 : frontU), lz = -ez * 0.5 + stepZ * (iz + 0.5) + (attempt ? 0 : frontV);
       double px = ccx + lx * ux + lz * vx, pz = ccz + lx * uz + lz * vz;
       if (nx * nz > 1 && !insidePoly(px, pz)) continue;
       const Candidate& c = *chosen.c;
       int sx = chosen.sx, sz = chosen.sz;
       int bx = int(std::lround(px - sx * 0.5)), bz = int(std::lround(pz - sz * 0.5));
-      bool placed = false;
       for (int r = 0; r <= 2 && !placed; ++r)
         for (int dz = -r; dz <= r && !placed; ++dz)
           for (int dx = -r; dx <= r && !placed; ++dx) {
@@ -2770,6 +2846,7 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
             // the sides the turned template can face: orient2 0 → north/south, 1 → east/west
             int sideA = chosen.orient2 ? 1 : 0, sideB = sideA + 2;
             int side = dist[sideB] < dist[sideA] ? sideB : dist[sideA] < dist[sideB] ? sideA : (hash32(b.id + 7) & 1 ? sideA : sideB);
+            if (streetSide >= 0 && (streetSide & 1) == (sideA & 1)) side = streetSide;  // the front to the street
             int orient = frontOrient(side);
             if ((orient & 1) != chosen.orient2) orient = (orient + 1) & 3;  // the table must keep the footprint
             int y = maxCorner(g, x, z, sx, sz);
@@ -2790,7 +2867,16 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
               placed = true;
             }
           }
+      }
     }
+}
+
+// a building lined up along its street, else (nothing fits that way) as OSM has it
+void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
+                   std::map<std::string, std::vector<Candidate>>& cache) {
+  int before = a.buildingsPlaced;
+  placeBuildingAs(vm, grid, a, b, buildingsList, cache, true);
+  if (a.buildingsPlaced == before) placeBuildingAs(vm, grid, a, b, buildingsList, cache, false);
 }
 
 // one slice of the import's application; true when finished
@@ -2950,7 +3036,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
   }
   if (a.stage == 3) {  // buildings
     static std::map<std::string, std::vector<Candidate>> cache;
-    if (a.next == 0) cache.clear();
+    if (a.next == 0) cache.clear(), g_streets.build(g);
     if (a.next == 0 && std::getenv("REGS_DEBUG_OSM_BUILDINGS"))
       if (MapObj* m = vm.resolve(buildings).map())
         for (auto& [k, v] : m->entries) {
