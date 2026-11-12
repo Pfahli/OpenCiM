@@ -814,7 +814,7 @@ struct BuildingIn {
   bool polygon;  // pts is one closed ring (point-in-polygon works)
   bool terraced = false;  // wall to wall with a neighbour (or building=terrace): the game's city houses in a row
 };
-// a tree to plant: its cell and what it grows in (0 wood, 1 scrub, 2 park or orchard, 3 a single tree or a row)
+// a tree to plant: its cell and what it grows in (0 wood, 1 scrub, 2 park, 3 a single tree or a row, 4 orchard)
 struct TreeIn {
   int first = 0, second = 0;
   int kind = 3;
@@ -1236,9 +1236,9 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         } else if (nat == "wood" || lu == "forest") {
           if (closed) treeAreas.push_back({ringEdges, 1.0, 0});  // a forest: full of trees and bushes
         } else if (nat == "scrub") {
-          if (closed) treeAreas.push_back({ringEdges, 0.8, 1});
+          if (closed) treeAreas.push_back({ringEdges, 1.0, 1});
         } else if (lu == "orchard") {
-          if (closed) treeAreas.push_back({ringEdges, 0.25, 2});
+          if (closed) treeAreas.push_back({ringEdges, 1.0, 4});  // fruit trees in rows (every 4th cell each way)
         } else if (le == "park" || le == "garden") {
           if (closed) treeAreas.push_back({ringEdges, 0.08, 2});
         }
@@ -1339,14 +1339,22 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       fillEdges(edges, W, L, [&](int x, int z) {
         size_t i = size_t(z) * size_t(W) + size_t(x);
         if (taken[i] || water[i] || x < 1 || z < 1 || x >= W - 1 || z >= L - 1) return;
+        if (k == 4 && ((x & 3) || (z & 3))) return;
         if (double(hash32((uint64_t(x) << 40) ^ (uint64_t(z) << 16) ^ salt) % 10000) >= d * 10000.0) return;
         taken[i] = 1;
         data->trees.push_back({x, z, k});
       });
     }
-    if (data->trees.size() > 60000) {  // the game's maps hold about 90k objects in all
+    if (std::getenv("REGS_DEBUG_OSM")) {
+      int byKind[5] = {0, 0, 0, 0, 0}, areas[5] = {0, 0, 0, 0, 0};
+      for (auto& t : data->trees) ++byKind[std::clamp(t.kind, 0, 4)];
+      for (auto& ta : treeAreas) ++areas[std::clamp(ta.kind, 0, 4)];
+      LOG_INFO("osm: trees by kind: wood %d (%d areas), scrub %d (%d), park %d (%d), single %d, orchard %d (%d)", byKind[0], areas[0],
+               byKind[1], areas[1], byKind[2], areas[2], byKind[3], byKind[4], areas[4]);
+    }
+    if (data->trees.size() > 70000) {  // the game's maps hold about 90k objects in all (with undergrowth: ~100k)
       for (size_t i = data->trees.size() - 1; i > 0; --i) std::swap(data->trees[i], data->trees[hash32(i) % (i + 1)]);
-      data->trees.resize(60000);
+      data->trees.resize(70000);
     }
   }
   // buildings without a clear kind: the land use around them
@@ -2984,17 +2992,50 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       else if (n.rfind("tree", 0) == 0 || n == "street-tree") treeNames.push_back(n);
     if (treeNames.empty()) treeNames = bushNames;
     if (bushNames.empty()) bushNames = treeNames;
+    // woods: big crowns only (tree6 is the bare 'scrub tree', tree5 the small spruce, the street tree a small one); scrub and
+    // rows keep them
+    std::vector<std::string> woodNames;
+    for (const std::string& n : treeNames)
+      if (n != "tree6" && n != "tree5" && n != "street-tree") woodNames.push_back(n);  // big crowns
+    if (woodNames.empty()) woodNames = treeNames;
+    std::vector<std::string> orchardNames;  // round broadleaf crowns for fruit trees
+    for (const std::string& n : treeNames)
+      if (n == "tree1" || n == "tree2") orchardNames.push_back(n);
+    if (orchardNames.empty()) orchardNames = treeNames;
     while (!treeNames.empty() && a.next < d.trees.size()) {
       const TreeIn& t = d.trees[a.next++];
       const int x = t.first, z = t.second;
       size_t i = size_t(z) * size_t(W) + size_t(x);
       if (x < 1 || z < 1 || x >= W - 1 || z >= L - 1 || a.used[i]) continue;
       uint32_t h = hash32((uint64_t(x) << 32) | uint32_t(z));
-      const int bushPercent = t.kind == 0 ? 35 : t.kind == 1 ? 75 : t.kind == 2 ? 15 : 0;
-      const auto& pool = int((h >> 12) % 100) < bushPercent ? bushNames : treeNames;
-      if (addItem(vm, grid, a, pool[h % pool.size()], x, meanCorner(g, x, z), z, int((h >> 8) & 3)) >= 0) {
-        a.used[i] = 4;
+      // owner 2026-11-12: woods really dense. Woods: a big tree in every cell, a second one in 6 of 10, a bush in 2 of 10;
+      // scrub: a bush in every cell and a tree in 40 %; each turned and shifted freely (no cell grid to see)
+      const int bushPercent = t.kind == 0 ? 0 : t.kind == 1 ? 100 : t.kind == 2 ? 15 : 0;
+      const int secondPercent = t.kind == 0 ? 85 : t.kind == 1 ? 60 : 0;
+      const float half = g.cellSize * 0.45f;
+      auto plant = [&](const std::string& name, uint32_t hh) {
+        int made = addItem(vm, grid, a, name, x, meanCorner(g, x, z), z, int((hh >> 8) & 3));
+        if (made < 0) return false;
+        GridData::Item& it = g.items[size_t(made)];
+        if (t.kind <= 1) {
+          it.yaw = (float((hh >> 3) % 1000) / 1000.0f - 0.5f) * 1.5707963f;
+          it.offX = (float((hh >> 13) % 1000) / 1000.0f * 2.0f - 1.0f) * half;
+          it.offZ = (float((hh >> 23) % 512) / 512.0f * 2.0f - 1.0f) * half;
+        }
         ++a.treesPlaced;
+        return true;
+      };
+      const bool bushFirst = int((h >> 12) % 100) < bushPercent;
+      const auto& trees = t.kind == 0 ? woodNames : t.kind == 4 ? orchardNames : treeNames;
+      const auto& pool = bushFirst ? bushNames : trees;
+      if (plant(pool[h % pool.size()], h)) {
+        a.used[i] = 4;
+        uint32_t h2 = hash32(uint64_t(h) * 2654435761u + 17);
+        if (int(h2 % 100) < secondPercent) {
+          // woods: mostly a second tree (the canopy closes), else a bush as undergrowth
+          const auto& pool2 = bushFirst ? trees : (t.kind == 0 && (h2 >> 20) % 100 < 70) ? trees : bushNames;
+          plant(pool2[(h2 >> 7) % pool2.size()], h2);
+        }
       }
       if (now() - t0 > budget) break;
     }

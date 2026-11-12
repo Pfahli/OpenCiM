@@ -234,8 +234,8 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   view at the chosen location's city, the area as a rectangle of the map size × a scale 1-15, options terrain,
   water, trees, streets, buildings, satellite picture); the import runs when the new map stands, with a progress
   window, as one timeline group (one undo). Done: downloads with disk cache (tiles, Overpass answers for a week),
-  terrain from AWS Terrarium heights, sea (coastline flood), lakes and rivers, trees (woods dense with trees and
-  bushes, scrub mostly bushes, parks, tree rows, single trees; owner 2026-11-08: no stones or grass tufts), road
+  terrain from AWS Terrarium heights, sea (coastline flood), lakes and rivers, trees (woods closed: a big tree in every cell, a second
+  one in most, bushes as undergrowth, turned and shifted freely; scrub mostly bushes; orchards fruit trees in rows; parks, tree rows, single trees; owner 2026-11-08: no stones or grass tufts), road
   kinds from the tags (avenue for tree-lined or divided roads with a tree row, large for multi-lane/12 m+/primary/
   secondary, small, footpaths for pedestrian streets; divided roads merged to one centre line, the side streets
   following onto it; carriageways without a partner one-way small roads; roundabouts one-way rings). Since
