@@ -131,6 +131,7 @@ $regs_curve_mode_straight = "Straight (any angle)";
 $regs_type_oneway_hint = "One-way streets";
 $regs_curve_mode_curved = "Curved";
 $regs_curve_mode_freeform = "Freeform";
+$regs_curve_bridge_hint = "Curved bridge: start, bend point, end. The deck runs over ground and water.";
 $regs_curve_panel_hint1 = "Ends snap to dead ends, track ends and free road ends.";
 $regs_curve_panel_hint2 = "Right click: stop drawing.";
 $regs_curve_mode_remove = "Remove";
