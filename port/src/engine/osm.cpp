@@ -735,7 +735,12 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
         }
       a->pts = std::move(mid);
       a->oneway = false;
-      a->kind = a->cls >= 4 ? 4 : trees ? 3 : 1;
+      // lanes per carriageway (owner 2026-11-13: real lane counts): 2+ a side a large road (an avenue with the tree row),
+      // one a side the small road on the centre line
+      int side = std::max(a->lanes, 0);
+      for (const RoadIn* b : partners) side = std::max(side, b->lanes);
+      bool wide = side >= 2 || (side == 0 && a->cls >= 3);
+      a->kind = a->cls >= 4 ? 4 : !wide ? 0 : trees ? 3 : 1;
       for (const RoadIn* b : partners) const_cast<RoadIn*>(b)->dropped = true;
     }
   // points of dropped carriageways no centre line took (beyond the part its pair covered): the streets ending there
@@ -799,10 +804,32 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
   for (RoadIn& r : roads) {
     if (r.dropped || r.kind != 0) continue;
     if (r.cls >= 4) r.kind = 4;
-    else if (r.treeLined && r.cls >= 1) r.kind = 3;
     // a carriageway without its partner: a one-way street (two of them side by side are what the map has)
     else if (r.oneway) r.lanes = std::max(r.lanes, r.cls >= 1 ? 2 : r.lanes);
-    else if (r.lanes >= 4 || r.width >= 12.0 || r.cls >= 2) r.kind = 1;
+    else {
+      // the real lane count decides (owner 2026-11-13: lanes=2 or 3, one a side plus a turning lane, is a small road);
+      // without one primary roads and 14 m+ are wide; a wide tree-lined road is an avenue
+      bool wide = r.lanes > 0 ? r.lanes >= 4 : (r.width >= 14.0 || r.cls >= 3);
+      if (wide) r.kind = r.treeLined ? 3 : 1;
+    }
+  }
+  // one street, one kind (owner 2026-11-13: the changes between wide and narrow did not fit): the kind most of a named
+  // street's length has (two-way small, large and avenue; one-way streets and footpaths keep theirs)
+  {
+    std::map<std::string, std::map<int, double>> len;
+    auto two = [](const RoadIn& r) { return !r.dropped && !r.oneway && !r.ring && (r.kind == 0 || r.kind == 1 || r.kind == 3); };
+    for (const RoadIn& r : roads)
+      if (two(r) && !r.name.empty())
+        for (size_t i = 0; i + 1 < r.pts.size(); ++i)
+          len[r.name][r.kind] += std::hypot(r.pts[i + 1].first - r.pts[i].first, r.pts[i + 1].second - r.pts[i].second);
+    for (RoadIn& r : roads) {
+      if (!two(r) || r.name.empty()) continue;
+      const auto& m = len[r.name];
+      int best = r.kind;
+      for (auto& [k, l] : m)
+        if (l > m.at(best)) best = k;
+      r.kind = best;
+    }
   }
   roads.erase(std::remove_if(roads.begin(), roads.end(), [](const RoadIn& r) { return r.dropped; }), roads.end());
 }
@@ -813,6 +840,7 @@ struct BuildingIn {
   std::vector<std::pair<double, double>> pts;
   bool polygon;  // pts is one closed ring (point-in-polygon works)
   bool terraced = false;  // wall to wall with a neighbour (or building=terrace): the game's city houses in a row
+  int row = -1;           // the row of buildings wall to wall it belongs to (two or more), -1 none
 };
 // a tree to plant: its cell and what it grows in (0 wood, 1 scrub, 2 park, 3 a single tree or a row, 4 orchard)
 struct TreeIn {
@@ -1407,6 +1435,12 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         if (v.empty() || v.back() != i) v.push_back(i);
       }
     int rows = 0;
+    std::vector<size_t> parent(data->buildings.size());
+    for (size_t i = 0; i < parent.size(); ++i) parent[i] = i;
+    auto root = [&](size_t i) {
+      while (parent[i] != i) i = parent[i] = parent[parent[i]];
+      return i;
+    };
     for (size_t i = 0; i < data->buildings.size(); ++i) {
       BuildingIn& b = data->buildings[i];
       if (!b.polygon || b.category == "industry" || b.category == "farm" || b.category == "government" || b.category == "railway")
@@ -1436,12 +1470,22 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         }
         if (touching >= 2) {
           b.terraced = true;
-          break;
+          parent[root(i)] = root(j);
         }
       }
       rows += b.terraced;
     }
-    LOG_INFO("osm: %d buildings wall to wall", rows);
+    std::map<size_t, int> size, id;
+    for (size_t i = 0; i < data->buildings.size(); ++i)
+      if (data->buildings[i].terraced) ++size[root(i)];
+    for (size_t i = 0; i < data->buildings.size(); ++i) {
+      size_t r = root(i);
+      if (!data->buildings[i].terraced || size[r] < 2) continue;
+      auto it = id.find(r);
+      if (it == id.end()) it = id.emplace(r, int(id.size())).first;
+      data->buildings[i].row = it->second;
+    }
+    LOG_INFO("osm: %d buildings wall to wall, %zu rows", rows, id.size());
   }
   // 3. the satellite picture
   if (flags & kSatellite) {
@@ -1491,7 +1535,8 @@ struct Apply {
   std::vector<uint8_t> used;  // cells taken by roads, buildings, trees, water
   std::vector<int> made;
   Object* timeline = nullptr;
-  bool gridStreets = false;  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
+  bool gridStreets = false;
+  std::vector<char> inRow;  // buildings a row of city houses took  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
   int curvesMade = 0;
   int roadsOk = 0, roadsFailed = 0, buildingsPlaced = 0, treesPlaced = 0;
 };
@@ -2163,6 +2208,8 @@ void chordDir(const Plan& P, int from, int to, double& dx, double& dz) {
 bool smooth(const Plan& P, const Geo& G, int n) {
   const auto& a = G.arms[size_t(n)];
   if (a.size() != 2 || P.nodes[size_t(n)].corner || P.nodes[size_t(n)].exit >= 0) return false;
+  // a change of road kind: a junction piece joins the two widths (a bent join between kinds does not fit)
+  if (P.segs[size_t(a[0])].kind != P.segs[size_t(a[1])].kind) return false;
   double ax, az, bx, bz;
   chordDir(P, n, otherEnd(P.segs[size_t(a[0])], n), ax, az);
   chordDir(P, n, otherEnd(P.segs[size_t(a[1])], n), bx, bz);
@@ -2625,6 +2672,173 @@ struct StreetIndex {
 };
 StreetIndex g_streets;
 
+// a street corner near (x, z): two streets within r cells running at 45° or more to each other
+bool streetCorner(double x, double z, double r) {
+  std::vector<const StreetIndex::P*> near;
+  for (int bz = int(std::floor((z - r) / 8)); bz <= int(std::floor((z + r) / 8)); ++bz)
+    for (int bx = int(std::floor((x - r) / 8)); bx <= int(std::floor((x + r) / 8)); ++bx) {
+      auto it = g_streets.bucket.find({bx, bz});
+      if (it == g_streets.bucket.end()) continue;
+      for (uint32_t i : it->second) {
+        const StreetIndex::P& q = g_streets.pts[i];
+        if (std::hypot(q.x - x, q.z - z) - q.hw <= r) near.push_back(&q);
+      }
+    }
+  for (size_t i = 0; i < near.size(); ++i)
+    for (size_t j = i + 1; j < near.size(); ++j)
+      if (std::fabs(near[i]->tx * near[j]->tz - near[i]->tz * near[j]->tx) > 0.7071f) return true;
+  return false;
+}
+
+// the minimum-area rectangle of points (cells): its angle (of the side ea), the side lengths and the centre
+bool minRect(std::vector<std::pair<double, double>> pts, double& ang, double& ea, double& eb, double& ccx, double& ccz) {
+  std::sort(pts.begin(), pts.end());
+  pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+  if (pts.size() < 3) return false;
+  std::vector<std::pair<double, double>> hull;
+  auto cross = [](std::pair<double, double> o, std::pair<double, double> p, std::pair<double, double> q) {
+    return (p.first - o.first) * (q.second - o.second) - (p.second - o.second) * (q.first - o.first);
+  };
+  for (int pass = 0; pass < 2; ++pass) {
+    size_t start = hull.size();
+    for (size_t k = 0; k < pts.size(); ++k) {
+      auto p = pass ? pts[pts.size() - 1 - k] : pts[k];
+      while (hull.size() >= start + 2 && cross(hull[hull.size() - 2], hull.back(), p) <= 0) hull.pop_back();
+      hull.push_back(p);
+    }
+    hull.pop_back();
+  }
+  if (hull.size() < 3) return false;
+  double bestArea = 1e30;
+  for (size_t i = 0; i < hull.size(); ++i) {
+    auto p = hull[i], q = hull[(i + 1) % hull.size()];
+    double t = std::atan2(q.second - p.second, q.first - p.first), c = std::cos(t), s = std::sin(t);
+    double u0 = 1e30, u1 = -1e30, v0 = 1e30, v1 = -1e30;
+    for (auto& h : hull) {
+      double u = h.first * c + h.second * s, v = -h.first * s + h.second * c;
+      u0 = std::min(u0, u), u1 = std::max(u1, u), v0 = std::min(v0, v), v1 = std::max(v1, v);
+    }
+    double area = (u1 - u0) * (v1 - v0);
+    if (area < bestArea) {
+      bestArea = area, ang = t, ea = u1 - u0, eb = v1 - v0;
+      double uc = (u0 + u1) * 0.5, vc = (v0 + v1) * 0.5;
+      ccx = uc * c - vc * s, ccz = uc * s + vc * c;
+    }
+  }
+  return true;
+}
+
+double polyArea(const std::vector<std::pair<double, double>>& p) {
+  double a = 0;
+  for (size_t i = 0, j = p.size() - 1; i < p.size(); j = i++) a += (p[j].first + p[i].first) * (p[j].second - p[i].second);
+  return std::fabs(a) * 0.5;
+}
+
+// a row of buildings wall to wall (owner 2026-11-13: city houses stand in a row, joined): one straight row along its
+// street, filled with the game's city houses edge to edge, fronts on the street-side line; a corner house at an end
+// only where a second street crosses there. false: not a straight row along a street (its buildings go one by one)
+bool placeRow(VM& vm, GridObj* grid, Apply& a, const std::vector<const BuildingIn*>& members, const Value& buildingsList,
+              std::map<std::string, std::vector<Candidate>>& cache) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  std::vector<std::pair<double, double>> all;
+  double area = 0;
+  for (const BuildingIn* b : members) all.insert(all.end(), b->pts.begin(), b->pts.end()), area += polyArea(b->pts);
+  double ang, ea, eb, cx, cz;
+  if (!minRect(all, ang, ea, eb, cx, cz)) return false;
+  double ux = std::cos(ang), uz = std::sin(ang), len = ea, depth = eb;
+  if (eb > ea) ux = -std::sin(ang), uz = std::cos(ang), len = eb, depth = ea;
+  if (len < (members.size() >= 2 ? 1.2 : 1.8) * depth || area < 0.5 * len * depth || depth < 2.5) return false;  // not a straight row
+  const StreetIndex::P* st = g_streets.nearest(cx, cz, depth * 0.5 + 5.0);
+  if (!st || std::fabs(st->tx * uz - st->tz * ux) > 0.5) return false;  // no street along it (within 30°)
+  if (st->tx * ux + st->tz * uz < 0) ux = -st->tx, uz = -st->tz;  // the street's direction exactly
+  else ux = st->tx, uz = st->tz;
+  double vx = -uz, vz = ux;
+  double sgn = (st->x - cx) * vx + (st->z - cz) * vz > 0 ? 1.0 : -1.0;  // the street's side of the row
+  // the cell turn: the nearest 90° and the rest as the free turn; the side the fronts face in cell terms
+  const double quarter = kPi / 2, th = std::atan2(uz, ux);
+  const double rem = th - std::round(th / quarter) * quarter;
+  const double Ux = std::cos(rem), Uz = std::sin(rem), Vx = -Uz, Vz = Ux;
+  double fx = vx * sgn, fz = vz * sgn, lu = fx * Ux + fz * Uz, lv = fx * Vx + fz * Vz;
+  const int side = std::fabs(lu) > std::fabs(lv) ? (lu > 0 ? 1 : 3) : (lv > 0 ? 2 : 0);
+  const int orient2 = side & 1;
+  auto it = cache.find("blockhouses");
+  if (it == cache.end()) it = cache.emplace("blockhouses", categoryTemplates(vm, grid, buildingsList, "blockhouses")).first;
+  std::vector<const Candidate*> houses, corners;
+  for (const Candidate& c : it->second)
+    if (c.name.rfind("cornerhouse", 0) == 0) corners.push_back(&c);
+    else if (c.name.rfind("cityhouse", 0) == 0 || c.name.rfind("small-townbuilding", 0) == 0) houses.push_back(&c);
+  if (houses.empty()) return false;
+  // a house: w along the row, l deep (the template turned so); centred at along-row position t
+  int placed = 0;
+  auto put = [&](const Candidate& c, double t) {
+    const int w = c.w, l = c.l;
+    const int sx = orient2 ? l : w, sz = orient2 ? w : l;
+    double off = sgn * (depth * 0.5 - l * 0.5);  // the front on the street-side line
+    double px = cx + ux * t + vx * off, pz = cz + uz * t + vz * off;
+    int x = int(std::lround(px - sx * 0.5)), z = int(std::lround(pz - sz * 0.5));
+    // its cells: cell centres inside the turned rectangle (a sliver to spare: neighbours share a wall)
+    std::vector<size_t> cells;
+    double hx = sx * 0.5 - 0.15, hz = sz * 0.5 - 0.15, r = std::hypot(hx, hz);
+    for (int zz = int(std::floor(pz - r)); zz <= int(std::ceil(pz + r)); ++zz)
+      for (int xx = int(std::floor(px - r)); xx <= int(std::ceil(px + r)); ++xx) {
+        double dx = xx + 0.5 - px, dz = zz + 0.5 - pz;
+        if (std::fabs(dx * Ux + dz * Uz) > hx || std::fabs(dx * Vx + dz * Vz) > hz) continue;
+        if (xx < 1 || zz < 1 || xx >= W - 1 || zz >= L - 1) return false;
+        size_t ci = size_t(zz) * size_t(W) + size_t(xx);
+        if (a.used[ci]) return false;
+        cells.push_back(ci);
+      }
+    int orient = frontOrient(side);
+    if ((orient & 1) != orient2) orient = (orient + 1) & 3;
+    int made = addItem(vm, grid, a, c.name, x, maxCorner(g, x, z, sx, sz), z, orient);
+    if (made < 0) return false;
+    GridData::Item& item = g.items[size_t(made)];
+    const float half = g.cellSize * 0.5f;
+    item.yaw = float(-rem);
+    item.offX = std::clamp(float((px - (x + sx * 0.5)) * g.cellSize), -half, half);
+    item.offZ = std::clamp(float((pz - (z + sz * 0.5)) * g.cellSize), -half, half);
+    for (size_t ci : cells) a.used[ci] = 3;
+    ++a.buildingsPlaced;
+    ++placed;
+    return true;
+  };
+  uint32_t h = hash32(members.front()->id);
+  double from = -len * 0.5, to = len * 0.5;
+  // corner houses where a second street crosses at an end
+  for (int end = 0; end < 2 && !corners.empty(); ++end) {
+    double t = end ? to : from;
+    if (!streetCorner(cx + ux * t + vx * sgn * depth * 0.5, cz + uz * t + vz * sgn * depth * 0.5, 4.0)) continue;
+    const Candidate& c = *corners[(h >> (4 * end)) % corners.size()];
+    if (c.w > to - from) continue;
+    if (put(c, end ? to - c.w * 0.5 : from + c.w * 0.5)) {
+      if (end) to -= c.w;
+      else from += c.w;
+    }
+  }
+  // the houses between, edge to edge, the run centred
+  std::vector<const Candidate*> run;
+  double used = 0;
+  int minW = 1 << 30;
+  for (const Candidate* c : houses) minW = std::min(minW, c->w);
+  for (int k = 0; used + minW <= to - from + 0.3 && k < 64; ++k) {
+    const Candidate* pick = nullptr;
+    for (int tries = 0; tries < 8 && !pick; ++tries) {
+      const Candidate* c = houses[hash32(uint64_t(h) * 31 + uint64_t(k) * 7 + uint64_t(tries)) % houses.size()];
+      if (used + c->w <= to - from + 0.3) pick = c;
+    }
+    if (!pick) break;
+    run.push_back(pick);
+    used += pick->w;
+  }
+  double t = from + (to - from - used) * 0.5;
+  for (const Candidate* c : run) {
+    put(*c, t + c->w * 0.5);
+    t += c->w;
+  }
+  return placed > 0;
+}
+
 void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
                      std::map<std::string, std::vector<Candidate>>& cache, bool alongStreet) {
   GridData& g = *grid->data;
@@ -2704,7 +2918,8 @@ void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const
   if (b.terraced) {  // the city houses (and corner houses for squarish footprints)
     auto it = cache.find("blockhouses");
     if (it == cache.end()) it = cache.emplace("blockhouses", categoryTemplates(vm, grid, buildingsList, "blockhouses")).first;
-    const bool corner = std::min(ex, ez) >= 5.5 && std::max(ex, ez) < 1.4 * std::min(ex, ez);
+    const bool corner = std::min(ex, ez) >= 5.5 && std::max(ex, ez) < 1.4 * std::min(ex, ez) &&
+                        streetCorner(ccx, ccz, std::max(ex, ez) * 0.5 + 3.0);  // only at a street corner
     for (const Candidate& c : it->second)
       if (corner ? c.name.rfind("cornerhouse", 0) == 0 : (c.name.rfind("cityhouse", 0) == 0 || c.name.rfind("small-townbuilding", 0) == 0))
         cands.push_back(c);
@@ -3045,7 +3260,38 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           LOG_INFO("osm: buildings '%s': %s", cat.c_str(), all.c_str());
         }
     gridEditBegin(vm, grid);
+    if (a.next == 0) {  // the rows of city houses first; their buildings are done then
+      // a row split by the street its buildings face (a block's rows turn at its corners): the nearest street's
+      // direction in 20° steps
+      std::map<std::pair<int, int>, std::vector<const BuildingIn*>> rows;
+      for (const BuildingIn& b : d.buildings) {
+        if (b.row < 0) continue;
+        double cx = 0, cz = 0;
+        for (auto& q : b.pts) cx += q.first, cz += q.second;
+        cx /= double(b.pts.size()), cz /= double(b.pts.size());
+        const StreetIndex::P* st = g_streets.nearest(cx, cz, 12.0);
+        int dir = -1;
+        if (st) {
+          double t = std::atan2(double(st->tz), double(st->tx));
+          if (t < 0) t += kPi;
+          dir = int(std::lround(t / (kPi / 9))) % 9;
+        }
+        rows[{b.row, dir}].push_back(&b);
+      }
+      a.inRow.assign(d.buildings.size(), 0);
+      int made = 0;
+      for (auto& [id, members] : rows)
+        if (placeRow(vm, grid, a, members, buildings, cache)) {
+          ++made;
+          for (const BuildingIn* b : members) a.inRow[size_t(b - d.buildings.data())] = 1;
+        }
+      LOG_INFO("osm: %d of %zu rows built as city houses", made, rows.size());
+    }
     while (a.next < d.buildings.size()) {
+      if (a.inRow[a.next]) {
+        ++a.next;
+        continue;
+      }
       placeBuilding(vm, grid, a, d.buildings[a.next++], buildings, cache);
       if (now() - t0 > budget) break;
     }

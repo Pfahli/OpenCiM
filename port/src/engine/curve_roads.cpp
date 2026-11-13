@@ -885,7 +885,8 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g, const std::vect
     std::sort(group.begin() + 1, group.end());
     for (size_t k : group) used[k] = 1;
     if (group.size() < 2) continue;
-    if (group.size() == 2 && dot(ends[group[0]].out, ends[group[1]].out) < -0.985f) continue;  // a smooth join
+    if (group.size() == 2 && ends[group[0]].kind == ends[group[1]].kind && dot(ends[group[0]].out, ends[group[1]].out) < -0.985f)
+      continue;  // a smooth join (two road kinds meet in a junction piece: it joins their widths)
     CurveJunction j;
     j.kind = ends[a].kind;
     for (size_t k : group) j.centre = j.centre + ends[k].p * (1.0f / float(group.size()));
