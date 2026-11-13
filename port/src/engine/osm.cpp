@@ -2009,8 +2009,10 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
         if (cx < 0 || cz < 0 || cx >= W || cz >= L) return true;
         return water[size_t(cz) * size_t(W) + size_t(cx)] != 0;
       };
-      // streams up to 40 m wide: the street crosses on a causeway (bridges are not built yet)
-      for (Chain& dry : splitWhere(part, wet, 0.5, 1.0, 40.0 / cs)) chains.push_back(std::move(dry));
+      // streams up to 60 m wide: the street crosses on a causeway (bridges are not built yet)
+      if (part.bridge) chains.push_back(part);  // a bridge crosses whatever water it spans (on a causeway for now)
+      else
+        for (Chain& dry : splitWhere(part, wet, 0.5, 1.0, 60.0 / cs)) chains.push_back(std::move(dry));
     }
   }
   // 2. bridges crossing other streets without a shared node go (the legs that cross); footpaths keep 1.5 units off roads
@@ -2052,33 +2054,33 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
         for (Chain& part : splitWhere(c, byRoad, 0.5, 0.0)) kept.push_back(std::move(part));
         continue;
       }
-      if (!c.bridge) {
+      if (c.bridge) {  // bridges stay whole (owner 2026-11-13: streets over water must stay joined)
         kept.push_back(c);
         continue;
       }
-      // a bridge: its legs crossing another street's leg
-      Chain cur = c;
-      cur.pts.clear();
+      // a street a bridge crosses without a shared node (it runs under it): cut around the crossing
+      std::vector<std::pair<int, int>> over;
       for (size_t li = 0; li + 1 < c.pts.size(); ++li) {
         Pt p = c.pts[li], q = c.pts[li + 1];
-        bool cross = near((p.first + q.first) / 2, (p.second + q.second) / 2, std::hypot(q.first - p.first, q.second - p.second) / 2 + 1,
-                          [&](int cj, int lj) {
-                            if (size_t(cj) == ci) return false;
-                            const Chain& o = chains[size_t(cj)];
-                            return segCross(p, q, o.pts[size_t(lj)], o.pts[size_t(lj) + 1]);
-                          });
-        if (cross) {
-          if (cur.pts.size() >= 2) cur.exit1 = -1, kept.push_back(cur);
-          cur.pts.clear(), cur.exit0 = -1;
-          continue;
+        near((p.first + q.first) / 2, (p.second + q.second) / 2, std::hypot(q.first - p.first, q.second - p.second) / 2 + 1,
+             [&](int cj, int lj) {
+               const Chain& o = chains[size_t(cj)];
+               if (size_t(cj) != ci && o.bridge && segCross(p, q, o.pts[size_t(lj)], o.pts[size_t(lj) + 1])) over.push_back({cj, lj});
+               return false;
+             });
+      }
+      if (over.empty()) {
+        kept.push_back(c);
+        continue;
+      }
+      auto under = [&](double x, double z) {
+        for (auto [cj, lj] : over) {
+          const Chain& o = chains[size_t(cj)];
+          if (segDist(x, z, o.pts[size_t(lj)], o.pts[size_t(lj) + 1]) < (halfWidth(o.kind) + halfWidth(c.kind) + 2.0) / cs) return true;
         }
-        if (cur.pts.empty()) cur.pts.push_back(p);
-        cur.pts.push_back(q);
-      }
-      if (cur.pts.size() >= 2) {
-        if (cur.pts.back() != c.pts.back()) cur.exit1 = -1;
-        kept.push_back(cur);
-      }
+        return false;
+      };
+      for (Chain& part : splitWhere(c, under, 0.5, 0.0)) kept.push_back(std::move(part));
     }
     chains.swap(kept);
   }
@@ -3162,6 +3164,42 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           flags[i] = uint16_t(f & kGround);
           if (d.water[i]) a.used[i] = 1;
         }
+      // rounded river banks (owner 2026-11-13): the ground within 5 cells of the water eases down to just above the
+      // water line, except where buildings stand at the water (a quay wall stays steep)
+      if (!d.heights.empty() && water) {
+        std::vector<uint8_t> built(size_t(W) * size_t(L), 0);
+        for (const BuildingIn& b : d.buildings) {
+          if (!b.polygon || b.pts.size() < 3) continue;
+          Edges e;
+          addRing(e, b.pts, true);
+          fillEdges(e, W, L, [&](int x, int z) { built[size_t(z) * size_t(W) + size_t(x)] = 1; });
+        }
+        const int R = 5;
+        const int target = -0x100;  // just above the water line (-0x140)
+        auto wetCell = [&](int x, int z) { return x >= 0 && z >= 0 && x < W && z < L && d.water[size_t(z) * size_t(W) + size_t(x)]; };
+        std::vector<int16_t> out(heights);
+        for (int z = 0; z < L; ++z)
+          for (int x = 0; x < W; ++x) {
+            size_t i = size_t(z) * size_t(W) + size_t(x);
+            if (wetCell(x - 1, z - 1) || wetCell(x, z - 1) || wetCell(x - 1, z) || wetCell(x, z)) continue;  // a water corner
+            if (heights[i] <= target) continue;
+            double best = R + 1;
+            bool quay = false;
+            for (int dz = -R; dz <= R; ++dz)
+              for (int dx = -R; dx <= R; ++dx) {
+                int cx = x + dx, cz = z + dz;
+                if (cx < 0 || cz < 0 || cx >= W || cz >= L) continue;
+                if (std::abs(dx) <= 2 && std::abs(dz) <= 2 && built[size_t(cz) * size_t(W) + size_t(cx)]) quay = true;
+                if (d.water[size_t(cz) * size_t(W) + size_t(cx)]) best = std::min(best, std::hypot(dx + 0.5, dz + 0.5));
+              }
+            if (quay || best > R) continue;
+            double t = std::clamp((best - 0.5) / (R - 0.5), 0.0, 1.0);
+            t = t * t * (3 - 2 * t);
+            out[i] = int16_t(std::lround(target + (heights[i] - target) * t));
+          }
+        heights.swap(out);
+        g.height = heights;
+      }
       if (!d.heights.empty()) levelUnderRoads(g, a.network, d.water, heights);
       gridEditCellsChanged(grid, 0, 0, W - 1, L - 1, true);
       if (a.timeline) timelineRecordPatch(vm, a.timeline, 0, 0, W, L, heights, flags);
