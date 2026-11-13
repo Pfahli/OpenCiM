@@ -805,8 +805,18 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
         if (c.bridge && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
-          bentRoad(c, m, t0, t1, curveBridgePiece(c.kind));
-          return;
+          // shorter than 3/4 of a span piece (after the junctions' trims): the plain road (a span squeezed that much
+          // shows its girders instead of a deck)
+          const float kept = curveLength(c) - t0 - t1, piece = curveProfile(c.kind).piece;
+          static const bool debugCurves = std::getenv("REGS_DEBUG_CURVES") != nullptr;
+          if (debugCurves)
+            LOG_INFO("curves: bridge kind %d from %.1f %.1f %.1f to %.1f %.1f %.1f, length %.1f, trims %.1f / %.1f, %s",
+                     c.kind, c.x0, c.y0, c.z0, c.x1, c.y1, c.z1, curveLength(c), t0, t1,
+                     kept >= 0.75f * piece ? "span" : "plain road (short)");
+          if (kept >= 0.75f * piece) {
+            bentRoad(c, m, t0, t1, curveBridgePiece(c.kind));
+            return;
+          }
         }
         if (c.kind != 0) {
           bentRoad(c, m, t0, t1);

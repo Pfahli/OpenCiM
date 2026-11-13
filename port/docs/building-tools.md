@@ -62,6 +62,8 @@ A curve can be a bridge (`CurveRoad::bridge = 1`). It is meant for the OSM impor
 - It is drawn with the kind's bridge span bent along it, railings included: `bridge_rsmall_gap`, `bridge_rlarge_gap`,
   `bridge_ravenue_gap`, and `bridge_tdouble_gap` for the railway. The span's pillar stands every 24 units, its foot
   24 units under the deck. Footpaths and metro tracks keep their plain piece and get no pillars.
+- A bridge shorter than 3/4 of a span piece after the junctions' trims draws as the kind's plain road at deck height
+  (a span squeezed that much shows its girders). `REGS_DEBUG_CURVES=1` logs every bridge's length and trims.
 - Lanes and the walk map are as on any curve of the kind, at the deck's height.
 - Its ends join other curves and junctions by the same point rule.
 - The curve tool lays bridges while `regsCurveToolBridge(true)` is set (test switch: `REGS_TEST_CURVE_BRIDGE=1`). They
