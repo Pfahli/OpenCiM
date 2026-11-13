@@ -2114,7 +2114,8 @@ bool segCross(Pt a, Pt b, Pt c, Pt d) {  // proper crossing (not at the ends)
   return ((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) && ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9));
 }
 
-Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::vector<uint8_t>& water) {
+Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::vector<uint8_t>& water,
+          const std::vector<int16_t>& height) {
   Plan P;
   // the points several streets share (an end there joins another street: kept even in water)
   std::map<std::pair<long long, long long>, int> sharedPts;
@@ -2263,7 +2264,22 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
             if (w && runStart < 0) runStart = k;
             if ((!w || k == n) && runStart >= 0) {
               double m = 1.5 / len;  // a cell and a half of bank each side
-              iv.push_back({double(runStart) / n - m, (w ? t : double(k - 1) / n) + m});
+              double t0 = double(runStart) / n - m, t1 = (w ? t : double(k - 1) / n) + m;
+              // a cut deeper than the banks (a walled stream): on until the ground is back near the banks' level
+              if (!height.empty()) {
+                auto H = [&](double tt) {
+                  tt = std::clamp(tt, 0.0, 1.0);
+                  int cx = std::clamp(int(std::lround(p.first + (q.first - p.first) * tt)), 0, W - 1);
+                  int cz = std::clamp(int(std::lround(p.second + (q.second - p.second) * tt)), 0, L - 1);
+                  return double(height[size_t(cz) * size_t(W) + size_t(cx)]);
+                };
+                const double bank = std::min(H(0), H(1)) - 0.8 * 256.0 / cs;  // 0.8 units under the lower bank
+                const double step = 0.5 / len;
+                while (t0 > 0 && H(t0) < bank) t0 -= step;
+                while (t1 < 1 && H(t1) < bank) t1 += step;
+                t0 -= m * 0.5, t1 += m * 0.5;
+              }
+              iv.push_back({t0, t1});
               runStart = -1;
             }
           }
@@ -3706,7 +3722,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     if (now() - t0 > budget) return false;
   }
   if (a.stage == 2 && !a.gridStreets && !d.roads.empty()) {  // the streets as curves
-    streets::Plan plan = streets::plan(d.roads, W, L, g.cellSize, d.water);
+    streets::Plan plan = streets::plan(d.roads, W, L, g.cellSize, d.water, g.height);
     streets::rebuildRings(plan);
     streets::tidy(plan);
     // the map-edge stubs: the edge piece and a straight piece the curve starts on
