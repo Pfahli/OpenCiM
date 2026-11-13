@@ -42,6 +42,7 @@
 #include "engine/tool_tracks.h"
 #include "engine/tools.h"
 #include "render/renderer2d.h"
+#include "vfs/vfs.h"
 
 namespace regs::engine {
 
@@ -1428,7 +1429,10 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           for (size_t i = 0; i + 1 < pts.size(); ++i) coast.push_back({pts[i], pts[i + 1]});
         } else if (nat == "water" || lu == "reservoir" || lu == "basin" || ww == "riverbank" || ww == "dock") {
           if (closed) waterEdges.insert(waterEdges.end(), ringEdges.begin(), ringEdges.end());
-        } else if (ww == "river" || ww == "canal") {
+        } else if ((ww == "river" || ww == "canal") && tags.str("tunnel").empty() && tags.str("covered") != "yes" &&
+                   tags.num("layer", 0) >= 0) {
+          // (culverts and covered stretches run under the town: no open water there; owner 2026-11-14, the Saalbach
+          // under Bruchsal's market place)
           double wm = tags.num("width", ww == "river" ? 15.0 : 10.0);
           rivers.push_back({std::move(pts), wm / cellM});
         } else if (nat == "wood" || lu == "forest") {
@@ -2652,6 +2656,7 @@ void rebuildRings(Plan& P) {
         }
     }
     const double R = std::clamp(std::max(rr, 4.5 * double(arms.size()) + 4.0), 10.0, 40.0);
+    if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: roundabout at world %.1f, %.1f, radius %.1f, %zu arms", cx, cz, R, arms.size());
     for (int n : members) P.nodes[size_t(n)].alive = false;
     // the points on the circle: one per arm (arms closer than 20° share one), more where arcs pass 90°
     std::sort(arms.begin(), arms.end(), [](const Arm& x, const Arm& y) { return x.ang < y.ang; });
@@ -3514,6 +3519,231 @@ int placeBlock(VM& vm, GridObj* grid, Apply& a, const std::vector<const Building
   return placed;
 }
 
+// ---- templates from the game's own maps (owner 2026-11-14: copy fitting parts of the default maps as templates) ----
+// Read from the installed game at the first import (nothing of the game's data goes into the port): in the official
+// maps (the base game's cities and the European packages' big maps) every patch of pavement paint with street
+// furniture on it is a square template, and every patch of open ground closed mostly by houses with garden things in it
+// a yard template; each keeps its cells and its furniture (the props of the level's park, city, residential and market
+// lists, the lamps, trees and bushes) relative to its centre. An OSM square or a yard behind a row of houses takes the
+// template whose shape covers it best (intersection over union, turned to the area's main axis in 90° steps) and gets
+// that furniture where it lands on its own free cells.
+struct TplProp {
+  std::string name;
+  double x, z, fx, fz;  // centre relative to the template's centre (cells), the model front
+};
+struct TplArea {
+  std::set<std::pair<int, int>> cells;  // source cells
+  double cx = 0, cz = 0, ang = 0;       // centre (cells) and main axis
+  std::vector<TplProp> props;
+  std::string from;
+};
+struct TplLibrary {
+  bool built = false;
+  std::vector<TplArea> squares, yards;
+};
+TplLibrary g_tpl;
+
+double cellsAxis(const std::vector<std::pair<double, double>>& pts) {
+  double ang, ea, eb, cx, cz;
+  if (pts.size() < 3 || !minRect(pts, ang, ea, eb, cx, cz)) return 0;
+  return ea >= eb ? ang : ang + kPi / 2;
+}
+
+void buildTemplates(VM& vm, GridObj* grid, const Value& buildingsList, const Value& trees) {
+  if (g_tpl.built) return;
+  g_tpl.built = true;
+  const double t0 = now();
+  std::set<std::string> decor, houses;
+  try {
+    if (Value* main = vm.findGlobal(u"MAIN"))
+      if (MapObj* m = vm.resolve(vm.getMember(vm.getMember(*main, u"$level"), u"$props")).map())
+        for (auto& [k, v] : m->entries) {
+          std::string cat = utf16ToUtf8(vm.toStr(k));
+          if (cat != "park" && cat != "city" && cat != "residential" && cat != "market" && cat != "road") continue;
+          if (ArrayObj* arr = vm.resolve(v).array())
+            for (const Value& n : arr->items) {
+              std::string nm = utf16ToUtf8(vm.toStr(n));
+              if (cat == "road" && nm.find("light") == std::string::npos && nm.find("lamp") == std::string::npos) continue;
+              decor.insert(nm);
+            }
+        }
+  } catch (const std::exception& e) {
+    LOG_WARN("osm: templates: no prop lists (%s)", e.what());
+  }
+  if (ArrayObj* arr = vm.resolve(trees).array())
+    for (const Value& v : arr->items) {
+      std::string n = utf16ToUtf8(vm.toStr(v));
+      if (n.rfind("tree", 0) == 0 || n.rfind("bush", 0) == 0 || n == "street-tree" || n == "cherry-tree") decor.insert(n);
+    }
+  if (MapObj* m = vm.resolve(buildingsList).map())
+    for (auto& [k, v] : m->entries)
+      if (ArrayObj* arr = vm.resolve(v).array())
+        for (const Value& n : arr->items) houses.insert(utf16ToUtf8(vm.toStr(n)));
+  static const char* kMaps[] = {"metro/maps/berlin.grid",          "metro/maps/amsterdam.grid",
+                                "metro/maps/helsinki.grid",        "metro/maps/vienna.grid",
+                                "addons/germany/maps/cologne.grid", "addons/germany/maps/leipzig.grid",
+                                "addons/munich/maps/munich.grid",   "addons/ulm/maps/ulm.grid",
+                                "addons/london/maps/london.grid",   "addons/paris/maps/paris.grid",
+                                "addons/stpetersburg/maps/stpetersburg.grid"};
+  for (const char* path : kMaps) {
+    std::vector<uint8_t> file;
+    GridData s;
+    std::string err;
+    if (!vm.vfs().read(path, file) || !parseGridFile(file, s, &err)) continue;
+    const int W = s.width, L = s.length;
+    std::string from = path;
+    from = from.substr(from.find_last_of('/') + 1);
+    // what stands where: 1 furniture, 2 houses, 3 roads and everything else
+    std::vector<uint8_t> occ(size_t(W) * size_t(L), 0);
+    struct D {
+      std::string name;
+      double cx, cz, fx, fz;
+    };
+    std::vector<D> furniture;
+    for (const GridData::Item& it : s.items) {
+      if (it.parent || it.type >= s.types.size()) continue;
+      const std::string& name = s.types[it.type];
+      int w = 1, l = 1;
+      bool known = templateSize(vm, grid, name, w, l);
+      const int sx = (it.orient & 1) ? l : w, sz = (it.orient & 1) ? w : l;
+      const uint8_t kind = decor.count(name) ? 1 : houses.count(name) ? 2 : 3;
+      for (int zz = it.z; zz < it.z + sz; ++zz)
+        for (int xx = it.x; xx < it.x + sx; ++xx)
+          if (xx >= 0 && zz >= 0 && xx < W && zz < L) {
+            uint8_t& o = occ[size_t(zz) * size_t(W) + size_t(xx)];
+            o = std::max(o, kind);
+          }
+      if (kind == 1 && known) {
+        static const double kFront[4][2] = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};  // orient → the model front (frontOrient's inverse)
+        furniture.push_back({name, it.x + sx * 0.5, it.z + sz * 0.5, kFront[it.orient & 3][0], kFront[it.orient & 3][1]});
+      }
+    }
+    std::map<std::pair<int, int>, std::vector<size_t>> at;
+    for (size_t i = 0; i < furniture.size(); ++i) at[{int(std::floor(furniture[i].cx)), int(std::floor(furniture[i].cz))}].push_back(i);
+    std::vector<uint8_t> seen(size_t(W) * size_t(L), 0);
+    int squares = 0, yards = 0;
+    for (int pass = 0; pass < 2; ++pass)  // 0 squares (paved), 1 yards (open ground)
+      for (int z0 = 1; z0 < L - 1; ++z0)
+        for (int x0 = 1; x0 < W - 1; ++x0) {
+          auto cellOk = [&](int x, int z) {
+            if (x < 1 || z < 1 || x >= W - 1 || z >= L - 1) return false;
+            size_t i = size_t(z) * size_t(W) + size_t(x);
+            uint16_t f = s.flags[i];
+            if (occ[i] >= 2 || (f & 0x2000)) return false;
+            return pass == 0 ? (f & 0x8) != 0 : (f & 0x8) == 0;
+          };
+          size_t i0 = size_t(z0) * size_t(W) + size_t(x0);
+          if (seen[i0] == pass + 1 || !cellOk(x0, z0)) continue;
+          const size_t cap = pass == 0 ? 2500 : 1200;
+          std::vector<std::pair<int, int>> comp{{x0, z0}};
+          seen[i0] = uint8_t(pass + 1);
+          bool open = false;
+          int byHouse = 0, edge = 0;
+          for (size_t qi = 0; qi < comp.size(); ++qi) {
+            auto [x, z] = comp[qi];
+            for (auto [nx, nz] : {std::pair{x - 1, z}, {x + 1, z}, {x, z - 1}, {x, z + 1}}) {
+              if (nx < 0 || nz < 0 || nx >= W || nz >= L) {
+                open = true;
+                continue;
+              }
+              size_t ni = size_t(nz) * size_t(W) + size_t(nx);
+              if (cellOk(nx, nz)) {
+                if (seen[ni] == pass + 1) continue;
+                seen[ni] = uint8_t(pass + 1);
+                if (comp.size() < cap) comp.push_back({nx, nz});
+                else open = true;
+              } else {
+                ++edge;
+                byHouse += occ[ni] == 2;
+              }
+            }
+          }
+          if (open || comp.size() < (pass == 0 ? 25u : 15u)) continue;
+          if (pass == 1 && byHouse * 100 < edge * 45) continue;  // a yard: mostly houses around it
+          TplArea t;
+          t.from = from;
+          std::vector<std::pair<double, double>> pts;
+          for (auto& c : comp) {
+            t.cells.insert(c);
+            t.cx += c.first + 0.5, t.cz += c.second + 0.5;
+            pts.push_back({c.first + 0.5, c.second + 0.5});
+          }
+          t.cx /= double(comp.size()), t.cz /= double(comp.size());
+          t.ang = cellsAxis(pts);
+          std::set<std::string> kinds;
+          for (auto& c : comp) {
+            auto it = at.find(c);
+            if (it == at.end()) continue;
+            for (size_t k : it->second) {
+              const D& dd = furniture[k];
+              t.props.push_back({dd.name, dd.cx - t.cx, dd.cz - t.cz, dd.fx, dd.fz});
+              kinds.insert(dd.name);
+            }
+          }
+          if (t.props.size() < (pass == 0 ? 4u : 3u) || kinds.size() < 2) continue;
+          (pass == 0 ? g_tpl.squares : g_tpl.yards).push_back(std::move(t));
+          ++(pass == 0 ? squares : yards);
+        }
+    LOG_INFO("osm: templates from %s: %d squares, %d yards", from.c_str(), squares, yards);
+  }
+  LOG_INFO("osm: %zu square and %zu yard templates from the game's maps in %.1f s", g_tpl.squares.size(), g_tpl.yards.size(),
+           now() - t0);
+}
+
+// the template of `lib` that covers the target cells best (IoU at least minIoU), its furniture placed on the target
+// cells where ok(used) allows; false when none fits
+template <class F>
+bool placeTemplate(VM& vm, GridObj* grid, Apply& a, const std::vector<TplArea>& lib, const std::vector<std::pair<int, int>>& target,
+                   double minIoU, F ok, const char* what) {
+  if (lib.empty() || target.size() < 10) return false;
+  const int W = grid->data->width;
+  std::set<std::pair<int, int>> S(target.begin(), target.end());
+  double cx = 0, cz = 0;
+  std::vector<std::pair<double, double>> pts;
+  for (auto& c : target) cx += c.first + 0.5, cz += c.second + 0.5, pts.push_back({c.first + 0.5, c.second + 0.5});
+  cx /= double(target.size()), cz /= double(target.size());
+  const double angS = cellsAxis(pts);
+  struct Fit {
+    const TplArea* t;
+    double th, iou;
+  };
+  std::vector<Fit> fits;
+  double best = 0;
+  for (const TplArea& t : lib) {
+    const double n = double(t.cells.size()), m = double(target.size());
+    if (n < 0.6 * m || n > 1.7 * m) continue;
+    for (int k = 0; k < 4; ++k) {
+      const double th = angS - t.ang + k * kPi / 2, c = std::cos(th), s = std::sin(th);
+      int inter = 0;
+      for (auto& p : pts) {
+        double dx = p.first - cx, dz = p.second - cz;
+        double qx = t.cx + dx * c + dz * s, qz = t.cz - dx * s + dz * c;  // turned back by th
+        inter += t.cells.count({int(std::floor(qx)), int(std::floor(qz))}) != 0;
+      }
+      double iou = inter / (n + m - inter);
+      if (iou >= minIoU) fits.push_back({&t, th, iou}), best = std::max(best, iou);
+    }
+  }
+  if (fits.empty()) return false;
+  std::vector<const Fit*> good;
+  for (const Fit& f : fits)
+    if (f.iou >= best - 0.05) good.push_back(&f);
+  const Fit& f = *good[hash32(uint64_t(std::llround(cx * 16)) * 92821u + uint64_t(std::llround(cz * 16))) % good.size()];
+  const double c = std::cos(f.th), s = std::sin(f.th);
+  int placed = 0;
+  for (const TplProp& p : f.t->props) {
+    double px = cx + p.x * c - p.z * s, pz = cz + p.x * s + p.z * c;
+    if (!S.count({int(std::floor(px)), int(std::floor(pz))})) continue;
+    double fx = p.fx * c - p.fz * s, fz = p.fx * s + p.fz * c;
+    if (placeAt(vm, grid, a, p.name, px, pz, fx, fz, ok, 6) >= 0) ++placed;
+  }
+  if (std::getenv("REGS_DEBUG_OSM"))
+    LOG_INFO("osm: %s of %zu cells at world %.0f, %.0f from a template of %s (%zu cells, IoU %.2f): %d of %zu things", what,
+             target.size(), (cx - W * 0.5) * grid->data->cellSize, (cz - grid->data->length * 0.5) * grid->data->cellSize,
+             f.t->from.c_str(), f.t->cells.size(), f.iou, placed, f.t->props.size());
+  return placed > 0;
+}
+
 // ---- furnishing (owner 2026-11-14: fountains on squares, street lamps, courtyards and squares decorated, car parks
 // with rows of bays, more of OSM's data used) ----
 bool insideRing(const std::vector<std::pair<double, double>>& p, double x, double z) {
@@ -3640,6 +3870,15 @@ void decorateSquare(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, const Fur
     cx = bx, cz = bz;
   }
   auto okIn = [&](uint8_t u) { return u == 0 || u == 5; };
+  {  // a square of the game's own maps that fits it
+    std::vector<std::pair<int, int>> cells;
+    double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
+    for (auto& q : ar.pts) x0 = std::min(x0, q.first), z0 = std::min(z0, q.second), x1 = std::max(x1, q.first), z1 = std::max(z1, q.second);
+    for (int z = std::max(1, int(z0)); z <= std::min(g.length - 2, int(z1)); ++z)
+      for (int x = std::max(1, int(x0)); x <= std::min(W - 2, int(x1)); ++x)
+        if (insideRing(ar.pts, x + 0.5, z + 0.5) && okIn(a.used[size_t(z) * size_t(W) + size_t(x)])) cells.push_back({x, z});
+    if (ar.kind == 0 && placeTemplate(vm, grid, a, g_tpl.squares, cells, 0.5, okIn, "square")) return;
+  }
   const uint32_t h = hash32(uint64_t(std::llround(cx * 64)) * 1000003ull + uint64_t(std::llround(cz * 64)));
   bool osmFountain = false;
   for (const PointIn& p : d.points)
@@ -3839,7 +4078,7 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu) {
       }
     return true;
   };
-  int yards = 0, things = 0;
+  int yards = 0, things = 0, tpls = 0;
   for (auto& sd : a.yardSeeds) {
     int sx = int(std::floor(sd.first)), sz = int(std::floor(sd.second));
     if (sx < 1 || sz < 1 || sx >= W - 1 || sz >= L - 1 || seen[size_t(sz) * size_t(W) + size_t(sx)] || at(sx, sz)) continue;
@@ -3867,6 +4106,9 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu) {
       if (!open || dist <= 6) cells.push_back(p);
     if (cells.size() < 10) continue;
     ++yards;
+    // a closed yard: one of the game's own yards that fits it first (then just the bushes along the houses)
+    const bool fromTpl = !open && placeTemplate(vm, grid, a, g_tpl.yards, cells, 0.4, [](uint8_t u) { return u == 0; }, "yard");
+    tpls += fromTpl;
     for (size_t k = cells.size() - 1; k > 0; --k) std::swap(cells[k], cells[hash32(k * 2654435761u + cells[0].first) % (k + 1)]);
     for (auto [x, z] : cells) {
       if (at(x, z)) continue;
@@ -3874,6 +4116,8 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu) {
       bool byHouse = at(x - 1, z) == 3 || at(x + 1, z) == 3 || at(x, z - 1) == 3 || at(x, z + 1) == 3;
       if (byHouse) {
         if (h % 100 < 22) plantAt(vm, grid, a, fu.pick(fu.bushes, h >> 5), x, z, h);
+      } else if (fromTpl) {
+        continue;
       } else if (h % 100 < 7 && clear(x, z, 2, {3, 4})) {
         plantAt(vm, grid, a, fu.pick(fu.trees, h >> 5), x, z, h);
       } else if ((h >> 7) % 100 < 6 && !pool.empty() && clear(x, z, 1, {6})) {
@@ -3885,7 +4129,7 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu) {
       }
     }
   }
-  LOG_INFO("osm: %d yards furnished (%d things)", yards, things);
+  LOG_INFO("osm: %d yards furnished (%d from the game's maps, %d more things)", yards, tpls, things);
 }
 
 void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
@@ -4541,6 +4785,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       }
     if (fu.trees.empty()) fu.trees = fu.bushes;
     if (fu.bushes.empty()) fu.bushes = fu.trees;
+    buildTemplates(vm, grid, buildings, trees);
     gridEditBegin(vm, grid);
     std::vector<std::pair<double, double>> lamps;
     placePoints(vm, grid, a, lamps);

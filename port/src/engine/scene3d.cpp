@@ -159,6 +159,12 @@ void cameraView(VM& vm, Object* cam, Vec3& eye, Vec3& look, Vec3& up) {
   eye = p + rotEngine(q, off);
   look = p + rotEngine(q, Vec3{off.x, off.y, std::min(off.z - 1.0f, 0.0f)});
   up = rotEngine(q, Vec3{0, 1, 0});
+  // screenshots: REGS_DEBUG_TOPDOWN=x,z,height puts the floating camera straight above world (x, z), north up
+  if (floating)
+    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) {
+      float x = 0, z = 0, h = 200;
+      if (std::sscanf(td, "%f,%f,%f", &x, &z, &h) >= 2) eye = {x, h, z}, look = {x, 0, z}, up = {0, 0, -1};
+    }
 }
 
 // gsSun::move (0x100964c0, scene-basics.md §4): direction from the clock's time of day, light 20000 units away;

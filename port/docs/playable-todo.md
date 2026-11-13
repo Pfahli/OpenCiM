@@ -270,6 +270,13 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   closed within 6000 cells, else 6 cells deep) with bushes along the houses, trees and residents' props. Signs in the
   building lists (grocerysign) are no buildings any more; no paint bands along pedestrian streets / service roads
   (the saw-tooth strips). REGS_DEBUG_OSM=1 logs what the furnishing placed.
+  Templates from the game's own maps (owner 2026-11-14): at the first import the official maps (berlin, amsterdam,
+  helsinki, vienna, cologne, leipzig, munich, ulm, london, paris, stpetersburg; read from the install, nothing copied
+  into the port) give square templates (pavement patches with furniture) and yard templates (open ground mostly
+  closed by houses, with garden things): ~1100 and ~100, 0.8 s. An OSM square or a closed yard takes the best-covering
+  one (IoU ≥ 0.5 / 0.4, turned to its main axis in 90° steps) and its furniture where it lands on free cells; else the
+  furnishing above. Culverted / covered rivers (tunnel=*, covered=yes, layer < 0) are no open water.
+  REGS_DEBUG_TOPDOWN=x,z,height puts the camera straight above world (x, z) for screenshots.
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); level crossings
   (tracks have no crossing piece on curves); tram tracks from railway=tram; station platforms; painted areas (car
   parks, squares) keep the cell paint's saw-tooth edge on slanted outlines (a real fix: polygon surfaces like the
