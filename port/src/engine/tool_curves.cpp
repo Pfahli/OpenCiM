@@ -190,7 +190,7 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
       if (d <= reach2 && d < bestD) bestD = d, best = Snap{true, q, Vec3{c.dx1, 0, c.dz1}, false, {}};
     }
   }
-  if (best.ok || curveIsTrack(g_state.kind)) return best;  // tracks: no junctions
+  if (best.ok || curveNoJunctions(g_state.kind)) return best;  // tracks and express roads: no junctions
   // junction points, in this order: where curve ends meet, the middle of a curve, the middle of a straight block
   const float hw = pf.halfWidth;
   for (const CurveRoad& c : g.curves) {

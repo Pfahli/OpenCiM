@@ -233,6 +233,7 @@ const char* curveBridgePiece(int kind) {
     case 1: return "bridge_rlarge_gap";
     case 2: return "bridge_ravenue_gap";
     case 6: return "bridge_tdouble_gap";
+    case 7: return "bridge_rexpress_gap";
     default: return "";
   }
 }
@@ -241,6 +242,7 @@ const char* curveBridgePillar(int kind) {
     case 0: return "bridge_rsmall2_pillar";
     case 1: return "bridge_rlarge_pillar";
     case 2: return "bridge_ravenue_pillar";
+    case 7: return "bridge_rexpress_pillar";
     default: return "";
   }
 }
@@ -257,6 +259,8 @@ const CurveProfile& curveProfile(int kind) {
       {0xd, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "metro_ground_basic", "metro_ground_deadend", "", 4.5f, ""},
       {0xf, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "metro_elevated_basic", "metro_elevated_deadend", "", 4.5f, "metro_elevated_pillar"},
       {9, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "track_double_basic", "track_double_deadend", "", 4.5f, ""},
+      // the express road: 30 wide like the avenue (three lanes each way at 5, 9, 13 around a 6-wide median), no pavement
+      {7, 24, 24.0f, 15.0f, 15.0f, 9.0f, 30.0f, "road_express_basic", "road_express_deadend", "", 12.0f, ""},
   };
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
@@ -353,7 +357,7 @@ bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, V
 const CurveLanes& curveLanes(int kind) {
   static const CurveLanes k[kCurveKinds] = {
       {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0},
-      {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}};  // tracks: their pieces' paths only
+      {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}, {0, {0, 0}, 0}};  // tracks: their pieces' paths only
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
 
@@ -936,7 +940,7 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g) {
         group.push_back(b);
     for (size_t k : group) used[k] = 1;
     if (group.size() < 2) continue;
-    if (curveIsTrack(ends[a].kind)) continue;  // tracks only join smoothly (no junction pieces)
+    if (curveNoJunctions(ends[a].kind)) continue;  // tracks and express roads only join smoothly (no junction pieces)
     if (group.size() == 2 && dot(ends[group[0]].out, ends[group[1]].out) < -0.985f) continue;  // a smooth join
     CurveJunction j;
     j.kind = ends[a].kind;

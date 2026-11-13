@@ -53,6 +53,7 @@ The tool refuses a road that the junction would use up (an arm shorter than the 
 | metro, ground | 6 (track bed) | – | 20 | bent `metro_ground_basic`; metro tab of the build menu |
 | metro, elevated | 6 | – | 20 | bent `metro_elevated_basic`, pillars under every joint; ground left as it is |
 | railway (double track) | 6 | – | 20 | bent `track_double_basic`; track tab of the traffic menu |
+| express road | 30 | 3 (±5, ±9, ±13) | 30 | bent `road_express_basic`, median, no pavement; express tab; joins only express roads, smoothly (no junctions), no pedestrians; bridges with `bridge_rexpress_gap` |
 
 ### Bridges (curves)
 
@@ -155,7 +156,7 @@ A curve is **not** a grid item. `GridData::curves` (engine/grid.h) holds `CurveR
 | `x0, y0, z0` / `x1, y1, z1` | start / end in world units (map centre at the origin, a cell is 3 units; y = the road's item height: the pavement level) |
 | `dx0, dz0` / `dx1, dz1` | unit directions: at the start into the curve, at the end the direction of travel there |
 | `a`, `b` | Bézier handle lengths (control points `p0 + d0·a`, `p1 − d1·b`); y eases from y0 to y1 |
-| `kind` | 0 small, 1 large, 2 avenue, 3 alley, 4 metro (ground), 5 metro (elevated), 6 railway |
+| `kind` | 0 small, 1 large, 2 avenue, 3 alley, 4 metro (ground), 5 metro (elevated), 6 railway, 7 express road |
 | `ends` | bit 0: start on a grid road block (the curve continues its straight piece), bit 1: end on a block, bit 2: tram tracks, bit 3 / 4: start / end on a grass tram track (small roads), bit 5: one-way (start → end), bit 6: with bit 5 one lane, bit 7: part of a roundabout ring |
 | `stops` | `{s, side ±1, kind 0 bus / 1 tram, design}` (small roads) |
 | `bridge` | 1: a bridge (see above); saved in the second byte of the kind (section and timeline bytes) |
@@ -208,7 +209,7 @@ bend tighter than the kind's minimum radius.
 
 ## 4. Not done
 
-Tunnels and express roads on curves, abutments at bridge ends; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
+Tunnels on curves, express-road junctions and ramps, abutments at bridge ends; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
 on large-road and avenue curves; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 
