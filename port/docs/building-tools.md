@@ -50,6 +50,39 @@ The tool refuses a road that the junction would use up (an arm shorter than the 
 | large road | 24 | 2 (±1.5, ±4.5) | 15 | the game's straight piece bent; trams in the outer lanes |
 | avenue | 30 | 2 (±6, ±9) | 18 | bent; median; trams in the median |
 | alley (footpath) | 3 | – | 3 | bent; pedestrians only |
+| metro, ground | 6 (track bed) | – | 20 | bent `metro_ground_basic`; metro tab of the build menu |
+| metro, elevated | 6 | – | 20 | bent `metro_elevated_basic`, pillars under every joint; ground left as it is |
+| railway (double track) | 6 | – | 20 | bent `track_double_basic`; track tab of the traffic menu |
+
+### Bridges (curves)
+
+A curve can be a bridge (`CurveRoad::bridge = 1`). It is meant for the OSM import's `bridge=yes` ways and legs over water.
+- The deck runs at the curve's own heights: y0 and y1, eased along it. The ground or water under it stays as it is (no
+  levelling, no cell cover).
+- It is drawn with the kind's bridge span bent along it, railings included: `bridge_rsmall_gap`, `bridge_rlarge_gap`,
+  `bridge_ravenue_gap`, and `bridge_tdouble_gap` for the railway. The span's pillar stands every 24 units, its foot
+  24 units under the deck. Footpaths and metro tracks keep their plain piece and get no pillars.
+- Lanes and the walk map are as on any curve of the kind, at the deck's height.
+- Its ends join other curves and junctions by the same point rule.
+- The curve tool lays bridges while `regsCurveToolBridge(true)` is set (test switch: `REGS_TEST_CURVE_BRIDGE=1`). They
+  start two cells over the ground and pass over anything a cell lower than the deck. There is no menu button yet.
+
+### Tracks
+
+The build menu's metro tab ends with straight, curve and freeform for ground and elevated metro tracks, and the traffic
+menu's track tab with the same three for the railway.
+- Tracks join only tracks of their own kind: a grid track's dead end (it becomes a straight piece) or a track curve's
+  free end, always smoothly.
+- There are no junctions or switches on curves, and no tram tracks or stops on them.
+- A free end gets the track's dead-end piece, where trains turn back.
+- Elevated tracks start two cells over the ground and pass over anything a cell lower than they are.
+- The lanes are the pieces' own paths, bent; metro trains run on them. Test them with `REGS_TEST_CURVE_METRO=<n>`.
+- Checked (2026-11-12): a curve from a grid metro track's dead end joins it seamlessly, its lanes linked both ways
+  (the "tracks: n in, n out" count in the "curved roads:" log line); railway curves; metro cars on ground and elevated
+  curves. Like all curves, track curves are hidden in the underground view.
+- Checked (2026-11-13): a metro line between two ground stations joined by a 225 m U-shaped track curve (grid stubs
+  off the stations' ends, the curve between their dead ends): the line's route runs over the curve and its train
+  shuttles between the platforms (`REGS_TEST_LINE=2`).
 
 ### One-way streets
 
@@ -116,9 +149,10 @@ A curve is **not** a grid item. `GridData::curves` (engine/grid.h) holds `CurveR
 | `x0, y0, z0` / `x1, y1, z1` | start / end in world units (map centre at the origin, a cell is 3 units; y = the road's item height: the pavement level) |
 | `dx0, dz0` / `dx1, dz1` | unit directions: at the start into the curve, at the end the direction of travel there |
 | `a`, `b` | Bézier handle lengths (control points `p0 + d0·a`, `p1 − d1·b`); y eases from y0 to y1 |
-| `kind` | 0 small, 1 large, 2 avenue, 3 alley |
+| `kind` | 0 small, 1 large, 2 avenue, 3 alley, 4 metro (ground), 5 metro (elevated), 6 railway |
 | `ends` | bit 0: start on a grid road block (the curve continues its straight piece), bit 1: end on a block, bit 2: tram tracks, bit 3 / 4: start / end on a grass tram track (small roads), bit 5: one-way (start → end), bit 6: with bit 5 one lane, bit 7: part of a roundabout ring |
 | `stops` | `{s, side ±1, kind 0 bus / 1 tram, design}` (small roads) |
+| `bridge` | 1: a bridge (see above); saved in the second byte of the kind (section and timeline bytes) |
 
 Rules the renderer, lanes and walk map rely on:
 - **Joins and junctions are found by position**: curve ends of road kinds within 0.2 units of each other form a joint;
@@ -166,13 +200,14 @@ bend tighter than the kind's minimum radius.
 |---|---|
 | `REGS_START=editor:<map>` / `map:<map>` / `save:<name>`, `REGS_START_RUN=1` | straight into the editor or a game (main.script) |
 | `REGS_DEBUG_CURVES=1` | tool previews, snaps, junction fitting, "N junctions, M turn lanes, K joined both ways", tram ends |
-| `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>` | n cars / trams on random trips between curve lanes (engine/snowplows.cpp) |
+| `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>`, `REGS_TEST_CURVE_METRO=<n>` | n cars / trams / metro cars on random trips between curve lanes (engine/snowplows.cpp) |
+| `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |
 | `REGS_DUMP_TEMPLATES=a,b` (`REGS_DUMP_VERTICES=1`) | a template's size, mesh bounds and UVs per material, paths |
 
 ## 4. Not done
 
-Bridges, tunnels and express roads on curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
+Tunnels and express roads on curves, abutments at bridge ends, a bridge button; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
 on large-road and avenue curves; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 

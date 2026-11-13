@@ -226,14 +226,37 @@ CurveSample curveAt(const std::vector<CurveSample>& d, float s) {
   return r;
 }
 
+// the bridge span bent along a bridge curve and its pillar ("" none: the plain piece, no pillars)
+const char* curveBridgePiece(int kind) {
+  switch (kind) {
+    case 0: return "bridge_rsmall_gap";
+    case 1: return "bridge_rlarge_gap";
+    case 2: return "bridge_ravenue_gap";
+    case 6: return "bridge_tdouble_gap";
+    default: return "";
+  }
+}
+const char* curveBridgePillar(int kind) {
+  switch (kind) {
+    case 0: return "bridge_rsmall2_pillar";
+    case 1: return "bridge_rlarge_pillar";
+    case 2: return "bridge_ravenue_pillar";
+    default: return "";
+  }
+}
+
 const CurveProfile& curveProfile(int kind) {
   // sizes from the templates (REGS_DUMP_TEMPLATES): large and avenue pieces are 24 units long (two blocks), the large
   // road 24 wide with asphalt ±6, the avenue 30 wide with asphalt ±10.5 around its median, the footpath 3 × 3
   static const CurveProfile k[kCurveKinds] = {
-      {2, 0, 12.0f, 6.0f, 3.0f, kCurveCapReach, 6.0f, "road_small_basic", "road_small_deadend", "tram_small_basic"},
-      {5, 8, 24.0f, 12.0f, 6.0f, 12.0f, 15.0f, "road_large_basic", "road_large_deadend", "tram_large_basic"},
-      {6, 16, 24.0f, 15.0f, 10.5f, 9.0f, 18.0f, "road_avenue_basic", "road_avenue_deadend", "tram_avenue_basic"},
-      {1, 0, 3.0f, 1.5f, 0.0f, 1.5f, 3.0f, "alley_footpath_basic", "alley_footpath_deadend", ""},
+      {2, 0, 12.0f, 6.0f, 3.0f, kCurveCapReach, 6.0f, "road_small_basic", "road_small_deadend", "tram_small_basic", 6.0f, ""},
+      {5, 8, 24.0f, 12.0f, 6.0f, 12.0f, 15.0f, "road_large_basic", "road_large_deadend", "tram_large_basic", 12.0f, ""},
+      {6, 16, 24.0f, 15.0f, 10.5f, 9.0f, 18.0f, "road_avenue_basic", "road_avenue_deadend", "tram_avenue_basic", 12.0f, ""},
+      {1, 0, 3.0f, 1.5f, 0.0f, 1.5f, 3.0f, "alley_footpath_basic", "alley_footpath_deadend", "", 1.5f, ""},
+      // tracks: pieces of one block (12 long, the bed 6 wide), the dead end three cells beyond the block's edge
+      {0xd, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "metro_ground_basic", "metro_ground_deadend", "", 4.5f, ""},
+      {0xf, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "metro_elevated_basic", "metro_elevated_deadend", "", 4.5f, "metro_elevated_pillar"},
+      {9, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "track_double_basic", "track_double_deadend", "", 4.5f, ""},
   };
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
@@ -252,7 +275,7 @@ void curveCapFrame(const CurveRoad& c, int end, bool openPlusX, Vec3& o, Vec3& a
   // outward along the end, the piece's centre half a piece beyond it; its open side faces the curve
   Vec3 out = end ? Vec3{c.dx1, 0, c.dz1} : Vec3{-c.dx0, 0, -c.dz0};
   Vec3 e = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
-  o = e + out * (pf.piece * 0.5f);
+  o = e + out * pf.capOffset;
   ax = openPlusX ? out * -1.0f : out;  // local +x toward the open side (or away)
   az = rightOf(ax);
 }
@@ -329,7 +352,8 @@ bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, V
 
 const CurveLanes& curveLanes(int kind) {
   static const CurveLanes k[kCurveKinds] = {
-      {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0}};
+      {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0},
+      {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}};  // tracks: their pieces' paths only
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
 
@@ -622,7 +646,7 @@ static bool beyondBlockEnd(const CurveRoad& c, float x, float z) {
 
 void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
   GridData& g = *grid->data;
-  if (g.height.empty()) return;
+  if (g.height.empty() || curveIsElevated(c.kind) || c.bridge) return;  // elevated tracks and bridges leave the ground
   std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
@@ -666,6 +690,7 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
   if (g.curves.empty()) return;
   const float cs = g.cellSize;
   for (const CurveRoad& c : g.curves) {
+    if (curveIsElevated(c.kind) || c.bridge) continue;  // no ground cover under elevated tracks and bridges
     int cx0, cz0, cx1, cz1;
     curveCells(g, c, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
@@ -709,11 +734,11 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
 }
 
 // one curve: 13 floats (the 13th the end flags), i32 kind, u32 stop count, per stop f32 s, i8 side, u8 kind, u8 design,
-// u8 0 (format 2: the count's bit 31 set; format 1 had no stop count)
+// u8 0 (format 2: the count's bit 31 set; format 1 had no stop count). The kind's second byte: the bridge flag.
 static void writeCurve(const CurveRoad& c, std::vector<uint8_t>& out) {
   auto put = [&](const void* p, size_t n) { out.insert(out.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
   float f[13] = {c.x0, c.y0, c.z0, c.dx0, c.dz0, c.x1, c.y1, c.z1, c.dx1, c.dz1, c.a, c.b, float(c.ends)};
-  int32_t kind = c.kind;
+  int32_t kind = (c.kind & 0xff) | (int32_t(c.bridge) << 8);
   uint32_t n = uint32_t(c.stops.size());
   put(f, sizeof(f)), put(&kind, 4), put(&n, 4);
   for (const CurveRoad::Stop& st : c.stops) {
@@ -733,7 +758,8 @@ static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, boo
   c = CurveRoad();
   c.x0 = f[0], c.y0 = f[1], c.z0 = f[2], c.dx0 = f[3], c.dz0 = f[4];
   c.x1 = f[5], c.y1 = f[6], c.z1 = f[7], c.dx1 = f[8], c.dz1 = f[9];
-  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 255);
+  c.a = f[10], c.b = f[11], c.kind = kind & 0xff, c.ends = uint8_t(int(f[12]) & 255);
+  c.bridge = uint8_t((kind >> 8) & 0xff);
   if (!v2) return true;
   if (p + 4 > stop) return false;
   uint32_t n;
@@ -878,13 +904,14 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g, const std::vect
     while (lo > 0 && ends[byX[lo - 1]].p.x > ends[a].p.x - 0.2f) --lo;
     for (size_t k = lo; k < byX.size() && ends[byX[k]].p.x < ends[a].p.x + 0.2f; ++k) {
       size_t b = byX[k];
-      if (b > a && !used[b] && (ends[b].kind == 3) == (ends[a].kind == 3) && std::fabs(ends[b].p.x - ends[a].p.x) < 0.2f &&
+      if (b > a && !used[b] && curveJoinClass(ends[b].kind) == curveJoinClass(ends[a].kind) && std::fabs(ends[b].p.x - ends[a].p.x) < 0.2f &&
           std::fabs(ends[b].p.z - ends[a].p.z) < 0.2f)
         group.push_back(b);
     }
     std::sort(group.begin() + 1, group.end());
     for (size_t k : group) used[k] = 1;
     if (group.size() < 2) continue;
+    if (curveIsTrack(ends[a].kind)) continue;  // tracks only join smoothly (no junction pieces)
     if (group.size() == 2 && ends[group[0]].kind == ends[group[1]].kind && dot(ends[group[0]].out, ends[group[1]].out) < -0.985f)
       continue;  // a smooth join (two road kinds meet in a junction piece: it joins their widths)
     CurveJunction j;

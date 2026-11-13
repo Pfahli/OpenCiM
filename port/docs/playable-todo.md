@@ -205,7 +205,7 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
 - [x] New map: Karteneditor → Neue Karte → Kartenattribute → an empty flat map (`gsGrid.setSize`).
 - [x] Terrain: raise/lower (shift), level, soften, ruin, pavement and field paint, trees; water fills a dug basin.
 - [x] Objects: buildings, props and markers from the object lists, stops and stations, the bulldozer.
-- [~] Roads and alleys (see §1); bridges and tunnels still open.
+- [~] Roads and alleys (see §1); bridges and tunnels laid (moveLayBridge).
 - [x] Undo button (timeline replay over `memory/base.grid`).
 - [x] Timeline: the original shows the time bar only in debug mode (`$debug = true`, `$disableDebug = false`); there
   dated edits, the day's action list with its labels, moving between years and saving the timeline work (needed the
@@ -249,7 +249,7 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); bridges (none on
   curves yet); tram tracks from railway=tram; junctions of large roads at shallow angles (radius capped at 40, the
   arm goes); one-way large roads (not supported on curves); tiny water areas (fountains) left out; the minimap does not draw curves.
-- [ ] Open: bridges, tunnels, ramps and map-edge road pieces; the rename (0x14) and variation (0x15) tools;
+- [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
 ## 9. Release (OpenRCT2 style: requires the original game)

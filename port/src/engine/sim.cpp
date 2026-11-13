@@ -98,6 +98,8 @@ float densityOf(SimState& s, Object* module, const char16_t* field) {
 float populationDensity(SimState& s) { return densityOf(s, s.citizensModule.get(), u"regsPopulationDensity"); }
 float trafficDensity(SimState& s) { return densityOf(s, s.vehiclesModule.get(), u"regsTrafficDensity"); }
 
+int lineAddStop(VM& vm, GridObj* grid, SimState& s, int li, int item, bool temp);  // engine/sim_lines.cpp
+
 Vec3 itemCentre(VM& vm, GridObj* grid, int item, int* sxOut, int* szOut) {
   const GridData& g = *grid->data;
   const auto& it = g.items[size_t(item)];
@@ -1942,6 +1944,39 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
         if (item >= 0) gridEditRemoveItem(vm, grid, uint32_t(item));
       gridEditEnd(vm, grid);
       LOG_INFO("sim: test terminus: line %zu keeps %zu stops", li, s->lines[li].stops.size());
+    }
+  }
+  // test harness: REGS_TEST_LINE=<type> (0 bus, 1 tram, 2 metro) 60 ticks into the game: a new line of that type (the
+  // line panel's createLine) through every stop of it on the map (bus stops, tram stops, metro stations by template
+  // name, in map order), with one vehicle of REGS_TEST_LINE_MODEL (default bus-01 / tram-01 / metro-01), switched on
+  if (const char* t = std::getenv("REGS_TEST_LINE")) {
+    static int ticks = 0;
+    if (++ticks == 60) {
+      int type = std::atoi(t);
+      static const char* kPrefix[] = {"stop_bus", "stop_tram", "station_metro"};
+      static const char* kModel[] = {"bus-01", "tram-01", "metro-01"};
+      const char* model = std::getenv("REGS_TEST_LINE_MODEL");
+      if (!model) model = kModel[std::clamp(type, 0, 2)];
+      try {
+        Value* main = vm.findGlobal(u"MAIN");
+        Value panel = main ? vm.getMember(*main, u"$linepanel") : Value();
+        Value line = vm.call(vm.getMember(panel, u"createLine"), {Value::integer(type)});
+        int li = int(s->lines.size()) - 1;
+        int added = 0;
+        for (const auto& [item, stop] : s->stopOfItem) {
+          const GridData& g = *grid->data;
+          if (size_t(item) >= g.items.size() || g.items[size_t(item)].removed) continue;
+          const std::string& name = g.types[g.items[size_t(item)].type];
+          if (name.rfind(kPrefix[std::clamp(type, 0, 2)], 0) != 0) continue;
+          if (lineAddStop(vm, grid, *s, li, item, false) >= 0) ++added;
+        }
+        Value tpl = vm.call(vm.getMember(vm.getMember(*main, u"$grid"), u"getGridObject"), {Value::string(utf8ToUtf16(model))});
+        vm.call(vm.getMember(line, u"addVehicle"), {tpl});
+        vm.setMember(line, u"active", Value::boolean(true));
+        LOG_INFO("test: line %d (type %d) with %d stops and a %s", li, type, added, model);
+      } catch (const std::exception& e) {
+        LOG_WARN("test: line failed: %s", e.what());
+      }
     }
   }
   // debugging: REGS_DEBUG_SAVE_AT=<ticks>:<name> saves the game (main.saveGameData) after that many simulation ticks

@@ -747,7 +747,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (it == sliced.end()) it = sliced.emplace(o, sliceMeshAlongX(o->mesh, 1.5f)).first;
         return it->second;
       };
-      auto bentRoad = [&](const CurveRoad& c, MeshData& m, float t0, float t1) {
+      auto bentRoad = [&](const CurveRoad& c, MeshData& m, float t0, float t1, const char* straight = nullptr) {
         const CurveProfile& pf = curveProfile(c.kind);
         const float kept = curveLength(c) - t0 - t1;
         if (kept <= 0.05f) return;
@@ -761,8 +761,34 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           for (int i = 0; i < cp.count; ++i)
             appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
         };
-        pieces(pf.straight);
+        pieces(straight ? straight : pf.straight);
         if (c.ends & 4) pieces(pf.tram);
+        if (straight && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
+                                                         // its foot 8 cells under the deck as the span's own parts
+          ObjectObj* po = nullptr;
+          int pb = templateOf(curveBridgePillar(c.kind), &po);
+          const float every = 24.0f;
+          const int count = int(kept / every);
+          if (pb >= 0 && po && po->data)
+            for (int i = 1; i <= count; ++i) {
+              float s = t0 + kept * float(i) / float(count + 1);
+              CurveSample k = curveAt(shape, s);
+              Vec3 ax = render::normalize(Vec3{k.dir.x, 0, k.dir.z});
+              appendPlacedMesh(po->data->mesh, pb, k.p + Vec3{0, -24.0f, 0}, ax, k.right, m);
+            }
+        }
+        if (pf.pillar[0]) {  // elevated tracks: the straight piece's pillar parts (metroe_basic onPlace: a half on each
+                             // side, one cell under the track, at both ends of a piece) under every joint
+          ObjectObj* po = nullptr;
+          int pb = templateOf(pf.pillar, &po);
+          if (pb >= 0 && po && po->data)
+            for (int i = 0; i <= cp.count; ++i) {
+              CurveSample k = curveAt(shape, t0 + float(i) * pf.piece * cp.stretch);
+              Vec3 ax = render::normalize(Vec3{k.dir.x, 0, k.dir.z}), az = k.right, down{0, -3.0f, 0};
+              appendPlacedMesh(po->data->mesh, pb, k.p + az * 3.0f + down, ax, az, m);
+              appendPlacedMesh(po->data->mesh, pb, k.p - az * 3.0f + down, ax * -1.0f, az * -1.0f, m);
+            }
+        }
         CurveEnds caps = curveFreeEnds(g, c);
         ObjectObj* dob = nullptr;
         int db = templateOf(pf.deadend, &dob);
@@ -778,6 +804,10 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         }
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
+        if (c.bridge && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
+          bentRoad(c, m, t0, t1, curveBridgePiece(c.kind));
+          return;
+        }
         if (c.kind != 0) {
           bentRoad(c, m, t0, t1);
           return;
@@ -834,6 +864,8 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       }
     }
   }
+  // the underground view (viewMode 0x180) hides the surface: curves are all surface roads and tracks (no subway curves)
+  if (tc.viewMode == 0x180) return;
   if (tc.curvesBuilt && !tc.curves.parts.empty()) {
     DrawItem it;
     it.mesh = &tc.curves;

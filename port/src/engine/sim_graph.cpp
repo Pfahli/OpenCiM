@@ -726,6 +726,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   auto keep = [](const PathRecord& p) { return !(p.flags & (kPathStart | kPathEnd)); };
   auto bentNodes = [&](const CurveRoad& c, float t0, float t1) {
     const CurveProfile& pf = curveProfile(c.kind);
+    const bool track = curveIsTrack(c.kind);  // tracks keep their dead end's START / END paths (trains turn there)
     const float kept = curveLength(c) - t0 - t1;
     CurvePieces cp = curvePieces(c, kept);
     std::vector<CurveSample> shape = curveShape(c);
@@ -734,7 +735,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       for (int i = 0; i < cp.count && kept > 0.05f; ++i) {
         float s0 = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
         for (const auto& [name, p] : ps->paths) {
-          if (!keep(p)) continue;
+          if (!track && !keep(p)) continue;
           CurveSample a = curveAt(shape, s0 + p.p0.x * cp.stretch), b = curveAt(shape, s0 + p.p1.x * cp.stretch);
           LaneNode n;
           n.flags = p.flags & ~kPathStop;
@@ -759,7 +760,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       Vec3 o, ax, az, up{0, 1, 0};
       curveCapFrame(c, end, openPlusX, o, ax, az);
       for (const auto& [name, p] : dp->paths) {
-        if (!keep(p)) continue;
+        if (!track && !keep(p)) continue;
         LaneNode n;
         n.flags = p.flags & ~kPathStop;
         n.item = -1;
@@ -930,12 +931,15 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   if (!g.curves.empty()) {  // how they joined the items' lanes (both ways at each road block they meet)
     std::vector<uint8_t> isCurve(G.nodes.size(), 0);
     for (int n : G.curveNodes) isCurve[size_t(n)] = 1;
-    int in = 0, out = 0;
+    int in = 0, out = 0, trackIn = 0, trackOut = 0;
     for (size_t i = 0; i < G.nodes.size(); ++i)
       for (int s : G.nodes[i].next)
-        if (isCurve[i] != isCurve[size_t(s)]) ++(isCurve[i] ? out : in);
-    LOG_INFO("curved roads: %zu curves, %zu lane nodes, %d links from the road network into them, %d out", g.curves.size(),
-             G.curveNodes.size(), in, out);
+        if (isCurve[i] != isCurve[size_t(s)]) {
+          ++(isCurve[i] ? out : in);
+          if (G.nodes[i].flags & (kPathMetro | kPathTrain)) ++(isCurve[i] ? trackOut : trackIn);
+        }
+    LOG_INFO("curved roads: %zu curves, %zu lane nodes, %d links from the road network into them, %d out (tracks: %d in, "
+             "%d out)", g.curves.size(), G.curveNodes.size(), in, out, trackIn, trackOut);
   }
 }
 

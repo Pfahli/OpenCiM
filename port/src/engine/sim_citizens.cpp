@@ -569,6 +569,7 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
   WalkGrid& wg = s.walk;
   const float cs = g.cellSize;
   for (const CurveRoad& c : g.curves) {
+    if (curveIsElevated(c.kind)) continue;  // the ground under elevated tracks stays as it is
     int cx0, cz0, cx1, cz1;
     curveCells(g, c, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
@@ -590,7 +591,8 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
           curveNearest(shape, wx, wz, side, at);
           float ad = std::fabs(side);
           if (ad > pf.halfWidth) continue;
-          uint32_t code = ad > pf.carriageway ? 2u : std::fabs(at - mid) <= 1.5f ? 1u : 0u;
+          // tracks: blocked all across (no crossing)
+          uint32_t code = ad > pf.carriageway ? 2u : !curveIsTrack(c.kind) && std::fabs(at - mid) <= 1.5f ? 1u : 0u;
           w = (w & ~(3u << (2 * q))) | (code << (2 * q));
           any = true;
           if (code == 2 && !pavement) pavement = true, y = curveAt(shape, at).p.y;

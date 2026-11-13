@@ -62,6 +62,10 @@ struct GridData {
       uint8_t design = 1;  // the stop template's number
     };
     std::vector<Stop> stops;
+    // 1: a bridge (2026-11-13, the OSM import's bridge=yes ways): the deck at the curve's own heights over the ground or
+    // water, which stay as they are (no levelling, no cover), drawn with the kind's bridge span and pillars; saved in
+    // the second byte of the kind in section 0x07F00000 and the timeline bytes
+    uint8_t bridge = 0;
   };
   std::vector<CurveRoad> curves;
   // the stop items that anchor curve stops (and the stop tool's preview of one): not drawn, no walk map of their own

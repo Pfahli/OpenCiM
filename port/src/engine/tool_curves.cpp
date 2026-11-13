@@ -71,6 +71,7 @@ struct State {
   int mode = 1;  // 0 straight, 1 curved, 2 freeform, 3 remove
   int kind = 0;  // the road kind drawn (CurveProfile): 0 small, 1 large, 2 avenue, 3 alley
   int oneWay = 0;  // small roads: 0 both ways, 1 one-way with one lane, 2 one-way with two lanes (in the drawing direction)
+  bool bridge = false;  // new curves are bridges (regsCurveToolBridge; REGS_TEST_CURVE_BRIDGE=1 at start)
   int step = 0;  // 0 nothing picked, 1 the start, 2 (curved) the bend point too
   Vec3 start, bend;
   bool startDir = false;  // the start's direction is fixed (a snapped end, or drawing on)
@@ -157,6 +158,10 @@ void reset(VM& vm, GridObj* grid) {
   }
 }
 
+// a free point's height over the ground: the pavement 0.2 over it, elevated tracks two cells (as the grid's elevated
+// track tool)
+float freeLift() { return curveIsElevated(g_state.kind) || g_state.bridge ? 6.0f : 0.2f; }
+
 // the snap target near p: a dead end's closed side (8 units) or a curve's free end (6 units), the nearer one
 Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   Snap best;
@@ -185,7 +190,7 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
       if (d <= reach2 && d < bestD) bestD = d, best = Snap{true, q, Vec3{c.dx1, 0, c.dz1}, false, {}};
     }
   }
-  if (best.ok) return best;
+  if (best.ok || curveIsTrack(g_state.kind)) return best;  // tracks: no junctions
   // junction points, in this order: where curve ends meet, the middle of a curve, the middle of a straight block
   const float hw = pf.halfWidth;
   for (const CurveRoad& c : g.curves) {
@@ -362,6 +367,11 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
         float side, s;
         curveNearest(shape, wx, wz, side, s);
         hit = std::fabs(side) < curveProfile(c.kind).halfWidth - 0.5f;
+        // elevated tracks pass over what stays a cell under them (their pillars stand between)
+        if (hit && (curveIsElevated(c.kind) || c.bridge)) {
+          int top = g.items[i].y + (0x200 - int(g.heightBase)) + sh.height;
+          hit = top > int(std::lround(curveAt(shape, s).p.y * 256.0f / cs)) - 0x100;
+        }
         // near a junction point the junction takes the corner (its neighbours' blocks are not in the way)
         if (hit && ((g_state.startSnap.junction && s < g_state.startSnap.guard) ||
                     (g_state.endSnap.junction && s > shape.back().s - g_state.endSnap.guard)))
@@ -434,6 +444,7 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   c.ends = uint8_t((st.startBlock ? 1 : 0) | (endBlock ? 2 : 0));
   // an end on a grass tram track: the curve gets tracks that run on into it (its turning circle lies over the track)
   if (c.kind == 0 && st.oneWay) c.ends |= uint8_t(0x20 | (st.oneWay == 1 ? 0x40 : 0));  // one-way, as drawn
+  c.bridge = st.bridge ? 1 : 0;
   if (st.startBlock && st.startEnd.tram) c.ends |= 8 | 4;
   if (endBlock && sn.end.tram) c.ends |= 16 | 4;
   return true;
@@ -527,7 +538,7 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     return;
   }
   Snap sn = findSnap(vm, player, grid, p);
-  Vec3 h = sn.ok ? sn.p : Vec3{p.x, p.y + 0.2f, p.z};  // a free end: the pavement 0.2 over the ground
+  Vec3 h = sn.ok ? sn.p : Vec3{p.x, p.y + freeLift(), p.z};  // a free end over the ground
   st.endSnap = sn;
   st.hoverCurve = -1;
   if (st.mode == 3) {  // remove: the curve under the cursor shown red
@@ -554,7 +565,7 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     return;
   }
   // the curve tool's bend step picks a free point (no snapping)
-  if (st.mode == 1 && st.step == 1) sn = Snap(), h = Vec3{p.x, p.y + 0.2f, p.z}, st.endSnap = sn;
+  if (st.mode == 1 && st.step == 1) sn = Snap(), h = Vec3{p.x, p.y + freeLift(), p.z}, st.endSnap = sn;
   CurveRoad c;
   if (!buildCurve(g, h, sn, c)) {
     clearPreview(grid);
@@ -818,7 +829,7 @@ void up(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     ToolPick pick = toolPick(vm, player, x, y, false);
     if (!pick.hit) return;
     const Snap& sn = st.endSnap;
-    st.start = sn.ok ? sn.p : Vec3{pick.point.x, pick.point.y + 0.2f, pick.point.z};
+    st.start = sn.ok ? sn.p : Vec3{pick.point.x, pick.point.y + freeLift(), pick.point.z};
     st.startDir = sn.ok && !sn.junction;  // from a junction point the direction is free
     st.dir0 = st.startDir ? sn.out : Vec3{1, 0, 0};
     st.startBlock = sn.ok && sn.block;
@@ -831,7 +842,7 @@ void up(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (st.mode == 1 && st.step == 1) {
     ToolPick pick = toolPick(vm, player, x, y, false);
     if (!pick.hit) return;
-    Vec3 b{pick.point.x, pick.point.y + 0.2f, pick.point.z};
+    Vec3 b{pick.point.x, pick.point.y + freeLift(), pick.point.z};
     if (st.startDir) b = st.start + st.dir0 * std::max(1.0f, dot(flat(b - st.start), st.dir0));
     st.bend = b;
     st.step = 2;
@@ -1215,6 +1226,12 @@ void registerCurveTool(VM& vm) {
   implementGlobal(vm, u"regsCurveToolOneWay", [](VM& v, Object*, int argc, const Value* a) {
     if (argc > 0) g_state.oneWay = std::clamp(v.toInt(a[0]), 0, 2);
     return Value::integer(g_state.oneWay);
+  }, 0, 1);
+  // regsCurveToolBridge([on]): new curves are bridges (deck over the ground as it is, the bridge span and pillars)
+  if (std::getenv("REGS_TEST_CURVE_BRIDGE")) g_state.bridge = true;
+  implementGlobal(vm, u"regsCurveToolBridge", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc > 0) g_state.bridge = v.truthy(a[0]);
+    return Value::boolean(g_state.bridge);
   }, 0, 1);
   // regsCurveToolInfo(): [step, length, angle in degrees, fits (0/1), a curve under the cursor (0/1)] for the panel
   implementGlobal(vm, u"regsCurveToolInfo", [](VM&, Object*, int, const Value*) {
