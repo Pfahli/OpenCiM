@@ -1855,6 +1855,8 @@ struct Seg {
   uint8_t flags = 0;  // CurveRoad::ends bits 0x20 / 0x40 / 0x80
   bool alive = true;
   bool fixed = false;  // a roundabout's arc: its own tangents and handles below, never tidied away
+  bool bridge = false;     // a bridge curve (CurveRoad::bridge): an OSM bridge, or a leg over water
+  bool osmBridge = false;  // tagged bridge=yes (it may cross streets: its deck clears them)
   double d0x = 0, d0z = 0, d1x = 0, d1z = 0, h = 0;
 };
 struct Exit {
@@ -2082,7 +2084,11 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
         kept.push_back(c);
         continue;
       }
-      // a street a bridge crosses without a shared node (it runs under it): cut around the crossing
+      // a street a bridge crosses without a shared node runs under it (the bridge's deck clears it)
+      if (true) {
+        kept.push_back(c);
+        continue;
+      }
       std::vector<std::pair<int, int>> over;
       for (size_t li = 0; li + 1 < c.pts.size(); ++li) {
         Pt p = c.pts[li], q = c.pts[li + 1];
@@ -2205,9 +2211,22 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
       if (last >= 0 && last != v[i]) {
         Seg s;
         s.a = last, s.b = v[i], s.kind = c.kind, s.flags = c.flags;
+        s.bridge = s.osmBridge = c.bridge;
         P.segs.push_back(s);
       }
       last = v[i];
+    }
+  }
+  // legs over water are bridges (owner 2026-11-13: streets over the Saalbach; the curve tool's bridges since main d40011f)
+  for (Seg& sg : P.segs) {
+    if (sg.bridge || sg.kind == 3) continue;
+    const Node &A = P.nodes[size_t(sg.a)], &B = P.nodes[size_t(sg.b)];
+    double len = std::hypot(B.x - A.x, B.z - A.z) / cs;
+    int n = std::max(2, int(std::ceil(len / 0.5)));
+    for (int k = 1; k < n && !sg.bridge; ++k) {
+      double t = double(k) / n;
+      int cx = int(std::floor((A.x + (B.x - A.x) * t) / cs + W * 0.5)), cz = int(std::floor((A.z + (B.z - A.z) * t) / cs + L * 0.5));
+      if (cx >= 0 && cz >= 0 && cx < W && cz < L && water[size_t(cz) * size_t(W) + size_t(cx)]) sg.bridge = true;
     }
   }
   return P;
@@ -2432,7 +2451,7 @@ void tidy(Plan& P) {
         const auto& as = G.arms[size_t(n)];
         Seg& s1 = P.segs[size_t(as[0])];
         Seg& s2 = P.segs[size_t(as[1])];
-        if (s1.kind != s2.kind || s1.flags != s2.flags) continue;
+        if (s1.kind != s2.kind || s1.flags != s2.flags || s1.bridge != s2.bridge) continue;
         // s1 runs into n, s2 out of it (one-way streets keep their way)
         Seg* in = &s1;
         Seg* out = &s2;
@@ -2547,6 +2566,7 @@ CurveRoad curveOf(const Plan& P, const Geo& G, const std::map<int, JunctionShape
   c.x1 = float(B.x), c.y1 = B.y, c.z1 = float(B.z), c.dx1 = float(-d1x), c.dz1 = float(-d1z);
   c.a = c.b = std::max(0.5f, float(len / 3.0));
   c.ends = s.flags;
+  c.bridge = s.bridge ? 1 : 0;
   if (A.exit >= 0) c.ends |= 1;
   if (B.exit >= 0) c.ends |= 2;
   return c;
@@ -2618,6 +2638,7 @@ void addCurvesBulk(VM& vm, GridObj* grid, Object* tl, const std::vector<CurveRoa
     const size_t N = size_t(g.width) * size_t(g.length);
     std::vector<float> bestD(N, 1e9f), bestT(N, 0.0f);
     for (const CurveRoad& c : cs) {
+      if (c.bridge) continue;  // a bridge leaves the ground under it
       const float hw = curveProfile(c.kind).halfWidth;
       std::vector<CurveSample> shape = curveShape(c);
       int x0, z0, x1, z1;
@@ -3387,6 +3408,38 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     }
     for (streets::Node& n : plan.nodes)
       if (n.alive && n.exit < 0) n.y = groundY(g, n.x, n.z) + 0.2f;
+    // bridge decks: at least their higher end, clear of the ground under them, 6 units over streets an OSM bridge
+    // crosses; their end points lifted to the deck (the streets beyond ramp up to it)
+    {
+      auto crossesStreet = [&](const streets::Seg& b) {
+        const streets::Node &A = plan.nodes[size_t(b.a)], &B = plan.nodes[size_t(b.b)];
+        for (const streets::Seg& o : plan.segs) {
+          if (!o.alive || o.bridge || o.a == b.a || o.a == b.b || o.b == b.a || o.b == b.b) continue;
+          const streets::Node &C = plan.nodes[size_t(o.a)], &D = plan.nodes[size_t(o.b)];
+          if (streets::segCross({A.x, A.z}, {B.x, B.z}, {C.x, C.z}, {D.x, D.z})) return true;
+        }
+        return false;
+      };
+      std::vector<float> deck(plan.nodes.size(), -1e9f);
+      int bridges = 0;
+      for (const streets::Seg& b : plan.segs) {
+        if (!b.alive || !b.bridge) continue;
+        const streets::Node &A = plan.nodes[size_t(b.a)], &B = plan.nodes[size_t(b.b)];
+        float top = std::max(A.y, B.y), ground = -1e9f;
+        for (int k = 1; k < 16; ++k) {
+          double t = k / 16.0;
+          ground = std::max(ground, groundY(g, A.x + (B.x - A.x) * t, A.z + (B.z - A.z) * t));
+        }
+        top = std::max(top, ground + 1.0f);
+        if (b.osmBridge && crossesStreet(b)) top = std::max(top, ground + 6.0f);
+        deck[size_t(b.a)] = std::max(deck[size_t(b.a)], top);
+        deck[size_t(b.b)] = std::max(deck[size_t(b.b)], top);
+        ++bridges;
+      }
+      for (size_t i = 0; i < plan.nodes.size(); ++i)
+        if (plan.nodes[i].alive && plan.nodes[i].exit < 0 && deck[i] > plan.nodes[i].y) plan.nodes[i].y = deck[i];
+      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d bridge legs", bridges);
+    }
     std::vector<CurveRoad> cs = streets::curves(plan);
     addCurvesBulk(vm, grid, a.timeline, cs);
     markCurveCells(g, cs, a.used);
