@@ -256,9 +256,24 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   corner houses only at street corners and of the type whose corner faces the crossing street (research of the
   original maps: city houses front on model -Z, corner houses 01/02/05/06 also +X, 03/04 and small-townbuilding04
   also -X); rounded river banks except at buildings.
+  2026-11-14: blocks of row houses (placeBlock): wall-to-wall buildings form a block, each building goes to the side
+  along the street in front of it (curve and side, cut where the street bends > 12°), each side a straight row on the
+  median building line, outer block corners (sides 60-120° apart) get a corner house both rows run up to, rows filled
+  edge to edge with one house family per block (leftover taken by wider houses). Furnishing (a stage between buildings
+  and trees): OSM street furniture nodes (fountain, bench, waste_basket, bicycle_parking, telephone, post_box,
+  toilets, clock, street_lamp, memorial/monument, artwork, kiosk, playground) at their points facing the street;
+  squares a fountain (large one from 150 cells) with benches facing it, litter bins, flower beds, old lamps along the
+  edge with trees between; market places with market stands; car parks in asphalt (pavement paint 0) with rows of
+  parking-space props across the long side (bay, aisle, two bays back to back, …), no parking lanes
+  (parking=lane/street_side); street lamps along the curves where OSM has none (small streets one side every 28 m,
+  wide roads both sides staggered with the arm lamp, footpaths the old lantern); yards behind the rows (free ground
+  closed within 6000 cells, else 6 cells deep) with bushes along the houses, trees and residents' props. Signs in the
+  building lists (grocerysign) are no buildings any more; no paint bands along pedestrian streets / service roads
+  (the saw-tooth strips). REGS_DEBUG_OSM=1 logs what the furnishing placed.
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); level crossings
-  (tracks have no crossing piece on curves); tram tracks from railway=tram; station platforms; what the owner means
-  by the concrete areas not being right.
+  (tracks have no crossing piece on curves); tram tracks from railway=tram; station platforms; painted areas (car
+  parks, squares) keep the cell paint's saw-tooth edge on slanted outlines (a real fix: polygon surfaces like the
+  junction fills).
 - [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 

@@ -917,11 +917,26 @@ struct StationIn {
   double x = 0, z = 0;
   std::string name;
 };
+// an area to furnish (owner 2026-11-14: squares with fountains, car parks with rows of bays): its ring (cells)
+struct AreaIn {
+  std::vector<std::pair<double, double>> pts;
+  int kind = 0;  // 0 square, 1 car park, 2 market place
+};
+// a street furniture point from OSM (cells): 0 fountain, 1 bench, 2 litter bin, 3 bicycle stand, 4 telephone, 5 post box,
+// 6 toilets, 7 street lamp, 8 memorial, 9 monument, 10 artwork, 11 kiosk, 12 clock, 13 playground
+struct PointIn {
+  double x = 0, z = 0;
+  int kind = 0;
+};
 struct ImportData {
   int W = 0, L = 0, flags = 0;
+  double cellM = 2.5;            // metres per cell
+  std::vector<AreaIn> areas;
+  std::vector<PointIn> points;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
-  std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (2 industrial, 3 paving stones)
+  std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (1 asphalt, 3 paving stones; 4 a
+                                 // pedestrian street's paving stones, buildings allowed)
   std::vector<TreeIn> trees;
   std::vector<RoadIn> roads;
   std::vector<StationIn> stations;
@@ -1159,7 +1174,12 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       q += "way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|"
            "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$\"]" + b + ";way[\"natural\"=\"tree_row\"]" + b +
            ";way[\"place\"=\"square\"]" + b + ";way[\"amenity\"=\"parking\"]" + b + ";way[\"area:highway\"]" + b +
-           ";way[\"railway\"~\"^(rail|light_rail)$\"]" + b + ";node[\"railway\"~\"^(station|halt)$\"]" + b + ";";
+           ";way[\"railway\"~\"^(rail|light_rail)$\"]" + b + ";node[\"railway\"~\"^(station|halt)$\"]" + b +
+           ";way[\"highway\"=\"service\"]" + b +
+           ";node[\"amenity\"~\"^(fountain|bench|waste_basket|bicycle_parking|telephone|post_box|toilets|clock)$\"]" + b +
+           ";node[\"highway\"=\"street_lamp\"]" + b + ";node[\"historic\"~\"^(memorial|monument)$\"]" + b +
+           ";node[\"tourism\"=\"artwork\"]" + b + ";node[\"shop\"=\"kiosk\"]" + b + ";nwr[\"leisure\"=\"playground\"]" + b +
+           ";way[\"amenity\"~\"^(marketplace|fountain)$\"]" + b + ";";
     if (flags & kBuildings)
       q += "way[\"building\"]" + b + ";relation[\"building\"]" + b + ";way[\"landuse\"~\"^(residential|commercial|retail|"
            "industrial)$\"]" + b + ";";
@@ -1223,9 +1243,11 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
   };
   std::vector<TreeArea> treeAreas;
   std::vector<std::pair<Edges, uint8_t>> pavedAreas;
-  std::vector<std::vector<std::pair<double, double>>> pavedLines;
+  // lines of paving: the line, its paving value and half width (metres)
+  std::vector<std::pair<std::vector<std::pair<double, double>>, std::pair<uint8_t, double>>> pavedLines;
   std::vector<std::pair<std::vector<std::pair<double, double>>, double>> rivers;  // line, width in cells
   const double cellM = fr.unitsPerCell * metresPerUnit(fr.cmy);
+  data->cellM = cellM;
   if (haveOsm)
     if (const Json* els = osm.get("elements"); els && els->t == Json::Arr)
       for (const Json& el : els->a) {
@@ -1240,6 +1262,24 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             st.name = tags.str("name");
             if (st.x >= 0 && st.z >= 0 && st.x < W && st.z < L) data->stations.push_back(st);
             continue;
+          }
+          if (flags & kStreets) {  // street furniture (owner 2026-11-14: much OSM data still unused)
+            static const std::map<std::string, int> kAmenity = {{"fountain", 0}, {"bench", 1}, {"waste_basket", 2},
+                {"bicycle_parking", 3}, {"telephone", 4}, {"post_box", 5}, {"toilets", 6}, {"clock", 12}};
+            int kind = -1;
+            if (auto it = kAmenity.find(tags.str("amenity")); it != kAmenity.end()) kind = it->second;
+            else if (tags.str("highway") == "street_lamp") kind = 7;
+            else if (tags.str("historic") == "memorial") kind = 8;
+            else if (tags.str("historic") == "monument") kind = 9;
+            else if (tags.str("tourism") == "artwork") kind = 10;
+            else if (tags.str("shop") == "kiosk") kind = 11;
+            else if (tags.str("leisure") == "playground") kind = 13;
+            if (kind >= 0) {
+              PointIn pt;
+              pt.x = fr.cellX(lonToMx(el.num("lon"))), pt.z = fr.cellZ(latToMy(el.num("lat"))), pt.kind = kind;
+              if (pt.x >= 1 && pt.z >= 1 && pt.x < W - 1 && pt.z < L - 1) data->points.push_back(pt);
+              continue;
+            }
           }
           if ((flags & kTrees) && tags.str("natural") == "tree") {
             int x = int(std::floor(fr.cellX(lonToMx(el.num("lon"))))), z = int(std::floor(fr.cellZ(latToMy(el.num("lat")))));
@@ -1273,13 +1313,39 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         if (flags & kStreets) {
           bool square = tags.str("place") == "square" || tags.str("area:highway") == "pedestrian" ||
                         (hw == "pedestrian" && tags.str("area") == "yes");
-          if (closed && square) pavedAreas.push_back({ringEdges, 3});
-          else if (closed && tags.str("amenity") == "parking" && tags.str("parking") != "underground" &&
-                   tags.str("parking") != "multi-storey")
-            pavedAreas.push_back({ringEdges, 2});
-          else if (hw == "pedestrian" && type == "way" && !closed)
-            pavedLines.push_back(pts);
-          if (square || tags.str("amenity") == "parking" || !tags.str("area:highway").empty()) continue;
+          // owner 2026-11-14: car parks in asphalt with rows of bays, squares and market places furnished
+          const std::string am = tags.str("amenity");
+          auto centroidPoint = [&](int kind) {
+            double cx = 0, cz = 0;
+            for (auto& q : pts) cx += q.first, cz += q.second;
+            PointIn pt;
+            pt.x = cx / double(pts.size()), pt.z = cz / double(pts.size()), pt.kind = kind;
+            if (pt.x >= 1 && pt.z >= 1 && pt.x < W - 1 && pt.z < L - 1) data->points.push_back(pt);
+          };
+          if (closed && square) {
+            pavedAreas.push_back({ringEdges, 3});
+            if (type == "way") data->areas.push_back({pts, 0});
+          } else if (closed && am == "marketplace") {
+            pavedAreas.push_back({ringEdges, 3});
+            if (type == "way") data->areas.push_back({pts, 2});
+          } else if (closed && am == "parking" && tags.str("parking") != "underground" && tags.str("parking") != "multi-storey" &&
+                     tags.str("parking") != "rooftop" && tags.str("parking") != "lane" && tags.str("parking") != "street_side" &&
+                     tags.str("parking") != "on_street") {  // (parking lanes lie on the streets' shoulders: no strips beside them)
+            pavedAreas.push_back({ringEdges, 1});
+            if (type == "way") data->areas.push_back({pts, 1});
+          } else if (hw == "service" && type == "way" && closed && tags.str("area") == "yes") {
+            // service areas (yards, forecourts) in asphalt. Bands of paint along pedestrian streets and service roads
+            // are left out (owner 2026-11-14: painted cells along a slanted line make a saw-tooth strip; pedestrian
+            // streets are footpath curves of their own)
+            pavedAreas.push_back({ringEdges, uint8_t(1)});
+          } else if (am == "fountain") {
+            centroidPoint(0);
+          } else if (tags.str("leisure") == "playground") {
+            centroidPoint(13);
+          }
+          if (square || am == "parking" || am == "marketplace" || am == "fountain" || hw == "service" ||
+              tags.str("leisure") == "playground" || !tags.str("area:highway").empty())
+            continue;
         }
         // railways (owner 2026-11-13: tracks and the station were missing): main lines as the railway's double track
         if ((flags & kStreets) && type == "way" && (tags.str("railway") == "rail" || tags.str("railway") == "light_rail")) {
@@ -1516,8 +1582,10 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         size_t i = size_t(z) * size_t(W) + size_t(x);
         if (!water[i]) data->paving[i] = t;
       });
-    const double half = 3.0 / cellM;  // a pedestrian street: 6 m of paving stones (4: buildings may stand on it)
-    for (auto& line : pavedLines)
+    // a pedestrian street: 6 m of paving stones (4: buildings may stand on it); service roads asphalt
+    for (auto& [line, how] : pavedLines) {
+      const uint8_t value = how.first;
+      const double half = how.second / cellM;
       for (size_t k = 0; k + 1 < line.size(); ++k) {
         auto a = line[k], b2 = line[k + 1];
         int x0 = int(std::floor(std::min(a.first, b2.first) - half)), x1 = int(std::ceil(std::max(a.first, b2.first) + half));
@@ -1525,9 +1593,11 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         for (int z = std::max(0, z0); z <= std::min(L - 1, z1); ++z)
           for (int x = std::max(0, x0); x <= std::min(W - 1, x1); ++x) {
             size_t i = size_t(z) * size_t(W) + size_t(x);
-            if (!water[i] && !data->paving[i] && segDist(x + 0.5, z + 0.5, a, b2) <= half) data->paving[i] = 4;
+            if (!water[i] && (!data->paving[i] || (value == 1 && data->paving[i] == 4)) && segDist(x + 0.5, z + 0.5, a, b2) <= half)
+              data->paving[i] = value;
           }
       }
+    }
   }
   // buildings wall to wall (owner 2026-11-08: city houses in a row there): two corners of one on the other's outline
   {
@@ -1618,8 +1688,9 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       return;
     }
   }
-  LOG_INFO("osm: import data: %zu roads, %zu buildings, %zu trees, terrain %d, satellite %dx%d", data->roads.size(),
-           data->buildings.size(), data->trees.size(), int(!data->heights.empty()), data->satW, data->satH);
+  LOG_INFO("osm: import data: %zu roads, %zu buildings, %zu trees, %zu areas, %zu furniture points, terrain %d, satellite %dx%d",
+           data->roads.size(), data->buildings.size(), data->trees.size(), data->areas.size(), data->points.size(),
+           int(!data->heights.empty()), data->satW, data->satH);
   (void)serial;
   result = data;
 }
@@ -1642,6 +1713,7 @@ struct Apply {
   Object* timeline = nullptr;
   bool gridStreets = false;
   std::vector<char> inRow;  // buildings a row of city houses took
+  std::vector<std::pair<double, double>> yardSeeds;  // free cells behind the rows of houses (cells)
   int stationsPlaced = 0;  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
   int curvesMade = 0;
   int roadsOk = 0, roadsFailed = 0, buildingsPlaced = 0, treesPlaced = 0;
@@ -2994,6 +3066,9 @@ std::vector<Candidate> categoryTemplates(VM& vm, GridObj* grid, const Value& bui
     if (!a) continue;
     for (const Value& n : a->items) {
       std::string name = utf16ToUtf8(vm.toStr(n));
+      // signs in the building lists (the grocery's signs among the commercial buildings) are no buildings: in a small
+      // footprint they stood in rows in the yards (owner 2026-11-14)
+      if (name.find("sign") != std::string::npos) continue;
       auto it = grid->templates.find(name);
       if (it == grid->templates.end()) continue;
       Object* o = it->second.get();
@@ -3045,19 +3120,23 @@ int frontOrient(int side) {
 struct StreetIndex {
   struct P {
     float x, z, tx, tz, hw;  // cells
+    float cw = 0, s = 0;     // the kerb's distance from the centre, the arc length (cells)
+    int ci = -1, kind = 0;   // the curve and its kind
   };
   std::vector<P> pts;
   std::map<std::pair<int, int>, std::vector<uint32_t>> bucket;  // 8 × 8 cells
   void build(const GridData& g) {
     pts.clear(), bucket.clear();
     const float cs = g.cellSize;
-    for (const CurveRoad& c : g.curves) {
+    for (size_t ci = 0; ci < g.curves.size(); ++ci) {
+      const CurveRoad& c = g.curves[ci];
       if (c.kind == 3 || curveIsTrack(c.kind)) continue;  // footpaths and tracks: houses face the streets
       const float hw = curveProfile(c.kind).halfWidth / cs;
       for (const CurveSample& sm : sampleCurve(c, 2.0f)) {
         float l = std::hypot(sm.dir.x, sm.dir.z);
         if (l < 1e-4f) continue;
         P q{sm.p.x / cs + g.width * 0.5f, sm.p.z / cs + g.length * 0.5f, sm.dir.x / l, sm.dir.z / l, hw};
+        q.cw = curveProfile(c.kind).carriageway / cs, q.s = sm.s / cs, q.ci = int(ci), q.kind = c.kind;
         bucket[{int(std::floor(q.x / 8)), int(std::floor(q.z / 8))}].push_back(uint32_t(pts.size()));
         pts.push_back(q);
       }
@@ -3144,139 +3223,669 @@ double polyArea(const std::vector<std::pair<double, double>>& p) {
   return std::fabs(a) * 0.5;
 }
 
-// a row of buildings wall to wall (owner 2026-11-13: city houses stand in a row, joined): one straight row along its
-// street, filled with the game's city houses edge to edge, fronts on the street-side line; a corner house at an end
-// only where a second street crosses there. false: not a straight row along a street (its buildings go one by one)
-bool placeRow(VM& vm, GridObj* grid, Apply& a, const std::vector<const BuildingIn*>& members, const Value& buildingsList,
-              std::map<std::string, std::vector<Candidate>>& cache) {
+// a template's footprint (cells)
+bool templateSize(VM& vm, GridObj* grid, const std::string& name, int& w, int& l) {
+  auto it = grid->templates.find(name);
+  if (it == grid->templates.end()) return false;
+  Object* o = it->second.get();
+  auto f = [&](const char16_t* key) {
+    auto fv = o->fieldValues.find(key);
+    return fv == o->fieldValues.end() || fv->second.isNone() ? 1 : std::max(1, int(vm.toInt(fv->second)));
+  };
+  w = f(u"width"), l = f(u"length");
+  return true;
+}
+
+// the turn of an object whose model front (−Z) faces (dx, dz) (cells): the quarter turn and the free turn left over
+void faceTurn(double dx, double dz, int& orient, float& yaw) {
+  const double q = kPi / 2, th = std::atan2(dz, dx);
+  const double k = std::round(th / q), rem = th - k * q;
+  static const int side[4] = {1, 2, 3, 0};  // east, south, west, north
+  orient = frontOrient(side[((int(k) % 4) + 4) % 4]);
+  yaw = float(-rem);
+}
+// the model front for an object whose model +X (a lamp's arm) should point to (dx, dz)
+inline void armFront(double dx, double dz, double& fx, double& fz) { fx = dz, fz = -dx; }
+
+constexpr int kGroundY = -0x7fffffff;
+std::map<std::string, int> g_placedCount;  // REGS_DEBUG_OSM: what the furnishing placed
+// an object centred at (px, pz) (cells), its model front to (fx, fz): the quarter turn, the free turn and the shift onto
+// the point. Every cell its turned footprint covers must pass ok(used value); they are marked `mark` (road cells keep 2).
+// y: the height (engine units), kGroundY the ground. Returns the item or -1
+template <class F>
+int placeAt(VM& vm, GridObj* grid, Apply& a, const std::string& name, double px, double pz, double fx, double fz, F ok,
+            uint8_t mark, int y = kGroundY) {
   GridData& g = *grid->data;
   const int W = g.width, L = g.length;
-  std::vector<std::pair<double, double>> all;
-  double area = 0;
-  for (const BuildingIn* b : members) all.insert(all.end(), b->pts.begin(), b->pts.end()), area += polyArea(b->pts);
-  double ang, ea, eb, cx, cz;
-  if (!minRect(all, ang, ea, eb, cx, cz)) return false;
-  double ux = std::cos(ang), uz = std::sin(ang), len = ea, depth = eb;
-  if (eb > ea) ux = -std::sin(ang), uz = std::cos(ang), len = eb, depth = ea;
-  if (len < (members.size() >= 2 ? 1.2 : 1.8) * depth || area < 0.5 * len * depth || depth < 2.5) return false;  // not a straight row
-  const StreetIndex::P* st = g_streets.nearest(cx, cz, depth * 0.5 + 5.0);
-  if (!st || std::fabs(st->tx * uz - st->tz * ux) > 0.5) return false;  // no street along it (within 30°)
-  if (st->tx * ux + st->tz * uz < 0) ux = -st->tx, uz = -st->tz;  // the street's direction exactly
-  else ux = st->tx, uz = st->tz;
-  double vx = -uz, vz = ux;
-  double sgn = (st->x - cx) * vx + (st->z - cz) * vz > 0 ? 1.0 : -1.0;  // the street's side of the row
-  // the cell turn: the nearest 90° and the rest as the free turn; the side the fronts face in cell terms
-  const double quarter = kPi / 2, th = std::atan2(uz, ux);
-  const double rem = th - std::round(th / quarter) * quarter;
-  const double Ux = std::cos(rem), Uz = std::sin(rem), Vx = -Uz, Vz = Ux;
-  double fx = vx * sgn, fz = vz * sgn, lu = fx * Ux + fz * Uz, lv = fx * Vx + fz * Vz;
-  const int side = std::fabs(lu) > std::fabs(lv) ? (lu > 0 ? 1 : 3) : (lv > 0 ? 2 : 0);
-  const int orient2 = side & 1;
+  int w, l;
+  if (!templateSize(vm, grid, name, w, l)) return -1;
+  int orient;
+  float yaw;
+  faceTurn(fx, fz, orient, yaw);
+  const int sx = (orient & 1) ? l : w, sz = (orient & 1) ? w : l;
+  const double rem = -yaw, Ux = std::cos(rem), Uz = std::sin(rem), Vx = -Uz, Vz = Ux;
+  const int x = int(std::lround(px - sx * 0.5)), z = int(std::lround(pz - sz * 0.5));
+  if (x < 1 || z < 1 || x + sx >= W || z + sz >= L) return -1;
+  std::vector<size_t> cells;
+  const double hx = std::max(0.35, sx * 0.5 - 0.15), hz = std::max(0.35, sz * 0.5 - 0.15), r = std::hypot(hx, hz);
+  for (int zz = int(std::floor(pz - r)); zz <= int(std::ceil(pz + r)); ++zz)
+    for (int xx = int(std::floor(px - r)); xx <= int(std::ceil(px + r)); ++xx) {
+      double dx = xx + 0.5 - px, dz = zz + 0.5 - pz;
+      if (std::fabs(dx * Ux + dz * Uz) > hx || std::fabs(dx * Vx + dz * Vz) > hz) continue;
+      if (xx < 1 || zz < 1 || xx >= W - 1 || zz >= L - 1) return -1;
+      size_t ci = size_t(zz) * size_t(W) + size_t(xx);
+      if (!ok(a.used[ci])) return -1;
+      cells.push_back(ci);
+    }
+  if (cells.empty()) {
+    int cx = int(std::floor(px)), cz = int(std::floor(pz));
+    size_t ci = size_t(cz) * size_t(W) + size_t(cx);
+    if (!ok(a.used[ci])) return -1;
+    cells.push_back(ci);
+  }
+  if (y == kGroundY) y = sx * sz > 1 ? maxCorner(g, x, z, sx, sz) : meanCorner(g, x, z);
+  int made = addItem(vm, grid, a, name, x, y, z, orient);
+  if (made < 0) return -1;
+  ++g_placedCount[name];
+  GridData::Item& it = g.items[size_t(made)];
+  const float half = g.cellSize * 0.5f;
+  it.yaw = std::fabs(yaw) < 0.5f * float(kPi) / 180.0f ? 0.0f : yaw;
+  it.offX = std::clamp(float((px - (x + sx * 0.5)) * g.cellSize), -half, half);
+  it.offZ = std::clamp(float((pz - (z + sz * 0.5)) * g.cellSize), -half, half);
+  if (mark)
+    for (size_t ci : cells)
+      if (a.used[ci] != 2) a.used[ci] = mark;
+  return made;
+}
+
+// ---- the blocks of row houses (owner 2026-11-14: an autogen system for row houses based on blocks of houses) ----
+// Buildings wall to wall form a block. Each building belongs to the side of the block along the street in front of it
+// (the nearest curve and its side); a side is cut where the street bends more than 12°. Each side becomes a straight
+// row on the street's building line (the median of its buildings' street walls, at least clear of the pavement), as
+// deep as its buildings are; two sides meeting at an outer corner of the block (60–120° apart, their building lines
+// crossing near both ends) get a corner house there that both rows run up to. Then each row is filled edge to edge with
+// city houses of one family (the block's), leftover width taken up by wider houses. Behind the rows the yards are
+// furnished later (decorateYards).
+struct RowPlan {
+  double ox = 0, oz = 0, ux = 1, uz = 0, vx = 0, vz = 1;  // a point on the street, along it, across it to the houses (cells)
+  double t[2] = {0, 0};                                  // the row's ends along u
+  double front = 0, depth = 0, back = 0;                 // the building line and the depth (from the street's centre)
+  bool corner[2] = {false, false};
+  std::vector<const BuildingIn*> members;
+};
+
+int placeBlock(VM& vm, GridObj* grid, Apply& a, const std::vector<const BuildingIn*>& block, const Value& buildingsList,
+               std::map<std::string, std::vector<Candidate>>& cache) {
+  // 1. the block's sides
+  struct M {
+    const BuildingIn* b;
+    const StreetIndex::P* st;
+  };
+  std::map<std::pair<int, int>, std::vector<M>> sides;
+  for (const BuildingIn* b : block) {
+    double cx = 0, cz = 0;
+    for (auto& q : b->pts) cx += q.first, cz += q.second;
+    cx /= double(b->pts.size()), cz /= double(b->pts.size());
+    const StreetIndex::P* st = g_streets.nearest(cx, cz, 12.0);
+    if (!st) continue;
+    int side = st->tx * (cz - st->z) - st->tz * (cx - st->x) > 0 ? 1 : 0;
+    sides[{st->ci, side}].push_back({b, st});
+  }
+  std::vector<RowPlan> rows;
+  const double bend = std::cos(12.0 * kPi / 180.0);
+  for (auto& [key, ms] : sides) {
+    std::sort(ms.begin(), ms.end(), [](const M& p, const M& q) { return p.st->s < q.st->s; });
+    for (size_t i = 0; i < ms.size();) {
+      size_t j = i + 1;
+      while (j < ms.size() && ms[j].st->tx * ms[i].st->tx + ms[j].st->tz * ms[i].st->tz > bend && ms[j].st->s - ms[j - 1].st->s < 16.0) ++j;
+      RowPlan r;
+      double ux = 0, uz = 0, ox = 0, oz = 0, mx = 0, mz = 0, n = 0;
+      for (size_t k = i; k < j; ++k) {
+        ux += ms[k].st->tx, uz += ms[k].st->tz, ox += ms[k].st->x, oz += ms[k].st->z;
+        for (auto& q : ms[k].b->pts) mx += q.first, mz += q.second, n += 1;
+      }
+      double ul = std::hypot(ux, uz);
+      if (ul < 1e-6 || n == 0) {
+        i = j;
+        continue;
+      }
+      r.ux = ux / ul, r.uz = uz / ul, r.ox = ox / double(j - i), r.oz = oz / double(j - i);
+      r.vx = -r.uz, r.vz = r.ux;
+      if ((mx / n - r.ox) * r.vx + (mz / n - r.oz) * r.vz < 0) r.vx = -r.vx, r.vz = -r.vz;
+      std::vector<double> fronts, depths;
+      r.t[0] = 1e30, r.t[1] = -1e30;
+      for (size_t k = i; k < j; ++k) {
+        double fm = 1e30, bm = -1e30;
+        for (auto& q : ms[k].b->pts) {
+          double dx = q.first - r.ox, dz = q.second - r.oz, t = dx * r.ux + dz * r.uz, w = dx * r.vx + dz * r.vz;
+          r.t[0] = std::min(r.t[0], t), r.t[1] = std::max(r.t[1], t);
+          fm = std::min(fm, w), bm = std::max(bm, w);
+        }
+        fronts.push_back(fm), depths.push_back(bm - fm);
+        r.members.push_back(ms[k].b);
+      }
+      std::sort(fronts.begin(), fronts.end());
+      std::sort(depths.begin(), depths.end());
+      r.front = std::max(fronts[fronts.size() / 2], double(ms[i].st->hw) + 0.9);
+      r.depth = std::clamp(depths[depths.size() / 2], 4.0, 14.0);
+      if (r.t[1] - r.t[0] >= 3.0) rows.push_back(r);
+      i = j;
+    }
+  }
+  if (rows.empty()) return 0;
+  // 2. the houses: one family for the block (the base game's city houses or a package's row houses, deep enough)
   auto it = cache.find("blockhouses");
   if (it == cache.end()) it = cache.emplace("blockhouses", categoryTemplates(vm, grid, buildingsList, "blockhouses")).first;
-  // the original maps (research 2026-11-13, item dumps of Berlin, Amsterdam, Helsinki): city houses have their street on
-  // model -Z; the corner houses 01, 02, 05, 06 on -Z and +X, 03, 04 and small-townbuilding04 on -Z and -X
-  std::vector<const Candidate*> houses, cornersPlusX, cornersMinusX;
-  for (const Candidate& c : it->second)
-    if (c.name == "cornerhouse03" || c.name == "cornerhouse04" || c.name == "small-townbuilding04") cornersMinusX.push_back(&c);
-    else if (c.name.rfind("cornerhouse", 0) == 0) cornersPlusX.push_back(&c);
-    else if (c.name.rfind("cityhouse", 0) == 0 || c.name.rfind("small-townbuilding", 0) == 0) houses.push_back(&c);
-  // the packages' row houses too (owner 2026-11-13: assets of the other packages; London's, Paris', New York's
-  // blockhouses, the dam houses): narrow, deep enough, not diagonal; one family per row so a row keeps one style
-  auto family = [](const std::string& n) {
-    if (n.rfind("cityhouse", 0) == 0 || n.rfind("small-townbuilding", 0) == 0) return std::string("base");
-    std::string f = n;
+  // the original maps (research 2026-11-13): city houses have their street on model −Z; the corner houses 01, 02, 05,
+  // 06 on −Z and +X, 03, 04 and small-townbuilding04 on −Z and −X
+  std::vector<const Candidate*> cornersPlusX, cornersMinusX;
+  std::map<std::string, std::vector<const Candidate*>> families;
+  auto family = [](const std::string& nm) {
+    if (nm.rfind("cityhouse", 0) == 0 || nm.rfind("small-townbuilding", 0) == 0) return std::string("base");
+    std::string f = nm;
     while (!f.empty() && (std::isdigit((unsigned char)f.back()) || f.back() == '-')) f.pop_back();
     return f;
   };
-  std::map<std::string, std::vector<const Candidate*>> families;
-  for (const Candidate* c : houses) families["base"].push_back(c);
   for (const Candidate& c : it->second) {
-    const std::string& n = c.name;
-    if (n.rfind("cornerhouse", 0) == 0 || n.rfind("cityhouse", 0) == 0 || n.rfind("small-townbuilding", 0) == 0 ||
-        n.find("diagonal") != std::string::npos || (n.size() > 2 && n.compare(n.size() - 2, 2, "-b") == 0))
-      continue;
-    if (c.w <= 7 && c.l >= 4 && c.l <= 12) families[family(n)].push_back(&c);
+    const std::string& nm = c.name;
+    if (nm == "cornerhouse03" || nm == "cornerhouse04" || nm == "small-townbuilding04") cornersMinusX.push_back(&c);
+    else if (nm.rfind("cornerhouse", 0) == 0) cornersPlusX.push_back(&c);
+    else if (nm.rfind("cityhouse", 0) == 0 || nm.rfind("small-townbuilding", 0) == 0) families["base"].push_back(&c);
+    else if (nm.find("diagonal") == std::string::npos && !(nm.size() > 2 && nm.compare(nm.size() - 2, 2, "-b") == 0) && c.w <= 7 &&
+             c.l >= 4 && c.l <= 12)
+      families[family(nm)].push_back(&c);
   }
-  {
-    std::vector<std::string> keys;
-    for (auto& [k, v] : families)
-      if (!v.empty()) keys.push_back(k);
-    if (!keys.empty()) houses = families[keys[hash32(members.front()->id * 2654435761ull + 5) % keys.size()]];
+  std::vector<double> ds;
+  for (const RowPlan& r : rows) ds.push_back(r.depth);
+  std::sort(ds.begin(), ds.end());
+  const double blockDepth = ds[ds.size() / 2];
+  std::vector<std::string> keys;
+  for (auto& [k, v] : families) {
+    bool fits = false;
+    for (const Candidate* c : v) fits = fits || c->l <= blockDepth + 2.0;
+    if (fits) keys.push_back(k);
   }
-  if (houses.empty()) return false;
-  // a house: w along the row, l deep (the template turned so); centred at along-row position t
-  int placed = 0;
-  auto put = [&](const Candidate& c, double t) {
-    const int w = c.w, l = c.l;
-    const int sx = orient2 ? l : w, sz = orient2 ? w : l;
-    double off = sgn * (depth * 0.5 - l * 0.5);  // the front on the street-side line
-    double px = cx + ux * t + vx * off, pz = cz + uz * t + vz * off;
-    int x = int(std::lround(px - sx * 0.5)), z = int(std::lround(pz - sz * 0.5));
-    // its cells: cell centres inside the turned rectangle (a sliver to spare: neighbours share a wall)
-    std::vector<size_t> cells;
-    double hx = sx * 0.5 - 0.15, hz = sz * 0.5 - 0.15, r = std::hypot(hx, hz);
-    for (int zz = int(std::floor(pz - r)); zz <= int(std::ceil(pz + r)); ++zz)
-      for (int xx = int(std::floor(px - r)); xx <= int(std::ceil(px + r)); ++xx) {
-        double dx = xx + 0.5 - px, dz = zz + 0.5 - pz;
-        if (std::fabs(dx * Ux + dz * Uz) > hx || std::fabs(dx * Vx + dz * Vz) > hz) continue;
-        if (xx < 1 || zz < 1 || xx >= W - 1 || zz >= L - 1) return false;
-        size_t ci = size_t(zz) * size_t(W) + size_t(xx);
-        if (a.used[ci]) return false;
-        cells.push_back(ci);
+  if (keys.empty())
+    for (auto& [k, v] : families) keys.push_back(k);
+  if (keys.empty()) return 0;
+  const uint32_t h = hash32(block.front()->id * 2654435761ull + 5);
+  // the base game's city houses for half the blocks (they are made to stand in rows), a package's family otherwise
+  std::string fam = keys[h % keys.size()];
+  if (families.count("base") && std::find(keys.begin(), keys.end(), "base") != keys.end() && (h >> 12) % 2 == 0) fam = "base";
+  const std::vector<const Candidate*>& houses = families[fam];
+  auto free0 = [](uint8_t u) { return u == 0; };
+  // 3. the corners
+  for (size_t i = 0; i < rows.size(); ++i)
+    for (size_t j = 0; j < rows.size(); ++j) {
+      if (i == j) continue;
+      RowPlan &A = rows[i], &B = rows[j];
+      if (std::fabs(A.ux * B.ux + A.uz * B.uz) > 0.5) continue;
+      if (A.t[1] - A.t[0] < B.t[1] - B.t[0]) continue;  // A: the longer side, the corner house's front on it
+      double ax = A.ox + A.vx * A.front, az = A.oz + A.vz * A.front, bx = B.ox + B.vx * B.front, bz = B.oz + B.vz * B.front;
+      double den = A.ux * B.uz - A.uz * B.ux;
+      if (std::fabs(den) < 1e-6) continue;
+      double tA = ((bx - ax) * B.uz - (bz - az) * B.ux) / den;
+      double cx = ax + A.ux * tA, cz = az + A.uz * tA;
+      double tB = (cx - B.ox) * B.ux + (cz - B.oz) * B.uz;
+      int eA = std::fabs(tA - A.t[0]) < std::fabs(tA - A.t[1]) ? 0 : 1, eB = std::fabs(tB - B.t[0]) < std::fabs(tB - B.t[1]) ? 0 : 1;
+      if (A.corner[eA] || B.corner[eB]) continue;
+      if (std::fabs(tA - A.t[eA]) > B.depth + 4.0 || std::fabs(tB - B.t[eB]) > A.depth + 4.0) continue;
+      // an outer corner: each row's houses on the other's house side
+      double amx = A.ox + A.ux * (A.t[0] + A.t[1]) * 0.5 + A.vx * (A.front + A.depth * 0.5);
+      double amz = A.oz + A.uz * (A.t[0] + A.t[1]) * 0.5 + A.vz * (A.front + A.depth * 0.5);
+      double bmx = B.ox + B.ux * (B.t[0] + B.t[1]) * 0.5 + B.vx * (B.front + B.depth * 0.5);
+      double bmz = B.oz + B.uz * (B.t[0] + B.t[1]) * 0.5 + B.vz * (B.front + B.depth * 0.5);
+      if ((amx - cx) * B.vx + (amz - cz) * B.vz <= 0 || (bmx - cx) * A.vx + (bmz - cz) * A.vz <= 0) continue;
+      A.corner[eA] = B.corner[eB] = true;
+      const double dA = eA ? -1.0 : 1.0, dB = eB ? -1.0 : 1.0;  // into each row from the corner
+      const double fx = -A.vx, fz = -A.vz, plusX = (-fz) * (-B.vx) + fx * (-B.vz);
+      const auto& corners = plusX > 0 ? cornersPlusX : cornersMinusX;
+      bool made = false;
+      if (!corners.empty()) {
+        const Candidate& c = *corners[(h >> (3 + (i % 8))) % corners.size()];
+        double px = cx + A.ux * dA * c.w * 0.5 + A.vx * c.l * 0.5, pz = cz + A.uz * dA * c.w * 0.5 + A.vz * c.l * 0.5;
+        if (placeAt(vm, grid, a, c.name, px, pz, fx, fz, free0, 3) >= 0) {
+          ++a.buildingsPlaced;
+          A.t[eA] = tA + dA * c.w, B.t[eB] = tB + dB * c.l;
+          made = true;
+        }
       }
-    int orient = frontOrient(side);
-    if ((orient & 1) != orient2) orient = (orient + 1) & 3;
-    int made = addItem(vm, grid, a, c.name, x, maxCorner(g, x, z, sx, sz), z, orient);
-    if (made < 0) return false;
-    GridData::Item& item = g.items[size_t(made)];
-    const float half = g.cellSize * 0.5f;
-    item.yaw = float(-rem);
-    item.offX = std::clamp(float((px - (x + sx * 0.5)) * g.cellSize), -half, half);
-    item.offZ = std::clamp(float((pz - (z + sz * 0.5)) * g.cellSize), -half, half);
-    for (size_t ci : cells) a.used[ci] = 3;
-    ++a.buildingsPlaced;
-    ++placed;
-    return true;
-  };
-  uint32_t h = hash32(members.front()->id);
-  double from = -len * 0.5, to = len * 0.5;
-  // corner houses where a second street crosses at an end
-  for (int end = 0; end < 2; ++end) {
-    double t = end ? to : from;
-    if (!streetCorner(cx + ux * t + vx * sgn * depth * 0.5, cz + uz * t + vz * sgn * depth * 0.5, 4.0)) continue;
-    // the model +X side: the front (towards the street) turned 90° clockwise seen from above
-    double fx = vx * sgn, fz = vz * sgn, px = -fz, pz = fx, ex = end ? ux : -ux, ez = end ? uz : -uz;
-    const auto& corners = ex * px + ez * pz > 0 ? cornersPlusX : cornersMinusX;  // the corner on the end's side
-    if (corners.empty()) continue;
-    const Candidate& c = *corners[(h >> (4 * end)) % corners.size()];
-    if (c.w > to - from) continue;
-    if (put(c, end ? to - c.w * 0.5 : from + c.w * 0.5)) {
-      if (end) to -= c.w;
-      else from += c.w;
+      if (!made) A.t[eA] = tA, B.t[eB] = tB + dB * A.depth;  // A runs up to the corner, B up to A's back
     }
-  }
-  // the houses between, edge to edge, the run centred
-  std::vector<const Candidate*> run;
-  double used = 0;
+  // 4. the rows, edge to edge
+  int placed = 0;
   int minW = 1 << 30;
   for (const Candidate* c : houses) minW = std::min(minW, c->w);
-  for (int k = 0; used + minW <= to - from + 0.3 && k < 64; ++k) {
-    const Candidate* pick = nullptr;
-    for (int tries = 0; tries < 8 && !pick; ++tries) {
-      const Candidate* c = houses[hash32(uint64_t(h) * 31 + uint64_t(k) * 7 + uint64_t(tries)) % houses.size()];
-      if (used + c->w <= to - from + 0.3) pick = c;
+  for (size_t ri = 0; ri < rows.size(); ++ri) {
+    RowPlan& r = rows[ri];
+    std::vector<const Candidate*> fit;
+    for (const Candidate* c : houses)
+      if (c->l <= r.depth + 2.0) fit.push_back(c);
+    if (fit.empty()) fit = houses;
+    int fitMin = 1 << 30;
+    for (const Candidate* c : fit) fitMin = std::min(fitMin, c->w);
+    const double len = r.t[1] - r.t[0];
+    std::vector<const Candidate*> run;
+    double used = 0;
+    const uint32_t hr = hash32(uint64_t(h) * 31 + ri);
+    for (int k = 0; used + fitMin <= len + 0.3 && k < 96; ++k) {
+      const Candidate* pick = nullptr;
+      for (int tries = 0; tries < 8 && !pick; ++tries) {
+        const Candidate* c = fit[hash32(uint64_t(hr) * 7 + uint64_t(k) * 13 + uint64_t(tries)) % fit.size()];
+        if (used + c->w <= len + 0.3) pick = c;
+      }
+      if (!pick)
+        for (const Candidate* c : fit)
+          if (used + c->w <= len + 0.3 && (!pick || c->w > pick->w)) pick = c;
+      if (!pick) break;
+      run.push_back(pick);
+      used += pick->w;
     }
-    if (!pick) break;
-    run.push_back(pick);
-    used += pick->w;
+    // the leftover taken up by wider houses (no gaps in the row)
+    for (size_t k = 0; k < run.size() && len - used >= 1.0; ++k) {
+      const Candidate* best = nullptr;
+      for (const Candidate* c : fit)
+        if (c->w > run[k]->w && used - run[k]->w + c->w <= len + 0.3 && (!best || c->w > best->w)) best = c;
+      if (best) used += best->w - run[k]->w, run[k] = best;
+    }
+    double t = r.corner[0] && !r.corner[1] ? r.t[0] : r.corner[1] && !r.corner[0] ? r.t[1] - used : r.t[0] + (len - used) * 0.5;
+    int here = 0;
+    double back = 0;
+    for (const Candidate* c : run) {
+      const double tc = t + c->w * 0.5;
+      for (double shift : {0.0, 0.5, 1.0}) {
+        double across = r.front + c->l * 0.5 + shift;
+        double px = r.ox + r.ux * tc + r.vx * across, pz = r.oz + r.uz * tc + r.vz * across;
+        if (placeAt(vm, grid, a, c->name, px, pz, -r.vx, -r.vz, free0, 3) >= 0) {
+          ++a.buildingsPlaced, ++here;
+          back = std::max(back, r.front + c->l + shift);
+          break;
+        }
+      }
+      t += c->w;
+    }
+    if (!here) continue;
+    placed += here;
+    for (const BuildingIn* b : r.members) a.inRow[size_t(b - a.d->buildings.data())] = 1;
+    // the yard behind the row: its seeds a cell and a half behind the houses
+    for (double ts = r.t[0] + 0.5; ts <= r.t[1] - 0.5; ts += 1.0)
+      a.yardSeeds.push_back({r.ox + r.ux * ts + r.vx * (back + 1.5), r.oz + r.uz * ts + r.vz * (back + 1.5)});
   }
-  double t = from + (to - from - used) * 0.5;
-  for (const Candidate* c : run) {
-    put(*c, t + c->w * 0.5);
-    t += c->w;
+  return placed;
+}
+
+// ---- furnishing (owner 2026-11-14: fountains on squares, street lamps, courtyards and squares decorated, car parks
+// with rows of bays, more of OSM's data used) ----
+bool insideRing(const std::vector<std::pair<double, double>>& p, double x, double z) {
+  int n = 0;
+  for (size_t i = 0, j = p.size() - 1; i < p.size(); j = i++)
+    if ((p[i].second <= z) != (p[j].second <= z) &&
+        x < p[i].first + (z - p[i].second) * (p[j].first - p[i].first) / (p[j].second - p[i].second))
+      ++n;
+  return (n & 1) != 0;
+}
+
+struct Furnish {
+  std::vector<std::string> trees, bushes, bigTrees;
+  std::string pick(const std::vector<std::string>& v, uint32_t h) const { return v.empty() ? std::string() : v[h % v.size()]; }
+};
+
+// a tree or bush in a cell, turned and shifted freely
+bool plantAt(VM& vm, GridObj* grid, Apply& a, const std::string& name, int x, int z, uint32_t h) {
+  GridData& g = *grid->data;
+  if (name.empty()) return false;
+  int made = addItem(vm, grid, a, name, x, meanCorner(g, x, z), z, int((h >> 8) & 3));
+  if (made < 0) return false;
+  GridData::Item& it = g.items[size_t(made)];
+  const float half = g.cellSize * 0.35f;
+  it.yaw = (float((h >> 3) % 1000) / 1000.0f - 0.5f) * 1.5707963f;
+  it.offX = (float((h >> 13) % 1000) / 1000.0f * 2.0f - 1.0f) * half;
+  it.offZ = (float((h >> 23) % 512) / 512.0f * 2.0f - 1.0f) * half;
+  a.used[size_t(z) * size_t(g.width) + size_t(x)] = 4;
+  ++a.treesPlaced;
+  return true;
+}
+
+// the first of the names the map has
+std::string firstOf(GridObj* grid, std::initializer_list<const char*> names) {
+  for (const char* n : names)
+    if (grid->templates.count(n)) return n;
+  return {};
+}
+
+// OSM's street furniture where it is mapped; benches, kiosks and the like face the street they stand by, lamps reach
+// over it; points on the carriageway move to its kerb
+void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, double>>& lamps) {
+  const ImportData& d = *a.d;
+  int made = 0;
+  auto ok = [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6; };
+  for (const PointIn& pt : d.points) {
+    double px = pt.x, pz = pt.z, tx = 0, tz = -1;  // toward the street
+    const StreetIndex::P* st = g_streets.nearest(px, pz, 3.0);
+    if (st) {
+      double dx = px - st->x, dz = pz - st->z, dc = std::hypot(dx, dz);
+      if (dc > 1e-6) {
+        double nx = dx / dc, nz = dz / dc;
+        if (dc < st->cw + 0.35) px = st->x + nx * (st->cw + 0.4), pz = st->z + nz * (st->cw + 0.4);
+        tx = -nx, tz = -nz;
+      }
+    }
+    double fx = tx, fz = tz;
+    std::string name;
+    switch (pt.kind) {
+      case 0: {  // a fountain: the large one on a square with room for it
+        bool big = false;
+        for (const AreaIn& ar : d.areas)
+          if (ar.kind != 1 && polyArea(ar.pts) >= 150 && insideRing(ar.pts, px, pz)) big = true;
+        if (big && placeAt(vm, grid, a, "large-fountain", px, pz, 0, -1, ok, 6) >= 0) {
+          ++made;
+          continue;
+        }
+        name = firstOf(grid, {"garden-fountain-01", "garden-fountain-02"});
+        break;
+      }
+      case 1: name = firstOf(grid, {"pbench-01", "gardenbench"}); break;
+      case 2: name = firstOf(grid, {"street-litterbin", "litterbin-01"}); break;
+      case 3: name = firstOf(grid, {"bicycle-holder-01", "bicycle-holder-02"}); break;
+      case 4: name = firstOf(grid, {"phone-booth", "old-phone-booth"}); break;
+      case 5: name = firstOf(grid, {"mailbox02", "mailbox01"}); break;
+      case 6: name = firstOf(grid, {"public-toilet"}); break;
+      case 7:
+        if (st && st->kind >= 1) name = firstOf(grid, {"street-light-large", "street-light01"}), armFront(tx, tz, fx, fz);
+        else if (st) name = firstOf(grid, {"street-light01", "old-streetlamp"});
+        else name = firstOf(grid, {"old-streetlamp", "street-light01"}), armFront(tx, tz, fx, fz);
+        break;
+      case 8: name = firstOf(grid, {"standing-statue", "obelisk"}); break;
+      case 9: name = firstOf(grid, {"obelisk", "rider-statue", "standing-statue"}); break;
+      case 10: name = firstOf(grid, {"sculpture-01", "standing-statue"}); break;
+      case 11: name = firstOf(grid, {"kiosk-02", "kiosk-01"}); break;
+      case 12: name = firstOf(grid, {"street-clock"}); break;
+      case 13:  // a playground: a sandbox and a swing beside it
+        if (placeAt(vm, grid, a, firstOf(grid, {"sandbox"}), px, pz, fx, fz, ok, 6) >= 0) ++made;
+        name = firstOf(grid, {"gardenswing"}), px += 2.5;
+        break;
+    }
+    if (name.empty()) continue;
+    if (placeAt(vm, grid, a, name, px, pz, fx, fz, ok, 6) >= 0) {
+      ++made;
+      if (pt.kind == 7) lamps.push_back({px, pz});
+    }
   }
-  return placed > 0;
+  if (!d.points.empty()) LOG_INFO("osm: %d of %zu furniture points placed", made, d.points.size());
+}
+
+// a square: a fountain in the middle (unless OSM maps one), benches around it facing it with litter bins between,
+// flower beds, market stands on a market place, old lamps along the edge with trees between them on big squares
+void decorateSquare(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, const Furnish& fu) {
+  const ImportData& d = *a.d;
+  GridData& g = *grid->data;
+  const int W = g.width;
+  const double area = polyArea(ar.pts);
+  if (area < 8 || ar.pts.size() < 3) return;
+  double sa = 0, cx = 0, cz = 0;
+  for (size_t i = 0, j = ar.pts.size() - 1; i < ar.pts.size(); j = i++) {
+    double cr = ar.pts[j].first * ar.pts[i].second - ar.pts[i].first * ar.pts[j].second;
+    sa += cr, cx += (ar.pts[j].first + ar.pts[i].first) * cr, cz += (ar.pts[j].second + ar.pts[i].second) * cr;
+  }
+  if (std::fabs(sa) < 1e-9) return;
+  cx /= 3 * sa, cz /= 3 * sa;
+  if (!insideRing(ar.pts, cx, cz)) {  // a ring shape: the inside cell nearest its centroid
+    double best = 1e30, bx = cx, bz = cz;
+    for (auto& q : ar.pts)
+      for (int k = 1; k <= 3; ++k) {
+        double x = q.first + (cx - q.first) * k / 6.0, z = q.second + (cz - q.second) * k / 6.0;
+        if (insideRing(ar.pts, x, z) && std::hypot(x - cx, z - cz) < best) best = std::hypot(x - cx, z - cz), bx = x, bz = z;
+      }
+    if (best > 1e29) return;
+    cx = bx, cz = bz;
+  }
+  auto okIn = [&](uint8_t u) { return u == 0 || u == 5; };
+  const uint32_t h = hash32(uint64_t(std::llround(cx * 64)) * 1000003ull + uint64_t(std::llround(cz * 64)));
+  bool osmFountain = false;
+  for (const PointIn& p : d.points)
+    if (p.kind == 0 && insideRing(ar.pts, p.x, p.z)) osmFountain = true;
+  double R = 0;
+  if (!osmFountain && ar.kind == 0) {
+    if (area >= 150 && placeAt(vm, grid, a, "large-fountain", cx, cz, 0, -1, okIn, 6) >= 0) R = 2.5;
+    else if (area >= 20 && placeAt(vm, grid, a, firstOf(grid, {"garden-fountain-01", "garden-fountain-02"}), cx, cz, 0, -1, okIn, 6) >= 0)
+      R = 0.6;
+  }
+  auto inside = [&](double x, double z) { return insideRing(ar.pts, x, z); };
+  if (R > 0) {
+    const int n = std::clamp(int(area / 40), 4, 8);
+    const double rad = R + 2.3, off = (h % 2) ? kPi / n : 0;
+    for (int k = 0; k < n; ++k) {
+      double an = 2 * kPi * k / n + off, px = cx + std::cos(an) * rad, pz = cz + std::sin(an) * rad;
+      if (!inside(px, pz)) continue;
+      placeAt(vm, grid, a, firstOf(grid, {"pbench-01", "gardenbench"}), px, pz, cx - px, cz - pz, okIn, 6);
+      if (k % 2 == 0) {
+        double qx = px - std::sin(an) * 1.3, qz = pz + std::cos(an) * 1.3;
+        if (inside(qx, qz)) placeAt(vm, grid, a, firstOf(grid, {"street-litterbin", "litterbin-01"}), qx, qz, cx - qx, cz - qz, okIn, 6);
+      }
+    }
+    if (area >= 80)
+      for (int k = 0; k < 4; ++k) {
+        double an = kPi / 4 + kPi / 2 * k + off, px = cx + std::cos(an) * (R + 1.1), pz = cz + std::sin(an) * (R + 1.1);
+        if (inside(px, pz))
+          placeAt(vm, grid, a, firstOf(grid, {k % 2 ? "street-flowerbed-02" : "street-flowerbed-01", "flowerbed-01"}), px, pz, cx - px,
+                  cz - pz, okIn, 6);
+      }
+  }
+  if (ar.kind == 2) {  // a market place: stands on rings around the middle
+    static const char* kStands[] = {"marketstand01", "marketstand02", "marketstand03", "marketstand04", "marketumbrella",
+                                    "markettableset", "marketstand01", "marketstand02"};
+    for (double rad = R + 3.5; rad < std::sqrt(area) * 0.6; rad += 3.5)
+      for (int k = 0, n = std::max(4, int(2 * kPi * rad / 3.4)); k < n; ++k) {
+        double an = 2 * kPi * k / n, px = cx + std::cos(an) * rad, pz = cz + std::sin(an) * rad;
+        if (inside(px, pz)) placeAt(vm, grid, a, firstOf(grid, {kStands[hash32(h + k * 7 + uint32_t(rad)) % 8]}), px, pz, cx - px, cz - pz, okIn, 6);
+      }
+  }
+  // the edge: old lamps every 6 cells a cell and a half inside, trees between them on big squares
+  double perim = 0;
+  for (size_t i = 0; i < ar.pts.size(); ++i) {
+    auto p = ar.pts[i], q = ar.pts[(i + 1) % ar.pts.size()];
+    perim += std::hypot(q.first - p.first, q.second - p.second);
+  }
+  const std::string lamp = firstOf(grid, {"old-streetlamp", "street-light01"});
+  int k = 0;
+  for (double s = 3.0; s < perim; s += 3.0, ++k) {
+    double acc = 0;
+    for (size_t i = 0; i < ar.pts.size(); ++i) {
+      auto p = ar.pts[i], q = ar.pts[(i + 1) % ar.pts.size()];
+      double l = std::hypot(q.first - p.first, q.second - p.second);
+      if (acc + l < s || l < 1e-9) {
+        acc += l;
+        continue;
+      }
+      double t = (s - acc) / l, ex = (q.first - p.first) / l, ez = (q.second - p.second) / l;
+      double bx = p.first + (q.first - p.first) * t, bz = p.second + (q.second - p.second) * t;
+      double nx = -ez, nz = ex;
+      if (!inside(bx + nx * 1.5, bz + nz * 1.5)) nx = -nx, nz = -nz;
+      double px = bx + nx * 1.5, pz = bz + nz * 1.5;
+      if (inside(px, pz)) {
+        if (k % 2 == 0) {
+          double fx, fz;
+          armFront(nx, nz, fx, fz);
+          placeAt(vm, grid, a, lamp, px, pz, fx, fz, okIn, 6);
+        } else if (area >= 200) {
+          int x = int(std::floor(px)), z = int(std::floor(pz));
+          size_t ci = size_t(z) * size_t(W) + size_t(x);
+          if (okIn(a.used[ci])) plantAt(vm, grid, a, fu.pick(fu.trees, h + k), x, z, hash32(h * 3 + k));
+        }
+      }
+      break;
+    }
+  }
+}
+
+// a car park: asphalt (painted at the terrain stage) and rows of bays across its long side: bay, aisle, two bays back
+// to back, aisle, …; a bay only where it lies wholly inside the car park on free ground
+int decorateParking(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, int budget) {
+  double ang, ea, eb, cx, cz;
+  if (budget <= 0 || polyArea(ar.pts) < 6 || !minRect(ar.pts, ang, ea, eb, cx, cz)) return 0;
+  double ux = std::cos(ang), uz = std::sin(ang), len = ea, wid = eb;
+  if (eb > ea) ux = -std::sin(ang), uz = std::cos(ang), len = eb, wid = ea;
+  const double vx = -uz, vz = ux;
+  const std::string bay = firstOf(grid, {"parking-space"});
+  if (bay.empty() || wid < 2.2) return 0;
+  std::vector<double> rowsAt;  // the bay rows' centres across
+  double cur = -wid * 0.5 + 0.2;
+  rowsAt.push_back(cur + 1.0), cur += 2.0;
+  while (cur + 2.4 + 2.0 <= wid * 0.5) {
+    cur += 2.4;
+    rowsAt.push_back(cur + 1.0), cur += 2.0;
+    if (cur + 2.0 <= wid * 0.5 - 0.1) rowsAt.push_back(cur + 1.0), cur += 2.0;
+  }
+  auto ok = [](uint8_t u) { return u == 0 || u == 5; };
+  int made = 0;
+  for (double vo : rowsAt)
+    for (double t = -len * 0.5 + 0.6; t <= len * 0.5 - 0.5 && made < budget; t += 1.0) {
+      double px = cx + ux * t + vx * vo, pz = cz + uz * t + vz * vo;
+      bool in = true;
+      for (double su : {-0.45, 0.45})
+        for (double sv : {-0.95, 0.95}) in = in && insideRing(ar.pts, px + ux * su + vx * sv, pz + uz * su + vz * sv);
+      if (in && placeAt(vm, grid, a, bay, px, pz, vx, vz, ok, 6) >= 0) ++made;
+    }
+  return made;
+}
+
+// street lamps along the curves where OSM maps none: small streets on one side, wide roads and avenues on both
+// (staggered); every 28 m (32 m on wide roads, 20 m on footpaths), clear of the junctions; the plain post on small
+// streets, the large arm lamp reaching over wide roads, the old lantern by footpaths
+void streetLamps(VM& vm, GridObj* grid, Apply& a, const std::vector<std::pair<double, double>>& osmLamps) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  const float cs = g.cellSize;
+  std::map<std::pair<int, int>, std::vector<std::pair<double, double>>> near;
+  for (auto& q : osmLamps) near[{int(q.first) / 8, int(q.second) / 8}].push_back(q);
+  auto osmNear = [&](double x, double z) {
+    for (int bz = int(z) / 8 - 1; bz <= int(z) / 8 + 1; ++bz)
+      for (int bx = int(x) / 8 - 1; bx <= int(x) / 8 + 1; ++bx) {
+        auto it = near.find({bx, bz});
+        if (it != near.end())
+          for (auto& q : it->second)
+            if (std::hypot(q.first - x, q.second - z) < 6.0) return true;
+      }
+    return false;
+  };
+  const std::vector<CurveJunction> js = findCurveJunctions(g);
+  const std::string post = firstOf(grid, {"street-light01", "old-streetlamp"});
+  const std::string arm = firstOf(grid, {"street-light-large", "street-light01"});
+  const std::string lantern = firstOf(grid, {"old-streetlamp", "street-light01"});
+  auto ok = [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6; };
+  int made = 0;
+  for (size_t ci = 0; ci < g.curves.size(); ++ci) {
+    const CurveRoad& c = g.curves[ci];
+    if (c.bridge || curveIsTrack(c.kind)) continue;
+    const CurveProfile& pr = curveProfile(c.kind);
+    float trim0 = 0, trim1 = 0;
+    curveTrims(js, int(ci), trim0, trim1);
+    std::vector<CurveSample> all = sampleCurve(c, 4.0f);
+    if (all.empty()) continue;
+    const float len = all.back().s;
+    const double metres = c.kind == 3 ? 20.0 : c.kind == 0 ? 28.0 : 32.0;
+    const float step = float(metres / a.d->cellM) * cs;
+    const float s0 = trim0 + 4.0f, s1 = len - trim1 - 4.0f;
+    if (s1 - s0 < step * 0.5f) continue;
+    const float off = c.kind == 3 ? pr.halfWidth + 1.2f : pr.carriageway + 0.7f;
+    const bool both = c.kind == 1 || c.kind == 2;
+    const uint32_t hc = hash32(ci * 7919 + 3);
+    const float oneSide = (hc & 1) ? 1.0f : -1.0f;
+    for (int pass = 0; pass < (both ? 2 : 1); ++pass) {
+      const float side = both ? (pass ? -1.0f : 1.0f) : oneSide;
+      const float a0 = s0 + (pass ? step * 0.5f : 0.0f);
+      if (a0 > s1) continue;
+      for (const CurveSample& sm : sampleCurveRange(c, a0, s1, step)) {
+        double wx = sm.p.x + sm.right.x * off * side, wz = sm.p.z + sm.right.z * off * side;
+        double px = wx / cs + W * 0.5, pz = wz / cs + L * 0.5;
+        if (osmNear(px, pz)) continue;
+        double fx = 0, fz = -1;
+        const std::string* name = &post;
+        if (c.kind == 3) name = &lantern;
+        else if (c.kind >= 1) name = &arm, armFront(-sm.right.x * side, -sm.right.z * side, fx, fz);
+        int y = int(std::lround(sm.p.y * 256.0f / cs));
+        if (placeAt(vm, grid, a, *name, px, pz, fx, fz, ok, 6, y) >= 0) ++made;
+      }
+    }
+  }
+  LOG_INFO("osm: %d street lamps", made);
+}
+
+// the yards behind the rows of houses: the free ground reached from behind the rows (all of it when houses and streets
+// close it within 6000 cells, else the 6 cells behind the houses); bushes along
+// the houses' backs, trees in the open, and the residents' things: sandboxes, swings, sheds, bicycle stands, benches,
+// flower beds, now and then a garden fountain, a gazebo or a statue
+void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  std::vector<uint8_t> seen(size_t(W) * size_t(L), 0);
+  static const std::pair<const char*, int> kProps[] = {
+      {"sandbox", 2},      {"gardenswing", 2},       {"garden-shed", 2},        {"bicycle-holder-01", 3}, {"bicycle-holder-02", 2},
+      {"litterbin-01", 2}, {"litterbin-02", 1},      {"flowerbed-01", 3},       {"flowerbed-02", 3},      {"gardenbench", 3},
+      {"pbench-01", 2},    {"garden-fountain-01", 1}, {"garden-fountain-02", 1}, {"gazebo", 1},            {"garden-statue-01", 1},
+      {"gnome", 1},        {"doghouse", 1},           {"flowerpot-01", 2},       {"flowerpot-02", 1}};
+  std::vector<std::string> pool;
+  for (auto& [n, wgt] : kProps)
+    if (grid->templates.count(n))
+      for (int k = 0; k < wgt; ++k) pool.push_back(n);
+  auto at = [&](int x, int z) { return a.used[size_t(z) * size_t(W) + size_t(x)]; };
+  auto clear = [&](int x, int z, int r, std::initializer_list<uint8_t> bad) {
+    for (int dz = -r; dz <= r; ++dz)
+      for (int dx = -r; dx <= r; ++dx) {
+        int xx = x + dx, zz = z + dz;
+        if (xx < 0 || zz < 0 || xx >= W || zz >= L) continue;
+        for (uint8_t b : bad)
+          if (at(xx, zz) == b) return false;
+      }
+    return true;
+  };
+  int yards = 0, things = 0;
+  for (auto& sd : a.yardSeeds) {
+    int sx = int(std::floor(sd.first)), sz = int(std::floor(sd.second));
+    if (sx < 1 || sz < 1 || sx >= W - 1 || sz >= L - 1 || seen[size_t(sz) * size_t(W) + size_t(sx)] || at(sx, sz)) continue;
+    std::vector<std::pair<int, int>> cells;
+    std::vector<std::pair<std::pair<int, int>, int>> q{{{sx, sz}, 0}};
+    seen[size_t(sz) * size_t(W) + size_t(sx)] = 1;
+    // the free ground around (up to 6000 cells; more: not a yard closed by houses and streets but open land)
+    bool open = false;
+    for (size_t qi = 0; qi < q.size(); ++qi) {
+      auto [p, dist] = q[qi];
+      if (q.size() >= 6000) {
+        open = true;
+        if (dist >= 6) continue;
+      }
+      for (auto [nx, nz] : {std::pair{p.first - 1, p.second}, {p.first + 1, p.second}, {p.first, p.second - 1}, {p.first, p.second + 1}}) {
+        if (nx < 1 || nz < 1 || nx >= W - 1 || nz >= L - 1) continue;
+        size_t ni = size_t(nz) * size_t(W) + size_t(nx);
+        if (seen[ni] || a.used[ni]) continue;
+        seen[ni] = 1;
+        q.push_back({{nx, nz}, dist + 1});
+      }
+    }
+    // an open one: just the strip behind the houses (6 cells) is the residents' garden
+    for (auto& [p, dist] : q)
+      if (!open || dist <= 6) cells.push_back(p);
+    if (cells.size() < 10) continue;
+    ++yards;
+    for (size_t k = cells.size() - 1; k > 0; --k) std::swap(cells[k], cells[hash32(k * 2654435761u + cells[0].first) % (k + 1)]);
+    for (auto [x, z] : cells) {
+      if (at(x, z)) continue;
+      uint32_t h = hash32((uint64_t(x) << 32) | uint32_t(z) | 0x5a5a0000ull);
+      bool byHouse = at(x - 1, z) == 3 || at(x + 1, z) == 3 || at(x, z - 1) == 3 || at(x, z + 1) == 3;
+      if (byHouse) {
+        if (h % 100 < 22) plantAt(vm, grid, a, fu.pick(fu.bushes, h >> 5), x, z, h);
+      } else if (h % 100 < 7 && clear(x, z, 2, {3, 4})) {
+        plantAt(vm, grid, a, fu.pick(fu.trees, h >> 5), x, z, h);
+      } else if ((h >> 7) % 100 < 6 && !pool.empty() && clear(x, z, 1, {6})) {
+        int dir = int((h >> 17) & 3);
+        static const double kDir[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+        if (placeAt(vm, grid, a, pool[(h >> 9) % pool.size()], x + 0.5, z + 0.5, kDir[dir][0], kDir[dir][1],
+                    [](uint8_t u) { return u == 0; }, 6) >= 0)
+          ++things;
+      }
+    }
+  }
+  LOG_INFO("osm: %d yards furnished (%d things)", yards, things);
 }
 
 void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
@@ -3891,32 +4500,18 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         }
     gridEditBegin(vm, grid);
     if (a.next == 0) placeStations(vm, grid, a, d.stations);  // the stations before anything else takes their place
-    if (a.next == 0) {  // the rows of city houses first; their buildings are done then
-      // a row split by the street its buildings face (a block's rows turn at its corners): the nearest street's
-      // direction in 20° steps
-      std::map<std::pair<int, int>, std::vector<const BuildingIn*>> rows;
-      for (const BuildingIn& b : d.buildings) {
-        if (b.row < 0) continue;
-        double cx = 0, cz = 0;
-        for (auto& q : b.pts) cx += q.first, cz += q.second;
-        cx /= double(b.pts.size()), cz /= double(b.pts.size());
-        const StreetIndex::P* st = g_streets.nearest(cx, cz, 12.0);
-        int dir = -1;
-        if (st) {
-          double t = std::atan2(double(st->tz), double(st->tx));
-          if (t < 0) t += kPi;
-          dir = int(std::lround(t / (kPi / 9))) % 9;
-        }
-        rows[{b.row, dir}].push_back(&b);
-      }
+    if (a.next == 0) {  // the blocks of row houses first; their buildings are done then
+      std::map<int, std::vector<const BuildingIn*>> blocks;
+      for (const BuildingIn& b : d.buildings)
+        if (b.row >= 0) blocks[b.row].push_back(&b);
       a.inRow.assign(d.buildings.size(), 0);
-      int made = 0;
-      for (auto& [id, members] : rows)
-        if (placeRow(vm, grid, a, members, buildings, cache)) {
-          ++made;
-          for (const BuildingIn* b : members) a.inRow[size_t(b - d.buildings.data())] = 1;
-        }
-      LOG_INFO("osm: %d of %zu rows built as city houses", made, rows.size());
+      a.yardSeeds.clear();
+      int made = 0, houses = 0;
+      for (auto& [id, members] : blocks) {
+        int n = placeBlock(vm, grid, a, members, buildings, cache);
+        houses += n, made += n > 0;
+      }
+      LOG_INFO("osm: %d of %zu blocks built as rows of city houses (%d houses)", made, blocks.size(), houses);
     }
     while (a.next < d.buildings.size()) {
       if (a.inRow[a.next]) {
@@ -3934,7 +4529,41 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     a.stage = 4;
     a.next = 0;
   }
-  if (a.stage == 4) {  // trees
+  if (a.stage == 4) {  // furnishing: OSM's street furniture, squares, car parks, street lamps, the yards
+    setP(7, 1.0f);
+    Furnish fu;
+    if (ArrayObj* arr = vm.resolve(trees).array())
+      for (const Value& v : arr->items) {
+        std::string n = utf16ToUtf8(vm.toStr(v));
+        if (!grid->templates.count(n)) continue;
+        if (n.rfind("bush", 0) == 0) fu.bushes.push_back(n);
+        else if (n == "tree1" || n == "tree2" || n == "tree3" || n == "street-tree") fu.trees.push_back(n);
+      }
+    if (fu.trees.empty()) fu.trees = fu.bushes;
+    if (fu.bushes.empty()) fu.bushes = fu.trees;
+    gridEditBegin(vm, grid);
+    std::vector<std::pair<double, double>> lamps;
+    placePoints(vm, grid, a, lamps);
+    int squares = 0, bays = 0;
+    for (const AreaIn& ar : d.areas)
+      if (ar.kind != 1) decorateSquare(vm, grid, a, ar, fu), ++squares;
+    for (const AreaIn& ar : d.areas)
+      if (ar.kind == 1) bays += decorateParking(vm, grid, a, ar, 3000 - bays);
+    LOG_INFO("osm: %d squares furnished, %d parking bays", squares, bays);
+    if (!a.gridStreets) streetLamps(vm, grid, a, lamps);
+    decorateYards(vm, grid, a, fu);
+    gridEditEnd(vm, grid);
+    if (std::getenv("REGS_DEBUG_OSM")) {
+      std::string all;
+      for (auto& [n, c] : g_placedCount) all += n + " " + std::to_string(c) + ", ";
+      LOG_INFO("osm: placed: %s", all.c_str());
+    }
+    g_placedCount.clear();
+    a.stage = 5;
+    a.next = 0;
+    if (now() - t0 > budget) return false;
+  }
+  if (a.stage == 5) {  // trees
     std::vector<std::string> names;
     if (ArrayObj* arr = vm.resolve(trees).array())
       for (const Value& v : arr->items) {
@@ -4007,7 +4636,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       setP(8, float(a.next) / float(d.trees.size()));
       return false;
     }
-    a.stage = 5;
+    a.stage = 6;
   }
   // done: the new objects on the timeline, their events, the overlay picture
   for (int i : a.made)
