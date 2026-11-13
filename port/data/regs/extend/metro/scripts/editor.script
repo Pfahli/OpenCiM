@@ -391,7 +391,15 @@ function regsCurveToolFor($k, $way, $shape) {
   $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
   regsCurveToolMode($shape);
   regsCurveToolOneWay($k == 0 ? $way : 0);
+  regsCurveToolBridge(false);
   regsCursorInfoStart();
+}
+
+// a curved bridge of road kind k (0 small, 1 large, 2 avenue): the curve tool in curve mode, laying bridges (the deck two
+// cells over the ground, the kind's bridge span and pillars)
+function regsCurveBridgeFor($k) {
+  regsCurveToolFor($k, 0, 1);
+  regsCurveToolBridge(true);
 }
 
 function regsOneWayLanesSet($n) {
@@ -425,6 +433,8 @@ for ($regsI = 0; $regsI < 4; ++$regsI) {
   for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
     regsTabButton($regsTab, null, $regsShapeIcons[$regsJ], macro($regsCurveKinds[$regsI], $regsJ) :: regsCurveToolFor($0, 0, $1), $regsShapeTips[$regsJ]);
   }
+  if ($regsCurveKinds[$regsI] <= 2)  // roads: a curved bridge, with the game's bridge icon of the tab
+    regsTabButton($regsTab, null, "/metro/ui/toolbar/" + $regsCurveTabs[$regsI] + "-bridge", macro($regsCurveKinds[$regsI]) :: regsCurveBridgeFor($0), $regsRs.$regs_curve_bridge_hint);
 }
 // the road types One-way and Roundabout in the menu's top row
 $regsTab = regsAddRoadType("oneway", $regsRs.$regs_type_oneway_hint);

@@ -66,8 +66,12 @@ A curve can be a bridge (`CurveRoad::bridge = 1`). It is meant for the OSM impor
   (a span squeezed that much shows its girders). `REGS_DEBUG_CURVES=1` logs every bridge's length and trims.
 - Lanes and the walk map are as on any curve of the kind, at the deck's height.
 - Its ends join other curves and junctions by the same point rule.
-- The curve tool lays bridges while `regsCurveToolBridge(true)` is set (test switch: `REGS_TEST_CURVE_BRIDGE=1`). They
-  start two cells over the ground and pass over anything a cell lower than the deck. There is no menu button yet.
+- Editor: the small-road, large-road and avenue tabs end with a bridge button (the game's bridge icon of the tab): the
+  curve tool in curve mode (start, bend point, end) laying bridges, two cells over the ground, passing over anything a
+  cell lower than the deck. The other shape buttons switch bridges off. Script: `regsCurveToolBridge(on)`; test switch
+  `REGS_TEST_CURVE_BRIDGE=1`.
+- Checked (2026-11-13): small-road, large-road and avenue bridges (spans, parapets, pillar posts) over the S-curve; the
+  OSM import's Saalbach bridge in Bruchsal.
 
 ### Tracks
 
@@ -209,7 +213,7 @@ bend tighter than the kind's minimum radius.
 
 ## 4. Not done
 
-Tunnels and express roads on curves, abutments at bridge ends, a bridge button; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
+Tunnels and express roads on curves, abutments at bridge ends; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
 on large-road and avenue curves; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 

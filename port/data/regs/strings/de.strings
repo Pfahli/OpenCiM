@@ -160,6 +160,7 @@ $regs_curve_mode_straight = "Gerade (beliebiger Winkel)";
 $regs_type_oneway_hint = "Einbahnstraßen";
 $regs_curve_mode_curved = "Kurve";
 $regs_curve_mode_freeform = "Freihand";
+$regs_curve_bridge_hint = "Brücke als Kurve: Anfang, Knickpunkt, Ende. Das Deck liegt über Gelände und Wasser.";
 $regs_curve_panel_hint1 = "Endet an Sackgassen, Gleisenden und freien Straßenenden.";
 $regs_curve_panel_hint2 = "Rechtsklick: Zeichnen beenden.";
 $regs_curve_mode_remove = "Entfernen";
