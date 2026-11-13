@@ -722,6 +722,24 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       if (object) *object = ti >= 0 ? tc.templates[size_t(ti)].object : nullptr;
       return ti >= 0 ? tc.templates[size_t(ti)].materialBase : -1;
     };
+    // every template the curves draw joins the map's types before any mesh is built: a type added later rebuilds the
+    // template table, and the material bases taken before it then point at other materials (two bridges, the second
+    // with pillars: the first span drew with the wrong materials, no railings)
+    {
+      auto need = [&](const char* name) {
+        if (name && name[0]) templateOf(name, nullptr);
+      };
+      auto needCurve = [&](const CurveRoad& c) {
+        const CurveProfile& pf = curveProfile(c.kind);
+        need(pf.straight), need(pf.deadend), need(pf.pillar);
+        if (c.ends & 4) need(pf.tram);
+        if (c.bridge) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind));
+        for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st).c_str());
+      };
+      need("road_small_basic"), need("tram_small_basic"), need(curveProfile(3).straight);
+      for (const CurveRoad& c : g.curves) needCurve(c);
+      if (grid->hasCurvePreview) needCurve(grid->curvePreview);
+    }
     int base = templateOf("road_small_basic", nullptr);
     if (base < 0) {
       LOG_WARN("curved roads: no template road_small_basic, not drawn");

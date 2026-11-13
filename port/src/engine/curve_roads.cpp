@@ -1356,12 +1356,39 @@ void levelTerrainUnderJunctions(GridObj* grid, const CurveRoad& c) {
     int x0, z0, x1, z1;
     junctionCells(g, j, x0, z0, x1, z1);
     int16_t target = int16_t(std::lround((j.centre.y - 0.25f) * 256.0f / cs));
+    // bridge arms: their part of the junction (farther from the centre than the other arms' half width) stays over the
+    // ground as it is, and so does water (raised riverbed showed as a flat box beside a bridge, OSM import)
+    std::vector<std::pair<std::vector<CurveSample>, float>> bridges;  // shape, half width
+    float core = 0;
+    for (const CurveArm& a : j.arms) {
+      const CurveRoad& ac = g.curves[size_t(a.curve)];
+      if (ac.bridge) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
+      else core = std::max(core, curveProfile(ac.kind).halfWidth);
+    }
+    auto water = [&](int x, int z) {
+      for (int dz = -1; dz <= 0; ++dz)
+        for (int dx = -1; dx <= 0; ++dx) {
+          int cx = x + dx, cz = z + dz;
+          if (cx >= 0 && cz >= 0 && cx < g.width && cz < g.length && (g.flags[size_t(cz) * size_t(g.width) + size_t(cx)] & 0x2000))
+            return true;
+        }
+      return false;
+    };
     for (int z = z0; z <= std::min(z1 + 1, g.length - 1); ++z)
       for (int x = x0; x <= std::min(x1 + 1, g.width - 1); ++x) {
         size_t ci = size_t(z) * size_t(g.width) + size_t(x);
         if (g.flags[ci] & 0x1000) continue;  // a locked corner
         float wx = (float(x) - float(g.width) * 0.5f) * cs, wz = (float(z) - float(g.length) * 0.5f) * cs;
         if (!insideOutline(outer, wx, wz)) continue;
+        if (water(x, z)) continue;
+        bool onBridge = false;
+        float fromCentre = std::sqrt((wx - j.centre.x) * (wx - j.centre.x) + (wz - j.centre.z) * (wz - j.centre.z));
+        for (const auto& [shape, hw] : bridges) {
+          float side, s;
+          curveNearest(shape, wx, wz, side, s);
+          if (std::fabs(side) <= hw + 1.5f && fromCentre > core) onBridge = true;
+        }
+        if (onBridge) continue;
         g.height[ci] = target;
       }
     gridEditCellsChanged(grid, std::max(0, x0 - 1), std::max(0, z0 - 1), x1, z1, true);
