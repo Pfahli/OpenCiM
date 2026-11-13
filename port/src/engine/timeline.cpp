@@ -18,6 +18,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/curve_roads.h"
+#include "engine/paint_edges.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/interaction.h"
@@ -39,7 +40,10 @@ constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x0708101
                    kRegsCurve = 0x070810A0,
                    // port: an item off the grid (GridData::Item::yaw, offX, offZ): the ObjRef, then the angle and the
                    // shifts as floats (Action::turn; older records only the angle), after the item's createObject
-                   kRegsTurn = 0x070810B0;
+                   kRegsTurn = 0x070810B0,
+                   // port: the painted areas' edges of a rect of cells (engine/paint_edges.h paintEdgeActionBytes), kept
+                   // in Action::raw
+                   kRegsPaintEdges = 0x070810C0;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -456,6 +460,7 @@ void applyBrush(Apply& ap, const Action& a, bool preview) {
           if (type == 19 && d2 <= r * r && !(g.flags[c] & 0x1000))
             g.height[c] = int16_t(g.height[c] + int(std::nearbyint(falloff(d2) * float(a.strength - g.height[c]))));
           if (dz * dz + dx * dx > (r + 1) * (r + 1) || dz > r || dx > r) continue;
+          if (!preview && type >= 1 && type <= 9) dropPaintEdge(g, px + dx, pz + dz);  // port: hand paint drops the edge
           uint16_t& f = g.flags[c];
           if (type >= 1 && type <= 8) {
             if (!preview) f = uint16_t((f & 0xFF98) | 0x8 | (type - 1));
@@ -555,6 +560,12 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       gridEditCellsChanged(ap.grid, x0 - 1, z0 - 1, x0 + w, z0 + l, true);
       break;
     }
+    case kRegsPaintEdges: {
+      if (preview) break;
+      int x0, z0, w, l;
+      if (applyPaintEdgeAction(g, a.raw, x0, z0, w, l)) gridEditCellsChanged(ap.grid, x0, z0, x0 + w - 1, z0 + l - 1, false);
+      break;
+    }
     case kRegsCurve: {
       CurveRoad c;
       bool add = true;
@@ -596,6 +607,7 @@ std::u16string labelOf(const Action& a) {
     case kName: return u"%!24";
     case kVariation: return u"%!25";
     case kRegsPatch: return u"%!18";  // shown as levelling the terrain
+    case kRegsPaintEdges: return u"%!13";  // shown as painting the pavement
     default: return u"";
   }
 }
@@ -785,6 +797,14 @@ void timelineRecordCurve(VM& vm, Object* s, const CurveRoad& c, bool add) {
   recordAction(vm, s, std::move(a));
 }
 
+void timelineRecordPaintEdges(VM& vm, Object* s, const GridData& g, int x, int z, int w, int l) {
+  if (!s || w <= 0 || l <= 0) return;
+  Action a;
+  a.tag = kRegsPaintEdges;
+  a.raw = paintEdgeActionBytes(g, x, z, w, l);
+  recordAction(vm, s, std::move(a));
+}
+
 void timelineRecordWater(VM& vm, Object* s, int x, int z, bool on) {
   if (!s) return;
   Action a;
@@ -941,6 +961,7 @@ void registerTimelineNatives(VM& vm) {
         std::memcpy(act.raw.data(), &px, 2);
         std::memcpy(act.raw.data() + 2, &pz, 2);
       }
+      if (act.tag == kRegsPaintEdges) shiftPaintEdgeAction(act.raw, dx, dz);
       for (Action& c : act.children) shift(c);
     };
     resetRecording(s);

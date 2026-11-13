@@ -12,6 +12,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/grid.h"
+#include "engine/paint_edges.h"
 #include "engine/grid_render.h"
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
@@ -492,6 +493,7 @@ void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int st
     }
   } else {
     for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz)) {
+      if (!preview && type >= 1 && type <= 9) dropPaintEdge(g, x, z);  // hand paint drops the painted area's edge
       uint16_t& f = g.flags[idx(x, z)];
       if (type >= 1 && type <= 8) {
         if (!preview) f = uint16_t((f & 0xFF98) | 0x8 | (type - 1));

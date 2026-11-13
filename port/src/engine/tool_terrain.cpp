@@ -16,6 +16,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/grid.h"
+#include "engine/paint_edges.h"
 #include "engine/grid_edit.h"
 #include "engine/settings.h"
 #include "engine/gui.h"
@@ -234,6 +235,7 @@ void moveBrush(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
         if (mode == kGridModeSetPavement) v &= 0xFFF0;
         else if (mode == kGridModeSetField) v &= 0xFFD8;
       }
+      if (mode == kGridModeSetPavement && (t.inProgress || t.right)) dropPaintEdge(g, px + dx, pz + dz);  // hand paint
       *f = v;
       highlightCell(grid, px + dx, pz + dz);
     }

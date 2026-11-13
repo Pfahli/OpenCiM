@@ -196,6 +196,28 @@ A polyline becomes a chain of cubic Béziers, one per segment, with tangents fro
 (Catmull-Rom: `d = normalize(p[i+1] − p[i−1])`, handles a = b = segment length / 3); drop points that would make a
 bend tighter than the kind's minimum radius.
 
+### Painted areas with exact edges (for the OSM import's car parks, squares, bands)
+
+The pavement paint is per cell, so an area with a slanted or round outline used to end in a saw tooth of whole cells.
+The cells its outline crosses can now carry an **edge** (`GridData::paintEdges`, engine/grid.h): one or two straight
+lines in the cell's own coordinates; the part inside takes the edge's paint, the rest of the cell is drawn as its
+flags say (grass, or another paint). The terrain mesh cuts the cell's four triangles along the lines
+(`Builder::edgeCell`, engine/terrain.cpp), so the border follows the outline at any angle; shader hooks see it too.
+
+API (engine/paint_edges.h):
+- `paintArea(g, rings, type, x0, z0, x1, z1)`: paints an outline (rings in corner coordinates: cell (x, z) spans x..x+1;
+  several rings even-odd, for holes) in pavement paint `type` (0..7 as `flags & 7`; the game's asphalt 0, paving stones
+  2): whole cells get the paint, crossed cells an edge (the best one or two lines, fitted by sampling the outline in the
+  cell; a second line covers corners, also inner ones). Water cells are skipped. Returns the cells and their rect.
+- `paintAreaCells(W, L, rings)`: the same without touching a grid (the caller decides per cell).
+- `timelineRecordPaintEdges(vm, timeline, g, x, z, w, l)` (timeline.h): records the rect's edges for undo; record the
+  cells' flags as before (e.g. the import's terrain patch), then the edges. Call `gridEditCellsChanged` for live edits.
+
+Saving: map.grid section `0x07F20000` (u32 count; per cell u16 x, u16 z, u8 type, u8 lines | join << 4, u16 0, six
+floats), timeline action `0x070810C0` (the rect and its edges). Painting a cell by hand (terrain menu, either brush)
+drops its edge; map resizes move the edges. The minimap and the simulation still read the cell flags only (a cut cell
+counts as its flags say).
+
 ## 3. Testing and debugging
 
 | Switch | Effect |
@@ -205,6 +227,7 @@ bend tighter than the kind's minimum radius.
 | `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>`, `REGS_TEST_CURVE_METRO=<n>` | n cars / trams / metro cars on random trips between curve lanes (engine/snowplows.cpp) |
 | `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |
+| `REGS_TEST_PAINT_AREA=1` or `=x,z` | at map load: a turned car park in asphalt, a round square and an L in paving stones around the map centre (or cell x, z), with cut edges (engine/grid.cpp) |
 | `REGS_DUMP_TEMPLATES=a,b` (`REGS_DUMP_VERTICES=1`) | a template's size, mesh bounds and UVs per material, paths |
 
 ## 4. Not done
@@ -217,5 +240,5 @@ texture variations on curves.
 
 engine/curve_roads.{h,cpp} (geometry, meshes, junctions, file section), engine/tool_curves.cpp (curve, roundabout,
 wrappers of the tram track, stop and bulldozer tools), engine/sim_graph.cpp (`rebuildCurveNodes`: lanes),
-engine/sim_citizens.cpp (walk map), engine/terrain.cpp (`collectCurves`), engine/tool_tracks.cpp (block ends),
+engine/sim_citizens.cpp (walk map), engine/terrain.cpp (`collectCurves`), engine/paint_edges.{h,cpp} (painted areas' edges), engine/tool_tracks.cpp (block ends),
 data/regs/extend/metro/scripts/editor.script (menu), data/regs/ui/toolbar (icons; `tools/make-toolbar-icon.ps1`).

@@ -73,8 +73,33 @@ struct GridData {
   std::set<uint32_t> curveAnchors;
   // per cell: 1 where a curve put the cell cover (applyCurveCover); picking takes such cells as ground (no item there)
   std::vector<uint8_t> curveCover;
+  // port: the edges of painted areas (owner's request 2026-11-14: painted cells along a slanted outline make a saw
+  // tooth). A cell with an edge is cut along one or two straight lines: the part inside takes the pavement paint
+  // `type` (0..7, as flags & 7 of a painted cell), the part outside is drawn as the cell's own flags say. Lines in the
+  // cell's own coordinates u, v (0..1 from its corner (x, z)): inside where l[k][0]·u + l[k][1]·v + l[k][2] >= 0; two
+  // lines join as both (join 0) or either (join 1). Key paintEdgeKey(x, z). Painting the cell by hand drops its edge.
+  struct PaintEdge {
+    uint8_t type = 0;
+    uint8_t lines = 1;  // 1 or 2
+    uint8_t join = 0;   // 0: inside both lines, 1: inside either
+    float l[2][3] = {{0, 0, 0}, {0, 0, 0}};
+  };
+  std::map<uint32_t, PaintEdge> paintEdges;
 };
 using CurveRoad = GridData::CurveRoad;
+using PaintEdge = GridData::PaintEdge;
+
+// port: the painted areas' edges (GridData::paintEdges) in map.grid: u32 count, then per cell u16 x, u16 z, u8 type,
+// u8 lines | join << 4, u16 0, six floats (the two lines)
+constexpr uint32_t kPaintEdgeSectionTag = 0x07F20000;
+inline uint32_t paintEdgeKey(int x, int z) { return uint32_t(z) << 16 | uint32_t(x & 0xFFFF); }
+// inside the edge at the cell's own u, v (0..1)
+inline bool paintEdgeInside(const PaintEdge& e, float u, float v) {
+  bool a = e.l[0][0] * u + e.l[0][1] * v + e.l[0][2] >= 0;
+  if (e.lines < 2) return a;
+  bool b = e.l[1][0] * u + e.l[1][1] * v + e.l[1][2] >= 0;
+  return e.join ? (a || b) : (a && b);
+}
 
 // An item's turn in its placement x' = x·c + z·s, z' = −x·s + z·c (grid-items.md §2.2): (orient + 2)·90° and the port's
 // free turn (GridData::Item::yaw)
