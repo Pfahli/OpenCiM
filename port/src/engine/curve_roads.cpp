@@ -689,6 +689,19 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
     for (int x = x0; x <= x1; ++x) g.curveCover[size_t(z) * size_t(g.width) + size_t(x)] = 0;
   if (g.curves.empty()) return;
   const float cs = g.cellSize;
+  // a cell whose ground drops more than a unit under the road (a bank, a river channel) stays uncovered: the terrain
+  // draws its slope under the road's edge; covered, it left a hole down to the background (a flat brown face beside a
+  // bridge at a junction on a river bank, OSM import)
+  auto dropsAway = [&](int x, int z, float roadY) {
+    if (g.height.empty()) return false;
+    int lowest = 0x7fff;
+    for (int dz = 0; dz <= 1; ++dz)
+      for (int dx = 0; dx <= 1; ++dx) {
+        int hx = std::min(x + dx, g.width - 1), hz = std::min(z + dz, g.length - 1);
+        lowest = std::min(lowest, int(g.height[size_t(hz) * size_t(g.width) + size_t(hx)]));
+      }
+    return float(lowest) * cs / 256.0f < roadY - 1.0f;
+  };
   for (const CurveRoad& c : g.curves) {
     if (curveIsElevated(c.kind) || c.bridge) continue;  // no ground cover under elevated tracks and bridges
     int cx0, cz0, cx1, cz1;
@@ -706,6 +719,11 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
           inside = std::fabs(side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz);
         }
         if (!inside) continue;
+        {
+          float side, s, px = (float(x) + 0.5f - float(g.width) * 0.5f) * cs, pz = (float(z) + 0.5f - float(g.length) * 0.5f) * cs;
+          curveNearest(d, px, pz, side, s);
+          if (dropsAway(x, z, curveAt(d, s).p.y)) continue;
+        }
         size_t ci = size_t(z) * size_t(g.width) + size_t(x);
         if ((g.flags[ci] & 0x0F00) != 0x0F00) g.curveCover[ci] = 1;  // covered by the curve, not by an item
         g.flags[ci] |= 0x0F00;
@@ -718,6 +736,16 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
     if (cx0 > cx1 || cz0 > cz1) continue;
     std::vector<Vec3> outer = junctionOutline(j, 1, -0.2f, 6);
+    // not over water, a bridge arm's part of the junction or ground more than a cell under it: covered cells there
+    // hide the ground and the terrain hangs its base walls from them into the gap (a flat brown box beside a bridge
+    // that ends at a junction, OSM import)
+    std::vector<std::pair<std::vector<CurveSample>, float>> bridges;
+    float core = 0;
+    for (const CurveArm& a : j.arms) {
+      const CurveRoad& ac = g.curves[size_t(a.curve)];
+      if (ac.bridge) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
+      else core = std::max(core, curveProfile(ac.kind).halfWidth);
+    }
     for (int z = cz0; z <= cz1; ++z)
       for (int x = cx0; x <= cx1; ++x) {
         bool inside = true;
@@ -727,6 +755,19 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
         }
         if (!inside) continue;
         size_t ci = size_t(z) * size_t(g.width) + size_t(x);
+        if (g.flags[ci] & 0x2000) continue;  // water
+        if (dropsAway(x, z, j.centre.y)) continue;  // the ground falling away under the junction
+        if (!bridges.empty()) {
+          float wx = (float(x) + 0.5f - float(g.width) * 0.5f) * cs, wz = (float(z) + 0.5f - float(g.length) * 0.5f) * cs;
+          float fromCentre = std::sqrt((wx - j.centre.x) * (wx - j.centre.x) + (wz - j.centre.z) * (wz - j.centre.z));
+          bool onBridge = false;
+          for (const auto& [shape, hw] : bridges) {
+            float side, s;
+            curveNearest(shape, wx, wz, side, s);
+            if (std::fabs(side) <= hw + 1.5f && fromCentre > core) onBridge = true;
+          }
+          if (onBridge) continue;
+        }
         if ((g.flags[ci] & 0x0F00) != 0x0F00) g.curveCover[ci] = 1;
         g.flags[ci] |= 0x0F00;
       }
