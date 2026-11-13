@@ -2222,10 +2222,15 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
       for (Chain& part : splitWhere(c, under, 0.5, 0.0)) kept.push_back(std::move(part));
     }
     chains.swap(kept);
-    // tracks over an underpass: a short bridge there (the track split around the crossing)
+    // bridges just where they are needed: a leg's stretches over water (a cell of dry bank each side) and, for tracks,
+    // over an underpass become their own short bridge chains (owner 2026-11-13: not a whole simplified leg as a viaduct)
     std::vector<Chain> out;
+    auto wetAt = [&](Pt q) {
+      int cx = int(std::floor(q.first)), cz = int(std::floor(q.second));
+      return cx >= 0 && cz >= 0 && cx < W && cz < L && water[size_t(cz) * size_t(W) + size_t(cx)] != 0;
+    };
     for (const Chain& c : chains) {
-      if (!curveIsTrack(c.kind) || c.bridge) {
+      if (c.kind == 3 || c.bridge) {
         out.push_back(c);
         continue;
       }
@@ -2233,39 +2238,69 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
       cur.pts.assign(1, c.pts.front());
       for (size_t li = 0; li + 1 < c.pts.size(); ++li) {
         Pt p = c.pts[li], q = c.pts[li + 1];
-        double len = std::hypot(q.first - p.first, q.second - p.second);
-        std::vector<double> ts;  // crossings along the leg (0..1)
-        for (const Chain& u : chains) {
-          if (!u.underpass) continue;
-          for (size_t k = 0; k + 1 < u.pts.size(); ++k) {
-            Pt a = u.pts[k], b = u.pts[k + 1];
-            if (!segCross(p, q, a, b)) continue;
-            double dx = q.first - p.first, dz = q.second - p.second, ex = b.first - a.first, ez = b.second - a.second;
-            double den = dx * ez - dz * ex;
-            if (std::fabs(den) < 1e-12) continue;
-            ts.push_back(((a.first - p.first) * ez - (a.second - p.second) * ex) / den);
+        double len = std::max(1e-9, std::hypot(q.first - p.first, q.second - p.second));
+        std::vector<std::pair<double, double>> iv;  // stretches (0..1) to bridge
+        if (curveIsTrack(c.kind))
+          for (const Chain& u : chains) {
+            if (!u.underpass) continue;
+            for (size_t k = 0; k + 1 < u.pts.size(); ++k) {
+              Pt ua = u.pts[k], ub = u.pts[k + 1];
+              if (!segCross(p, q, ua, ub)) continue;
+              double dx = q.first - p.first, dz = q.second - p.second, ex = ub.first - ua.first, ez = ub.second - ua.second;
+              double den = dx * ez - dz * ex;
+              if (std::fabs(den) < 1e-12) continue;
+              double t = ((ua.first - p.first) * ez - (ua.second - p.second) * ex) / den;
+              double half = (halfWidth(0) + 4.0) / cs / len;
+              iv.push_back({t - half, t + half});
+            }
+          }
+        {
+          int n = std::max(2, int(std::ceil(len / 0.25)));
+          int runStart = -1;
+          for (int k = 0; k <= n; ++k) {
+            double t = double(k) / n;
+            bool w = wetAt({p.first + (q.first - p.first) * t, p.second + (q.second - p.second) * t});
+            if (w && runStart < 0) runStart = k;
+            if ((!w || k == n) && runStart >= 0) {
+              double m = 1.5 / len;  // a cell and a half of bank each side
+              iv.push_back({double(runStart) / n - m, (w ? t : double(k - 1) / n) + m});
+              runStart = -1;
+            }
           }
         }
-        std::sort(ts.begin(), ts.end());
-        double from = 0;
-        for (double t : ts) {
-          double half = (halfWidth(0) + 4.0) / cs / std::max(len, 1e-9);  // the road under it and a margin
-          double t0 = std::max(from, t - half), t1 = std::min(1.0, t + half);
+        std::sort(iv.begin(), iv.end());
+        std::vector<std::pair<double, double>> merged;
+        for (auto [t0, t1] : iv) {
+          t0 = std::max(0.0, t0), t1 = std::min(1.0, t1);
           if (t1 <= t0) continue;
-          Pt b0{p.first + (q.first - p.first) * t0, p.second + (q.second - p.second) * t0};
-          Pt b1{p.first + (q.first - p.first) * t1, p.second + (q.second - p.second) * t1};
-          if (t0 > from + 1e-6) cur.pts.push_back(b0);
-          if (cur.pts.size() >= 2) cur.exit1 = -1, out.push_back(cur);
+          if (!merged.empty() && t0 <= merged.back().second + 1.0 / len) merged.back().second = std::max(merged.back().second, t1);
+          else merged.push_back({t0, t1});
+        }
+        double from = 0;
+        for (auto [t0, t1] : merged) {
+          // a stretch reaching a leg's end takes the end point itself (a shared node stays shared)
+          if (t0 < 0.5 / len) t0 = 0;
+          if (t1 > 1 - 0.5 / len) t1 = 1;
+          t0 = std::max(from, t0);
+          if (t1 <= t0) continue;
+          Pt b0 = t0 <= 0 ? p : Pt{p.first + (q.first - p.first) * t0, p.second + (q.second - p.second) * t0};
+          Pt b1 = t1 >= 1 ? q : Pt{p.first + (q.first - p.first) * t1, p.second + (q.second - p.second) * t1};
+          if (t0 > from + 1e-9) cur.pts.push_back(b0);
+          if (cur.pts.size() >= 2) {
+            cur.exit1 = -1;
+            out.push_back(cur);
+          }
           Chain br = c;
           br.pts = {b0, b1};
           br.bridge = true;
-          br.exit0 = br.exit1 = -1;
+          br.exit0 = t0 <= 0 && li == 0 ? c.exit0 : -1;
+          br.exit1 = -1;
           out.push_back(br);
           cur.pts.assign(1, b1);
           cur.exit0 = -1;
           from = t1;
         }
-        if (from < 1.0 - 1e-6) cur.pts.push_back(q);
+        if (from < 1.0 - 1e-9) cur.pts.push_back(q);
       }
       if (cur.pts.size() >= 2) out.push_back(cur);
     }
@@ -2804,6 +2839,20 @@ float groundY(const GridData& g, double wx, double wz) {
 void addCurvesBulk(VM& vm, GridObj* grid, Object* tl, const std::vector<CurveRoad>& cs) {
   GridData& g = *grid->data;
   gridEditBegin(vm, grid);
+  // the corners of water cells keep their height (levelling under junctions and road ends at a bank would lift the
+  // river bed into view: a brown patch at a bridge's end)
+  std::vector<std::pair<size_t, int16_t>> wetCorners;
+  if (!g.height.empty())
+    for (int z = 0; z < g.length; ++z)
+      for (int x = 0; x < g.width; ++x) {
+        bool wet = false;
+        for (int dz = -1; dz <= 0 && !wet; ++dz)
+          for (int dx = -1; dx <= 0 && !wet; ++dx) {
+            int cx = x + dx, cz = z + dz;
+            wet = cx >= 0 && cz >= 0 && cx < g.width && cz < g.length && (g.flags[size_t(cz) * size_t(g.width) + size_t(cx)] & 0x2000);
+          }
+        if (wet) wetCorners.push_back({size_t(z) * size_t(g.width) + size_t(x), g.height[size_t(z) * size_t(g.width) + size_t(x)]});
+      }
   for (const CurveRoad& c : cs) g.curves.push_back(c);
   const float cell = g.cellSize;
   // the ground beside the streets: flat at their height 3 units beyond the edge, easing out over 6 more (the nearest
@@ -2862,6 +2911,7 @@ void addCurvesBulk(VM& vm, GridObj* grid, Object* tl, const std::vector<CurveRoa
         if (insideOutline(outer, wx, wz)) g.height[ci] = target;
       }
   }
+  for (auto [i, h] : wetCorners) g.height[i] = h;
   refreshCurveAnchors(g);
   grid->curveRects.push_back({0, 0, g.width - 1, g.length - 1});
   grid->curvesDirty = true;
