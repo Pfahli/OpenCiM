@@ -3165,6 +3165,29 @@ bool placeRow(VM& vm, GridObj* grid, Apply& a, const std::vector<const BuildingI
     if (c.name == "cornerhouse03" || c.name == "cornerhouse04" || c.name == "small-townbuilding04") cornersMinusX.push_back(&c);
     else if (c.name.rfind("cornerhouse", 0) == 0) cornersPlusX.push_back(&c);
     else if (c.name.rfind("cityhouse", 0) == 0 || c.name.rfind("small-townbuilding", 0) == 0) houses.push_back(&c);
+  // the packages' row houses too (owner 2026-11-13: assets of the other packages; London's, Paris', New York's
+  // blockhouses, the dam houses): narrow, deep enough, not diagonal; one family per row so a row keeps one style
+  auto family = [](const std::string& n) {
+    if (n.rfind("cityhouse", 0) == 0 || n.rfind("small-townbuilding", 0) == 0) return std::string("base");
+    std::string f = n;
+    while (!f.empty() && (std::isdigit((unsigned char)f.back()) || f.back() == '-')) f.pop_back();
+    return f;
+  };
+  std::map<std::string, std::vector<const Candidate*>> families;
+  for (const Candidate* c : houses) families["base"].push_back(c);
+  for (const Candidate& c : it->second) {
+    const std::string& n = c.name;
+    if (n.rfind("cornerhouse", 0) == 0 || n.rfind("cityhouse", 0) == 0 || n.rfind("small-townbuilding", 0) == 0 ||
+        n.find("diagonal") != std::string::npos || (n.size() > 2 && n.compare(n.size() - 2, 2, "-b") == 0))
+      continue;
+    if (c.w <= 7 && c.l >= 4 && c.l <= 12) families[family(n)].push_back(&c);
+  }
+  {
+    std::vector<std::string> keys;
+    for (auto& [k, v] : families)
+      if (!v.empty()) keys.push_back(k);
+    if (!keys.empty()) houses = families[keys[hash32(members.front()->id * 2654435761ull + 5) % keys.size()]];
+  }
   if (houses.empty()) return false;
   // a house: w along the row, l deep (the template turned so); centred at along-row position t
   int placed = 0;

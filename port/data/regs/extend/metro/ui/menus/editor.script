@@ -155,6 +155,7 @@ function regsChooseOsm() {
     $a = regsOsmArea();
     if ((MAIN.$regsOsmPending : false) && $a != null) {
       $regsOsmButton.text = expandPattern($regsStrings.$regs_osm_chosen, regsKm($a[2]), regsKm($a[3]));
+      regsSelectAllDlcs();  // owner 2026-11-13: the import uses the buildings of the other packages too (untick to leave one out)
     } else {
       MAIN.$regsOsmPending = false;
       $regsOsmButton.text = $regsStrings.$regs_osm_newmap;
