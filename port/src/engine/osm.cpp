@@ -569,9 +569,11 @@ struct Way {
   std::vector<std::pair<double, double>> pts;
 };
 struct RoadIn {
-  int kind = 0;  // 0 small road, 1 large road (multi-lane), 2 alley, 3 avenue (trees in the median), 4 express road
+  int kind = 0;  // 0 small road, 1 large road (multi-lane), 2 alley, 3 avenue (trees in the median), 4 express road,
+                 // 5 railway (double track)
   bool bridge = false, oneway = false, treeLined = false, dropped = false;
   bool ring = false;  // junction=roundabout
+  bool underpass = false;  // a short tunnel (under a railway or road): on the ground, what crosses it bridges it
   int cls = 0;   // 0 minor, 1 tertiary, 2 secondary, 3 primary, 4 trunk/motorway
   int lanes = 0;
   double width = 0;  // metres (0 unknown)
@@ -833,6 +835,69 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
   }
   roads.erase(std::remove_if(roads.begin(), roads.end(), [](const RoadIn& r) { return r.dropped; }), roads.end());
 }
+// parallel railway tracks closer than the game's double track is wide (4.5 cells) become one double track on their
+// centre line (OSM maps every single track; each as a double track they would overlap); tracks ending on a merged
+// one's points follow onto the centre line
+void mergeTracks(std::vector<RoadIn>& roads) {
+  const double maxGap = 4.5;
+  auto key = [](std::pair<double, double> q) { return std::pair<long long, long long>{std::llround(q.first * 64), std::llround(q.second * 64)}; };
+  std::map<std::pair<long long, long long>, std::pair<double, double>> moved;
+  auto beside = [](std::pair<double, double> q, const RoadIn& w, double& dist, std::pair<double, double>& foot) {
+    dist = 1e30;
+    bool in = false;
+    for (size_t i = 0; i + 1 < w.pts.size(); ++i) {
+      auto a = w.pts[i], b = w.pts[i + 1];
+      double dx = b.first - a.first, dz = b.second - a.second, l2 = dx * dx + dz * dz;
+      double tr = l2 > 0 ? ((q.first - a.first) * dx + (q.second - a.second) * dz) / l2 : 0, t = std::clamp(tr, 0.0, 1.0);
+      std::pair<double, double> f{a.first + t * dx, a.second + t * dz};
+      double d = std::hypot(f.first - q.first, f.second - q.second);
+      if (d < dist) dist = d, foot = f, in = !((i == 0 && tr < 0) || (i + 2 == w.pts.size() && tr > 1));
+    }
+    return in;
+  };
+  int merged = 0;
+  for (RoadIn& a : roads) {
+    if (a.kind != 5 || a.dropped || a.pts.size() < 2) continue;
+    for (RoadIn& b : roads) {
+      if (&b == &a || b.kind != 5 || b.dropped || b.pts.size() < 2) continue;
+      // most of b lies beside a, closer than the double track is wide
+      int near = 0, all = 0;
+      double d;
+      std::pair<double, double> f;
+      for (auto& q : b.pts) {
+        ++all;
+        if (beside(q, a, d, f) && d < maxGap) ++near;
+      }
+      if (near * 3 < all * 2) continue;
+      // a's points move halfway to b; b goes, its points onto a's new line
+      for (auto& q : a.pts) {
+        double db;
+        std::pair<double, double> fb;
+        if (beside(q, b, db, fb) && db < maxGap) {
+          std::pair<double, double> m{(q.first + fb.first) * 0.5, (q.second + fb.second) * 0.5};
+          moved[key(q)] = m;
+          q = m;
+        }
+      }
+      for (auto& q : b.pts) {
+        beside(q, a, d, f);
+        moved[key(q)] = f;
+      }
+      b.dropped = true;
+      ++merged;
+    }
+  }
+  for (RoadIn& r : roads) {
+    if (r.kind != 5 || r.dropped) continue;
+    for (auto& q : r.pts) {
+      auto it = moved.find(key(q));
+      if (it != moved.end()) q = it->second;
+    }
+  }
+  roads.erase(std::remove_if(roads.begin(), roads.end(), [](const RoadIn& r) { return r.dropped; }), roads.end());
+  if (merged) LOG_INFO("osm: %d railway tracks merged into double tracks", merged);
+}
+
 struct BuildingIn {
   std::string category;
   uint64_t id;
@@ -847,6 +912,11 @@ struct TreeIn {
   int first = 0, second = 0;
   int kind = 3;
 };
+// a railway station (OSM railway=station / halt node), cells
+struct StationIn {
+  double x = 0, z = 0;
+  std::string name;
+};
 struct ImportData {
   int W = 0, L = 0, flags = 0;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
@@ -854,6 +924,7 @@ struct ImportData {
   std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (2 industrial, 3 paving stones)
   std::vector<TreeIn> trees;
   std::vector<RoadIn> roads;
+  std::vector<StationIn> stations;
   std::vector<BuildingIn> buildings;
   std::vector<uint8_t> satellite;
   int satW = 0, satH = 0;
@@ -1087,7 +1158,8 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     if (flags & kStreets)
       q += "way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|"
            "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$\"]" + b + ";way[\"natural\"=\"tree_row\"]" + b +
-           ";way[\"place\"=\"square\"]" + b + ";way[\"amenity\"=\"parking\"]" + b + ";way[\"area:highway\"]" + b + ";";
+           ";way[\"place\"=\"square\"]" + b + ";way[\"amenity\"=\"parking\"]" + b + ";way[\"area:highway\"]" + b +
+           ";way[\"railway\"~\"^(rail|light_rail)$\"]" + b + ";node[\"railway\"~\"^(station|halt)$\"]" + b + ";";
     if (flags & kBuildings)
       q += "way[\"building\"]" + b + ";relation[\"building\"]" + b + ";way[\"landuse\"~\"^(residential|commercial|retail|"
            "industrial)$\"]" + b + ";";
@@ -1162,6 +1234,13 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         const Json& tags = tagsP ? *tagsP : kEmpty;
         std::string type = el.str("type");
         if (type == "node") {
+          if ((flags & kStreets) && (tags.str("railway") == "station" || tags.str("railway") == "halt")) {
+            StationIn st;
+            st.x = fr.cellX(lonToMx(el.num("lon"))), st.z = fr.cellZ(latToMy(el.num("lat")));
+            st.name = tags.str("name");
+            if (st.x >= 0 && st.z >= 0 && st.x < W && st.z < L) data->stations.push_back(st);
+            continue;
+          }
           if ((flags & kTrees) && tags.str("natural") == "tree") {
             int x = int(std::floor(fr.cellX(lonToMx(el.num("lon"))))), z = int(std::floor(fr.cellZ(latToMy(el.num("lat")))));
             if (x >= 1 && z >= 1 && x < W - 1 && z < L - 1) data->trees.push_back({x, z});
@@ -1202,10 +1281,35 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             pavedLines.push_back(pts);
           if (square || tags.str("amenity") == "parking" || !tags.str("area:highway").empty()) continue;
         }
+        // railways (owner 2026-11-13: tracks and the station were missing): main lines as the railway's double track
+        if ((flags & kStreets) && type == "way" && (tags.str("railway") == "rail" || tags.str("railway") == "light_rail")) {
+          std::string sv = tags.str("service");
+          if (tags.str("tunnel") == "yes" || tags.num("layer", 0) < 0 || sv == "yard" || sv == "siding" || sv == "spur" ||
+              sv == "crossover")
+            continue;
+          RoadIn r;
+          r.kind = 5;
+          r.bridge = tags.str("bridge") == "yes" || tags.str("bridge") == "viaduct";
+          r.name = tags.str("name");
+          r.pts = std::move(pts);
+          data->roads.push_back(std::move(r));
+          continue;
+        }
         if (!hw.empty() && type == "way") {
-          if (tags.str("tunnel") == "yes" || tags.str("tunnel") == "building_passage" || tags.num("layer", 0) < 0) continue;
+          // tunnels: a short one (an underpass, up to 80 m) stays on the ground and what runs over it gets a bridge there
+          // (owner 2026-11-13: a street under the railway did not reach its roundabout); longer ones are left out
+          bool tunnel = tags.str("tunnel") == "yes" || tags.str("tunnel") == "building_passage" || tags.num("layer", 0) < 0;
+          bool under = false;
+          if (tunnel) {
+            double len = 0;
+            for (size_t i = 0; i + 1 < pts.size(); ++i)
+              len += std::hypot(pts[i + 1].first - pts[i].first, pts[i + 1].second - pts[i].second) * cellM;
+            if (len > 80.0) continue;
+            under = true;
+          }
           if (tags.str("area") == "yes") continue;
           RoadIn r;
+          r.underpass = under;
           r.kind = hw == "pedestrian" ? 2 : 0;
           r.cls = (hw == "motorway" || hw == "trunk") ? 4 : hw == "primary" ? 3 : hw == "secondary" ? 2 : hw == "tertiary" ? 1 : 0;
           r.bridge = tags.str("bridge") == "yes" || tags.str("bridge") == "viaduct";
@@ -1273,6 +1377,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       }
   osm = Json();
   classifyRoads(data->roads, treeRows, cellM);
+  mergeTracks(data->roads);
   // water: lakes and river areas, river lines, the sea behind the coastline
   std::vector<uint8_t>& water = data->water;
   if (flags & kWater) {
@@ -1536,7 +1641,8 @@ struct Apply {
   std::vector<int> made;
   Object* timeline = nullptr;
   bool gridStreets = false;
-  std::vector<char> inRow;  // buildings a row of city houses took  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
+  std::vector<char> inRow;  // buildings a row of city houses took
+  int stationsPlaced = 0;  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
   int curvesMade = 0;
   int roadsOk = 0, roadsFailed = 0, buildingsPlaced = 0, treesPlaced = 0;
 };
@@ -1847,6 +1953,7 @@ struct Node {
   int exit = -1;        // the map-edge stub it ends on
   bool corner = false;  // a sharp bend: its two roads meet as a junction
   bool fixed = false;   // a roundabout's point: never moved, merged or dropped
+  bool track = false;   // a track's point: tracks have no junction pieces (they only join smoothly)
   bool alive = true;
 };
 struct Seg {
@@ -1883,6 +1990,7 @@ struct Chain {
   int kind = 0;
   uint8_t flags = 0;
   bool bridge = false;
+  bool underpass = false;
   int exit0 = -1, exit1 = -1;  // the map side the first / last point lies on (clipped there), -1 none
 };
 
@@ -2019,9 +2127,10 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
     if (r.pts.size() < 2) continue;
     Chain c;
     c.pts = r.pts;
-    c.kind = r.kind == 2 ? 3 : r.kind == 3 ? 2 : (r.kind == 1 || r.kind == 4) ? 1 : 0;
+    c.kind = r.kind == 5 ? 6 : r.kind == 2 ? 3 : r.kind == 3 ? 2 : (r.kind == 1 || r.kind == 4) ? 1 : 0;
     c.bridge = r.bridge;
-    if (r.ring) c.kind = 0;  // roundabouts: one-way small roads (large ones are not supported yet)
+    c.underpass = r.underpass;
+    if (r.ring && r.kind != 5) c.kind = 0;  // roundabouts: one-way small roads (large ones are not supported yet)
     if (c.kind == 0 && (r.oneway || r.ring)) {
       bool single = r.lanes == 1 || (r.lanes == 0 && (r.ring || r.cls == 0));
       c.flags = uint8_t(0x20 | (single ? 0x40 : 0) | (r.ring ? 0x80 : 0));
@@ -2113,24 +2222,74 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
       for (Chain& part : splitWhere(c, under, 0.5, 0.0)) kept.push_back(std::move(part));
     }
     chains.swap(kept);
+    // tracks over an underpass: a short bridge there (the track split around the crossing)
+    std::vector<Chain> out;
+    for (const Chain& c : chains) {
+      if (!curveIsTrack(c.kind) || c.bridge) {
+        out.push_back(c);
+        continue;
+      }
+      Chain cur = c;
+      cur.pts.assign(1, c.pts.front());
+      for (size_t li = 0; li + 1 < c.pts.size(); ++li) {
+        Pt p = c.pts[li], q = c.pts[li + 1];
+        double len = std::hypot(q.first - p.first, q.second - p.second);
+        std::vector<double> ts;  // crossings along the leg (0..1)
+        for (const Chain& u : chains) {
+          if (!u.underpass) continue;
+          for (size_t k = 0; k + 1 < u.pts.size(); ++k) {
+            Pt a = u.pts[k], b = u.pts[k + 1];
+            if (!segCross(p, q, a, b)) continue;
+            double dx = q.first - p.first, dz = q.second - p.second, ex = b.first - a.first, ez = b.second - a.second;
+            double den = dx * ez - dz * ex;
+            if (std::fabs(den) < 1e-12) continue;
+            ts.push_back(((a.first - p.first) * ez - (a.second - p.second) * ex) / den);
+          }
+        }
+        std::sort(ts.begin(), ts.end());
+        double from = 0;
+        for (double t : ts) {
+          double half = (halfWidth(0) + 4.0) / cs / std::max(len, 1e-9);  // the road under it and a margin
+          double t0 = std::max(from, t - half), t1 = std::min(1.0, t + half);
+          if (t1 <= t0) continue;
+          Pt b0{p.first + (q.first - p.first) * t0, p.second + (q.second - p.second) * t0};
+          Pt b1{p.first + (q.first - p.first) * t1, p.second + (q.second - p.second) * t1};
+          if (t0 > from + 1e-6) cur.pts.push_back(b0);
+          if (cur.pts.size() >= 2) cur.exit1 = -1, out.push_back(cur);
+          Chain br = c;
+          br.pts = {b0, b1};
+          br.bridge = true;
+          br.exit0 = br.exit1 = -1;
+          out.push_back(br);
+          cur.pts.assign(1, b1);
+          cur.exit0 = -1;
+          from = t1;
+        }
+        if (from < 1.0 - 1e-6) cur.pts.push_back(q);
+      }
+      if (cur.pts.size() >= 2) out.push_back(cur);
+    }
+    chains.swap(out);
   }
   // 3. nodes: shared OSM points are one node (footpaths their own), simplified chains, legs
-  auto key = [](Pt q, bool foot) {
-    return std::tuple<long long, long long, bool>{std::llround(q.first * 64), std::llround(q.second * 64), foot};
+  // the node classes: roads, footpaths, each track kind (they meet only their own)
+  auto key = [](Pt q, int cls) {
+    return std::tuple<long long, long long, int>{std::llround(q.first * 64), std::llround(q.second * 64), cls};
   };
-  std::map<std::tuple<long long, long long, bool>, int> nodeOf;
+  std::map<std::tuple<long long, long long, int>, int> nodeOf;
   std::map<int, int> chainsAt;  // node → how many chains pass it
   std::vector<std::vector<int>> ids(chains.size());
   for (size_t ci = 0; ci < chains.size(); ++ci) {
     std::set<int> seen;
     for (Pt q : chains[ci].pts) {
-      auto k = key(q, chains[ci].kind == 3);
+      auto k = key(q, curveJoinClass(chains[ci].kind));
       auto it = nodeOf.find(k);
       int id;
       if (it == nodeOf.end()) {
         id = int(P.nodes.size());
         Node n;
         n.x = (q.first - W * 0.5) * cs, n.z = (q.second - L * 0.5) * cs, n.foot = chains[ci].kind == 3;
+        n.track = curveIsTrack(chains[ci].kind);
         P.nodes.push_back(n);
         nodeOf[k] = id;
       } else id = it->second;
@@ -2141,7 +2300,7 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
   }
   // the map-edge stubs
   auto makeExit = [&](int nodeId, int side, int kind) {
-    if (kind == 3 || kind == 2) return;  // footpaths and avenues end free at the edge
+    if (kind == 3 || kind == 2 || kind >= 4) return;  // footpaths, avenues and tracks end free at the edge
     Node& n = P.nodes[size_t(nodeId)];
     double cx = n.x / cs + W * 0.5, cz = n.z / cs + L * 0.5;
     Exit e;
@@ -2426,7 +2585,7 @@ void tidy(Plan& P) {
     Geo G = arms(P);
     std::vector<double> R(P.nodes.size(), -1);
     auto radius = [&](int n) {
-      if (R[size_t(n)] < 0) R[size_t(n)] = junction(P, G, n) ? junctionShape(P, G, n).radius : 0.0;
+      if (R[size_t(n)] < 0) R[size_t(n)] = !P.nodes[size_t(n)].track && junction(P, G, n) ? junctionShape(P, G, n).radius : 0.0;
       return R[size_t(n)];
     };
     std::vector<std::pair<double, int>> order;
@@ -2554,6 +2713,22 @@ CurveRoad curveOf(const Plan& P, const Geo& G, const std::map<int, JunctionShape
       chordDir(P, other, o, dx, dz);
       return;
     }
+    if (N.track && G.arms[size_t(n)].size() >= 2) {  // a track's branch: on into the straightest other arm
+      double mx, mz, best = 2;
+      int partner = -1;
+      chordDir(P, n, o, mx, mz);
+      for (int other : G.arms[size_t(n)]) {
+        if (other == si) continue;
+        double ox, oz;
+        chordDir(P, n, otherEnd(P.segs[size_t(other)], n), ox, oz);
+        double dd = mx * ox + mz * oz;
+        if (dd < best) best = dd, partner = otherEnd(P.segs[size_t(other)], n);
+      }
+      if (partner >= 0 && best < -0.5) {
+        chordDir(P, partner, o, dx, dz);
+        return;
+      }
+    }
     chordDir(P, n, o, dx, dz);
   };
   double d0x, d0z, d1x, d1z;
@@ -2580,7 +2755,7 @@ std::vector<CurveRoad> curves(Plan& P) {
     Geo G = arms(P);
     std::map<int, JunctionShape> J;
     for (size_t n = 0; n < P.nodes.size(); ++n)
-      if (P.nodes[n].alive && junction(P, G, int(n))) J[int(n)] = junctionShape(P, G, int(n));
+      if (P.nodes[n].alive && !P.nodes[n].track && junction(P, G, int(n))) J[int(n)] = junctionShape(P, G, int(n));
     out.clear();
     bool again = false;
     for (size_t i = 0; i < P.segs.size(); ++i) {
@@ -2591,7 +2766,7 @@ std::vector<CurveRoad> curves(Plan& P) {
         out.push_back(c);
         continue;
       }
-      if (P.segs[i].fixed) {  // a roundabout's arc stays
+      if (P.segs[i].fixed || curveIsTrack(P.segs[i].kind)) {  // a roundabout's arc stays; tracks keep their line
         out.push_back(c);
         continue;
       }
@@ -2811,7 +2986,7 @@ struct StreetIndex {
     pts.clear(), bucket.clear();
     const float cs = g.cellSize;
     for (const CurveRoad& c : g.curves) {
-      if (c.kind == 3) continue;  // footpaths: houses face the streets
+      if (c.kind == 3 || curveIsTrack(c.kind)) continue;  // footpaths and tracks: houses face the streets
       const float hw = curveProfile(c.kind).halfWidth / cs;
       for (const CurveSample& sm : sampleCurve(c, 2.0f)) {
         float l = std::hypot(sm.dir.x, sm.dir.z);
@@ -2933,9 +3108,12 @@ bool placeRow(VM& vm, GridObj* grid, Apply& a, const std::vector<const BuildingI
   const int orient2 = side & 1;
   auto it = cache.find("blockhouses");
   if (it == cache.end()) it = cache.emplace("blockhouses", categoryTemplates(vm, grid, buildingsList, "blockhouses")).first;
-  std::vector<const Candidate*> houses, corners;
+  // the original maps (research 2026-11-13, item dumps of Berlin, Amsterdam, Helsinki): city houses have their street on
+  // model -Z; the corner houses 01, 02, 05, 06 on -Z and +X, 03, 04 and small-townbuilding04 on -Z and -X
+  std::vector<const Candidate*> houses, cornersPlusX, cornersMinusX;
   for (const Candidate& c : it->second)
-    if (c.name.rfind("cornerhouse", 0) == 0) corners.push_back(&c);
+    if (c.name == "cornerhouse03" || c.name == "cornerhouse04" || c.name == "small-townbuilding04") cornersMinusX.push_back(&c);
+    else if (c.name.rfind("cornerhouse", 0) == 0) cornersPlusX.push_back(&c);
     else if (c.name.rfind("cityhouse", 0) == 0 || c.name.rfind("small-townbuilding", 0) == 0) houses.push_back(&c);
   if (houses.empty()) return false;
   // a house: w along the row, l deep (the template turned so); centred at along-row position t
@@ -2975,9 +3153,13 @@ bool placeRow(VM& vm, GridObj* grid, Apply& a, const std::vector<const BuildingI
   uint32_t h = hash32(members.front()->id);
   double from = -len * 0.5, to = len * 0.5;
   // corner houses where a second street crosses at an end
-  for (int end = 0; end < 2 && !corners.empty(); ++end) {
+  for (int end = 0; end < 2; ++end) {
     double t = end ? to : from;
     if (!streetCorner(cx + ux * t + vx * sgn * depth * 0.5, cz + uz * t + vz * sgn * depth * 0.5, 4.0)) continue;
+    // the model +X side: the front (towards the street) turned 90° clockwise seen from above
+    double fx = vx * sgn, fz = vz * sgn, px = -fz, pz = fx, ex = end ? ux : -ux, ez = end ? uz : -uz;
+    const auto& corners = ex * px + ez * pz > 0 ? cornersPlusX : cornersMinusX;  // the corner on the end's side
+    if (corners.empty()) continue;
     const Candidate& c = *corners[(h >> (4 * end)) % corners.size()];
     if (c.w > to - from) continue;
     if (put(c, end ? to - c.w * 0.5 : from + c.w * 0.5)) {
@@ -3090,7 +3272,8 @@ void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const
     const bool corner = std::min(ex, ez) >= 5.5 && std::max(ex, ez) < 1.4 * std::min(ex, ez) &&
                         streetCorner(ccx, ccz, std::max(ex, ez) * 0.5 + 3.0);  // only at a street corner
     for (const Candidate& c : it->second)
-      if (corner ? c.name.rfind("cornerhouse", 0) == 0 : (c.name.rfind("cityhouse", 0) == 0 || c.name.rfind("small-townbuilding", 0) == 0))
+      if (corner ? (c.name.rfind("cornerhouse", 0) == 0 || c.name == "small-townbuilding04")
+                 : (c.name.rfind("cityhouse", 0) == 0 || (c.name.rfind("small-townbuilding", 0) == 0 && c.name != "small-townbuilding04")))
         cands.push_back(c);
     // too small a footprint for any of them (a single house wall to wall with its garage): the usual buildings
     bool fits = false;
@@ -3255,9 +3438,83 @@ void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const
     }
 }
 
+// the railway stations (owner 2026-11-13): the game's railway-station (14 × 5, its own two platform tracks along its −Z
+// side, 8 cells deep) parallel to the nearest railway, its tracks beside the main line, on the station node's side
+void placeStations(VM& vm, GridObj* grid, Apply& a, const std::vector<StationIn>& stations) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  const std::string name = "railway-station";
+  if (stations.empty() || !grid->templates.count(name)) return;
+  const float cs = g.cellSize;
+  struct RP {
+    double x, z, tx, tz;
+  };
+  std::vector<RP> rail;
+  for (const CurveRoad& c : g.curves) {
+    if (c.kind != 6) continue;
+    for (const CurveSample& sm : sampleCurve(c, 2.0f)) {
+      double l = std::hypot(sm.dir.x, sm.dir.z);
+      if (l > 1e-4) rail.push_back({sm.p.x / cs + W * 0.5, sm.p.z / cs + L * 0.5, sm.dir.x / l, sm.dir.z / l});
+    }
+  }
+  const int w = 14, l = 5;
+  for (const StationIn& st : stations) {
+    const RP* best = nullptr;
+    double bd = 20.0;
+    for (const RP& r : rail) {
+      double d = std::hypot(r.x - st.x, r.z - st.z);
+      if (d < bd) bd = d, best = &r;
+    }
+    if (!best) continue;
+    double ux = best->tx, uz = best->tz, vx = -uz, vz = ux;
+    double sgn = (st.x - best->x) * vx + (st.z - best->z) * vz >= 0 ? 1.0 : -1.0;  // the station's side
+    const double quarter = kPi / 2, th = std::atan2(uz, ux);
+    const double rem = th - std::round(th / quarter) * quarter;
+    const double Ux = std::cos(rem), Uz = std::sin(rem), Vx = -Uz, Vz = Ux;
+    double fx = -vx * sgn, fz = -vz * sgn, lu = fx * Ux + fz * Uz, lv = fx * Vx + fz * Vz;  // the front: to the line
+    const int side = std::fabs(lu) > std::fabs(lv) ? (lu > 0 ? 1 : 3) : (lv > 0 ? 2 : 0);
+    const int orient2 = side & 1;
+    const int sx = orient2 ? l : w, sz = orient2 ? w : l;
+    const double off = 2.0 + 8.0 + l * 0.5;  // the main line's half width, the platform tracks, half the building
+    double px = best->x + vx * sgn * off, pz = best->z + vz * sgn * off;
+    int x = int(std::lround(px - sx * 0.5)), z = int(std::lround(pz - sz * 0.5));
+    // the building's cells and the platform tracks' strip must be free
+    std::vector<size_t> cells;
+    bool free = true;
+    double hx = w * 0.5, hzBack = l * 0.5, hzFront = l * 0.5 + 8.0;
+    for (int zz = int(std::floor(pz - 16)); zz <= int(std::ceil(pz + 16)) && free; ++zz)
+      for (int xx = int(std::floor(px - 16)); xx <= int(std::ceil(px + 16)) && free; ++xx) {
+        double dx = xx + 0.5 - px, dz = zz + 0.5 - pz;
+        double along = dx * ux + dz * uz, across = (dx * vx + dz * vz) * sgn;  // across > 0: away from the line
+        if (std::fabs(along) > hx || across > hzBack || across < -hzFront) continue;
+        if (xx < 1 || zz < 1 || xx >= W - 1 || zz >= L - 1) {
+          free = false;
+          break;
+        }
+        size_t ci = size_t(zz) * size_t(W) + size_t(xx);
+        if (a.used[ci] == 3) free = false;  // buildings are in the way (trees, paving and the like give way)
+        cells.push_back(ci);
+      }
+    if (!free) continue;
+    int orient = frontOrient(side);
+    if ((orient & 1) != orient2) orient = (orient + 1) & 3;
+    int made = addItem(vm, grid, a, name, x, maxCorner(g, x, z, sx, sz), z, orient);
+    if (made < 0) continue;
+    GridData::Item& item = g.items[size_t(made)];
+    const float half = cs * 0.5f;
+    item.yaw = float(-rem);
+    item.offX = std::clamp(float((px - (x + sx * 0.5)) * cs), -half, half);
+    item.offZ = std::clamp(float((pz - (z + sz * 0.5)) * cs), -half, half);
+    for (size_t ci : cells) a.used[ci] = 3;
+    ++a.stationsPlaced;
+    LOG_INFO("osm: station '%s' placed", st.name.c_str());
+  }
+}
+
 // a building lined up along its street, else (nothing fits that way) as OSM has it
 void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
                    std::map<std::string, std::vector<Candidate>>& cache) {
+  if (b.category == "railway" && a.stationsPlaced) return;  // the station building stands at its track already
   int before = a.buildingsPlaced;
   placeBuildingAs(vm, grid, a, b, buildingsList, cache, true);
   if (a.buildingsPlaced == before) placeBuildingAs(vm, grid, a, b, buildingsList, cache, false);
@@ -3498,6 +3755,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           LOG_INFO("osm: buildings '%s': %s", cat.c_str(), all.c_str());
         }
     gridEditBegin(vm, grid);
+    if (a.next == 0) placeStations(vm, grid, a, d.stations);  // the stations before anything else takes their place
     if (a.next == 0) {  // the rows of city houses first; their buildings are done then
       // a row split by the street its buildings face (a block's rows turn at its corners): the nearest street's
       // direction in 20° steps

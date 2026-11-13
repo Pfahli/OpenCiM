@@ -246,9 +246,19 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   node are left out, footpaths keep off roads; the ground beside the streets levelled 3 units wide (hills).
   REGS_OSM_GRID=1 builds the old block-grid network instead. Buildings fitted to footprints by category (wall-to-wall ones as the city houses / corner houses in rows), turned to
   the footprint's angle (yaw and offX/offZ of the free turn; REGS_OSM_NOTURN=1 off).
-  Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); bridges (none on
-  curves yet); tram tracks from railway=tram; junctions of large roads at shallow angles (radius capped at 40, the
-  arm goes); one-way large roads (not supported on curves); tiny water areas (fountains) left out; the minimap does not draw curves.
+  2026-11-13 (owner's test runs, Bruchsal): road kinds from the real lane count (lanes 2-3 small, 4+ large), one kind
+  per named street, kind changes as junction pieces; roundabouts rebuilt as the game's roundabouts (radius for their
+  arms); bridges as the curve tool's bridge curves (OSM bridges and legs over water, decks clear of what they cross);
+  short tunnels (underpasses up to 80 m) on the ground with a bridge for the track over them; railways (rail,
+  light_rail, no sidings) as railway curves, parallel tracks closer than 4.5 cells merged into one double track;
+  stations (railway=station/halt) as the game's railway-station beside the line; buildings lined up along their
+  street (angle, front, building line), rows of wall-to-wall buildings as city houses edge to edge per street side,
+  corner houses only at street corners and of the type whose corner faces the crossing street (research of the
+  original maps: city houses front on model -Z, corner houses 01/02/05/06 also +X, 03/04 and small-townbuilding04
+  also -X); rounded river banks except at buildings.
+  Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); level crossings
+  (tracks have no crossing piece on curves); tram tracks from railway=tram; station platforms; what the owner means
+  by the concrete areas not being right.
 - [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
