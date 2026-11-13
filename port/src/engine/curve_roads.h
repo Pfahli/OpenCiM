@@ -50,6 +50,9 @@ inline bool curveIsElevated(int kind) { return kind == 5; }
 // which curve ends may meet: roads of all kinds, footpaths, and each track kind on its own
 inline int curveJoinClass(int kind) { return kind >= 3 ? kind : 0; }
 const CurveProfile& curveProfile(int kind);
+// a bridge curve's span template bent along it and its pillar, per kind ("" none)
+const char* curveBridgePiece(int kind);
+const char* curveBridgePillar(int kind);
 // the driving lanes' offsets right of the centre line (one direction; the other mirrors), and their medium
 struct CurveLanes {
   int count;

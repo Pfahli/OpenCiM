@@ -54,6 +54,19 @@ The tool refuses a road that the junction would use up (an arm shorter than the 
 | metro, elevated | 6 | – | 20 | bent `metro_elevated_basic`, pillars under every joint; ground left as it is |
 | railway (double track) | 6 | – | 20 | bent `track_double_basic`; track tab of the traffic menu |
 
+### Bridges (curves)
+
+A curve can be a bridge (`CurveRoad::bridge = 1`). It is meant for the OSM import's `bridge=yes` ways and legs over water.
+- The deck runs at the curve's own heights: y0 and y1, eased along it. The ground or water under it stays as it is (no
+  levelling, no cell cover).
+- It is drawn with the kind's bridge span bent along it, railings included: `bridge_rsmall_gap`, `bridge_rlarge_gap`,
+  `bridge_ravenue_gap`, and `bridge_tdouble_gap` for the railway. The span's pillar stands every 24 units, its foot
+  24 units under the deck. Footpaths and metro tracks keep their plain piece and get no pillars.
+- Lanes and the walk map are as on any curve of the kind, at the deck's height.
+- Its ends join other curves and junctions by the same point rule.
+- The curve tool lays bridges while `regsCurveToolBridge(true)` is set (test switch: `REGS_TEST_CURVE_BRIDGE=1`). They
+  start two cells over the ground and pass over anything a cell lower than the deck. There is no menu button yet.
+
 ### Tracks
 
 The build menu's metro tab ends with straight, curve and freeform for ground and elevated metro tracks, and the traffic
@@ -139,6 +152,7 @@ A curve is **not** a grid item. `GridData::curves` (engine/grid.h) holds `CurveR
 | `kind` | 0 small, 1 large, 2 avenue, 3 alley, 4 metro (ground), 5 metro (elevated), 6 railway |
 | `ends` | bit 0: start on a grid road block (the curve continues its straight piece), bit 1: end on a block, bit 2: tram tracks, bit 3 / 4: start / end on a grass tram track (small roads), bit 5: one-way (start → end), bit 6: with bit 5 one lane, bit 7: part of a roundabout ring |
 | `stops` | `{s, side ±1, kind 0 bus / 1 tram, design}` (small roads) |
+| `bridge` | 1: a bridge (see above); saved in the second byte of the kind (section and timeline bytes) |
 
 Rules the renderer, lanes and walk map rely on:
 - **Joins and junctions are found by position**: curve ends of road kinds within 0.2 units of each other form a joint;
@@ -188,7 +202,7 @@ bend tighter than the kind's minimum radius.
 
 ## 4. Not done
 
-Bridges, tunnels and express roads on curves; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
+Tunnels and express roads on curves, abutments at bridge ends, a bridge button; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
 on large-road and avenue curves; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 

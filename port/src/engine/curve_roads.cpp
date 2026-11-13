@@ -226,6 +226,25 @@ CurveSample curveAt(const std::vector<CurveSample>& d, float s) {
   return r;
 }
 
+// the bridge span bent along a bridge curve and its pillar ("" none: the plain piece, no pillars)
+const char* curveBridgePiece(int kind) {
+  switch (kind) {
+    case 0: return "bridge_rsmall_gap";
+    case 1: return "bridge_rlarge_gap";
+    case 2: return "bridge_ravenue_gap";
+    case 6: return "bridge_tdouble_gap";
+    default: return "";
+  }
+}
+const char* curveBridgePillar(int kind) {
+  switch (kind) {
+    case 0: return "bridge_rsmall2_pillar";
+    case 1: return "bridge_rlarge_pillar";
+    case 2: return "bridge_ravenue_pillar";
+    default: return "";
+  }
+}
+
 const CurveProfile& curveProfile(int kind) {
   // sizes from the templates (REGS_DUMP_TEMPLATES): large and avenue pieces are 24 units long (two blocks), the large
   // road 24 wide with asphalt ±6, the avenue 30 wide with asphalt ±10.5 around its median, the footpath 3 × 3
@@ -627,7 +646,7 @@ static bool beyondBlockEnd(const CurveRoad& c, float x, float z) {
 
 void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
   GridData& g = *grid->data;
-  if (g.height.empty() || curveIsElevated(c.kind)) return;  // elevated tracks leave the ground as it is
+  if (g.height.empty() || curveIsElevated(c.kind) || c.bridge) return;  // elevated tracks and bridges leave the ground
   std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
@@ -671,7 +690,7 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
   if (g.curves.empty()) return;
   const float cs = g.cellSize;
   for (const CurveRoad& c : g.curves) {
-    if (curveIsElevated(c.kind)) continue;  // no ground cover under elevated tracks
+    if (curveIsElevated(c.kind) || c.bridge) continue;  // no ground cover under elevated tracks and bridges
     int cx0, cz0, cx1, cz1;
     curveCells(g, c, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
@@ -715,11 +734,11 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
 }
 
 // one curve: 13 floats (the 13th the end flags), i32 kind, u32 stop count, per stop f32 s, i8 side, u8 kind, u8 design,
-// u8 0 (format 2: the count's bit 31 set; format 1 had no stop count)
+// u8 0 (format 2: the count's bit 31 set; format 1 had no stop count). The kind's second byte: the bridge flag.
 static void writeCurve(const CurveRoad& c, std::vector<uint8_t>& out) {
   auto put = [&](const void* p, size_t n) { out.insert(out.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
   float f[13] = {c.x0, c.y0, c.z0, c.dx0, c.dz0, c.x1, c.y1, c.z1, c.dx1, c.dz1, c.a, c.b, float(c.ends)};
-  int32_t kind = c.kind;
+  int32_t kind = (c.kind & 0xff) | (int32_t(c.bridge) << 8);
   uint32_t n = uint32_t(c.stops.size());
   put(f, sizeof(f)), put(&kind, 4), put(&n, 4);
   for (const CurveRoad::Stop& st : c.stops) {
@@ -739,7 +758,8 @@ static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, boo
   c = CurveRoad();
   c.x0 = f[0], c.y0 = f[1], c.z0 = f[2], c.dx0 = f[3], c.dz0 = f[4];
   c.x1 = f[5], c.y1 = f[6], c.z1 = f[7], c.dx1 = f[8], c.dz1 = f[9];
-  c.a = f[10], c.b = f[11], c.kind = kind, c.ends = uint8_t(int(f[12]) & 255);
+  c.a = f[10], c.b = f[11], c.kind = kind & 0xff, c.ends = uint8_t(int(f[12]) & 255);
+  c.bridge = uint8_t((kind >> 8) & 0xff);
   if (!v2) return true;
   if (p + 4 > stop) return false;
   uint32_t n;
