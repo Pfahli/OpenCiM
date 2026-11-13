@@ -2966,7 +2966,7 @@ float groundAbovePavement(const GridData& g, const std::vector<CurveRoad>& cs, i
 void markCurveCells(const GridData& g, const std::vector<CurveRoad>& cs, std::vector<uint8_t>& used) {
   const float cell = g.cellSize;
   for (const CurveRoad& c : cs) {
-    float r = curveProfile(c.kind).halfWidth + 1.5f;
+    float r = curveProfile(c.kind).halfWidth + (c.bridge ? 4.0f : 1.5f);  // bridges: room for their parapets and ramps
     for (const CurveSample& s : sampleCurve(c, 1.5f)) {
       int x0 = int(std::floor((s.p.x - r) / cell + g.width * 0.5f)), x1 = int(std::floor((s.p.x + r) / cell + g.width * 0.5f));
       int z0 = int(std::floor((s.p.z - r) / cell + g.length * 0.5f)), z1 = int(std::floor((s.p.z + r) / cell + g.length * 0.5f));
@@ -3754,37 +3754,83 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     }
     for (streets::Node& n : plan.nodes)
       if (n.alive && n.exit < 0) n.y = groundY(g, n.x, n.z) + 0.2f;
-    // bridge decks: at least their higher end, clear of the ground under them, 6 units over streets an OSM bridge
-    // crosses; their end points lifted to the deck (the streets beyond ramp up to it)
+    // bridge decks (fixed 2026-11-14 with the curve session's check of the Bruchsal map: decks lay at the channel bed,
+    // hidden by its walls): a point in a channel (water within 5 cells, its ground 2+ units under the highest ground
+    // within 5 cells) makes its legs bridges; each run of joined bridge legs gets one deck: the highest of its points
+    // on solid ground (the banks), at least 1 unit over the ground under it, 6 over streets an OSM bridge crosses
     {
-      auto crossesStreet = [&](const streets::Seg& b) {
-        const streets::Node &A = plan.nodes[size_t(b.a)], &B = plan.nodes[size_t(b.b)];
+      const float cs2 = g.cellSize;
+      auto lowNode = [&](const streets::Node& n) {
+        int cx = int(std::floor(n.x / cs2 + W * 0.5)), cz = int(std::floor(n.z / cs2 + L * 0.5));
+        bool wet = false;
+        float hi = -1e9f;
+        for (int dz = -5; dz <= 5; ++dz)
+          for (int dx = -5; dx <= 5; ++dx) {
+            int x = cx + dx, z = cz + dz;
+            if (x < 0 || z < 0 || x >= W || z >= L) continue;
+            if (std::abs(dx) <= 2 && std::abs(dz) <= 2 && d.water.size() == size_t(W) * size_t(L) &&
+                d.water[size_t(z) * size_t(W) + size_t(x)])
+              wet = true;  // the water right by it (not a street along the bank)
+            hi = std::max(hi, float(g.height[size_t(z) * size_t(W) + size_t(x)]) * cs2 / 256.0f);
+          }
+        return wet && groundY(g, n.x, n.z) < hi - 2.0f;
+      };
+      std::vector<char> low(plan.nodes.size(), 0);
+      for (size_t i = 0; i < plan.nodes.size(); ++i)
+        if (plan.nodes[i].alive && plan.nodes[i].exit < 0 && !plan.nodes[i].foot) low[i] = lowNode(plan.nodes[i]);
+      for (streets::Seg& sg : plan.segs)
+        if (sg.alive && !sg.fixed && sg.kind != 3 && (low[size_t(sg.a)] || low[size_t(sg.b)])) {
+          const streets::Node &A = plan.nodes[size_t(sg.a)], &B = plan.nodes[size_t(sg.b)];
+          if (std::hypot(B.x - A.x, B.z - A.z) <= 30.0) sg.bridge = true;  // short legs into the channel (long ones ramp)
+        }
+      auto crossesStreet = [&](const streets::Seg& br) {
+        const streets::Node &A = plan.nodes[size_t(br.a)], &B = plan.nodes[size_t(br.b)];
         for (const streets::Seg& o : plan.segs) {
-          if (!o.alive || o.bridge || o.a == b.a || o.a == b.b || o.b == b.a || o.b == b.b) continue;
+          if (!o.alive || o.bridge || o.a == br.a || o.a == br.b || o.b == br.a || o.b == br.b) continue;
           const streets::Node &C = plan.nodes[size_t(o.a)], &D = plan.nodes[size_t(o.b)];
           if (streets::segCross({A.x, A.z}, {B.x, B.z}, {C.x, C.z}, {D.x, D.z})) return true;
         }
         return false;
       };
-      std::vector<float> deck(plan.nodes.size(), -1e9f);
-      int bridges = 0;
-      for (const streets::Seg& b : plan.segs) {
-        if (!b.alive || !b.bridge) continue;
-        const streets::Node &A = plan.nodes[size_t(b.a)], &B = plan.nodes[size_t(b.b)];
-        float top = std::max(A.y, B.y), ground = -1e9f;
-        for (int k = 1; k < 16; ++k) {
+      // runs of bridge legs joined at their points
+      std::vector<int> parent(plan.nodes.size());
+      for (size_t i = 0; i < parent.size(); ++i) parent[i] = int(i);
+      auto root = [&](int i) {
+        while (parent[size_t(i)] != i) i = parent[size_t(i)] = parent[size_t(parent[size_t(i)])];
+        return i;
+      };
+      for (const streets::Seg& sg : plan.segs)
+        if (sg.alive && sg.bridge) parent[size_t(root(sg.a))] = root(sg.b);
+      std::map<int, float> deck, need;
+      for (const streets::Seg& sg : plan.segs) {
+        if (!sg.alive || !sg.bridge) continue;
+        const streets::Node &A = plan.nodes[size_t(sg.a)], &B = plan.nodes[size_t(sg.b)];
+        int r = root(sg.a);
+        if (!deck.count(r)) deck[r] = -1e9f, need[r] = -1e9f;
+        for (int n : {sg.a, sg.b})
+          if (!low[size_t(n)]) deck[r] = std::max(deck[r], plan.nodes[size_t(n)].y);
+        float ground = -1e9f;
+        for (int k = 0; k <= 16; ++k) {
           double t = k / 16.0;
           ground = std::max(ground, groundY(g, A.x + (B.x - A.x) * t, A.z + (B.z - A.z) * t));
         }
-        top = std::max(top, ground + 1.0f);
-        if (b.osmBridge && crossesStreet(b)) top = std::max(top, ground + 6.0f);
-        deck[size_t(b.a)] = std::max(deck[size_t(b.a)], top);
-        deck[size_t(b.b)] = std::max(deck[size_t(b.b)], top);
-        ++bridges;
+        need[r] = std::max(need[r], ground + ((sg.osmBridge && crossesStreet(sg)) ? 6.0f : 1.0f));
       }
-      for (size_t i = 0; i < plan.nodes.size(); ++i)
-        if (plan.nodes[i].alive && plan.nodes[i].exit < 0 && deck[i] > plan.nodes[i].y) plan.nodes[i].y = deck[i];
-      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d bridge legs", bridges);
+      int runs = 0;
+      for (auto& [r, dk] : deck) {
+        float top = std::max(dk, need[r]);
+        ++runs;
+        for (size_t i = 0; i < plan.nodes.size(); ++i)
+          if (plan.nodes[i].alive && plan.nodes[i].exit < 0 && root(int(i)) == r) {
+            // a run's point: the deck; a bank point on it keeps the deck too (the street beyond ramps up)
+            bool onRun = false;
+            for (const streets::Seg& sg : plan.segs)
+              if (sg.alive && sg.bridge && (sg.a == int(i) || sg.b == int(i))) onRun = true;
+            if (onRun) plan.nodes[i].y = top;
+          }
+      }
+      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu bridge runs", deck.size());
+      (void)runs;
     }
     std::vector<CurveRoad> cs = streets::curves(plan);
     addCurvesBulk(vm, grid, a.timeline, cs);
