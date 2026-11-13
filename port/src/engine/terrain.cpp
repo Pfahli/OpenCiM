@@ -779,7 +779,32 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           for (int i = 0; i < cp.count; ++i)
             appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
         };
+        const size_t before = m.positions.size();
         pieces(straight ? straight : pf.straight);
+        static const bool debugBridge = std::getenv("REGS_DEBUG_CURVES") != nullptr;
+        if (debugBridge && straight) {  // the span's drawn extent and the live ground under the curve's middle
+          float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+          for (size_t k = before; k + 2 < m.positions.size(); k += 3)
+            for (int a = 0; a < 3; ++a) lo[a] = std::min(lo[a], m.positions[k + a]), hi[a] = std::max(hi[a], m.positions[k + a]);
+          CurveSample mid = curveAt(shape, t0 + kept * 0.5f);
+          int cx = int(std::floor(mid.p.x / g.cellSize + float(g.width) * 0.5f)), cz = int(std::floor(mid.p.z / g.cellSize + float(g.length) * 0.5f));
+          float ground = cx >= 0 && cz >= 0 && cx < g.width && cz < g.length
+                             ? float(g.height[size_t(cz) * size_t(g.width) + size_t(cx)]) * g.cellSize / 256.0f : 0.0f;
+          LOG_INFO("curves: span %s, %zu vertices, x %.1f..%.1f y %.1f..%.1f z %.1f..%.1f", straight,
+                   (m.positions.size() - before) / 3, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
+          LOG_INFO("curves:   middle %.1f %.1f %.1f, ground %.1f", mid.p.x, mid.p.y, mid.p.z, ground);
+          for (float s = 0; s <= shape.back().s + 0.01f; s += 2.0f) {  // the highest corner of each cell along it
+            CurveSample k = curveAt(shape, s);
+            int kx = int(std::floor(k.p.x / g.cellSize + float(g.width) * 0.5f)), kz = int(std::floor(k.p.z / g.cellSize + float(g.length) * 0.5f));
+            int top = -0x8000;
+            for (int dz = 0; dz <= 1; ++dz)
+              for (int dx = 0; dx <= 1; ++dx)
+                if (kx + dx >= 0 && kz + dz >= 0 && kx + dx < g.width && kz + dz < g.length)
+                  top = std::max(top, int(g.height[size_t(kz + dz) * size_t(g.width) + size_t(kx + dx)]));
+            uint16_t fl = kx >= 0 && kz >= 0 && kx < g.width && kz < g.length ? g.flags[size_t(kz) * size_t(g.width) + size_t(kx)] : 0;
+            LOG_INFO("curves:   s %4.1f cell %d,%d road %.1f ground top %.1f flags %04x", s, kx, kz, k.p.y, float(top) * g.cellSize / 256.0f, fl);
+          }
+        }
         if (c.ends & 4) pieces(pf.tram);
         if (straight && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
                                                          // its foot 8 cells under the deck as the span's own parts
