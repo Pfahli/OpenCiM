@@ -67,6 +67,9 @@ menu's track tab with the same three for the railway.
 - Checked (2026-11-12): a curve from a grid metro track's dead end joins it seamlessly, its lanes linked both ways
   (the "tracks: n in, n out" count in the "curved roads:" log line); railway curves; metro cars on ground and elevated
   curves. Like all curves, track curves are hidden in the underground view.
+- Checked (2026-11-13): a metro line between two ground stations joined by a 225 m U-shaped track curve (grid stubs
+  off the stations' ends, the curve between their dead ends): the line's route runs over the curve and its train
+  shuttles between the platforms (`REGS_TEST_LINE=2`).
 
 ### One-way streets
 
@@ -179,6 +182,7 @@ bend tighter than the kind's minimum radius.
 | `REGS_START=editor:<map>` / `map:<map>` / `save:<name>`, `REGS_START_RUN=1` | straight into the editor or a game (main.script) |
 | `REGS_DEBUG_CURVES=1` | tool previews, snaps, junction fitting, "N junctions, M turn lanes, K joined both ways", tram ends |
 | `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>`, `REGS_TEST_CURVE_METRO=<n>` | n cars / trams / metro cars on random trips between curve lanes (engine/snowplows.cpp) |
+| `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |
 | `REGS_DUMP_TEMPLATES=a,b` (`REGS_DUMP_VERTICES=1`) | a template's size, mesh bounds and UVs per material, paths |
 
