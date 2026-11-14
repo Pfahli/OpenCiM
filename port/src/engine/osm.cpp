@@ -37,6 +37,7 @@
 #include "engine/gui.h"
 #include "engine/host.h"
 #include "engine/interaction.h"
+#include "engine/paint_edges.h"
 #include "engine/platform.h"
 #include "engine/timeline.h"
 #include "engine/tool_tracks.h"
@@ -958,6 +959,9 @@ struct ImportData {
   double cellM = 2.5;            // metres per cell
   std::vector<AreaIn> areas;
   std::vector<PointIn> points;
+  // painted areas with exact edges (paint_edges.h, 2026-11-14): car parks in asphalt (0), squares and market places in
+  // paving stones (2); rings in corner coordinates (= cells), several even-odd
+  std::vector<std::pair<std::vector<PaintRing>, int>> paintAreas;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
   std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (1 asphalt, 3 paving stones; 4 a
@@ -1315,17 +1319,20 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         // the way's points, or a relation's members (outer and inner rings as edges)
         std::vector<std::pair<double, double>> pts;
         Edges ringEdges;
+        std::vector<PaintRing> rings;  // the way's ring or the relation's members (for exact paint)
         bool closed = false;
         if (type == "way") {
           if (const Json* g = el.get("geometry")) pts = P(*g);
           closed = pts.size() > 3 && pts.front() == pts.back();
           addRing(ringEdges, pts, true);
+          rings.push_back(pts);
         } else if (type == "relation") {
           if (const Json* mem = el.get("members"); mem && mem->t == Json::Arr)
             for (const Json& m : mem->a)
               if (const Json* g = m.get("geometry")) {
                 auto mp = P(*g);
                 addRing(ringEdges, mp, false);
+                rings.push_back(mp);
                 if (m.str("role") != "inner") pts.insert(pts.end(), mp.begin(), mp.end());
               }
           closed = true;
@@ -1348,21 +1355,21 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             if (pt.x >= 1 && pt.z >= 1 && pt.x < W - 1 && pt.z < L - 1) data->points.push_back(pt);
           };
           if (closed && square) {
-            pavedAreas.push_back({ringEdges, 3});
+            data->paintAreas.push_back({rings, 2});
             if (type == "way") data->areas.push_back({pts, 0});
           } else if (closed && am == "marketplace") {
-            pavedAreas.push_back({ringEdges, 3});
+            data->paintAreas.push_back({rings, 2});
             if (type == "way") data->areas.push_back({pts, 2});
           } else if (closed && am == "parking" && tags.str("parking") != "underground" && tags.str("parking") != "multi-storey" &&
                      tags.str("parking") != "rooftop" && tags.str("parking") != "lane" && tags.str("parking") != "street_side" &&
                      tags.str("parking") != "on_street") {  // (parking lanes lie on the streets' shoulders: no strips beside them)
-            pavedAreas.push_back({ringEdges, 1});
+            data->paintAreas.push_back({rings, 0});
             if (type == "way") data->areas.push_back({pts, 1});
           } else if (hw == "service" && type == "way" && closed && tags.str("area") == "yes") {
             // service areas (yards, forecourts) in asphalt. Bands of paint along pedestrian streets and service roads
             // are left out (owner 2026-11-14: painted cells along a slanted line make a saw-tooth strip; pedestrian
             // streets are footpath curves of their own)
-            pavedAreas.push_back({ringEdges, uint8_t(1)});
+            data->paintAreas.push_back({rings, 0});
           } else if (am == "fountain") {
             centroidPoint(0);
           } else if (tags.str("leisure") == "playground") {
@@ -1742,6 +1749,7 @@ struct Apply {
   bool gridStreets = false;
   std::vector<char> inRow;  // buildings a row of city houses took
   std::vector<std::pair<double, double>> yardSeeds;  // free cells behind the rows of houses (cells)
+  std::vector<std::vector<std::pair<double, double>>> yardBands;  // a band of pavement behind each row (corner coordinates)
   int stationsPlaced = 0;
   std::vector<std::array<double, 4>> stationFrames;  // placed stations: centre (cells) and front  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
   int curvesMade = 0;
@@ -3587,6 +3595,11 @@ int placeBlock(VM& vm, GridObj* grid, Apply& a, const std::vector<const Building
     if (!here) continue;
     placed += here;
     for (const BuildingIn* b : r.members) a.inRow[size_t(b - a.d->buildings.data())] = 1;
+    // the yard's pavement along the houses' backs: a band 2.2 cells deep (painted with exact edges, decorateYards)
+    {
+      auto P = [&](double t, double w) { return std::pair<double, double>{r.ox + r.ux * t + r.vx * w, r.oz + r.uz * t + r.vz * w}; };
+      a.yardBands.push_back({P(r.t[0], back - 0.2), P(r.t[1], back - 0.2), P(r.t[1], back + 2.2), P(r.t[0], back + 2.2)});
+    }
     // the yard behind the row: its seeds a cell and a half behind the houses
     for (double ts = r.t[0] + 0.5; ts <= r.t[1] - 0.5; ts += 1.0)
       a.yardSeeds.push_back({r.ox + r.ux * ts + r.vx * (back + 1.5), r.oz + r.uz * ts + r.vz * (back + 1.5)});
@@ -3767,11 +3780,76 @@ void buildTemplates(VM& vm, GridObj* grid, const Value& buildingsList, const Val
            now() - t0);
 }
 
+// the outline of a set of cells as rings in corner coordinates (each cell's edges, shared ones cancelled, chained)
+std::vector<PaintRing> traceCells(const std::set<std::pair<int, int>>& cells) {
+  using E = std::pair<std::pair<int, int>, std::pair<int, int>>;
+  std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> next;
+  std::set<E> edges;
+  for (auto [x, z] : cells) {
+    std::pair<int, int> c[4] = {{x, z}, {x + 1, z}, {x + 1, z + 1}, {x, z + 1}};
+    for (int k = 0; k < 4; ++k) {
+      E e{c[k], c[(k + 1) & 3]}, rev{c[(k + 1) & 3], c[k]};
+      if (edges.count(rev)) edges.erase(rev);
+      else edges.insert(e);
+    }
+  }
+  for (const E& e : edges) next[e.first].push_back(e.second);
+  std::vector<PaintRing> rings;
+  while (!next.empty()) {
+    auto start = next.begin()->first;
+    PaintRing ring;
+    auto cur = start;
+    while (true) {
+      auto it = next.find(cur);
+      if (it == next.end() || it->second.empty()) break;
+      auto to = it->second.back();
+      it->second.pop_back();
+      if (it->second.empty()) next.erase(it);
+      ring.push_back({double(cur.first), double(cur.second)});
+      cur = to;
+      if (cur == start) break;
+    }
+    if (ring.size() >= 3) rings.push_back(std::move(ring));
+  }
+  return rings;
+}
+
+// pavement painted with exact edges (paint_edges.h), but only on the cells allow(cell) accepts; collects the touched
+// rectangle for the rebuild and the timeline
+struct Painter {
+  GridData& g;
+  int x0 = 1 << 30, z0 = 1 << 30, x1 = -1, z1 = -1;
+  template <class F>
+  std::vector<size_t> paint(const std::vector<PaintRing>& rings, int type, F allow) {
+    std::vector<size_t> out;
+    type &= 7;
+    for (const PaintAreaCell& c : paintAreaCells(g.width, g.length, rings)) {
+      size_t i = size_t(c.z) * size_t(g.width) + size_t(c.x);
+      uint16_t& f = g.flags[i];
+      if ((f & 0x2000) || !allow(i)) continue;
+      const bool whole = (f & 0x8) && !g.paintEdges.count(paintEdgeKey(c.x, c.z));
+      if (c.full) {
+        g.paintEdges.erase(paintEdgeKey(c.x, c.z));
+        f = uint16_t((f & 0xFF98) | 0x8 | type);
+      } else if (!whole && !g.paintEdges.count(paintEdgeKey(c.x, c.z))) {
+        PaintEdge e = c.edge;
+        e.type = uint8_t(type);
+        g.paintEdges[paintEdgeKey(c.x, c.z)] = e;
+      } else {
+        continue;
+      }
+      out.push_back(i);
+      x0 = std::min(x0, c.x), z0 = std::min(z0, c.z), x1 = std::max(x1, c.x), z1 = std::max(z1, c.z);
+    }
+    return out;
+  }
+};
+
 // the template of `lib` that covers the target cells best (IoU at least minIoU), its furniture placed on the target
 // cells where ok(used) allows; false when none fits
 template <class F>
 bool placeTemplate(VM& vm, GridObj* grid, Apply& a, const std::vector<TplArea>& lib, const std::vector<std::pair<int, int>>& target,
-                   double minIoU, F ok, const char* what, std::vector<std::pair<size_t, uint8_t>>* paintOut = nullptr) {
+                   double minIoU, F ok, const char* what, std::vector<std::pair<std::vector<PaintRing>, int>>* paintOut = nullptr) {
   if (lib.empty() || target.size() < 10) return false;
   const int W = grid->data->width;
   std::set<std::pair<int, int>> S(target.begin(), target.end());
@@ -3808,13 +3886,19 @@ bool placeTemplate(VM& vm, GridObj* grid, Apply& a, const std::vector<TplArea>& 
   const Fit& f = *good[hash32(uint64_t(std::llround(cx * 16)) * 92821u + uint64_t(std::llround(cz * 16))) % good.size()];
   const double c = std::cos(f.th), s = std::sin(f.th);
   int placed = 0;
-  if (paintOut && !f.t->paint.empty())  // the template's pavement on the cells it covers
-    for (auto& p : pts) {
-      double dx = p.first - cx, dz = p.second - cz;
-      auto it = f.t->paint.find({int(std::floor(f.t->cx + dx * c + dz * s)), int(std::floor(f.t->cz - dx * s + dz * c))});
-      if (it != f.t->paint.end())
-        paintOut->push_back({size_t(std::floor(p.second)) * size_t(grid->data->width) + size_t(std::floor(p.first)), it->second});
+  if (paintOut && !f.t->paint.empty()) {  // the template's pavement: its outlines per paint, turned onto the target
+    std::map<int, std::set<std::pair<int, int>>> byType;
+    for (auto& [cell, t] : f.t->paint) byType[t - 1].insert(cell);
+    for (auto& [type, cells] : byType) {
+      std::vector<PaintRing> rings = traceCells(cells);
+      for (PaintRing& r : rings)
+        for (auto& q : r) {
+          double dx = q.first - f.t->cx, dz = q.second - f.t->cz;
+          q = {cx + dx * c - dz * s, cz + dx * s + dz * c};
+        }
+      paintOut->push_back({std::move(rings), type});
     }
+  }
   for (const TplProp& p : f.t->props) {
     double px = cx + p.x * c - p.z * s, pz = cz + p.x * s + p.z * c;
     if (!S.count({int(std::floor(px)), int(std::floor(pz))})) continue;
@@ -4138,7 +4222,7 @@ void streetLamps(VM& vm, GridObj* grid, Apply& a, const std::vector<std::pair<do
 // close it within 6000 cells, else the 6 cells behind the houses); bushes along
 // the houses' backs, trees in the open, and the residents' things: sandboxes, swings, sheds, bicycle stands, benches,
 // flower beds, now and then a garden fountain, a gazebo or a statue
-void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, std::vector<std::pair<size_t, uint8_t>>& paint) {
+void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, Painter& painter) {
   GridData& g = *grid->data;
   const int W = g.width, L = g.length;
   std::vector<uint8_t> seen(size_t(W) * size_t(L), 0);
@@ -4163,6 +4247,11 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, std::vect
     return true;
   };
   int yards = 0, things = 0, tpls = 0;
+  // the bands of pavement behind the rows first (on free ground and under the yards' things)
+  std::set<size_t> paved;
+  auto groundOk = [&](size_t i) { uint8_t u = a.used[i]; return u == 0 || u == 4 || u == 6; };
+  for (auto& band : a.yardBands)
+    for (size_t i : painter.paint({band}, 0, groundOk)) paved.insert(i);
   for (auto& sd : a.yardSeeds) {
     int sx = int(std::floor(sd.first)), sz = int(std::floor(sd.second));
     if (sx < 1 || sz < 1 || sx >= W - 1 || sz >= L - 1 || seen[size_t(sz) * size_t(W) + size_t(sx)] || at(sx, sz)) continue;
@@ -4191,20 +4280,18 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, std::vect
     if (cells.size() < 10) continue;
     ++yards;
     // a closed yard: one of the game's own yards that fits it first (then just the bushes along the houses)
-    const size_t painted0 = paint.size();
-    const bool fromTpl = !open && placeTemplate(vm, grid, a, g_tpl.yards, cells, 0.4, [](uint8_t u) { return u == 0; }, "yard", &paint);
+    // the yard's pavement (owner 2026-11-14: yards paved): the band along the houses (above) and the template's,
+    // its outlines turned onto the yard with exact edges, kept to the yard's own cells
+    std::vector<std::pair<std::vector<PaintRing>, int>> tplPaint;
+    const bool fromTpl = !open && placeTemplate(vm, grid, a, g_tpl.yards, cells, 0.4, [](uint8_t u) { return u == 0; }, "yard", &tplPaint);
     tpls += fromTpl;
-    // the yard's pavement (owner 2026-11-14: yards paved): the template's, and where it brought little, a band of
-    // pavement two cells wide along the houses' backs
-    if (paint.size() - painted0 < cells.size() / 5)
-      for (auto [x, z] : cells) {
-        bool near = false;
-        for (int dz = -2; dz <= 2 && !near; ++dz)
-          for (int dx = -2; dx <= 2 && !near; ++dx) near = x + dx >= 0 && z + dz >= 0 && x + dx < W && z + dz < L && at(x + dx, z + dz) == 3;
-        if (near) paint.push_back({size_t(z) * size_t(W) + size_t(x), uint8_t(1)});
-      }
-    std::set<size_t> pavedHere;
-    for (size_t k = painted0; k < paint.size(); ++k) pavedHere.insert(paint[k].first);
+    {
+      std::set<size_t> mine;
+      for (auto [x, z] : cells) mine.insert(size_t(z) * size_t(W) + size_t(x));
+      for (auto& [rings, type] : tplPaint)
+        for (size_t i : painter.paint(rings, type, [&](size_t i) { return mine.count(i) != 0; })) paved.insert(i);
+    }
+    const std::set<size_t>& pavedHere = paved;
     for (size_t k = cells.size() - 1; k > 0; --k) std::swap(cells[k], cells[hash32(k * 2654435761u + cells[0].first) % (k + 1)]);
     for (auto [x, z] : cells) {
       if (at(x, z)) continue;
@@ -4667,7 +4754,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     setP(5, 0);
     if (a.gridStreets) buildNetwork(d.roads, W, L, d.water, a.network, a.drags);
     bool water = (d.flags & kWater) != 0;
-    if (!d.heights.empty() || water || !d.paving.empty()) {
+    if (!d.heights.empty() || water || !d.paving.empty() || !d.paintAreas.empty()) {
       std::vector<int16_t> heights(size_t(W) * size_t(L));
       std::vector<uint16_t> flags(heights.size());
       constexpr uint16_t kGround = 0x203F;
@@ -4733,8 +4820,23 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         g.height = heights;
       }
       if (!d.heights.empty()) levelUnderRoads(g, a.network, d.water, heights);
+      // car parks and squares painted with exact edges (no saw tooth along slanted outlines; owner 2026-11-14): whole
+      // cells and the border cells cut along the outline; nothing is built on either
+      int painted = 0;
+      for (auto& [rings, type] : d.paintAreas) {
+        int px0, pz0, px1, pz1;
+        for (const PaintAreaCell& c : paintArea(g, rings, type, px0, pz0, px1, pz1)) {
+          size_t i = size_t(c.z) * size_t(W) + size_t(c.x);
+          if (d.water[i]) continue;
+          a.used[i] = 5;
+          flags[i] = uint16_t(g.flags[i] & kGround);
+          ++painted;
+        }
+      }
       gridEditCellsChanged(grid, 0, 0, W - 1, L - 1, true);
       if (a.timeline) timelineRecordPatch(vm, a.timeline, 0, 0, W, L, heights, flags);
+      if (a.timeline && !d.paintAreas.empty()) timelineRecordPaintEdges(vm, a.timeline, g, 0, 0, W, L);
+      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu areas painted with exact edges (%d cells)", d.paintAreas.size(), painted);
     }
     a.stage = 2;
     a.next = 0;
@@ -4964,32 +5066,23 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       if (ar.kind == 1) bays += decorateParking(vm, grid, a, ar, 3000 - bays);
     LOG_INFO("osm: %d squares furnished, %d parking bays", squares, bays);
     if (!a.gridStreets) streetLamps(vm, grid, a, lamps);
-    std::vector<std::pair<size_t, uint8_t>> paint;
-    decorateYards(vm, grid, a, fu, paint);
-    if (!paint.empty()) {  // the yards' pavement: painted like the terrain menu's tool, on the timeline as a patch
-      int x0 = W, z0 = L, x1 = -1, z1 = -1;
-      for (auto [i, t] : paint) {
-        int x = int(i % size_t(W)), z = int(i / size_t(W));
-        if (g.flags[i] & 0x2000) continue;
-        g.flags[i] = uint16_t((g.flags[i] & 0xFFD8) | ((t - 1) & 7) | 0x8);
-        x0 = std::min(x0, x), z0 = std::min(z0, z), x1 = std::max(x1, x), z1 = std::max(z1, z);
+    Painter painter{g};
+    decorateYards(vm, grid, a, fu, painter);
+    if (painter.x1 >= painter.x0) {  // the yards' pavement: on the timeline as a patch and the edges
+      gridEditCellsChanged(grid, painter.x0, painter.z0, painter.x1, painter.z1, false);
+      if (a.timeline) {
+        const int pw = painter.x1 - painter.x0 + 1, pl = painter.z1 - painter.z0 + 1;
+        std::vector<int16_t> hs(size_t(pw) * size_t(pl));
+        std::vector<uint16_t> fs(hs.size());
+        for (int z = 0; z < pl; ++z)
+          for (int x = 0; x < pw; ++x) {
+            size_t i = size_t(painter.z0 + z) * size_t(W) + size_t(painter.x0 + x);
+            hs[size_t(z) * size_t(pw) + size_t(x)] = g.height[i];
+            fs[size_t(z) * size_t(pw) + size_t(x)] = uint16_t(g.flags[i] & 0x203F);
+          }
+        timelineRecordPatch(vm, a.timeline, painter.x0, painter.z0, pw, pl, hs, fs);
+        timelineRecordPaintEdges(vm, a.timeline, g, painter.x0, painter.z0, pw, pl);
       }
-      if (x1 >= x0) {
-        gridEditCellsChanged(grid, x0, z0, x1, z1, false);
-        if (a.timeline) {
-          const int pw = x1 - x0 + 1, pl = z1 - z0 + 1;
-          std::vector<int16_t> hs(size_t(pw) * size_t(pl));
-          std::vector<uint16_t> fs(hs.size());
-          for (int z = 0; z < pl; ++z)
-            for (int x = 0; x < pw; ++x) {
-              size_t i = size_t(z0 + z) * size_t(W) + size_t(x0 + x);
-              hs[size_t(z) * size_t(pw) + size_t(x)] = g.height[i];
-              fs[size_t(z) * size_t(pw) + size_t(x)] = uint16_t(g.flags[i] & 0x203F);
-            }
-          timelineRecordPatch(vm, a.timeline, x0, z0, pw, pl, hs, fs);
-        }
-      }
-      LOG_INFO("osm: %zu yard cells paved", paint.size());
     }
     gridEditEnd(vm, grid);
     if (std::getenv("REGS_DEBUG_OSM")) {

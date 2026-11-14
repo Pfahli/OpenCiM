@@ -283,11 +283,13 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   built like Berlin's: platform pieces in two rows by the line, the railway-station behind them with its back to the
   line, an island platform to a parallel line 5.5-14 cells away, platform lamps and benches. Track cells are marked
   apart (used 7): no street furniture on tracks. Yard templates take paved ground too and bring their pavement
-  paint; yards without much of it get a two-cell band of pavement along the houses (a timeline patch).
+  paint; yards get a band of pavement along the houses' backs.
+  Exact edges (paint_edges.h, main 43b7c9c): car parks (asphalt 0), squares and market places (paving stones 2) are
+  painted with paintArea from their OSM rings at the terrain stage (timelineRecordPaintEdges after the patch); the
+  yards' pavement too: a turned rectangle 2.2 cells deep behind each row, and the yard templates' paved cells traced
+  to outlines, turned onto the yard and painted with paintAreaCells on the yard's own cells (Painter in osm.cpp).
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); level crossings
-  (tracks have no crossing piece on curves); tram tracks from railway=tram; station platforms; painted areas (car
-  parks, squares) keep the cell paint's saw-tooth edge on slanted outlines (a real fix: polygon surfaces like the
-  junction fills).
+  (tracks have no crossing piece on curves); tram tracks from railway=tram.
 - [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
