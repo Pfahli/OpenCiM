@@ -947,8 +947,53 @@ void moveRemove(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
 // game's hover script renames through the controllers' names (its dialog) and calls applyTool. finishTool records the
 // names (a group "%2" for several) or sets the variation toolMode (0..4; only where the template has that texture
 // variation, 0 always) and records it (a group "%!26" for several).
-// Port: the original selects the whole road segment around a hovered road (selectRoadSegment L:0x0818f2f0) unless the
-// right button is held; the port takes the hovered item only for now.
+// Rename takes the whole road segment around a hovered road (roadSegment) unless the right button is held.
+
+// port: the road segment around a road piece (after selectRoadSegment L:0x0818f2f0): the pieces of the same kind (alley,
+// road, tram track, track) that touch it along a side where both connect towards each other, followed piece by piece;
+// junctions (three or more ways) end the segment (a hovered junction is its own segment). Diagonal joins are not
+// followed.
+std::vector<uint32_t> roadSegment(VM& vm, GridObj* grid, uint32_t start) {
+  std::vector<uint32_t> out{start};
+  Info s = infoOf(vm, grid, start);
+  auto road = [](const Info& n) { return n.ok && n.type() >= 1 && n.type() <= 0xf && !(n.flags & 0x2000); };
+  auto ways = [](const Info& n) {
+    uint32_t b = (n.conn | n.conn >> 8 | n.conn >> 16 | n.conn >> 24) & 0xFF;
+    return b;
+  };
+  auto junction = [&](const Info& n) {
+    uint32_t b = ways(n);
+    int count = 0;
+    for (uint32_t d = 1; d < 0x100; d <<= 1) count += (b & d) != 0;
+    return count >= 3;
+  };
+  if (!road(s) || junction(s)) return out;
+  auto kind = [](int t) { return t == 1 ? 0 : t >= 10 && t <= 12 ? 1 : t >= 13 ? 2 : 3; };
+  std::set<uint32_t> seen{start};
+  std::vector<Info> todo{s};
+  while (!todo.empty() && out.size() < 512) {
+    Info c = todo.back();
+    todo.pop_back();
+    for (uint32_t o : gridGetObjects(vm, grid, c.x - 5, c.z - 5, c.sx + 10, c.sz + 10)) {
+      if (seen.count(o)) continue;
+      Info n = infoOf(vm, grid, o);
+      if (!road(n) || kind(n.type()) != kind(s.type())) continue;
+      // the side they share: c's direction bit towards n and n's back
+      uint32_t d = 0, back = 0;
+      bool overlapX = n.x < c.x + c.sx && c.x < n.x + n.sx, overlapZ = n.z < c.z + c.sz && c.z < n.z + n.sz;
+      if (overlapZ && n.x == c.x + c.sx) d = 4, back = 0x40;
+      else if (overlapZ && n.x + n.sx == c.x) d = 0x40, back = 4;
+      else if (overlapX && n.z == c.z + c.sz) d = 0x10, back = 1;
+      else if (overlapX && n.z + n.sz == c.z) d = 1, back = 0x10;
+      if (!d || !(ways(c) & d) || !(ways(n) & back)) continue;
+      seen.insert(o);
+      if (junction(n)) continue;
+      out.push_back(o);
+      todo.push_back(n);
+    }
+  }
+  return out;
+}
 
 void moveModify(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   ToolState& t = toolState(player);
@@ -960,13 +1005,21 @@ void moveModify(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   if (item >= 0)
     while ((g.items[size_t(item)].flags & kItemAutoChild) && g.items[size_t(item)].parent)
       item = int(g.items[size_t(item)].parent) - 1;
-  if (item == last && !t.replaced.empty() == (item >= 0)) return;
+  static std::unordered_map<const Object*, bool> lastRight;  // the right button switches between segment and piece
+  bool& wasRight = lastRight.try_emplace(player, false).first->second;
+  if (item == last && wasRight == t.right && !t.replaced.empty() == (item >= 0)) return;
+  wasRight = t.right;
   gridEditBegin(vm, grid);
   for (uint32_t r : t.replaced) gridSetSelected(vm, grid, r, false, false);
   t.replaced.clear();
   if (item >= 0) {
-    t.replaced.insert(uint32_t(item));
-    gridSetSelected(vm, grid, uint32_t(item), true, false);
+    // rename: the whole road segment unless the right button is held (the original's +0x259)
+    std::vector<uint32_t> sel = editMode(vm, player) == kGridModeRename && !t.right ? roadSegment(vm, grid, uint32_t(item))
+                                                                                  : std::vector<uint32_t>{uint32_t(item)};
+    for (uint32_t i : sel) {
+      t.replaced.insert(i);
+      gridSetSelected(vm, grid, i, true, false);
+    }
   }
   gridEditEnd(vm, grid);
   t.cellX = p.cellX, t.cellZ = p.cellZ;

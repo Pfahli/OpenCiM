@@ -41,7 +41,7 @@ modes (the editor's roads, terrain and paint tools come later):
   Pavement paint with exact edges (2026-11-14): the round brush and its eraser cut the cells on the brush circle,
   painted areas (paint_edges.h, for the OSM import) cut along their outline; see building-tools.md.
   Rename (0x14, the toolbar's T: the hovered item, the game's dialog, timeline names) and variation (0x15, the
-  original's debug menu) work on the hovered item; the original's road-segment selection for rename is still open.
+  original's debug menu) work on the hovered item; rename takes the road segment up to the junctions (right button: one piece).
 - [x] Undo: the editor's undo button (timeline `removeLastAction` + base grid replay); every tool records on
   `gsGridPlayer.timeline`. The brushes' drag copy (`addUndoItem`) is put back on cancel.
 - [x] Live map updates after an edit (`engine/grid_edit.h`, used by the city timeline): items added and removed in
@@ -232,7 +232,7 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   their own file format .cimtpl (GS10 package with template.grid, template.dds, template.info listing the DLCs of its
   objects) with export (Explorer) and import (drop into the folder), the missing-DLC check before placing, and the
   DLCs a template needs loaded when placing it. Still no rotation.
-- [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); rename of a whole road segment;
+- [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); rename of curved roads (they have no names yet);
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
 ## 9. Release (OpenRCT2 style: requires the original game)
