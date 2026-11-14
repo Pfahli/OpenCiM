@@ -57,6 +57,9 @@ const CurveProfile& curveProfile(int kind);
 // a bridge curve's span template bent along it and its pillar, per kind ("" none)
 const char* curveBridgePiece(int kind);
 const char* curveBridgePillar(int kind);
+// the street tram dead-end piece (the tracks' end, no lanes) drawn on a large road's or avenue's dead-end piece at a
+// free end of a curve with tracks, per kind ("" none: small roads draw their own turning circle)
+const char* curveTramDeadend(int kind);
 // the driving lanes' offsets right of the centre line (one direction; the other mirrors), and their medium
 struct CurveLanes {
   int count;

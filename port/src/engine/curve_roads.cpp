@@ -237,6 +237,13 @@ const char* curveBridgePiece(int kind) {
     default: return "";
   }
 }
+const char* curveTramDeadend(int kind) {
+  switch (kind) {
+    case 1: return "tram_large_deadend";
+    case 2: return "tram_avenue_deadend";
+    default: return "";
+  }
+}
 const char* curveBridgePillar(int kind) {
   switch (kind) {
     case 0: return "bridge_rsmall2_pillar";

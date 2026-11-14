@@ -151,7 +151,12 @@ as usual; on large roads and avenues the kerb lane on the stop's side gets STOP 
 halt there (tested with REGS_TEST_LINE=0 on both kinds). Tram stops on large roads stand at the kerb beside the kerb
 lane's track (`stop_tram0N_large`); on avenues in the middle strip beside its track, with the game's zebra crossing
 over the carriageway (`stop_tram0N_avenue`, `curveStopOffset` 4.5); the tram lane on the stop's side gets STOP (tested
-with REGS_TEST_LINE=1 on both kinds).
+with REGS_TEST_LINE=1 on both kinds). Checked on bent curves too (2026-11-14): tram stops 02 and 03 on a large road, bus stops 02 and 03 on both sides
+of an avenue, tram stops on both sides of an avenue's middle strip; the test lines halt at every stop. A tram turns
+round only at a stop on the same track (the large road's kerb track; reverseConsist), so tram stops on both sides of
+an avenue need a loop or a junction to reach each other, as in the game, whose avenue dead end has no tram turn either.
+A large road or avenue curve with tracks ends at a free end in the game's tram end piece (`tram_large_deadend`,
+`tram_avenue_deadend`, no lanes), its open edge on the road dead end's (`curveTramDeadend`).
 
 ## 2. Data model (for code that lays roads, e.g. the OSM import)
 

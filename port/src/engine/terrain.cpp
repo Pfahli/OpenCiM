@@ -818,7 +818,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       auto needCurve = [&](const CurveRoad& c) {
         const CurveProfile& pf = curveProfile(c.kind);
         need(pf.straight), need(pf.deadend), need(pf.pillar);
-        if (c.ends & 4) need(pf.tram);
+        if (c.ends & 4) need(pf.tram), need(curveTramDeadend(c.kind));
         if (c.bridge) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind));
         for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st, c.kind).c_str());
       };
@@ -919,18 +919,32 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             }
         }
         CurveEnds caps = curveFreeEnds(g, c);
-        ObjectObj* dob = nullptr;
-        int db = templateOf(pf.deadend, &dob);
-        if (db < 0 || !dob || !dob->data) return;
-        auto cf = dob->fieldValues.find(u"connections");
-        uint32_t conn = cf == dob->fieldValues.end() || cf->second.isNone() ? 0x40u << pf.shift : uint32_t(vm.toInt(cf->second));
-        bool openPlusX = ((conn >> pf.shift) & 0x40) != 0;
-        for (int end = 0; end < 2; ++end) {
-          if (!(end ? caps.free1 : caps.free0)) continue;
-          Vec3 o, ax, az;
-          curveCapFrame(c, end, openPlusX, o, ax, az);
-          appendPlacedMesh(dob->data->mesh, db, o, ax, az, m);
-        }
+        // the dead-end piece at a free end; with tracks the street tram dead-end piece too (the tracks' end, as the game
+        // lays it: no lanes, trams turn round only at a stop on the same track), its open edge on the road piece's
+        auto openEdge = [](const render::MeshData& mesh, bool plusX) {
+          float lo = 1e9f, hi = -1e9f;
+          for (size_t k = 0; k + 2 < mesh.positions.size(); k += 3) lo = std::min(lo, mesh.positions[k]), hi = std::max(hi, mesh.positions[k]);
+          return plusX ? hi : lo;
+        };
+        float roadEdge = 0;
+        auto deadEnd = [&](const char* name, bool road) {
+          ObjectObj* dob = nullptr;
+          int db = name[0] ? templateOf(name, &dob) : -1;
+          if (db < 0 || !dob || !dob->data) return;
+          auto cf = dob->fieldValues.find(u"connections");
+          uint32_t conn = cf == dob->fieldValues.end() || cf->second.isNone() ? 0x40u << pf.shift : uint32_t(vm.toInt(cf->second));
+          bool openPlusX = ((conn >> pf.shift) & 0x40) != 0;
+          float edge = openEdge(dob->data->mesh, openPlusX), shift = road ? 0.0f : roadEdge - edge;
+          if (road) roadEdge = edge;
+          for (int end = 0; end < 2; ++end) {
+            if (!(end ? caps.free1 : caps.free0)) continue;
+            Vec3 o, ax, az;
+            curveCapFrame(c, end, openPlusX, o, ax, az);
+            appendPlacedMesh(dob->data->mesh, db, o + ax * shift, ax, az, m);
+          }
+        };
+        deadEnd(pf.deadend, true);
+        if (c.ends & 4) deadEnd(curveTramDeadend(c.kind), false);
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
         if (c.bridge && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
