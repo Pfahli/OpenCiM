@@ -158,8 +158,24 @@ void moveBrushRound(VM& vm, ControlObj* player, GridObj* grid, float x, float y)
     gridRoundBrush(grid, type, R, fx, fz, strength, false);
     if (Object* tl = playerTimeline(vm, player)) recordRound(vm, tl, type, r, fx, fz, strength);
   }
-  for (auto [cx, cz] : gridRoundBrushCells(grid, R, fx, fz)) highlightCell(grid, cx, cz);
+  // the highlight: the cells the brush works; the pavement brush (which cuts cells along its circle) every cell the
+  // circle touches, the rim ones drawn clipped to it (buildHighlightOverlay)
+  const bool circle = mode == kGridModeSetPavement;
+  if (circle) {
+    GridData& g = *grid->data;
+    for (int cz = std::max(0, int(std::floor(fz - R))); cz <= std::min(g.length - 1, int(std::floor(fz + R))); ++cz)
+      for (int cx = std::max(0, int(std::floor(fx - R))); cx <= std::min(g.width - 1, int(std::floor(fx + R))); ++cx) {
+        float nx = std::clamp(fx, float(cx), float(cx + 1)) - fx, nz = std::clamp(fz, float(cz), float(cz + 1)) - fz;
+        if (nx * nx + nz * nz < R * R) highlightCell(grid, cx, cz);
+      }
+  } else {
+    for (auto [cx, cz] : gridRoundBrushCells(grid, R, fx, fz)) highlightCell(grid, cx, cz);
+  }
   ++grid->highlightVersion;
+  if (circle) {
+    grid->highlightCircle[0] = fx, grid->highlightCircle[1] = fz, grid->highlightCircle[2] = R;
+    grid->highlightCircleVersion = grid->highlightVersion;
+  }
   gridEditEnd(vm, grid);
   rs.fx = fx, rs.fz = fz;
   t.cellX = int(std::floor(fx)), t.cellZ = int(std::floor(fz));

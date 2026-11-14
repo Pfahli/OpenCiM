@@ -172,6 +172,10 @@ class GridObj : public script::Object {
   // drawn as an overlay with positiveMaterial / negativeMaterial; the version changes with every change
   std::set<uint32_t> highlightCells, highlightItems;
   uint64_t highlightVersion = 0;
+  // port: the round brush's circle (corner coordinates x, z and radius): while highlightCircleVersion equals
+  // highlightVersion, highlighted cells on its rim are drawn clipped to it (the paint and its eraser cut there too)
+  float highlightCircle[3] = {0, 0, 0};
+  uint64_t highlightCircleVersion = ~uint64_t(0);
   // gsGrid::mountObject: preview item → its mounted copy while a tool commits (children follow their parent's copy)
   std::map<uint32_t, uint32_t> mountedCopies;
   // gsGrid.viewMode (+0x1fc, GRID_VIEW_*; docs/renderer/underground.md): 0xfe (GRID_VIEW_DEFAULT) from the constructor,
