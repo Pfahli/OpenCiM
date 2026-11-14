@@ -232,7 +232,7 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   their own file format .cimtpl (GS10 package with template.grid, template.dds, template.info listing the DLCs of its
   objects) with export (Explorer) and import (drop into the folder), the missing-DLC check before placing, and the
   DLCs a template needs loaded when placing it. Still no rotation.
-- [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); rename of curved roads (they have no names yet);
+- [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08) (rename of curved roads: done 2026-11-14);
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
 ## 9. Release (OpenRCT2 style: requires the original game)

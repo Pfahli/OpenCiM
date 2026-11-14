@@ -207,7 +207,8 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c);
 // through it). Called at the end of fixGridCover / fixGridCoverArea, which clear and re-stamp the cover.
 void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1);
 
-// the section 0x07F00000: u32 count, then per curve 13 floats (the 13th: the end flags) and an i32 kind
+// the section 0x07F00000: u32 count (bits 31 / 30: format 2 / 3), then per curve 13 floats (the 13th: the end flags),
+// an i32 kind, the stops and (format 3) the name (curve_roads.cpp writeCurve)
 void writeCurveSection(const GridData& g, std::vector<uint8_t>& out);
 void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, GridData& g);
 
@@ -216,7 +217,8 @@ void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, 
 // (gridEditEnd → simCurvesChanged). The tool and the timeline replay both come here.
 void applyCurveEdit(script::VM& vm, GridObj* grid, const CurveRoad& c, bool add);
 bool sameCurve(const CurveRoad& a, const CurveRoad& b);
-// the timeline action's body: u8 add (1) or remove (0), then the curve as in the section (14 × 4 bytes)
+// the timeline action's body: u8 add (1) or remove (0), then the curve as in the section (format 3; older records
+// have no name)
 std::vector<uint8_t> curveActionBytes(const CurveRoad& c, bool add);
 bool curveFromActionBytes(const std::vector<uint8_t>& raw, CurveRoad& c, bool& add);
 

@@ -664,6 +664,7 @@ void registerToolNatives(VM& vm) {
     if (GridObj* grid = toolGrid(v, s))
       for (uint32_t i : toolState(s).replaced)
         if (Object* c = gridItemController(v, grid, i)) out.push_back(obj(c));
+    for (Object* c : toolState(s).extraReplaced) out.push_back(obj(c));
     return newArray(out);
   });
   // port: regsGetUpgradedItems(), the templates of the live stops the preview would upgrade (ToolState::upgraded)

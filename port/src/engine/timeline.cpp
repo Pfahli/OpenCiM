@@ -43,7 +43,10 @@ constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x0708101
                    kRegsTurn = 0x070810B0,
                    // port: the painted areas' edges of a rect of cells (engine/paint_edges.h paintEdgeActionBytes), kept
                    // in Action::raw
-                   kRegsPaintEdges = 0x070810C0;
+                   kRegsPaintEdges = 0x070810C0,
+                   // port: a curved road renamed: the curve as curveActionBytes (add 1) with its new name; the curve with
+                   // the same ends and handles takes the name
+                   kRegsCurveName = 0x070810D0;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -583,6 +586,14 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       applyCurveEdit(ap.vm, ap.grid, c, add);
       break;
     }
+    case kRegsCurveName: {
+      CurveRoad c;
+      bool add = true;
+      if (preview || !curveFromActionBytes(a.raw, c, add)) break;
+      for (CurveRoad& k : g.curves)
+        if (sameCurve(k, c)) k.name = c.name;
+      break;
+    }
     default: break;
   }
 }
@@ -618,6 +629,7 @@ std::u16string labelOf(const Action& a) {
     case kVariation: return u"%!25";
     case kRegsPatch: return u"%!18";  // shown as levelling the terrain
     case kRegsPaintEdges: return u"%!13";  // shown as painting the pavement
+    case kRegsCurveName: return u"%!24";  // shown as renaming
     default: return u"";
   }
 }
@@ -814,6 +826,14 @@ void timelineRecordCurve(VM& vm, Object* s, const CurveRoad& c, bool add) {
   Action a;
   a.tag = kRegsCurve;
   a.raw = curveActionBytes(c, add);
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordCurveName(VM& vm, Object* s, const CurveRoad& c) {
+  if (!s) return;
+  Action a;
+  a.tag = kRegsCurveName;
+  a.raw = curveActionBytes(c, true);
   recordAction(vm, s, std::move(a));
 }
 

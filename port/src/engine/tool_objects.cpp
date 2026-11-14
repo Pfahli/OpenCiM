@@ -17,6 +17,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/grid_render.h"
@@ -1428,6 +1429,19 @@ void registerNatives(VM& vm) {
       if ((sh.type == kTypeMarker) != station) d += 4.0f;
       if (!own.empty()) offer(own, d - 1.0f);
       if (!display.empty()) offer(display, d);
+    }
+    // port: named curves, scored as a road piece (r 15) from their nearest point
+    for (const GridData::CurveRoad& c : g.curves) {
+      if (c.name.empty()) continue;
+      std::vector<CurveSample> shape = curveShape(c);
+      float side, s;
+      curveNearest(shape, px, pz, side, s);
+      CurveSample q = curveAt(shape, s);
+      const float r = 15.0f;
+      float d = ((q.p.x - px) * (q.p.x - px) + (q.p.y - py) * (q.p.y - py) + (q.p.z - pz) * (q.p.z - pz)) / (r * r);
+      if (d >= 4.0f) continue;
+      if (station) d += 4.0f;
+      offer(c.name, d - 1.0f);
     }
     std::multimap<float, std::string> order;
     for (auto& [name, score] : best) order.emplace(score, name);

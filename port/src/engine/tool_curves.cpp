@@ -21,6 +21,7 @@
 #include <string>
 
 #include "core/log.h"
+#include "core/text.h"
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/grid.h"
@@ -790,6 +791,110 @@ bool bulldozerFinish(VM& vm, ControlObj* player, GridObj* grid) {
   return g_bulldozer.orig.finish ? g_bulldozer.orig.finish(vm, player, grid) : true;
 }
 
+// ---- the game's rename tool (GRIDMODE_RENAME, the map editor) over curves (2026-11-14) ----
+// Pointing at a curve marks it and the curves of its kind joined on at its ends (not through a junction), as the game
+// marks a road segment; with the right button held the curve alone. The hover event and getReplacedObjects carry a
+// stand-in gsGridItemController whose name reads and writes a pending name (<curveName>, interaction.cpp); the game's
+// dialog sets it and calls applyTool, which names the curves and records it (timeline 0x070810D0). Elsewhere the
+// tool is the game's own.
+struct Renamer {
+  ToolMode orig;
+  std::vector<int> curves;  // the marked curves, the hovered one first
+  bool right = false;
+  uint64_t version = 0;  // the curves' version they were marked at (an undo replays them: marked afresh)
+  Ref<Object> proxy;
+} g_renamer;
+
+// the curves of k's kind joined end to end with it (two ends at a point, no junction)
+std::vector<int> curveChain(const GridData& g, int k) {
+  std::vector<int> out{k};
+  std::set<int> seen{k};
+  for (size_t i = 0; i < out.size(); ++i) {
+    const CurveRoad& c = g.curves[size_t(out[i])];
+    for (int end = 0; end < 2; ++end) {
+      float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+      std::vector<int> at;
+      for (size_t j = 0; j < g.curves.size(); ++j) {
+        if (int(j) == out[i]) continue;
+        const CurveRoad& o = g.curves[j];
+        if ((std::fabs(o.x0 - x) < 0.2f && std::fabs(o.z0 - z) < 0.2f) || (std::fabs(o.x1 - x) < 0.2f && std::fabs(o.z1 - z) < 0.2f))
+          at.push_back(int(j));
+      }
+      if (at.size() != 1 || seen.count(at[0]) || g.curves[size_t(at[0])].kind != c.kind) continue;
+      seen.insert(at[0]);
+      out.push_back(at[0]);
+    }
+  }
+  return out;
+}
+
+void renameDrop(ControlObj* player, GridObj* grid) {
+  if (g_renamer.curves.empty()) return;
+  g_renamer.curves.clear();
+  toolState(player).extraReplaced.clear();
+  g_renamer.proxy = Ref<Object>();
+  if (grid) clearPreview(grid);
+}
+
+void renameMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
+  if (!grid || !grid->data) return;
+  ToolState& t = toolState(player);
+  ToolPick pick = toolPick(vm, player, x, y, false);
+  int k = pick.hit ? curveUnder(*grid->data, pick.point) : -1;
+  if (k >= 0) {
+    if (g_renamer.curves.empty() || g_renamer.curves[0] != k || g_renamer.right != t.right ||
+        g_renamer.version != grid->curvesVersion) {
+      if (g_renamer.curves.empty() && g_renamer.orig.cancel) g_renamer.orig.cancel(vm, player, grid);  // the game's marks go
+      const GridData& g = *grid->data;
+      g_renamer.curves = t.right ? std::vector<int>{k} : curveChain(g, k);
+      g_renamer.right = t.right;
+      g_renamer.version = grid->curvesVersion;
+      std::vector<CurveRoad> marked;
+      std::string name;
+      for (int i : g_renamer.curves) {
+        marked.push_back(g.curves[size_t(i)]);
+        if (name.empty()) name = g.curves[size_t(i)].name;
+      }
+      litPreview(vm, grid, marked, false);
+      g_renamer.proxy = vm.newObject(vm.findClass("gsGridItemController"), nullptr);
+      g_renamer.proxy->fieldValues[u"<curveName>"] = Value::string(utf8ToUtf16(name));
+      t.extraReplaced = {g_renamer.proxy.get()};
+      if (std::getenv("REGS_DEBUG_CURVES"))
+        LOG_INFO("rename: curve %d, %zu curves marked, name \"%s\"", k, g_renamer.curves.size(), name.c_str());
+      vm.fireEvent(player, u"onHoverRename", {Value::heap(VT::Object, g_renamer.proxy.get())});
+    }
+    return;
+  }
+  renameDrop(player, grid);
+  if (g_renamer.orig.move) g_renamer.orig.move(vm, player, grid, x, y);
+}
+
+bool renameFinish(VM& vm, ControlObj* player, GridObj* grid) {
+  if (grid && grid->data && !g_renamer.curves.empty() && g_renamer.proxy) {
+    GridData& g = *grid->data;
+    std::string name = utf16ToUtf8(vm.toStr(g_renamer.proxy->fieldValues[u"<curveName>"]));
+    Object* tl = playerTimeline(vm, player);
+    std::vector<int> renamed;
+    for (int i : g_renamer.curves)
+      if (size_t(i) < g.curves.size() && g.curves[size_t(i)].name != name) renamed.push_back(i);
+    if (tl && renamed.size() > 1) timelineBeginGroup(vm, tl, "%2");
+    for (int i : renamed) {
+      g.curves[size_t(i)].name = name;
+      if (tl) timelineRecordCurveName(vm, tl, g.curves[size_t(i)]);
+    }
+    if (tl && renamed.size() > 1) timelineEndGroup(vm, tl);
+    LOG_INFO("rename: %zu curves named \"%s\"", renamed.size(), name.c_str());
+    renameDrop(player, grid);
+    return true;
+  }
+  return g_renamer.orig.finish ? g_renamer.orig.finish(vm, player, grid) : true;
+}
+
+void renameCancel(VM& vm, ControlObj* player, GridObj* grid) {
+  renameDrop(player, grid);
+  if (g_renamer.orig.cancel) g_renamer.orig.cancel(vm, player, grid);
+}
+
 void bulldozerCancel(VM& vm, ControlObj* player, GridObj* grid) {
   if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: cancel (curve %d)", g_bulldozer.curve);
   if (grid && g_bulldozer.curve >= 0) {
@@ -1205,6 +1310,14 @@ void registerCurveTool(VM& vm) {
     b.finish = bulldozerFinish;
     b.cancel = bulldozerCancel;
     registerToolMode(8, b);
+  }
+  {  // the rename tool (GRIDMODE_RENAME, registered before this) names curves too
+    g_renamer.orig = toolModeOf(kGridModeRename);
+    ToolMode r = g_renamer.orig;
+    r.move = renameMove;
+    r.finish = renameFinish;
+    r.cancel = renameCancel;
+    registerToolMode(kGridModeRename, r);
   }
   vm.setGlobal(u"REGS_GRIDMODE_CURVE_ROAD", Value::integer(kModeCurveRoad));
   // regsCurveToolMode([mode]): the mode (0 straight, 1 curved, 2 freeform, 3 remove); setting it drops the road being drawn

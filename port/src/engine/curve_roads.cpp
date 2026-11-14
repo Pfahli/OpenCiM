@@ -799,7 +799,8 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
 }
 
 // one curve: 13 floats (the 13th the end flags), i32 kind, u32 stop count, per stop f32 s, i8 side, u8 kind, u8 design,
-// u8 0 (format 2: the count's bit 31 set; format 1 had no stop count). The kind's second byte: the bridge flag.
+// u8 0, then u16 length + the name's UTF-8 bytes (format 3: the count's bits 31 and 30 set; format 2 (bit 31) had no
+// name, format 1 no stop count). The kind's second byte: the bridge flag.
 static void writeCurve(const CurveRoad& c, std::vector<uint8_t>& out) {
   auto put = [&](const void* p, size_t n) { out.insert(out.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
   float f[13] = {c.x0, c.y0, c.z0, c.dx0, c.dz0, c.x1, c.y1, c.z1, c.dx1, c.dz1, c.a, c.b, float(c.ends)};
@@ -810,10 +811,12 @@ static void writeCurve(const CurveRoad& c, std::vector<uint8_t>& out) {
     uint8_t b[4] = {uint8_t(st.side), st.kind, st.design, 0};
     put(&st.s, 4), put(b, 4);
   }
+  uint16_t len = uint16_t(std::min<size_t>(c.name.size(), 0xFFFF));
+  put(&len, 2), put(c.name.data(), len);
 }
 
 // reads one curve at p; false when it does not fit before stop
-static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, bool v2, CurveRoad& c) {
+static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, bool v2, bool v3, CurveRoad& c) {
   if (p + 56 > stop) return false;
   float f[13];
   int32_t kind;
@@ -838,12 +841,20 @@ static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, boo
     st.design = d[p + 6];
     c.stops.push_back(st);
   }
+  if (v3 && p + 2 <= stop) {
+    uint16_t len;
+    std::memcpy(&len, d.data() + p, 2);
+    p += 2;
+    if (p + len > stop) return false;
+    c.name.assign((const char*)d.data() + p, len);
+    p += len;
+  }
   return true;
 }
 
 void writeCurveSection(const GridData& g, std::vector<uint8_t>& out) {
   std::vector<uint8_t> body;
-  uint32_t count = uint32_t(g.curves.size()) | 0x80000000u;
+  uint32_t count = uint32_t(g.curves.size()) | 0xC0000000u;
   body.insert(body.end(), (const uint8_t*)&count, (const uint8_t*)&count + 4);
   for (const CurveRoad& c : g.curves) writeCurve(c, body);
   uint32_t tag = kCurveSectionTag, size = uint32_t(body.size());
@@ -857,11 +868,11 @@ void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, 
   if (stop > d.size() || body + 4 > stop) return;
   uint32_t count;
   std::memcpy(&count, d.data() + body, 4);
-  bool v2 = (count & 0x80000000u) != 0;
-  count &= 0x7fffffffu;
+  bool v2 = (count & 0x80000000u) != 0, v3 = v2 && (count & 0x40000000u) != 0;
+  count &= 0x3fffffffu;
   size_t p = body + 4;
   CurveRoad c;
-  for (uint32_t i = 0; i < count && readCurve(d, p, stop, v2, c); ++i) g.curves.push_back(c);
+  for (uint32_t i = 0; i < count && readCurve(d, p, stop, v2, v3, c); ++i) g.curves.push_back(c);
   refreshCurveAnchors(g);
 }
 
@@ -933,7 +944,7 @@ bool curveFromActionBytes(const std::vector<uint8_t>& raw, CurveRoad& c, bool& a
   if (raw.size() < 1 + 60) return false;
   add = raw[0] != 0;
   size_t p = 1;
-  return readCurve(raw, p, raw.size(), true, c);
+  return readCurve(raw, p, raw.size(), true, true, c);  // older records end before the name
 }
 
 // ---- junctions ----

@@ -158,6 +158,16 @@ an avenue need a loop or a junction to reach each other, as in the game, whose a
 A large road or avenue curve with tracks ends at a free end in the game's tram end piece (`tram_large_deadend`,
 `tram_avenue_deadend`, no lanes), its open edge on the road dead end's (`curveTramDeadend`).
 
+### Street names
+
+The game's rename tool (T in the editor's toolbar) names curves too (2026-11-14): pointing at a curve marks it and the
+curves of its kind joined on at its ends (through no junction), as the game marks a road segment; with the right button
+held the curve alone. A click opens the game's rename dialog; the name goes on every marked curve (undo takes it back).
+`findNames` offers a curve's name from its nearest point, scored as a road piece, so stops placed in a game near a
+named curve take its name. Engine/tool_curves.cpp (`renameMove`, a stand-in `gsGridItemController` with `<curveName>`
+for the dialog), timeline action `0x070810D0`. Checked (2026-11-14): naming a large-road curve, the hover text, the
+name after saving and loading, undo, and a bus stop placed in a game beside it offered the name.
+
 ## 2. Data model (for code that lays roads, e.g. the OSM import)
 
 A curve is **not** a grid item. `GridData::curves` (engine/grid.h) holds `CurveRoad`s:
@@ -171,6 +181,7 @@ A curve is **not** a grid item. `GridData::curves` (engine/grid.h) holds `CurveR
 | `ends` | bit 0: start on a grid road block (the curve continues its straight piece), bit 1: end on a block, bit 2: tram tracks, bit 3 / 4: start / end on a grass tram track (small roads), bit 5: one-way (start → end), bit 6: with bit 5 one lane, bit 7: part of a roundabout ring |
 | `stops` | `{s, side ±1, kind 0 bus / 1 tram, design}` (small roads) |
 | `bridge` | 1: a bridge (see above); saved in the second byte of the kind (section and timeline bytes) |
+| `name` | the street name (UTF-8, empty when unnamed); `findNames` offers it for stop names |
 
 Rules the renderer, lanes and walk map rely on:
 - **Joins and junctions are found by position**: curve ends of road kinds within 0.2 units of each other form a joint;
@@ -188,8 +199,9 @@ levelled, cover, walk map, lanes and the renderer updated; call between `gridEdi
 `timelineRecordCurve(vm, timeline, c, add)` records it for undo. `splitCurve(c, s, first, second)` cuts a curve at arc
 length s (the halves meet exactly). `curveProfile(kind)`, `curveLanes(kind)` give sizes and lane offsets.
 
-Saving: map.grid section `0x07F00000` (format 2: per curve 13 floats with `ends` as the 13th, i32 kind, u32 stop count,
-8 bytes per stop); timeline action `0x070810A0`. Game saves carry the section with the map.
+Saving: map.grid section `0x07F00000` (format 3: per curve 13 floats with `ends` as the 13th, i32 kind, u32 stop count,
+8 bytes per stop, u16 name length and the name; format 2 had no name); timeline action `0x070810A0` (the same bytes
+after an add/remove byte), renames `0x070810D0`. Game saves carry the section with the map.
 
 ### Mapping OpenStreetMap ways (suggestion)
 

@@ -66,6 +66,9 @@ struct GridData {
     // water, which stay as they are (no levelling, no cover), drawn with the kind's bridge span and pillars; saved in
     // the second byte of the kind in section 0x07F00000 and the timeline bytes
     uint8_t bridge = 0;
+    // the street name (2026-11-14: the map editor's rename tool over curves; findNames offers it for stop names), UTF-8,
+    // empty when unnamed; saved after the stops (format 3)
+    std::string name;
   };
   std::vector<CurveRoad> curves;
   // the stop items that anchor curve stops (and the stop tool's preview of one): not drawn, no walk map of their own
