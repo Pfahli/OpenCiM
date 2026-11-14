@@ -216,7 +216,9 @@ API (engine/paint_edges.h):
 The terrain menu's round pavement brush and its eraser (right button) cut the cells on the brush circle the same way
 (`paintCircle`): strokes get round, smooth borders, a stroke over another paint's edge joins it (where three surfaces
 meet in one cell a small notch stays: a cell holds one cut). Templates (.cimtpl) keep the edges of their cells; the
-minimap counts a cut cell as paved when its paint holds the cell's centre.
+minimap counts a cut cell as paved when its paint holds the cell's centre. The field brush still paints whole cells: cut
+field cells were tried (2026-11-14) but the field texture's soil rim, blended from the cell corners, came out ragged
+along the cut.
 
 Saving: map.grid section `0x07F20000` (u32 count; per cell u16 x, u16 z, u8 type, u8 lines | join << 4, u16 0, six
 floats), timeline action `0x070810C0` (the rect and its edges). Painting a cell by hand (terrain menu, either brush)
