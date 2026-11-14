@@ -820,7 +820,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         need(pf.straight), need(pf.deadend), need(pf.pillar);
         if (c.ends & 4) need(pf.tram);
         if (c.bridge) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind));
-        for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st).c_str());
+        for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st, c.kind).c_str());
       };
       need("road_small_basic"), need("tram_small_basic"), need(curveProfile(3).straight);
       for (const CurveRoad& c : g.curves) needCurve(c);
@@ -947,20 +947,27 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             return;
           }
         }
+        // the stops: their templates' meshes (the shelter) bent along the curve at the kerb (3 out on small roads, 6 on
+        // large roads, 10.5 on avenues: the stop items' own centre line sits that far from the road's)
+        auto stops = [&]() {
+          if (c.stops.empty()) return;
+          std::vector<CurveSample> shape = curveShape(c);
+          const float out = curveProfile(c.kind).carriageway;
+          for (const CurveRoad::Stop& st : c.stops) {
+            ObjectObj* o = nullptr;
+            int sb = templateOf(stopTemplateName(st, c.kind), &o);
+            if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), out, m);
+          }
+        };
         if (c.kind != 0) {
           bentRoad(c, m, t0, t1);
+          stops();
           return;
         }
         bool meet0 = false, meet1 = false;
         if (!noCaps) curveOneWayMeets(g, c, t0, t1, meet0, meet1);
         buildCurveMesh(c, noCaps ? CurveEnds{} : curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1, meet0, meet1);
-        if (c.stops.empty()) return;
-        std::vector<CurveSample> shape = curveShape(c);
-        for (const CurveRoad::Stop& st : c.stops) {
-          ObjectObj* o = nullptr;
-          int sb = templateOf(stopTemplateName(st), &o);
-          if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), 3.0f, m);
-        }
+        stops();
       };
       MeshData all;
       std::vector<CurveJunction> junctions = findCurveJunctions(g);

@@ -994,6 +994,12 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
       if ((side >= 0 ? 1 : -1) == w.lastSide && std::fabs(s - w.lastS) < 0.75f) return;
     }
     if (k >= 0) {
+      if (t.cellX != -1 && w.curve < 0) {  // the original tool's red cell (a spot where no stop fits) goes
+        gridEditBegin(vm, grid);
+        gridUnselectArea(vm, grid, t.cellX, t.cellZ, 1, 1);
+        gridEditEnd(vm, grid);
+        t.cellX = t.cellZ = -1;
+      }
       wrapClear(vm, player, grid, w);
       const CurveRoad& c = g.curves[size_t(k)];
       w.curve = k;
@@ -1016,7 +1022,7 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
           invisiblePreview(vm, player, grid, pf.tram, cx, int(c.y0 * 256.0f / cs), cz, 0, false);
       } else {
         CurveRoad::Stop st;
-        w.ok = stopToolTemplate(vm, player, grid, st) && c.kind == 0;  // stops on small-road curves only (so far)
+        w.ok = stopToolTemplate(vm, player, grid, st) && curveTakesStop(c.kind, st.kind);  // small roads; large and avenues: bus
         std::vector<CurveSample> shape = curveShape(c);
         float side, s;
         curveNearest(shape, pick.point.x, pick.point.z, side, s);
@@ -1032,11 +1038,11 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
         int ax, az, ao;
         stopAnchor(g, w.after, st, ax, az, ao);
         float ay = curveAt(shape, std::clamp(s, 0.0f, L)).p.y;
-        w.stopAnchor = invisiblePreview(vm, player, grid, stopTemplateName(st), ax, int(ay * 256.0f / cs), az, ao, !w.ok);
+        w.stopAnchor = invisiblePreview(vm, player, grid, stopTemplateName(st, c.kind), ax, int(ay * 256.0f / cs), az, ao, !w.ok);
         if (w.stopAnchor < 0) w.ok = false;
         if (std::getenv("REGS_DEBUG_CURVES"))
           LOG_INFO("curve tool: stop target kind %d design %d at s %.1f of %.1f side %d, anchor %d (%s), %s", int(st.kind),
-                   int(st.design), s, L, int(st.side), w.stopAnchor, stopTemplateName(st).c_str(), w.ok ? "fits" : "refused");
+                   int(st.design), s, L, int(st.side), w.stopAnchor, stopTemplateName(st, c.kind).c_str(), w.ok ? "fits" : "refused");
       }
       showAfter(grid, w.after, !w.ok);
       if (w.mode == 0x11)

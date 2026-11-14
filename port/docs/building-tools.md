@@ -144,8 +144,11 @@ Under the pointer: the hint, and once turned, the angle. A new object starts unt
 
 ### Stops
 
-Bus and tram stops on small-road curves: the game's stop tool, the platform bent along the curve (tram stops need
-tracks). A real stop item of the game anchors each stop (invisible), so lines, picking and saving work as usual.
+Bus and tram stops on small-road curves, bus stops on large-road and avenue curves (2026-11-14): the game's stop tool,
+the stop's model bent along the curve at the kerb (tram stops need tracks). A real stop item of the game anchors each
+stop (invisible; `stop_bus0N_small` / `_large` / `_avenue` at the pavement's middle), so lines, picking and saving work
+as usual; on large roads and avenues the kerb lane on the stop's side gets STOP where the stop is (bentNodes), and buses
+halt there (tested with REGS_TEST_LINE=0 on both kinds).
 
 ## 2. Data model (for code that lays roads, e.g. the OSM import)
 
@@ -240,7 +243,7 @@ reads the cell flags only (a cut cell counts as its flags say).
 
 ## 4. Not done
 
-Tunnels on curves, express-road junctions and ramps, abutments at bridge ends; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
+Tunnels on curves, express-road junctions and ramps, abutments at bridge ends; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; tram stops
 on large-road and avenue curves; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 

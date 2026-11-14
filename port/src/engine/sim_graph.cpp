@@ -739,6 +739,14 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
           CurveSample a = curveAt(shape, s0 + p.p0.x * cp.stretch), b = curveAt(shape, s0 + p.p1.x * cp.stretch);
           LaneNode n;
           n.flags = p.flags & ~kPathStop;
+          // a bus stop (large roads, avenues) on this piece: the kerb lane on its side gets STOP where the stop is
+          if (!c.stops.empty() && (p.flags & kPathClassMask & ~0x600u) == kPathRoad && !(p.flags & kPathPark)) {
+            const float outer = curveLanes(c.kind).offset[1], sa = s0 + p.p0.x * cp.stretch, sb = s0 + p.p1.x * cp.stretch;
+            for (const CurveRoad::Stop& st : c.stops)
+              if (st.kind == 0 && std::fabs(std::fabs(p.p0.z) - outer) < 0.5f && (p.p0.z > 0) == (st.side > 0) &&
+                  st.s >= std::min(sa, sb) && st.s < std::max(sa, sb))
+                n.flags |= kPathStop;
+          }
           n.item = -1;
           n.p0 = a.p + a.right * p.p0.z + Vec3{0, p.p0.y, 0};
           n.p1 = b.p + b.right * p.p1.z + Vec3{0, p.p1.y, 0};

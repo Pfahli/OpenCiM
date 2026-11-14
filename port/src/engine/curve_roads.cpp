@@ -609,16 +609,22 @@ void appendBentMesh(const render::MeshData& src, int materialBase, const std::ve
   (void)first;
 }
 
-std::string stopTemplateName(const CurveRoad::Stop& st) {
-  return st.kind == 1 ? "stop_tram01_small" : "stop_bus0" + std::to_string(std::clamp(int(st.design), 1, 3)) + "_small";
+std::string stopTemplateName(const CurveRoad::Stop& st, int kind) {
+  if (st.kind == 1) return "stop_tram01_small";
+  const char* road = kind == 1 ? "_large" : kind == 2 ? "_avenue" : "_small";
+  return "stop_bus0" + std::to_string(std::clamp(int(st.design), 1, 3)) + road;
 }
 
 void stopAnchor(const GridData& g, const CurveRoad& c, const CurveRoad::Stop& st, int& x, int& z, int& orient) {
   std::vector<CurveSample> d = curveShape(c);
   CurveSample k = curveAt(d, st.s);
-  Vec3 p = k.p + k.right * (float(st.side) * 4.5f);  // the pavement's middle
+  // the pavement's middle (small road 4.5, large road 9, avenue 12.75 out); the stop items' footprints along x and
+  // across: small 4 × 2, large 8 × 4, avenue 8 × 3
+  const CurveProfile& pf = curveProfile(c.kind);
+  Vec3 p = k.p + k.right * (float(st.side) * (pf.carriageway + pf.halfWidth) * 0.5f);
   orient = std::fabs(k.dir.x) >= std::fabs(k.dir.z) ? 0 : 1;
-  int sx = orient ? 2 : 4, sz = orient ? 4 : 2;
+  const int along = c.kind == 1 || c.kind == 2 ? 8 : 4, across = c.kind == 1 ? 4 : c.kind == 2 ? 3 : 2;
+  int sx = orient ? across : along, sz = orient ? along : across;
   const float cs = g.cellSize;
   x = int(std::lround(p.x / cs + float(g.width) * 0.5f - float(sx) * 0.5f));
   z = int(std::lround(p.z / cs + float(g.length) * 0.5f - float(sz) * 0.5f));
@@ -630,7 +636,7 @@ void refreshCurveAnchors(GridData& g) {
     for (const CurveRoad::Stop& st : c.stops) {
       int x, z, o;
       stopAnchor(g, c, st, x, z, o);
-      std::string name = stopTemplateName(st);
+      std::string name = stopTemplateName(st, c.kind);
       for (size_t i = 0; i < g.items.size(); ++i) {
         const GridData::Item& it = g.items[i];
         if (it.removed || it.x != x || it.z != z || it.type >= g.types.size() || g.types[it.type] != name) continue;

@@ -185,7 +185,10 @@ CurvePieces curvePieces(const CurveRoad& c, float length = -1);
 void curveCapFrame(const CurveRoad& c, int end, bool openPlusX, render::Vec3& o, render::Vec3& ax, render::Vec3& az);
 // curve stops: the stop item template of a stop, its anchor item's cell and orientation (at the pavement beside s),
 // and GridData::curveAnchors rebuilt from the map's items (after loads and curve edits)
-std::string stopTemplateName(const CurveRoad::Stop& st);
+// (small roads: bus 01-03 and tram; large roads and avenues: their bus stops, stop_bus0N_large / _avenue)
+std::string stopTemplateName(const CurveRoad::Stop& st, int kind = 0);
+// the kinds that take stops: small roads (bus, tram), large roads and avenues (bus)
+inline bool curveTakesStop(int kind, int stopKind) { return kind == 0 || ((kind == 1 || kind == 2) && stopKind == 0); }
 void stopAnchor(const GridData& g, const CurveRoad& c, const CurveRoad::Stop& st, int& x, int& z, int& orient);
 void refreshCurveAnchors(GridData& g);
 

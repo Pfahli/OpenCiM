@@ -1948,13 +1948,13 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   }
   // test harness: REGS_TEST_LINE=<type> (0 bus, 1 tram, 2 metro) 60 ticks into the game: a new line of that type (the
   // line panel's createLine) through every stop of it on the map (bus stops, tram stops, metro stations by template
-  // name, in map order), with one vehicle of REGS_TEST_LINE_MODEL (default bus-01 / tram-01 / metro-01), switched on
+  // name, in map order), with one vehicle of REGS_TEST_LINE_MODEL (default bus01 / tram-01 / metro-01), switched on
   if (const char* t = std::getenv("REGS_TEST_LINE")) {
     static int ticks = 0;
     if (++ticks == 60) {
       int type = std::atoi(t);
       static const char* kPrefix[] = {"stop_bus", "stop_tram", "station_metro"};
-      static const char* kModel[] = {"bus-01", "tram-01", "metro-01"};
+      static const char* kModel[] = {"bus01", "tram-01", "metro-01"};  // the game's own names (buses without a dash)
       const char* model = std::getenv("REGS_TEST_LINE_MODEL");
       if (!model) model = kModel[std::clamp(type, 0, 2)];
       try {
