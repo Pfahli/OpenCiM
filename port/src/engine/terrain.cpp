@@ -948,15 +948,14 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           }
         }
         // the stops: their templates' meshes (the shelter) bent along the curve at the kerb (3 out on small roads, 6 on
-        // large roads, 10.5 on avenues: the stop items' own centre line sits that far from the road's)
+        // large roads, 10.5 on avenues, an avenue's tram stop 4.5 in its middle strip: curveStopOffset)
         auto stops = [&]() {
           if (c.stops.empty()) return;
           std::vector<CurveSample> shape = curveShape(c);
-          const float out = curveProfile(c.kind).carriageway;
           for (const CurveRoad::Stop& st : c.stops) {
             ObjectObj* o = nullptr;
             int sb = templateOf(stopTemplateName(st, c.kind), &o);
-            if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), out, m);
+            if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), curveStopOffset(c.kind, st.kind), m);
           }
         };
         if (c.kind != 0) {

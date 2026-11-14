@@ -610,18 +610,25 @@ void appendBentMesh(const render::MeshData& src, int materialBase, const std::ve
 }
 
 std::string stopTemplateName(const CurveRoad::Stop& st, int kind) {
-  if (st.kind == 1) return "stop_tram01_small";
   const char* road = kind == 1 ? "_large" : kind == 2 ? "_avenue" : "_small";
+  if (st.kind == 1)  // trams: small roads keep design 01 (as before); large roads and avenues their design
+    return kind == 0 ? "stop_tram01_small" : "stop_tram0" + std::to_string(std::clamp(int(st.design), 1, 3)) + road;
   return "stop_bus0" + std::to_string(std::clamp(int(st.design), 1, 3)) + road;
+}
+
+float curveStopOffset(int kind, int stopKind) {
+  if (kind == 2 && stopKind == 1) return 4.5f;  // an avenue's tram stop: in the middle strip
+  return curveProfile(kind).carriageway;
 }
 
 void stopAnchor(const GridData& g, const CurveRoad& c, const CurveRoad::Stop& st, int& x, int& z, int& orient) {
   std::vector<CurveSample> d = curveShape(c);
   CurveSample k = curveAt(d, st.s);
-  // the pavement's middle (small road 4.5, large road 9, avenue 12.75 out); the stop items' footprints along x and
-  // across: small 4 × 2, large 8 × 4, avenue 8 × 3
+  // the pavement's middle (small road 4.5, large road 9, avenue 12.75 out; an avenue's tram stop on its platform, 3.75
+  // out in the middle strip); the stop items' footprints along x and across: small 4 × 2, large 8 × 4, avenue 8 × 3
   const CurveProfile& pf = curveProfile(c.kind);
-  Vec3 p = k.p + k.right * (float(st.side) * (pf.carriageway + pf.halfWidth) * 0.5f);
+  const float out = c.kind == 2 && st.kind == 1 ? 3.75f : (pf.carriageway + pf.halfWidth) * 0.5f;
+  Vec3 p = k.p + k.right * (float(st.side) * out);
   orient = std::fabs(k.dir.x) >= std::fabs(k.dir.z) ? 0 : 1;
   const int along = c.kind == 1 || c.kind == 2 ? 8 : 4, across = c.kind == 1 ? 4 : c.kind == 2 ? 3 : 2;
   int sx = orient ? across : along, sz = orient ? along : across;

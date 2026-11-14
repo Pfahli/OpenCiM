@@ -747,6 +747,13 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
                   st.s >= std::min(sa, sb) && st.s < std::max(sa, sb))
                 n.flags |= kPathStop;
           }
+          // a tram stop: the tram lane on its side (large roads: the kerb lane's track; avenues: the middle strip's)
+          if (!c.stops.empty() && (p.flags & kPathClassMask) == kPathTram) {
+            const float sa = s0 + p.p0.x * cp.stretch, sb = s0 + p.p1.x * cp.stretch;
+            for (const CurveRoad::Stop& st : c.stops)
+              if (st.kind == 1 && (p.p0.z > 0) == (st.side > 0) && st.s >= std::min(sa, sb) && st.s < std::max(sa, sb))
+                n.flags |= kPathStop;
+          }
           n.item = -1;
           n.p0 = a.p + a.right * p.p0.z + Vec3{0, p.p0.y, 0};
           n.p1 = b.p + b.right * p.p1.z + Vec3{0, p.p1.y, 0};
