@@ -176,6 +176,9 @@ class GridObj : public script::Object {
   // highlightVersion, highlighted cells on its rim are drawn clipped to it (the paint and its eraser cut there too)
   float highlightCircle[3] = {0, 0, 0};
   uint64_t highlightCircleVersion = ~uint64_t(0);
+  // the same for a convex outline instead of the circle (x, z pairs in corner coordinates; the pavement brush's Shift
+  // strip): used while not empty and highlightCircleVersion equals highlightVersion
+  std::vector<float> highlightPoly;
   // gsGrid::mountObject: preview item → its mounted copy while a tool commits (children follow their parent's copy)
   std::map<uint32_t, uint32_t> mountedCopies;
   // gsGrid.viewMode (+0x1fc, GRID_VIEW_*; docs/renderer/underground.md): 0xfe (GRID_VIEW_DEFAULT) from the constructor,

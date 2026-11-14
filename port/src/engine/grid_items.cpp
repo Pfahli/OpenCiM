@@ -701,16 +701,41 @@ void buildHighlightOverlay(const GridData& g, const GridObj& grid, const Terrain
     };
     Part& p = parts[(g.flags[c] & 0x8000) ? 1 : 0];
     // port: the round pavement brush's rim cells clipped to its circle (a 64-gon around it), heights bilinear
+    // (or to the convex outline highlightPoly: its edges as the clipping lines)
     const float* rc = grid.highlightCircle;
-    if (grid.highlightCircleVersion == grid.highlightVersion && rc[2] > 0) {
-      auto inside = [&](float px, float pz) { return (px - rc[0]) * (px - rc[0]) + (pz - rc[1]) * (pz - rc[1]) <= rc[2] * rc[2]; };
+    const std::vector<float>& hp = grid.highlightPoly;
+    const bool usePoly = hp.size() >= 6;
+    if (grid.highlightCircleVersion == grid.highlightVersion && (rc[2] > 0 || usePoly)) {
+      // the clipping lines: n·(p − c) − off <= 0 inside; a 64-gon around the circle, or the outline's edges
+      std::vector<std::array<float, 4>> lines;  // nx, nz, cx, cz (off folded into c)
+      if (usePoly) {
+        float mx = 0, mz = 0;
+        const size_t m = hp.size() / 2;
+        for (size_t i = 0; i < m; ++i) mx += hp[2 * i], mz += hp[2 * i + 1];
+        mx /= float(m), mz /= float(m);
+        for (size_t i = 0; i < m; ++i) {
+          float ax = hp[2 * i], az = hp[2 * i + 1], bx = hp[2 * ((i + 1) % m)], bz = hp[2 * ((i + 1) % m) + 1];
+          float nx = bz - az, nz = -(bx - ax);
+          if (nx * (mx - ax) + nz * (mz - az) > 0) nx = -nx, nz = -nz;  // outward
+          lines.push_back({nx, nz, ax, az});
+        }
+      } else {
+        for (int s = 0; s < 64; ++s) {
+          float ang = float(s) * 6.2831853f / 64, nx = std::cos(ang), nz = std::sin(ang);
+          lines.push_back({nx, nz, rc[0] + nx * rc[2], rc[1] + nz * rc[2]});
+        }
+      }
+      auto inside = [&](float px, float pz) {
+        for (const auto& l : lines)
+          if (l[0] * (px - l[2]) + l[1] * (pz - l[3]) > 0) return false;
+        return true;
+      };
       if (!(inside(float(x), float(z)) && inside(float(x + 1), float(z)) && inside(float(x), float(z + 1)) &&
             inside(float(x + 1), float(z + 1)))) {
         std::vector<std::pair<float, float>> poly = {{0.f, 0.f}, {0.f, 1.f}, {1.f, 1.f}, {1.f, 0.f}};  // as a, d, e, b
-        constexpr int kSides = 64;
-        for (int s = 0; s < kSides && poly.size() >= 3; ++s) {
-          float ang = float(s) * 6.2831853f / kSides, nx = std::cos(ang), nz = std::sin(ang);
-          auto dist = [&](const std::pair<float, float>& q) { return (x + q.first - rc[0]) * nx + (z + q.second - rc[1]) * nz - rc[2]; };
+        for (size_t s = 0; s < lines.size() && poly.size() >= 3; ++s) {
+          const auto& l = lines[s];
+          auto dist = [&](const std::pair<float, float>& q) { return l[0] * (x + q.first - l[2]) + l[1] * (z + q.second - l[3]); };
           std::vector<std::pair<float, float>> next;
           for (size_t i = 0; i < poly.size(); ++i) {
             const auto& q0 = poly[i];
