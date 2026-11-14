@@ -219,7 +219,19 @@ API (engine/paint_edges.h):
 The terrain menu's round pavement brush and its eraser (right button) cut the cells on the brush circle the same way
 (`paintCircle`): strokes get round, smooth borders, a stroke over another paint's edge joins it (where three surfaces
 meet in one cell a small notch stays: a cell holds one cut). Templates (.cimtpl) keep the edges of their cells; the
-minimap counts a cut cell as paved when its paint holds the cell's centre. **Shift + drag** with the pavement brush paints a straight strip as wide as the brush from the press point to the release
+minimap counts a cut cell as paved when its paint holds the cell's centre. 
+
+**Brush shapes** (2026-11-14): a second column beside the brush sizes picks the shape, with drawn symbols
+(`data/regs/ui/toolbar/brush-*.dds`, `tools/make-brush-icons.ps1`; script: the toolbar extension, native
+`regsBrushShape([n])`): circle, square (along the grid), diamond (turned 45°) and line (a strip as wide as the brush
+from the press to the release; pavement and fields). Every brush (pavement, fields, level, soften, shift, ruin) takes the
+shape: its distance gives the height brushes' falloff, the field brush paints the cells whose centre is inside, the
+pavement brush cuts along the rim. The green preview is the shape itself (rim cells clipped to it: `highlightCircle` /
+`highlightPoly`). A pavement stroke paints the shape's sweep between two mouse positions (the convex hull of the shape at
+both: straight sides at any angle) and records it as point pairs (strength 2), so undo replays the same; each stroke is
+one undo step (`timelineCloseBrush`). The shape goes in the brush action's radius byte (top two bits).
+
+**Shift + drag** with the pavement brush paints a straight strip as wide as the brush from the press point to the release
 point, at any angle with exact edges (`paintArea`; the preview is clipped to the strip; one undo step). The field brush still paints whole cells: cut
 field cells were tried (2026-11-14) but the field texture's soil rim, blended from the cell corners, came out ragged
 along the cut.

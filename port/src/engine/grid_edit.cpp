@@ -415,22 +415,24 @@ bool gridSetWaterFlag(GridObj* grid, int x, int z, bool on) {
   return changed;
 }
 
-std::vector<std::pair<int, int>> gridRoundBrushCells(GridObj* grid, float R, float cx, float cz) {
+std::vector<std::pair<int, int>> gridRoundBrushCells(GridObj* grid, float R, float cx, float cz, int shape) {
   std::vector<std::pair<int, int>> out;
   if (!grid->data) return out;
+  const BrushShape sh{shape == kBrushLine ? kBrushCircle : shape, cx, cz, R};
   const GridData& g = *grid->data;
   int x0 = std::max(0, int(std::floor(cx - R - 1))), x1 = std::min(g.width - 1, int(std::ceil(cx + R)));
   int z0 = std::max(0, int(std::floor(cz - R - 1))), z1 = std::min(g.length - 1, int(std::ceil(cz + R)));
   for (int z = z0; z <= z1; ++z)
-    for (int x = x0; x <= x1; ++x) {
-      float dx = float(x) + 0.5f - cx, dz = float(z) + 0.5f - cz;
-      if (dx * dx + dz * dz <= R * R) out.emplace_back(x, z);
-    }
+    for (int x = x0; x <= x1; ++x)
+      if (sh.contains(x + 0.5, z + 0.5)) out.emplace_back(x, z);
   return out;
 }
 
-void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int strength, bool preview) {
+void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int strength, bool preview, int shape,
+                    const float* from) {
   if (!grid->data || R <= 0) return;
+  if (shape == kBrushLine) shape = kBrushCircle;  // a line's dabs are circles
+  const BrushShape sh{shape, cx, cz, R};
   GridData& g = *grid->data;
   const int W = g.width, L = g.length;
   if (preview && !(type >= 1 && type <= 8)) return;
@@ -439,9 +441,9 @@ void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int st
   if (x0 > x1 || z0 > z1) return;
   auto idx = [&](int x, int z) { return size_t(z) * size_t(W) + size_t(x); };
   auto weight = [&](int x, int z) {
-    float dx = float(x) - cx, dz = float(z) - cz, d = std::sqrt(dx * dx + dz * dz);
-    if (d >= R) return 0.0f;
-    float t = 1.0f - d / R;
+    float d = float(sh.norm(x, z));  // 0 at the centre, 1 on the rim of the brush's shape
+    if (d >= 1.0f) return 0.0f;
+    float t = 1.0f - d;
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
   };
   bool heights = type >= 19 && type <= 21;
@@ -483,19 +485,23 @@ void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int st
         if (h1 > -0x141 && h2 > -0x141 && h3 > -0x141) g.flags[c] &= 0xDFFF;
       }
   } else if (type == 22) {  // ruin: the worn variant grows with the weight at the cell's centre
-    for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz)) {
+    for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz, shape)) {
       uint16_t& f = g.flags[idx(x, z)];
       if (f & 0x1028) continue;
-      float dx = float(x) + 0.5f - cx, dz = float(z) + 0.5f - cz, t = 1.0f - std::sqrt(dx * dx + dz * dz) / R;
+      float t = 1.0f - float(sh.norm(x + 0.5, z + 0.5));
       float w = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
       int wear = int(std::lrint(float(strength) * w * 0.0001f * float((std::rand() & 0x1f) + 0x44))) + (f & 7);
       f = uint16_t((f & 0xFFF8) | std::clamp(wear, 0, 7));
     }
   } else if (!preview && type >= 1 && type <= 9) {
     // pavement paint and its eraser: the circle's border cells cut along it (engine/paint_edges.h, owner 2026-11-14)
-    paintCircle(g, type, cx, cz, R);
+    const bool sweep = from && (from[0] != cx || from[1] != cz);  // a sweep from the point itself: the dab
+    paintShape(g, type, sweep ? sh.sweptFrom(from[0], from[1]) : sh);
+    if (sweep)  // the whole sweep, from its far end on
+      gridEditCellsChanged(grid, int(std::floor(std::min(from[0], cx) - R)) - 1, int(std::floor(std::min(from[1], cz) - R)) - 1,
+                           int(std::ceil(std::max(from[0], cx) + R)) + 1, int(std::ceil(std::max(from[1], cz) + R)) + 1, false);
   } else {
-    for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz)) {
+    for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz, shape)) {
       uint16_t& f = g.flags[idx(x, z)];
       if (type >= 1 && type <= 8) {
         if (!preview) f = uint16_t((f & 0xFF98) | 0x8 | (type - 1));

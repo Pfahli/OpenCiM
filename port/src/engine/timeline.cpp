@@ -399,8 +399,18 @@ void applyCreate(Apply& ap, const Action& a, bool preview) {
 void applyBrush(Apply& ap, const Action& a, bool preview) {
   GridData& g = *ap.grid->data;
   int type = a.brushType, r = a.radius;
-  if (type & 0x40) {  // port: the round brush (grid_edit.h), its centres in 1/8 cell, radius r + 0.5
-    for (auto [px, pz] : a.points) gridRoundBrush(ap.grid, type & 0x3f, float(r) + 0.5f, float(px) / 8.0f, float(pz) / 8.0f, a.strength, preview);
+  if (type & 0x40) {  // port: the round brush (grid_edit.h), its centres in 1/8 cell, radius r + 0.5; the radius byte's
+    // top two bits: the brush shape (engine/paint_edges.h kBrushCircle / Square / Diamond)
+    const int rr = uint8_t(a.radius) & 0x3F, shape = uint8_t(a.radius) >> 6;
+    const int bt = type & 0x3f;
+    if (bt >= 1 && bt <= 9 && a.strength == 2 && !preview) {  // pavement sweeps: point pairs (from, to), recorded so
+      for (size_t i = 0; i + 1 < a.points.size(); i += 2) {
+        const float from[2] = {float(a.points[i].first) / 8.0f, float(a.points[i].second) / 8.0f};
+        gridRoundBrush(ap.grid, bt, float(rr) + 0.5f, float(a.points[i + 1].first) / 8.0f, float(a.points[i + 1].second) / 8.0f, 0, false, shape, from);
+      }
+      return;
+    }
+    for (auto [px, pz] : a.points) gridRoundBrush(ap.grid, bt, float(rr) + 0.5f, float(px) / 8.0f, float(pz) / 8.0f, a.strength, preview, shape);
     return;
   }
   if (preview && !(type >= 1 && type <= 8)) return;
@@ -625,6 +635,16 @@ struct Recording {
 std::unordered_map<const Object*, Recording> g_recording;
 
 void resetRecording(Object* s) { g_recording.erase(s); }
+
+}  // namespace
+
+// port: a brush stroke ended: its dabs stay one action (one undo step); the next stroke opens its own
+void timelineCloseBrush(Object* s) {
+  auto it = g_recording.find(s);
+  if (it != g_recording.end()) it->second.brushOpen = false;
+}
+
+namespace {
 
 std::vector<Action>& recordContainer(VM& vm, Object* s, Recording& rec) {
   TimelineData& t = timelineOf(s);

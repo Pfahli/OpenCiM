@@ -163,3 +163,8 @@ $regs_track_rail = "Railway";
 $regs_turn_info = "Rotation %0.%1 deg  (Shift + mouse wheel, with Ctrl: fine)";
 $regs_turn_snap = "Rotation %0.%1 deg, lined up with the neighbour (hold Ctrl: free)";
 $regs_curve_info_bad = "(does not fit)";
+// the brush shapes beside the brush sizes (terrain menu)
+$regs_brush_circle = "Brush: circle";
+$regs_brush_square = "Brush: square";
+$regs_brush_diamond = "Brush: diamond";
+$regs_brush_line = "Brush: line (drag: a straight strip as wide as the brush from the press to the release; pavement and fields)";

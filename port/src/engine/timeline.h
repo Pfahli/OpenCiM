@@ -44,5 +44,7 @@ void timelineRecordWater(script::VM& vm, script::Object* timeline, int x, int z,
 void timelineRecordCurve(script::VM& vm, script::Object* timeline, const GridData::CurveRoad& c, bool add);
 // port: the painted areas' edges of cells [x, x + w) × [z, z + l) as they are now in the grid (engine/paint_edges.h)
 void timelineRecordPaintEdges(script::VM& vm, script::Object* timeline, const GridData& g, int x, int z, int w, int l);
+// port: a brush stroke ended (mouse up): its dabs stay one action, the next stroke opens its own (one undo step each)
+void timelineCloseBrush(script::Object* timeline);
 
 }  // namespace regs::engine

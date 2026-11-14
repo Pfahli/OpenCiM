@@ -29,3 +29,26 @@ function openBuildingMenu() {
     }
   }
 }
+
+// the brush shapes (owner's request 2026-11-14): a second column of buttons beside the brush sizes, with symbols
+// (regs/ui/toolbar/brush-*.dds, drawn by tools/make-brush-icons.ps1): circle, square, diamond and line (regsBrushShape,
+// engine/tool_terrain.cpp). The size bar grows to two columns, so the buttons show, hide and go with it.
+$regsShapeFile = "regs/strings/"+MAIN.$language+".strings";
+if (!file_exists($regsShapeFile)) $regsShapeFile = "regs/strings/en_US.strings";
+$regsShapeS = load "/"+$regsShapeFile;
+$sizebar.width = 100;
+$regsShapeArea = new_control($sizebar);
+$regsShapeArea.setRect(50, 0, 50, 190);
+$regsShapeArea.visible = true;
+$regsShapeButtons = [];
+$regsShapeNames = ["circle", "square", "diamond", "line"];
+$regsShapeHints = [$regsShapeS.$regs_brush_circle, $regsShapeS.$regs_brush_square, $regsShapeS.$regs_brush_diamond, $regsShapeS.$regs_brush_line];
+delete $regsShapeS;
+for ($regsI = 0; $regsI < 4; ++$regsI) {
+  $regsIcon = "/regs/ui/toolbar/brush-" + $regsShapeNames[$regsI];
+  $regsB = MAIN.$ui.createChoiceButton($regsShapeArea, $regsShapeArea, 0, $regsI * 45 + 5, 40, 40, "", macro($regsI) :: regsBrushShape($0),
+    $regsIcon + ".dds", $regsIcon + "_se.dds", $regsIcon + "_ho.dds");
+  MAIN.$ui.setTooltip($regsB, $regsShapeHints[$regsI], 1, 0);
+  $regsShapeButtons[] = $regsB;
+}
+MAIN.$ui.selectChoiceButton($regsShapeButtons[regsBrushShape()], $regsShapeArea);

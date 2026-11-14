@@ -44,9 +44,14 @@ bool gridSetWaterFlag(GridObj* grid, int x, int z, bool on);
 // pavement paint and its eraser cut the cells on the circle along it (engine/paint_edges.h paintCircle).
 // Heights skip locked corners (0x1000); water stays only where a corner is still below the water line. preview: only
 // the pavement paints mark their cells (0x40), as the timeline's previews. The cells are queued as changed.
-void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int strength, bool preview);
+// shape: the brush shape (engine/paint_edges.h kBrushCircle / Square / Diamond): its distance makes the weights and
+// decides the cells, the pavement paints cut along its rim
+// from (pavement paints 1-9 only): the stroke's previous dab; the paint covers the shape's sweep from there to (cx, cz)
+// (the convex hull of the shape at both points), so a square stroke gets straight diagonal sides
+void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int strength, bool preview, int shape = 0,
+                    const float* from = nullptr);
 // the cells whose centre lies inside the round brush (for the highlight)
-std::vector<std::pair<int, int>> gridRoundBrushCells(GridObj* grid, float R, float cx, float cz);
+std::vector<std::pair<int, int>> gridRoundBrushCells(GridObj* grid, float R, float cx, float cz, int shape = 0);
 // the live items whose footprint corner is cell (x, z) (gsGrid::getObjects slot search for ObjRef matching)
 std::vector<uint32_t> gridItemsAt(script::VM& vm, GridObj* grid, int x, int z);
 // the live items whose footprint corner lies in the divisions around [x0, x1] × [z0, z1], grown by one division (the

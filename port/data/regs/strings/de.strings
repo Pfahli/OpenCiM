@@ -163,3 +163,8 @@ $regs_track_rail = "Eisenbahn";
 $regs_turn_info = "Drehung %0,%1°  (Umschalt + Mausrad, mit Strg fein)";
 $regs_turn_snap = "Drehung %0,%1°, am Nachbarn ausgerichtet (Strg halten: frei)";
 $regs_curve_info_bad = "(passt nicht)";
+// the brush shapes beside the brush sizes (terrain menu)
+$regs_brush_circle = "Pinsel: Kreis";
+$regs_brush_square = "Pinsel: Quadrat";
+$regs_brush_diamond = "Pinsel: Raute";
+$regs_brush_line = "Pinsel: Linie (ziehen: ein gerader Streifen in Pinselbreite vom Klick bis zum Loslassen; Pflaster und Felder)";
