@@ -277,6 +277,13 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   one (IoU ≥ 0.5 / 0.4, turned to its main axis in 90° steps) and its furniture where it lands on free cells; else the
   furnishing above. Culverted / covered rivers (tunnel=*, covered=yes, layer < 0) are no open water.
   REGS_DEBUG_TOPDOWN=x,z,height puts the camera straight above world (x, z) for screenshots.
+  2026-11-14 later: tracks run to the map edge (no margin), stretches of OSM tracks running beside another only part
+  of their way are kept (joined to the merged line), spurs up to 120 cells and loose pieces up to 400 cells that end in
+  the open are dropped (pruneTracks; REGS_DEBUG_OSM_RAILS=<png> draws OSM's railways and the track curves). Stations
+  built like Berlin's: platform pieces in two rows by the line, the railway-station behind them with its back to the
+  line, an island platform to a parallel line 5.5-14 cells away, platform lamps and benches. Track cells are marked
+  apart (used 7): no street furniture on tracks. Yard templates take paved ground too and bring their pavement
+  paint; yards without much of it get a two-cell band of pavement along the houses (a timeline patch).
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); level crossings
   (tracks have no crossing piece on curves); tram tracks from railway=tram; station platforms; painted areas (car
   parks, squares) keep the cell paint's saw-tooth edge on slanted outlines (a real fix: polygon surfaces like the
