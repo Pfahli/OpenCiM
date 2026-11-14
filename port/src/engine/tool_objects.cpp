@@ -940,6 +940,89 @@ void moveRemove(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   vm.fireEvent(player, u"onHoverDemolish", {Value::boolean((t.buttons & 1) != 0)});
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// GRIDMODE_RENAME (0x14) / GRIDMODE_SET_VARIATION (0x15) (mouseMove L:0x0819f2a0.c:1426-1483, finishTool
+// L:0x0819a3e0.c:684-805): the hovered item (its root when it is a part) is the replaced set, highlighted; the hover
+// event (18 onHoverRename / 19 onHoverVariation) carries its controller. A click fires onTryApplyTool at once; the
+// game's hover script renames through the controllers' names (its dialog) and calls applyTool. finishTool records the
+// names (a group "%2" for several) or sets the variation toolMode (0..4; only where the template has that texture
+// variation, 0 always) and records it (a group "%!26" for several).
+// Port: the original selects the whole road segment around a hovered road (selectRoadSegment L:0x0818f2f0) unless the
+// right button is held; the port takes the hovered item only for now.
+
+void moveModify(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
+  ToolState& t = toolState(player);
+  ToolPick p = toolPick(vm, player, mx, my, false);
+  if (!p.hit) return;
+  int& last = g_lastHover.try_emplace(player, -1).first->second;
+  int item = p.item;
+  const GridData& g = *grid->data;
+  if (item >= 0)
+    while ((g.items[size_t(item)].flags & kItemAutoChild) && g.items[size_t(item)].parent)
+      item = int(g.items[size_t(item)].parent) - 1;
+  if (item == last && !t.replaced.empty() == (item >= 0)) return;
+  gridEditBegin(vm, grid);
+  for (uint32_t r : t.replaced) gridSetSelected(vm, grid, r, false, false);
+  t.replaced.clear();
+  if (item >= 0) {
+    t.replaced.insert(uint32_t(item));
+    gridSetSelected(vm, grid, uint32_t(item), true, false);
+  }
+  gridEditEnd(vm, grid);
+  t.cellX = p.cellX, t.cellZ = p.cellZ;
+  last = item;
+  Object* c = item >= 0 ? gridItemController(vm, grid, uint32_t(item)) : nullptr;
+  Value arg = c ? Value::heap(VT::Object, c) : Value::null();
+  vm.fireEvent(player, editMode(vm, player) == kGridModeSetVariation ? u"onHoverVariation" : u"onHoverRename", {arg});
+}
+
+bool finishModify(VM& vm, ControlObj* player, GridObj* grid) {
+  ToolState& t = toolState(player);
+  if (!grid || !grid->data) return true;
+  GridData& g = *grid->data;
+  Object* tl = playerTimeline(vm, player);
+  const bool variation = editMode(vm, player) == kGridModeSetVariation;
+  const int v = intField(vm, player, u"toolMode", 0);
+  std::vector<uint32_t> items(t.replaced.begin(), t.replaced.end());
+  if (tl && items.size() > 1) timelineBeginGroup(vm, tl, variation ? "%!26" : "%2");
+  gridEditBegin(vm, grid);
+  for (uint32_t i : items) {
+    if (i >= g.items.size() || g.items[i].removed) continue;
+    if (variation) {
+      bool has = v == 0;
+      if (!has && g.items[i].type < g.types.size())
+        if (auto tp = grid->templates.find(g.types[g.items[i].type]); tp != grid->templates.end() && tp->second) {
+          auto f = tp->second->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(v)) + u">");
+          has = f != tp->second->fieldValues.end() && !f->second.isNone() && !f->second.isNull();
+        }
+      if (has) {
+        g.items[i].variation = uint32_t(v);
+        gridEditItemChanged(grid, i);
+        if (tl) timelineRecordVariation(vm, tl, grid, i, uint32_t(v));
+      }
+    } else if (tl) {
+      timelineRecordName(vm, tl, grid, i, i < g.names.size() ? g.names[i] : std::string());
+    }
+    gridSetSelected(vm, grid, i, false, false);
+  }
+  gridEditEnd(vm, grid);
+  if (tl && items.size() > 1) timelineEndGroup(vm, tl);
+  t.replaced.clear();
+  g_lastHover[player] = -1;
+  return true;
+}
+
+void cancelModify(VM& vm, ControlObj* player, GridObj* grid) {
+  ToolState& t = toolState(player);
+  if (grid && grid->data) {
+    gridEditBegin(vm, grid);
+    for (uint32_t r : t.replaced) gridSetSelected(vm, grid, r, false, false);
+    gridEditEnd(vm, grid);
+  }
+  t.replaced.clear();
+  g_lastHover[player] = -1;
+}
+
 // the direction bit of an item's own end (+0x44 orientation, +0x54 diagonals), for the slope correction
 uint32_t endBit(const Info& n) {
   static const uint32_t straight[4] = {0x40, 0x10, 4, 1}, diagonal[4] = {0x20, 8, 2, 0x80};
@@ -1318,6 +1401,12 @@ void registerObjectTools(VM& vm) {
   remove.finish = finishRemove;
   remove.cancel = cancelRemove;
   registerToolMode(kGridModeRemoveObjects, remove);
+  ToolMode modify;  // rename (0x14), variation (0x15)
+  modify.move = moveModify;
+  modify.finish = finishModify;
+  modify.cancel = cancelModify;
+  registerToolMode(kGridModeRename, modify);
+  registerToolMode(kGridModeSetVariation, modify);
   registerNatives(vm);
   // port: regsPlaceToolTurn(player): [the place tool's turn in degrees (0 ≤ a < 360: toolMode's steps and the free
   // turn), the free turn in degrees, turnable (0/1: a preview there that may turn freely), snapped to a neighbour (0/1)] for the editor's cursor line (Shift + mouse wheel, toolWheel)
