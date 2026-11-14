@@ -287,9 +287,14 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   Exact edges (paint_edges.h, main 43b7c9c): car parks (asphalt 0), squares and market places (paving stones 2) are
   painted with paintArea from their OSM rings at the terrain stage (timelineRecordPaintEdges after the patch); the
   yards' pavement too: a turned rectangle 2.2 cells deep behind each row, and the yard templates' paved cells traced
-  to outlines, turned onto the yard and painted with paintAreaCells on the yard's own cells (Painter in osm.cpp).
+  to outlines, turned onto the yard and painted with paintAreaCells on the yard's own cells (Painter in osm.cpp); the traced
+  outlines lose their stair steps (corners within 0.75 cells of their neighbours' line). Pedestrian streets get a 6 m
+  band of paving stones with exact edges (a rectangle per leg, an octagon per bend; buildings may stand on it).
+  Squares, market places and car parks are dry (water under them dropped). Street trams: railway=tram ways (not in
+  tunnels) give the road curves along which 60 % of the samples lie within the carriageway the tram tracks (ends 0x4);
+  tested in Karlsruhe (most of its centre's trams run in the tunnel now).
   Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); level crossings
-  (tracks have no crossing piece on curves); tram tracks from railway=tram.
+  (tracks have no crossing piece on curves); trams on their own track bed (railway=tram off the streets).
 - [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 

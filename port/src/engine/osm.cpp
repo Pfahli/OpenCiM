@@ -961,7 +961,9 @@ struct ImportData {
   std::vector<PointIn> points;
   // painted areas with exact edges (paint_edges.h, 2026-11-14): car parks in asphalt (0), squares and market places in
   // paving stones (2); rings in corner coordinates (= cells), several even-odd
+  // (type | 0x100: buildings may stand on it, a pedestrian street's band)
   std::vector<std::pair<std::vector<PaintRing>, int>> paintAreas;
+  std::vector<std::vector<std::pair<double, double>>> tramLines;  // railway=tram (cells): the streets they run on get tracks
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
   std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (1 asphalt, 3 paving stones; 4 a
@@ -1204,7 +1206,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
            "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$\"]" + b + ";way[\"natural\"=\"tree_row\"]" + b +
            ";way[\"place\"=\"square\"]" + b + ";way[\"amenity\"=\"parking\"]" + b + ";way[\"area:highway\"]" + b +
            ";way[\"railway\"~\"^(rail|light_rail)$\"]" + b + ";node[\"railway\"~\"^(station|halt)$\"]" + b +
-           ";way[\"highway\"=\"service\"]" + b +
+           ";way[\"highway\"=\"service\"]" + b + ";way[\"railway\"=\"tram\"]" + b +
            ";node[\"amenity\"~\"^(fountain|bench|waste_basket|bicycle_parking|telephone|post_box|toilets|clock)$\"]" + b +
            ";node[\"highway\"=\"street_lamp\"]" + b + ";node[\"historic\"~\"^(memorial|monument)$\"]" + b +
            ";node[\"tourism\"=\"artwork\"]" + b + ";node[\"shop\"=\"kiosk\"]" + b + ";nwr[\"leisure\"=\"playground\"]" + b +
@@ -1370,6 +1372,25 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             // are left out (owner 2026-11-14: painted cells along a slanted line make a saw-tooth strip; pedestrian
             // streets are footpath curves of their own)
             data->paintAreas.push_back({rings, 0});
+          } else if (hw == "pedestrian" && type == "way" && !closed) {
+            // a pedestrian street: a band of paving stones 6 m wide with exact edges (owner 2026-11-14), a rectangle per
+            // leg and an octagon at each bend; buildings may stand on it
+            const double hwid = 3.0 / cellM;
+            for (size_t k = 0; k + 1 < pts.size(); ++k) {
+              auto a = pts[k], b2 = pts[k + 1];
+              double dx = b2.first - a.first, dz = b2.second - a.second, l = std::hypot(dx, dz);
+              if (l < 1e-6) continue;
+              double nx = -dz / l * hwid, nz = dx / l * hwid;
+              data->paintAreas.push_back({{{{a.first + nx, a.second + nz}, {b2.first + nx, b2.second + nz},
+                                            {b2.first - nx, b2.second - nz}, {a.first - nx, a.second - nz}}},
+                                          2 | 0x100});
+            }
+            for (size_t k = 1; k + 1 < pts.size(); ++k) {
+              PaintRing oct;
+              for (int j = 0; j < 8; ++j)
+                oct.push_back({pts[k].first + hwid * std::cos(j * kPi / 4), pts[k].second + hwid * std::sin(j * kPi / 4)});
+              data->paintAreas.push_back({{oct}, 2 | 0x100});
+            }
           } else if (am == "fountain") {
             centroidPoint(0);
           } else if (tags.str("leisure") == "playground") {
@@ -1378,6 +1399,11 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           if (square || am == "parking" || am == "marketplace" || am == "fountain" || hw == "service" ||
               tags.str("leisure") == "playground" || !tags.str("area:highway").empty())
             continue;
+        }
+        // tram lines (owner 2026-11-14): the streets they run along get the curve's street tram tracks
+        if ((flags & kStreets) && type == "way" && tags.str("railway") == "tram") {
+          if (tags.str("tunnel").empty() && tags.num("layer", 0) >= 0) data->tramLines.push_back(pts);
+          continue;
         }
         // railways (owner 2026-11-13: tracks and the station were missing): main lines as the railway's double track
         if ((flags & kStreets) && type == "way" && (tags.str("railway") == "rail" || tags.str("railway") == "light_rail")) {
@@ -1546,6 +1572,12 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         if (elev[i] < -10.0) water[i] = 1;
     }
   }
+  // squares, market places and car parks are dry (a stream culverted under a market place; owner 2026-11-14)
+  if (flags & kWater)
+    for (auto& [rings, type] : data->paintAreas)
+      if (!(type & 0x100))
+        for (const PaintAreaCell& c : paintAreaCells(W, L, rings))
+          if (c.full) water[size_t(c.z) * size_t(W) + size_t(c.x)] = 0;
   // terrain heights: land from its lowest point at the ground level 0x200, water below the water line
   if ((flags & kTerrain) && haveElev) {
     std::vector<double> land;
@@ -3809,6 +3841,18 @@ std::vector<PaintRing> traceCells(const std::set<std::pair<int, int>>& cells) {
       cur = to;
       if (cur == start) break;
     }
+    // the cells' stair steps smoothed away (a slanted template outline turned onto the map would show them as a saw
+    // tooth again; owner 2026-11-14): a corner within 0.75 cells of the line between its neighbours goes, repeatedly
+    for (bool changed = true; changed && ring.size() > 4;) {
+      changed = false;
+      for (size_t i = 0; i < ring.size() && ring.size() > 4; ++i) {
+        auto a = ring[(i + ring.size() - 1) % ring.size()], b = ring[(i + 1) % ring.size()];
+        if (segDist(ring[i].first, ring[i].second, a, b) < 0.75) {
+          ring.erase(ring.begin() + std::ptrdiff_t(i));
+          changed = true;
+        }
+      }
+    }
     if (ring.size() >= 3) rings.push_back(std::move(ring));
   }
   return rings;
@@ -4825,10 +4869,10 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       int painted = 0;
       for (auto& [rings, type] : d.paintAreas) {
         int px0, pz0, px1, pz1;
-        for (const PaintAreaCell& c : paintArea(g, rings, type, px0, pz0, px1, pz1)) {
+        for (const PaintAreaCell& c : paintArea(g, rings, type & 7, px0, pz0, px1, pz1)) {
           size_t i = size_t(c.z) * size_t(W) + size_t(c.x);
           if (d.water[i]) continue;
-          a.used[i] = 5;
+          if (!(type & 0x100)) a.used[i] = 5;
           flags[i] = uint16_t(g.flags[i] & kGround);
           ++painted;
         }
@@ -4955,6 +4999,38 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       (void)runs;
     }
     std::vector<CurveRoad> cs = streets::curves(plan);
+    if (!d.tramLines.empty()) {  // street trams: a road curve with a tram line along most of it gets the tracks (ends bit 2)
+      std::map<std::pair<int, int>, std::vector<std::pair<std::pair<double, double>, std::pair<double, double>>>> legs;  // 8 × 8 cell buckets
+      for (auto& line : d.tramLines)
+        for (size_t k = 0; k + 1 < line.size(); ++k) {
+          std::pair<double, double> a2 = line[k], b2 = line[k + 1];
+          for (int bz = int(std::floor(std::min(a2.second, b2.second) / 8)); bz <= int(std::floor(std::max(a2.second, b2.second) / 8)); ++bz)
+            for (int bx = int(std::floor(std::min(a2.first, b2.first) / 8)); bx <= int(std::floor(std::max(a2.first, b2.first) / 8)); ++bx)
+              legs[{bx, bz}].push_back({a2, b2});
+        }
+      int tracked = 0;
+      for (CurveRoad& c : cs) {
+        if (c.kind > 2 || c.bridge || (c.ends & 0x80)) continue;
+        const double tol = std::max(1.5, curveProfile(c.kind).carriageway / g.cellSize + 0.8);
+        int on = 0, all = 0;
+        for (const CurveSample& sm : sampleCurve(c, 3.0f)) {
+          double x = sm.p.x / g.cellSize + W * 0.5, z = sm.p.z / g.cellSize + L * 0.5;
+          ++all;
+          auto it = legs.find({int(std::floor(x / 8)), int(std::floor(z / 8))});
+          if (it == legs.end()) continue;
+          for (auto& [a2, b2] : it->second)
+            if (segDist(x, z, a2, b2) <= tol) {
+              ++on;
+              break;
+            }
+        }
+        if (all && on * 10 >= all * 6) {
+          c.ends |= 0x4, ++tracked;
+          if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: tram tracks on a curve at world %.0f, %.0f", (c.x0 + c.x1) * 0.5, (c.z0 + c.z1) * 0.5);
+        }
+      }
+      LOG_INFO("osm: %zu tram lines, %d street curves with tram tracks", d.tramLines.size(), tracked);
+    }
     addCurvesBulk(vm, grid, a.timeline, cs);
     markCurveCells(g, cs, a.used);
     if (std::getenv("REGS_DEBUG_OSM")) {
