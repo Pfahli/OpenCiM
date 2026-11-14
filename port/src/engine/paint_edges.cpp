@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <map>
 
 namespace regs::engine {
@@ -77,6 +78,57 @@ bool getEdge(const uint8_t* p, PaintEdge& e) {
 
 constexpr int kSamples = 12;  // per side of a cell, for the fit
 
+// the pavement paint a cell has whole (flags 0x8, no preview mark 0x40), else −1
+int wholePaint(uint16_t f) { return (f & 0x48) == 0x8 ? (f & 7) : -1; }
+
+// a candidate line of a cell's edge (the cell's own coordinates, inside on the positive side) and how much outline it
+// carries (the longest are tried first)
+struct Cand {
+  float l[3];
+  double len;
+};
+
+void addCand(std::vector<Cand>& cands, const Cand& c) {
+  for (Cand& o : cands)
+    if (std::fabs(o.l[0] - c.l[0]) < 1e-3f && std::fabs(o.l[1] - c.l[1]) < 1e-3f && std::fabs(o.l[2] - c.l[2]) < 1e-3f) {
+      o.len += c.len;
+      return;
+    }
+  cands.push_back(c);
+}
+
+// the best edge for the sampled truth: one line, or two joined as both or either, most samples right (fewer lines on
+// a tie)
+PaintEdge fitEdge(const bool* truth, std::vector<Cand> cands) {
+  std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.len > b.len; });
+  if (cands.size() > 6) cands.resize(6);
+  PaintEdge best;
+  int bestScore = -1;
+  auto score = [&](const PaintEdge& e) {
+    int n = 0;
+    for (int j = 0; j < kSamples; ++j)
+      for (int i = 0; i < kSamples; ++i)
+        n += paintEdgeInside(e, float((i + 0.5) / kSamples), float((j + 0.5) / kSamples)) == truth[j * kSamples + i];
+    return n;
+  };
+  for (size_t a = 0; a < cands.size(); ++a) {
+    PaintEdge e;
+    e.lines = 1;
+    std::memcpy(e.l[0], cands[a].l, sizeof e.l[0]);
+    if (int s = score(e); s > bestScore) best = e, bestScore = s;
+  }
+  for (size_t a = 0; a < cands.size() && bestScore < kSamples * kSamples; ++a)
+    for (size_t b = a + 1; b < cands.size(); ++b)
+      for (uint8_t join = 0; join < 2; ++join) {
+        PaintEdge e;
+        e.lines = 2, e.join = join;
+        std::memcpy(e.l[0], cands[a].l, sizeof e.l[0]);
+        std::memcpy(e.l[1], cands[b].l, sizeof e.l[1]);
+        if (int s = score(e); s > bestScore) best = e, bestScore = s;
+      }
+  return best;
+}
+
 }  // namespace
 
 std::vector<PaintAreaCell> paintAreaCells(int W, int L, const std::vector<PaintRing>& rings) {
@@ -120,10 +172,6 @@ std::vector<PaintAreaCell> paintAreaCells(int W, int L, const std::vector<PaintR
         for (int i = 0; i < kSamples; ++i)
           truth[j * kSamples + i] = insideRings(rings, x + (i + 0.5) / kSamples, z + (j + 0.5) / kSamples);
       // candidate lines: the segments crossing the cell, in the cell's own coordinates, inside on the positive side
-      struct Cand {
-        float l[3];
-        double len;
-      };
       std::vector<Cand> cands;
       for (size_t s : it->second) {
         const Seg& g = segs[s];
@@ -137,43 +185,10 @@ std::vector<PaintAreaCell> paintAreaCells(int W, int L, const std::vector<PaintR
         Cand c;
         c.l[0] = float(nx), c.l[1] = float(nz), c.l[2] = float(nx * (x - g.ax) + nz * (z - g.az));
         c.len = (t1 - t0) * len;
-        bool same = false;
-        for (Cand& o : cands)
-          if (std::fabs(o.l[0] - c.l[0]) < 1e-3f && std::fabs(o.l[1] - c.l[1]) < 1e-3f && std::fabs(o.l[2] - c.l[2]) < 1e-3f) {
-            o.len += c.len, same = true;
-            break;
-          }
-        if (!same) cands.push_back(c);
+        addCand(cands, c);
       }
       if (cands.empty()) continue;
-      std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.len > b.len; });
-      if (cands.size() > 6) cands.resize(6);
-      // the best of one line, or two lines joined as both or either: most samples right, fewer lines on a tie
-      PaintEdge best;
-      int bestScore = -1;
-      auto score = [&](const PaintEdge& e) {
-        int n = 0;
-        for (int j = 0; j < kSamples; ++j)
-          for (int i = 0; i < kSamples; ++i)
-            n += paintEdgeInside(e, float((i + 0.5) / kSamples), float((j + 0.5) / kSamples)) == truth[j * kSamples + i];
-        return n;
-      };
-      for (size_t a = 0; a < cands.size(); ++a) {
-        PaintEdge e;
-        e.lines = 1;
-        std::memcpy(e.l[0], cands[a].l, sizeof e.l[0]);
-        if (int s = score(e); s > bestScore) best = e, bestScore = s;
-      }
-      for (size_t a = 0; a < cands.size() && bestScore < kSamples * kSamples; ++a)
-        for (size_t b = a + 1; b < cands.size(); ++b)
-          for (uint8_t join = 0; join < 2; ++join) {
-            PaintEdge e;
-            e.lines = 2, e.join = join;
-            std::memcpy(e.l[0], cands[a].l, sizeof e.l[0]);
-            std::memcpy(e.l[1], cands[b].l, sizeof e.l[1]);
-            if (int s = score(e); s > bestScore) best = e, bestScore = s;
-          }
-      out.push_back({x, z, false, best});
+      out.push_back({x, z, false, fitEdge(truth, cands)});
     }
   return out;
 }
@@ -189,8 +204,31 @@ std::vector<PaintAreaCell> paintArea(GridData& g, const std::vector<PaintRing>& 
     const uint32_t key = paintEdgeKey(c.x, c.z);
     auto it = g.paintEdges.find(key);
     const bool paintedSame = (f & 0x48) == 0x8 && (f & 7) == type;
-    // two areas of the same paint sharing a border cell: the cell whole (a rare overlap, no union of the cuts)
-    if (!c.full && it != g.paintEdges.end() && it->second.type == type) c.full = true;
+    if (!c.full && !paintedSame && it != g.paintEdges.end()) {
+      // a border cell another area cut already: the same paint joins both cuts (refitted from both edges' lines);
+      // another paint takes the rest of the cell when it covered most of that rest
+      const PaintEdge old = it->second;
+      bool truth[kSamples * kSamples];
+      int count = 0, other = 0;
+      for (int j = 0; j < kSamples; ++j)
+        for (int i = 0; i < kSamples; ++i) {
+          float u = float((i + 0.5) / kSamples), v = float((j + 0.5) / kSamples);
+          bool mine = paintEdgeInside(c.edge, u, v), was = paintEdgeInside(old, u, v);
+          bool in = mine || (old.type == type && was);
+          truth[j * kSamples + i] = in;
+          count += in;
+          other += !in && was && old.type != type;
+        }
+      if (old.type == type) {
+        std::vector<Cand> cands;
+        for (const PaintEdge* e : {static_cast<const PaintEdge*>(&c.edge), &old})
+          for (int k = 0; k < e->lines; ++k) addCand(cands, {{e->l[k][0], e->l[k][1], e->l[k][2]}, 1.0});
+        if (count == kSamples * kSamples) c.full = true;
+        else c.edge = fitEdge(truth, cands);
+      } else if (wholePaint(f) < 0 && 2 * other >= kSamples * kSamples - count) {
+        f = uint16_t((f & 0xFF98) | 0x8 | old.type);
+      }
+    }
     if (c.full) {
       if (it != g.paintEdges.end()) g.paintEdges.erase(it);
       f = uint16_t((f & 0xFF98) | 0x8 | type);
@@ -201,6 +239,85 @@ std::vector<PaintAreaCell> paintArea(GridData& g, const std::vector<PaintRing>& 
     x0 = std::min(x0, c.x), z0 = std::min(z0, c.z), x1 = std::max(x1, c.x), z1 = std::max(z1, c.z);
   }
   return cells;
+}
+
+void paintCircle(GridData& g, int brushType, double cx, double cz, double R) {
+  if (R <= 0 || brushType < 1 || brushType > 9) return;
+  const bool erase = brushType == 9;
+  const int t = brushType - 1;
+  int x0 = std::max(0, int(std::floor(cx - R))), x1 = std::min(g.width - 1, int(std::floor(cx + R)));
+  int z0 = std::max(0, int(std::floor(cz - R))), z1 = std::min(g.length - 1, int(std::floor(cz + R)));
+  auto inCircle = [&](double px, double pz) { return (px - cx) * (px - cx) + (pz - cz) * (pz - cz) <= R * R; };
+  for (int z = z0; z <= z1; ++z)
+    for (int x = x0; x <= x1; ++x) {
+      double nx = std::clamp(cx, double(x), double(x + 1)) - cx, nz = std::clamp(cz, double(z), double(z + 1)) - cz;
+      if (nx * nx + nz * nz >= R * R) continue;  // the circle misses the cell
+      double fx = std::max(std::fabs(x - cx), std::fabs(x + 1 - cx)), fz = std::max(std::fabs(z - cz), std::fabs(z + 1 - cz));
+      uint16_t& f = g.flags[size_t(z) * size_t(g.width) + size_t(x)];
+      const uint32_t key = paintEdgeKey(x, z);
+      auto it = g.paintEdges.find(key);
+      if (fx * fx + fz * fz <= R * R) {  // wholly inside: painted or bare, without an edge
+        if (it != g.paintEdges.end()) g.paintEdges.erase(it);
+        f = erase ? uint16_t(f & 0xFFF0) : uint16_t((f & 0xFF98) | 0x8 | t);
+        continue;
+      }
+      const int own = (f & 0x48) == 0x8 ? (f & 7) : -1;  // the cell's whole paint
+      const PaintEdge* old = it != g.paintEdges.end() ? &it->second : nullptr;
+      int type;
+      std::function<bool(double, double)> was;  // the paint of `type` in the cell before the dab
+      if (!erase) {
+        if (own == t) continue;  // painted whole already
+        type = t;
+        was = [&](double u, double v) { return old && old->type == t && paintEdgeInside(*old, float(u), float(v)); };
+      } else if (own >= 0) {
+        type = own;
+        was = [](double, double) { return true; };
+      } else if (old) {
+        type = old->type;
+        was = [&](double u, double v) { return paintEdgeInside(*old, float(u), float(v)); };
+      } else {
+        continue;  // nothing to erase
+      }
+      bool truth[kSamples * kSamples];
+      int count = 0;
+      for (int j = 0; j < kSamples; ++j)
+        for (int i = 0; i < kSamples; ++i) {
+          double u = (i + 0.5) / kSamples, v = (j + 0.5) / kSamples;
+          bool in = erase ? was(u, v) && !inCircle(x + u, z + v) : was(u, v) || inCircle(x + u, z + v);
+          truth[j * kSamples + i] = in;
+          count += in;
+        }
+      // candidates: the old edge's lines, the circle's tangents where it crosses the cell (inward for paint)
+      std::vector<Cand> cands;
+      if (old && old->type == type)
+        for (int k = 0; k < old->lines; ++k) addCand(cands, {{old->l[k][0], old->l[k][1], old->l[k][2]}, 1.0});
+      double a0 = std::atan2(z + 0.5 - cz, x + 0.5 - cx), spread = std::min(0.6, 0.6 / R);
+      for (double a : {a0, a0 - spread, a0 + spread}) {
+        double px = cx + R * std::cos(a), pz = cz + R * std::sin(a), ux = -std::cos(a), uz = -std::sin(a);
+        if (erase) ux = -ux, uz = -uz;
+        addCand(cands, {{float(ux), float(uz), float(ux * (x - px) + uz * (z - pz))}, a == a0 ? 0.9 : 0.8});
+      }
+      if (erase && own >= 0) f = uint16_t(f & 0xFFF0);  // the cell keeps its paint only inside the new edge
+      // paint over another paint's edge: a cell holds one edge, so the other paint takes the rest of the cell when it
+      // covered most of that rest (else the rest goes bare); no notch where strokes of two paints meet
+      if (!erase && old && old->type != t && own < 0 && count > 0 && count < kSamples * kSamples) {
+        int other = 0;
+        for (int j = 0; j < kSamples; ++j)
+          for (int i = 0; i < kSamples; ++i)
+            other += !truth[j * kSamples + i] && paintEdgeInside(*old, float((i + 0.5) / kSamples), float((j + 0.5) / kSamples));
+        if (2 * other >= kSamples * kSamples - count) f = uint16_t((f & 0xFF98) | 0x8 | old->type);
+      }
+      if (count == 0) {
+        if (it != g.paintEdges.end()) g.paintEdges.erase(it);
+      } else if (count == kSamples * kSamples) {
+        if (it != g.paintEdges.end()) g.paintEdges.erase(it);
+        f = uint16_t((f & 0xFF98) | 0x8 | type);
+      } else {
+        PaintEdge e = fitEdge(truth, cands);
+        e.type = uint8_t(type);
+        g.paintEdges[key] = e;
+      }
+    }
 }
 
 void writePaintEdgeSection(const GridData& g, std::vector<uint8_t>& out) {

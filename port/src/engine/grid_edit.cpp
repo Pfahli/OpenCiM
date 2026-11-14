@@ -491,9 +491,11 @@ void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int st
       int wear = int(std::lrint(float(strength) * w * 0.0001f * float((std::rand() & 0x1f) + 0x44))) + (f & 7);
       f = uint16_t((f & 0xFFF8) | std::clamp(wear, 0, 7));
     }
+  } else if (!preview && type >= 1 && type <= 9) {
+    // pavement paint and its eraser: the circle's border cells cut along it (engine/paint_edges.h, owner 2026-11-14)
+    paintCircle(g, type, cx, cz, R);
   } else {
     for (auto [x, z] : gridRoundBrushCells(grid, R, cx, cz)) {
-      if (!preview && type >= 1 && type <= 9) dropPaintEdge(g, x, z);  // hand paint drops the painted area's edge
       uint16_t& f = g.flags[idx(x, z)];
       if (type >= 1 && type <= 8) {
         if (!preview) f = uint16_t((f & 0xFF98) | 0x8 | (type - 1));

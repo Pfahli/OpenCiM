@@ -42,6 +42,11 @@ void shiftPaintEdgeAction(std::vector<uint8_t>& raw, int dx, int dz);
 std::vector<PaintAreaCell> paintArea(GridData& g, const std::vector<PaintRing>& rings, int type, int& x0, int& z0,
                                      int& x1, int& z1);
 
+// the round brush's paints (grid_edit.h gridRoundBrush): brushType 1..8 paints pavement type − 1, 9 erases, over the
+// circle of radius R around corner coordinates (cx, cz); the cells the circle crosses are cut along it (their old edge
+// joined with the dab), so strokes get round, smooth borders
+void paintCircle(GridData& g, int brushType, double cx, double cz, double R);
+
 // painting a cell by hand (or the timeline's brushes) drops its edge
 inline void dropPaintEdge(GridData& g, int x, int z) {
   if (!g.paintEdges.empty()) g.paintEdges.erase(paintEdgeKey(x, z));

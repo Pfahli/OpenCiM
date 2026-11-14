@@ -213,10 +213,15 @@ API (engine/paint_edges.h):
 - `timelineRecordPaintEdges(vm, timeline, g, x, z, w, l)` (timeline.h): records the rect's edges for undo; record the
   cells' flags as before (e.g. the import's terrain patch), then the edges. Call `gridEditCellsChanged` for live edits.
 
+The terrain menu's round pavement brush and its eraser (right button) cut the cells on the brush circle the same way
+(`paintCircle`): strokes get round, smooth borders, a stroke over another paint's edge joins it (where three surfaces
+meet in one cell a small notch stays: a cell holds one cut). Templates (.cimtpl) keep the edges of their cells; the
+minimap counts a cut cell as paved when its paint holds the cell's centre.
+
 Saving: map.grid section `0x07F20000` (u32 count; per cell u16 x, u16 z, u8 type, u8 lines | join << 4, u16 0, six
 floats), timeline action `0x070810C0` (the rect and its edges). Painting a cell by hand (terrain menu, either brush)
-drops its edge; map resizes move the edges. The minimap and the simulation still read the cell flags only (a cut cell
-counts as its flags say).
+drops its edge (the old square brush) or cuts it (the round brush); map resizes move the edges. The simulation still
+reads the cell flags only (a cut cell counts as its flags say).
 
 ## 3. Testing and debugging
 

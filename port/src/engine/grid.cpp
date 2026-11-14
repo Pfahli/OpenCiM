@@ -458,6 +458,10 @@ void registerGridNatives(VM& vm) {
       size_t a = paintArea(*data, {turned(0, 0, 9.5, 4.25, 27)}, 0, x0, z0, x1, z1).size();
       size_t b = paintArea(*data, {round}, 2, x0, z0, x1, z1).size();
       size_t c = paintArea(*data, {ell}, 2, x0, z0, x1, z1).size();
+      // brush strokes as the round brush paints them (dabs every quarter cell): a wavy stroke of paving stones (3)
+      // beside the car park, an eraser stroke across the car park's end
+      for (double s = 0; s <= 24; s += 0.25) paintCircle(*data, 4, cx - 12 + s, cz - 14 + 3 * std::sin(s * 0.3), 2.5);
+      for (double s = 0; s <= 14; s += 0.25) paintCircle(*data, 9, cx + 6 + s * 0.2, cz - 7 + s, 1.5);
       LOG_INFO("test paint areas at %.1f,%.1f: %zu, %zu and %zu cells, %zu edges", cx, cz, a, b, c, data->paintEdges.size());
     }
     size_t missing = 0;
