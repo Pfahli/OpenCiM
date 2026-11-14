@@ -591,8 +591,8 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
           curveNearest(shape, wx, wz, side, at);
           float ad = std::fabs(side);
           if (ad > pf.halfWidth) continue;
-          // tracks: blocked all across (no crossing)
-          uint32_t code = ad > pf.carriageway ? 2u : !curveIsTrack(c.kind) && std::fabs(at - mid) <= 1.5f ? 1u : 0u;
+          // tracks and express roads: blocked all across (no crossing)
+          uint32_t code = ad > pf.carriageway ? 2u : !curveNoJunctions(c.kind) && std::fabs(at - mid) <= 1.5f ? 1u : 0u;
           w = (w & ~(3u << (2 * q))) | (code << (2 * q));
           any = true;
           if (code == 2 && !pavement) pavement = true, y = curveAt(shape, at).p.y;

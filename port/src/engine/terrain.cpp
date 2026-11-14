@@ -17,6 +17,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/curve_roads.h"
+#include "engine/paint_edges.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
@@ -204,6 +205,75 @@ struct Builder {
     return (fc & 0x60) == 0x20 && (fc & 7) == group - kField;
   }
 
+  // port: a cell cut by a painted area's edge (engine/paint_edges.h): the fan's uncovered quadrants clipped along the
+  // edge's lines, the part inside (inside = true) or outside of it, each piece with vertices of its own (attributes
+  // interpolated along the triangle's edges, so the cut lies in the triangle's plane)
+  template <class Scale>
+  void edgeCell(int lx, int lz, uint16_t cover, const PaintEdge& e, bool inside, const Scale& scaled) {
+    struct P {
+      Corner c;
+      float u, v;
+    };
+    const Corner& c0 = corner(lx, lz);
+    auto mk = [&](const Corner& c) { return P{c, (c.pos.x - c0.pos.x) / cs, (c.pos.z - c0.pos.z) / cs}; };
+    auto lerp = [](const P& a, const P& b, float t) {
+      P p;
+      p.c.pos = a.c.pos + (b.c.pos - a.c.pos) * t;
+      p.c.normal = normalize(a.c.normal + (b.c.normal - a.c.normal) * t);
+      p.c.u = a.c.u + (b.c.u - a.c.u) * t, p.c.v = a.c.v + (b.c.v - a.c.v) * t;
+      p.c.s = a.c.s + (b.c.s - a.c.s) * t, p.c.t = a.c.t + (b.c.t - a.c.t) * t;
+      uint32_t col = 0;
+      for (int k = 0; k < 32; k += 8) {
+        float ca = float(a.c.color >> k & 0xFF), cb = float(b.c.color >> k & 0xFF);
+        col |= uint32_t(std::clamp(std::lrint(ca + (cb - ca) * t), 0L, 255L)) << k;
+      }
+      p.c.color = col;
+      p.u = a.u + (b.u - a.u) * t, p.v = a.v + (b.v - a.v) * t;
+      return p;
+    };
+    // Sutherland–Hodgman against one line: keeps the positive side (pos) or the negative one
+    auto clip = [&](const std::vector<P>& in, const float* l, bool pos) {
+      std::vector<P> res;
+      const size_t m = in.size();
+      for (size_t i = 0; i < m; ++i) {
+        const P& a = in[i];
+        const P& b = in[(i + 1) % m];
+        float da = l[0] * a.u + l[1] * a.v + l[2], db = l[0] * b.u + l[1] * b.v + l[2];
+        if (!pos) da = -da, db = -db;
+        if (da >= 0) res.push_back(a);
+        if ((da >= 0) != (db >= 0)) res.push_back(lerp(a, b, da / (da - db)));
+      }
+      return res;
+    };
+    const P tl = mk(corner(lx, lz)), tr = mk(corner(lx + 1, lz)), bl = mk(corner(lx, lz + 1)),
+            br = mk(corner(lx + 1, lz + 1)), c = mk(centre(lx, lz));
+    std::vector<std::vector<P>> tris;
+    if (!(cover & 0x100)) tris.push_back({tl, c, tr});
+    if (!(cover & 0x800)) tris.push_back({bl, c, tl});
+    if (!(cover & 0x200)) tris.push_back({tr, c, br});
+    if (!(cover & 0x400)) tris.push_back({br, c, bl});
+    const float* l0 = e.l[0];
+    const float* l1 = e.l[1];
+    for (const std::vector<P>& t : tris) {
+      std::vector<std::vector<P>> pieces;
+      if (e.lines < 2) pieces.push_back(clip(t, l0, inside));
+      else if (inside && !e.join) pieces.push_back(clip(clip(t, l0, true), l1, true));
+      else if (inside) pieces = {clip(t, l0, true), clip(clip(t, l0, false), l1, true)};
+      else if (!e.join) pieces = {clip(t, l0, false), clip(clip(t, l0, true), l1, false)};
+      else pieces.push_back(clip(clip(t, l0, false), l1, false));
+      for (const std::vector<P>& p : pieces) {
+        if (p.size() < 3) continue;
+        uint32_t first = push(scaled(p[0].c));
+        uint32_t prev = push(scaled(p[1].c));
+        for (size_t k = 2; k < p.size(); ++k) {
+          uint32_t cur = push(scaled(p[k].c));
+          out.indices.insert(out.indices.end(), {first, prev, cur});
+          prev = cur;
+        }
+      }
+    }
+  }
+
   void surfaceGroup(int group, int lod) {
     size_t firstIndex = out.indices.size();
     std::vector<int32_t> map(size_t((n + 1) * (n + 1)), -1);
@@ -223,7 +293,23 @@ struct Builder {
       for (int lx = 0; lx < n && dx + lx < W(); ++lx) {
         uint16_t fc = f(dx + lx, dz + lz);
         uint16_t cover = fc & 0xF00;
-        if (cover == 0xF00 || !groupOf(fc, group)) continue;  // fully under an item: no terrain
+        // port: a painted area's edge cuts the cell (engine/paint_edges.h): its paint inside, the cell's own outside
+        const PaintEdge* edge = nullptr;
+        if (!g.paintEdges.empty() && group != kEarth) {
+          auto it = g.paintEdges.find(paintEdgeKey(dx + lx, dz + lz));
+          if (it != g.paintEdges.end()) edge = &it->second;
+        }
+        const bool own = groupOf(fc, group), paint = edge && group == kYard + edge->type;
+        if (cover == 0xF00 || (!own && !paint)) continue;  // fully under an item: no terrain
+        if (edge && !(own && paint)) {
+          bool absent[4];
+          absentCorners(fc, absent);
+          if (!absent[0] && !absent[1] && !absent[2] && !absent[3]) {
+            edgeCell(lx, lz, cover, *edge, paint, scaled);
+            continue;
+          }
+          if (!own) continue;  // corners missing under an item: the cell as its flags say
+        }
         if (lod == 1 && !cover) {
           uint32_t tl = at(lx, lz), tr = at(lx + 1, lz), bl = at(lx, lz + 1), br = at(lx + 1, lz + 1);
           out.indices.insert(out.indices.end(), {tl, bl, tr, tr, bl, br});

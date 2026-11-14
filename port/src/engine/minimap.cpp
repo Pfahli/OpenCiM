@@ -144,6 +144,13 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
       else if (f & 0x40) ++r[10];
       else if (f & 0x08) ++r[11];
     }
+  // port: cells a painted area's edge cuts (engine/grid.h PaintEdge) count as paved when its paint holds their centre
+  for (const auto& [key, e] : g.paintEdges) {
+    int x = int(key & 0xFFFF), z = int(key >> 16);
+    if (x >= W || z >= L) continue;
+    uint16_t f = g.flags[size_t(z) * size_t(W) + size_t(x)];
+    if (!(f & 0x2068) && paintEdgeInside(e, 0.5f, 0.5f)) ++rec(x, z)[11];
+  }
   for (const GridData::Item& it : g.items) {
     if (it.removed) continue;
     if (it.type >= tpl.size() || !tpl[it.type].object) continue;

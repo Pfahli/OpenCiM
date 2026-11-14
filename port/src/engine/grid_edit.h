@@ -40,7 +40,8 @@ bool gridSetWaterFlag(GridObj* grid, int x, int z, bool on);
 // corner with a clipped rim, which leaves jagged edges). Centre (cx, cz) in corner coordinates (fractional; corner i
 // lies at x = i), radius R in cells; each corner's weight is smootherstep(1 − d/R), so the edit eases out to nothing
 // at the rim. type is the original's brush type (1-8 pavement, 9 no pavement, 10-17 field, 18 no field, 19 level to
-// `strength`, 20 shift by `strength`, 21 soften, 22 ruin); paints take the cells whose centre is inside the circle.
+// `strength`, 20 shift by `strength`, 21 soften, 22 ruin); field paints take the cells whose centre is inside the circle; the
+// pavement paint and its eraser cut the cells on the circle along it (engine/paint_edges.h paintCircle).
 // Heights skip locked corners (0x1000); water stays only where a corner is still below the water line. preview: only
 // the pavement paints mark their cells (0x40), as the timeline's previews. The cells are queued as changed.
 void gridRoundBrush(GridObj* grid, int type, float R, float cx, float cz, int strength, bool preview);

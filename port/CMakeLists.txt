@@ -86,6 +86,7 @@ add_library(regs_engine STATIC
   src/engine/sim_jams.cpp
   src/engine/particles.cpp
   src/engine/mods.cpp
+  src/engine/paint_edges.cpp
   src/engine/surface_map.cpp
   src/engine/traffic_maps.cpp
   src/engine/snowplows.cpp

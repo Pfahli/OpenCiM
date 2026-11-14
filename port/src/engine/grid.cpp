@@ -4,12 +4,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/curve_roads.h"
+#include "engine/paint_edges.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
 #include "engine/sim_graph.h"
@@ -87,6 +89,8 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
       }
     } else if (tag == kCurveSectionTag) {  // port: curved roads (engine/curve_roads.h)
       parseCurveSection(d, body, stop, g);
+    } else if (tag == kPaintEdgeSectionTag) {  // port: the painted areas' edges (engine/paint_edges.h)
+      parsePaintEdgeSection(d, body, stop, g);
     } else if (tag == kItemTurnSectionTag && body + 4 <= stop) {  // port: items off the grid (Item::yaw, offX, offZ)
       uint32_t count = r.u32(body) & 0x7fffffffu;
       size_t each = (r.u32(body) & 0x80000000u) ? 16 : 8;  // bit 31: with the shifts
@@ -433,6 +437,33 @@ void registerGridNatives(VM& vm) {
       return Value::boolean(false);
     }
     prepareTerrainCells(*data);
+    if (const char* t = std::getenv("REGS_TEST_PAINT_AREA")) {  // port test: painted areas with cut edges
+      // around cell "x,z" (default: the map's centre): a turned car park in asphalt (0), a round square in paving
+      // stones (2) and an L with an inner corner (2)
+      double cx = data->width * 0.5, cz = data->length * 0.5;
+      if (std::strchr(t, ',')) cx = std::atof(t), cz = std::atof(std::strchr(t, ',') + 1);
+      auto turned = [&](double ox, double oz, double hw, double hl, double deg) {
+        double a = deg * 3.14159265358979 / 180.0, c = std::cos(a), s = std::sin(a);
+        PaintRing r;
+        for (auto [u, w] : {std::pair{-hw, -hl}, {hw, -hl}, {hw, hl}, {-hw, hl}})
+          r.push_back({cx + ox + u * c - w * s, cz + oz + u * s + w * c});
+        return r;
+      };
+      PaintRing round, ell;
+      for (int k = 0; k < 48; ++k)
+        round.push_back({cx + 14 + 7.5 * std::cos(k * 3.14159265358979 / 24), cz - 12 + 7.5 * std::sin(k * 3.14159265358979 / 24)});
+      for (auto [u, w] : {std::pair{0.0, 0.0}, {12.3, 3.1}, {10.7, 9.4}, {5.6, 8.1}, {3.4, 16.6}, {-2.1, 15.2}})
+        ell.push_back({cx - 18 + u, cz + 6 + w});
+      int x0, z0, x1, z1;
+      size_t a = paintArea(*data, {turned(0, 0, 9.5, 4.25, 27)}, 0, x0, z0, x1, z1).size();
+      size_t b = paintArea(*data, {round}, 2, x0, z0, x1, z1).size();
+      size_t c = paintArea(*data, {ell}, 2, x0, z0, x1, z1).size();
+      // brush strokes as the round brush paints them (dabs every quarter cell): a wavy stroke of paving stones (3)
+      // beside the car park, an eraser stroke across the car park's end
+      for (double s = 0; s <= 24; s += 0.25) paintCircle(*data, 4, cx - 12 + s, cz - 14 + 3 * std::sin(s * 0.3), 2.5);
+      for (double s = 0; s <= 14; s += 0.25) paintCircle(*data, 9, cx + 6 + s * 0.2, cz - 7 + s, 1.5);
+      LOG_INFO("test paint areas at %.1f,%.1f: %zu, %zu and %zu cells, %zu edges", cx, cz, a, b, c, data->paintEdges.size());
+    }
     size_t missing = 0;
     for (const auto& t : data->types) missing += g->templates.count(t) ? 0 : 1;
     LOG_INFO("grid %s: %dx%d cells, %zu items of %zu types (%zu without a template)", path.c_str(), data->width,
@@ -487,6 +518,10 @@ void registerGridNatives(VM& vm) {
     for (CurveRoad c : old.curves) {
       c.x0 += cxw, c.z0 += czw, c.y0 += cyw, c.x1 += cxw, c.z1 += czw, c.y1 += cyw;
       data->curves.push_back(c);
+    }
+    for (const auto& [key, e] : old.paintEdges) {  // port: the painted areas' edges move with their cells
+      int nx = int(key & 0xFFFF) + ox, nz = int(key >> 16) + oz;
+      if (nx >= 0 && nz >= 0 && nx < w && nz < l) data->paintEdges[paintEdgeKey(nx, nz)] = e;
     }
     LOG_INFO("grid: resized %dx%d -> %dx%d, offset %d,%d, %zu items", old.width, old.length, w, l, ox, oz, data->items.size());
     g->data = data;

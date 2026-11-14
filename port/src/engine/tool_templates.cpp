@@ -25,6 +25,7 @@
 #include "engine/api.h"
 #include "engine/display.h"
 #include "engine/grid.h"
+#include "engine/paint_edges.h"
 #include "engine/grid_edit.h"
 #include "engine/grid_save.h"
 #include "engine/gui.h"
@@ -319,8 +320,16 @@ void upPlace(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
       if (x < r.w && z < r.l) g.flags[c] = uint16_t((g.flags[c] & ~kGroundFlags) | flags[k]);
       else flags[k] = uint16_t(g.flags[c] & kGroundFlags);
     }
+  // port: the painted areas' edges (engine/paint_edges.h) of the template's cells replace the area's
+  for (int z = 0; z < r.l; ++z)
+    for (int x = 0; x < r.w; ++x) {
+      g.paintEdges.erase(paintEdgeKey(r.x + x, r.z + z));
+      auto e = tp.paintEdges.find(paintEdgeKey(x, z));
+      if (e != tp.paintEdges.end()) g.paintEdges[paintEdgeKey(r.x + x, r.z + z)] = e->second;
+    }
   gridEditCellsChanged(grid, r.x - 1, r.z - 1, r.x + W, r.z + L, true);
   if (tl) timelineRecordPatch(vm, tl, r.x, r.z, W, L, heights, flags);
+  if (tl) timelineRecordPaintEdges(vm, tl, g, r.x, r.z, r.w, r.l);
   }
   // the template's objects, parents first (as stored)
   std::vector<int> made(tp.items.size(), -1);
@@ -484,6 +493,11 @@ void registerTemplateTools(VM& vm) {
         size_t c = size_t(r.z + z) * size_t(g.width) + size_t(r.x + x), k = size_t(z) * size_t(t.width) + size_t(x);
         t.height[k] = withTerrain ? int16_t(int(g.height[c]) - base + 0x200) : kNoTerrain;
         t.flags[k] = withTerrain ? uint16_t(g.flags[c] & kGroundFlags) : uint16_t(0);
+      }
+    if (withTerrain)  // port: the painted areas' edges of its cells
+      for (const auto& [key, e] : g.paintEdges) {
+        int ex = int(key & 0xFFFF) - r.x, ez = int(key >> 16) - r.z;
+        if (ex >= 0 && ez >= 0 && ex < r.w && ez < r.l) t.paintEdges[paintEdgeKey(ex, ez)] = e;
       }
     std::vector<uint32_t> items = withParts(g, g_items);
     std::vector<int64_t> index(g.items.size(), -1);

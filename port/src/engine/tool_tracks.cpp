@@ -2090,7 +2090,7 @@ std::vector<RoadEnd> findSmallRoadEnds(VM& vm, ControlObj* player, GridObj* grid
     uint32_t b = (o.conn >> roadShift(o.type())) & 0xff;
     auto [bx, bz] = roadXZ(o);
     const float B = roadType == 1 ? 1.0f : 4.0f;  // the block (cells), its centre the piece's
-    const float half = roadType == 1 ? 1.5f : roadType == 5 || roadType == 6 ? 12.0f : 6.0f;  // half a piece
+    const float half = roadType == 1 ? 1.5f : roadType == 5 || roadType == 6 || roadType == 7 ? 12.0f : 6.0f;  // half a piece
     render::Vec3 centre{(2.0f * float(bx) + B - float(g.width)) * cs * 0.5f,
                 float(itemHeight(g, g.items[size_t(o.live)], o.t->flags, o.type())) * cs / 256.0f,
                 (2.0f * float(bz) + B - float(g.length)) * cs * 0.5f};

@@ -424,16 +424,16 @@ function regsRoundaboutTool($n) {
 $regsRs = regsStringsNow();
 $regsShapeTips = [$regsRs.$regs_curve_mode_straight, $regsRs.$regs_curve_mode_curved, $regsRs.$regs_curve_mode_freeform, $regsRs.$regs_curve_mode_remove];
 // the shapes in the road tabs (the curve icon of the tab's road kind)
-$regsCurveTabs = ["alley", "smallroad", "largeroad", "avenue"];
-$regsCurveKinds = [3, 0, 1, 2];
-$regsCurveIcons = ["curve-alley", "curve-small", "curve-large", "curve-avenue"];
-for ($regsI = 0; $regsI < 4; ++$regsI) {
+$regsCurveTabs = ["alley", "smallroad", "largeroad", "avenue", "express"];
+$regsCurveKinds = [3, 0, 1, 2, 7];
+$regsCurveIcons = ["curve-alley", "curve-small", "curve-large", "curve-avenue", "curve-avenue"];  // express: the avenue's icon
+for ($regsI = 0; $regsI < 5; ++$regsI) {
   $regsTab = $trafficMenu.$tabs[$regsCurveTabs[$regsI]];
   $regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/" + $regsCurveIcons[$regsI], "/regs/ui/toolbar/curve-free"];
   for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
     regsTabButton($regsTab, null, $regsShapeIcons[$regsJ], macro($regsCurveKinds[$regsI], $regsJ) :: regsCurveToolFor($0, 0, $1), $regsShapeTips[$regsJ]);
   }
-  if ($regsCurveKinds[$regsI] <= 2)  // roads: a curved bridge, with the game's bridge icon of the tab
+  if ($regsCurveKinds[$regsI] <= 2 || $regsCurveKinds[$regsI] == 7)  // roads: a curved bridge, with the game's bridge icon of the tab
     regsTabButton($regsTab, null, "/metro/ui/toolbar/" + $regsCurveTabs[$regsI] + "-bridge", macro($regsCurveKinds[$regsI]) :: regsCurveBridgeFor($0), $regsRs.$regs_curve_bridge_hint);
 }
 // the road types One-way and Roundabout in the menu's top row

@@ -12,6 +12,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/curve_roads.h"
+#include "engine/paint_edges.h"
 #include "engine/grid.h"
 #include "vfs/vfs.h"
 
@@ -143,6 +144,7 @@ std::vector<uint8_t> gridFileOf(const GridData& g) {
   writeTerrain(g, out);
   writeNetwork(g, out);
   writeItemTurns(g, out);
+  writePaintEdgeSection(g, out);
   putU32(out, 4, uint32_t(out.size() - 8));
   return out;
 }
@@ -170,6 +172,7 @@ void registerSaveNatives(VM& vm) {
       else if (tag == 0x07020000 && g->data) writeNetwork(*g->data, out);
       else if (tag == kCurveSectionTag && g->data) writeCurveSection(*g->data, out);  // port: curved roads
       else if (tag == kItemTurnSectionTag && g->data) writeItemTurns(*g->data, out);  // port: free item turns
+      else if (tag == kPaintEdgeSectionTag && g->data) writePaintEdgeSection(*g->data, out);  // port: paint edges
       else if (g_sectionWriter && g_sectionWriter(v, g, tag, chunk)) out.insert(out.end(), chunk.begin(), chunk.end());
       else out.insert(out.end(), src.begin() + std::ptrdiff_t(p), src.begin() + std::ptrdiff_t(end));
       seen.push_back(tag);
@@ -184,6 +187,7 @@ void registerSaveNatives(VM& vm) {
     if (g->data && !g->data->curves.empty() && std::find(seen.begin(), seen.end(), kCurveSectionTag) == seen.end())
       writeCurveSection(*g->data, out);
     if (g->data && std::find(seen.begin(), seen.end(), kItemTurnSectionTag) == seen.end()) writeItemTurns(*g->data, out);
+    if (g->data && std::find(seen.begin(), seen.end(), kPaintEdgeSectionTag) == seen.end()) writePaintEdgeSection(*g->data, out);
     putU32(out, 4, uint32_t(out.size() - 8));
     return Value::boolean(v.vfs().write(path, out));
   });
