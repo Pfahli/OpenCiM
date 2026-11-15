@@ -192,6 +192,12 @@ right-hand ones on the piece next to it; at junctions all their lanes go one way
 A ring of four one-way quarter-circle small-road curves, counter-clockwise seen from above (right-hand traffic), 1 or
 2 lanes, radius 10–40. Small rings take roads at the compass points (where the arcs meet), larger ones anywhere.
 
+Large-road and avenue roundabouts (2026-11-15): the roundabout tab's third and fourth buttons (the large road's and the
+avenue's curve icons) lay the same ring of that kind, all four lanes one way (one-way large roads and avenues), radius
+18–60 (avenue 21–60: half width plus a 6-unit island). An avenue ring keeps its green middle strip, so it looks like two
+carriageways round the island. Checked: a large-road ring with two large roads joined (20 turn lanes, all linked), test
+cars round it without jams; an avenue ring with an avenue joined.
+
 ### Tram tracks
 
 - The game's tram track tool lays tracks on a whole curve with one click (priced as street track for its length).
@@ -370,7 +376,7 @@ reads the cell flags only (a cut cell counts as its flags say).
 
 ## 4. Not done
 
-Express roads splitting or joining each other (interchanges); underground metro, switches and stations on track curves; arrows on one-way large roads and avenues; large-road or avenue roundabouts; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
+Express roads splitting or joining each other (interchanges); underground metro, switches and stations on track curves; arrows on one-way large roads and avenues; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 
 ## 5. Files

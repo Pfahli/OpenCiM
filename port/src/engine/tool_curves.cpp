@@ -504,18 +504,23 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
 // A ring of four quarter-circle curves (BÃ©zier handles 0.5523Â·r), one-way counter-clockwise as seen from above (right-hand
 // traffic), centre and radius picked with two clicks. Roads join it like any curve: ending on the ring cuts it there
 // and makes a junction, whose lanes keep to the ring's direction.
-std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single) {
+// large-road and avenue rings (2026-11-15): the same four arcs of that kind, every lane one way (one-way large roads
+// and avenues, sim_graph.cpp), radius from the kind's half width plus a 6-unit island
+float roundaboutMinRadius(int kind) { return kind == 0 ? 10.0f : curveProfile(kind).halfWidth + 6.0f; }
+float roundaboutMaxRadius(int kind) { return kind == 0 ? 40.0f : 60.0f; }
+
+std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single, int kind = 0) {
   static const float dx[5] = {1, 0, -1, 0, 1}, dz[5] = {0, -1, 0, 1, 0};  // east, north, west, south (north is âˆ’z)
   std::vector<CurveRoad> arcs;
   for (int q = 0; q < 4; ++q) {
     CurveRoad c;
-    c.kind = 0;
+    c.kind = kind;
     c.x0 = C.x + dx[q] * r, c.y0 = C.y, c.z0 = C.z + dz[q] * r;
     c.x1 = C.x + dx[q + 1] * r, c.y1 = C.y, c.z1 = C.z + dz[q + 1] * r;
     c.dx0 = dz[q], c.dz0 = -dx[q];  // the tangent turning from east to north
     c.dx1 = dz[q + 1], c.dz1 = -dx[q + 1];
     c.a = c.b = 0.5523f * r;
-    c.ends = uint8_t(0x20 | 0x80 | (single ? 0x40 : 0));  // one-way, a ring
+    c.ends = uint8_t(0x20 | 0x80 | (single && kind == 0 ? 0x40 : 0));  // one-way, a ring
     arcs.push_back(c);
   }
   return arcs;
@@ -528,8 +533,8 @@ void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
     clearPreview(grid);
     return;
   }
-  float r = std::clamp(std::sqrt(len2(p - st.start)), 10.0f, 40.0f);
-  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, r, st.mode == 4);
+  float r = std::clamp(std::sqrt(len2(p - st.start)), roundaboutMinRadius(st.kind), roundaboutMaxRadius(st.kind));
+  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, r, st.mode == 4, st.kind);
   bool bad = false;
   for (const CurveRoad& c : arcs) {
     std::vector<uint32_t> trees, blocking;
@@ -548,7 +553,7 @@ void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
 
 void commitRoundabout(VM& vm, ControlObj* player, GridObj* grid) {
   State& st = g_state;
-  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, std::max(10.0f, st.length), st.mode == 4);
+  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, std::max(roundaboutMinRadius(st.kind), st.length), st.mode == 4, st.kind);
   Object* tl = playerTimeline(vm, player);
   unselectAll(vm, grid);
   clearPreview(grid);
@@ -567,8 +572,8 @@ void commitRoundabout(VM& vm, ControlObj* player, GridObj* grid) {
   }
   if (tl) timelineEndGroup(vm, tl);
   gridEditEnd(vm, grid);
-  LOG_INFO("curve tool: roundabout, radius %.1f, %s, %zu curves now", st.length, st.mode == 4 ? "one lane" : "two lanes",
-           grid->data->curves.size());
+  LOG_INFO("curve tool: roundabout, kind %d, radius %.1f, %s, %zu curves now", st.kind, st.length,
+           st.kind ? "all lanes" : st.mode == 4 ? "one lane" : "two lanes", grid->data->curves.size());
   st.step = 0;
 }
 

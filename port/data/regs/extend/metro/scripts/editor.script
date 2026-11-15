@@ -422,10 +422,11 @@ function regsOneWayShapeSet($m) {
   regsOneWayFor($regsOneWayLanes, $m);
 }
 
+// 1 / 2: a small-road ring with one / two lanes; 3 a large-road ring, 4 an avenue ring (all their lanes)
 function regsRoundaboutTool($n) {
   $regsRoundLanes = $n;
   $regsCurveUi = "round";
-  regsCurveToolKind(0);
+  regsCurveToolKind($n <= 2 ? 0 : $n - 2);
   $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
   regsCurveToolMode($n == 1 ? 4 : 5);
   regsCursorInfoStart();
@@ -470,6 +471,8 @@ for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
 $regsTab = regsAddRoadType("roundabout", $regsRs.$regs_round_tooltip);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout-1", macro :: regsRoundaboutTool(1), $regsRs.$regs_round_one);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout", macro :: regsRoundaboutTool(2), $regsRs.$regs_round_two);
+regsTabButton($regsTab, null, "/regs/ui/toolbar/curve-large", macro :: regsRoundaboutTool(3), $regsRs.$regs_round_large);
+regsTabButton($regsTab, null, "/regs/ui/toolbar/curve-avenue", macro :: regsRoundaboutTool(4), $regsRs.$regs_round_avenue);
 // tracks on curves (owner's request 2026-11-08): the build menu's metro tab gets the shapes for ground and elevated
 // metro tracks, the traffic menu's track tab those for the railway (curve kinds 4, 5, 6)
 $regsTrackTabs = [$buildMenu.$tabs["metro"], $buildMenu.$tabs["metro"], $trafficMenu.$tabs["track"]];
