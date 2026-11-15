@@ -18,6 +18,9 @@ class GridObj;
 
 void gridEditBegin(script::VM& vm, GridObj* grid);
 void gridEditEnd(script::VM& vm, GridObj* grid);
+// holds the simulation's share of the edits back (the OSM import on a big map: a rebuild of the walk areas after every
+// slice took a minute each, owner 2026-11-15); off again: everything held back goes to the simulation at once
+void gridEditHoldSimulation(script::VM& vm, GridObj* grid, bool hold);
 
 // gsGrid::addObject(template, x, y, z, orient, flags, parent): a new item of the named template, y in the engine's
 // 1/256 cells (as items and ObjRefs carry it), parent an item index or −1. Optional items (OPTIONAL 0x200000) under a

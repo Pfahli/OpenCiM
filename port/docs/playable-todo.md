@@ -401,6 +401,23 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   bank lowering stops at streets and paved areas (a quay wall), and a street point near water takes the elevation
   data's height of the dry cells around it.
   Footpaths lie 0.12 under their level with a polygon offset of -3 (0.2 down clipped into unlevelled ground).
+  2026-11-16 (owner's requests): paved areas (car parks, squares, market places, service areas) get rounded corners
+  (roundCorners, 4 m) and keep their cut border cells: the grass-sliver closing (terrain stage and Painter::closeGaps)
+  only fills gaps between two different areas (Apply::paintOwner), and street margins the street covers only partly
+  count as ground. Car parks: a concrete driveway to the nearest street when they do not reach it, and the parking sign
+  at the pavement beside it (parkingAccess). Fences: OSM's barrier=fence/wall/hedge (fence_type picks wooden, chain
+  link, iron, split rail; walls brick, hedges the hedge; short ones first, 12000 pieces at most) and fences between the
+  yards of neighbouring row houses (two joins in three, one kind a row) — placeFences / fenceLine (the fence models run
+  along their model z at their cell's −x edge). Junctions (junctionSigns): traffic lights where OSM maps
+  traffic_signals or two large roads cross; stop / give-way from OSM, give-way on small streets meeting large roads;
+  direction signs before large junctions; old signposts at footpath junctions in parks. Sign models seen in the game
+  (REGS_OSM_SIGNTEST=x,z lays them out): sign01 give way, 08 stop, 07 limit 100, 04 no stopping, 05 motorway;
+  traffic-lights02's arm reaches along its front, so only traffic-lights01 is used. OSM points: town signs
+  (traffic_sign=city_limit), advertising columns, bollards. Advertising (placeAds): posters and wall ads on the side
+  walls of houses by gaps along the streets in town, billboards along large roads, advertising columns at junction
+  corners. Standalone McDonald's / Burger King / KFC (brand, wikidata or name; a building or a point in it, at most
+  three times the restaurant's size) become the game's fast food restaurant. The import holds the simulation's
+  rebuilds back until it ends (gridEditHoldSimulation): on 2048 × 2048 each slice's rebuild took up to 80 s.
   Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
   signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
   the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at

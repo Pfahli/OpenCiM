@@ -591,6 +591,38 @@ double segDist(double px, double pz, std::pair<double, double> a, std::pair<doub
   double qx = a.first + t * dx - px, qz = a.second + t * dz - pz;
   return std::sqrt(qx * qx + qz * qz);
 }
+// a ring with its convex corners rounded (owner 2026-11-15: the edges of car parks toward the grass with a rounded
+// corner): a corner turning 20–170° becomes an arc (a quadratic curve) from d before to d after it, d = r · tan(turn / 2)
+// but at most 0.45 of either side
+std::vector<std::pair<double, double>> roundCorners(const std::vector<std::pair<double, double>>& p, double r) {
+  const size_t n = p.size();
+  if (n < 3 || r <= 0) return p;
+  double A = 0;  // (the ring's turning sense: a convex corner turns the same way)
+  for (size_t i = 0, j = n - 1; i < n; j = i++) A += p[j].first * p[i].second - p[i].first * p[j].second;
+  std::vector<std::pair<double, double>> out;
+  for (size_t i = 0; i < n; ++i) {
+    const auto a = p[(i + n - 1) % n], b = p[i], c = p[(i + 1) % n];
+    double ix = b.first - a.first, iz = b.second - a.second, ox = c.first - b.first, oz = c.second - b.second;
+    const double li = std::hypot(ix, iz), lo = std::hypot(ox, oz);
+    if (li < 1e-6 || lo < 1e-6) {
+      out.push_back(b);
+      continue;
+    }
+    ix /= li, iz /= li, ox /= lo, oz /= lo;
+    const double turn = std::acos(std::clamp(ix * ox + iz * oz, -1.0, 1.0));
+    if (turn < 20 * kPi / 180 || turn > 170 * kPi / 180 || (ix * oz - iz * ox) * A <= 0) {
+      out.push_back(b);
+      continue;
+    }
+    const double d = std::min({r * std::tan(turn * 0.5), li * 0.45, lo * 0.45});
+    const double p0x = b.first - ix * d, p0z = b.second - iz * d, p2x = b.first + ox * d, p2z = b.second + oz * d;
+    for (int k = 0; k <= 6; ++k) {
+      const double t = k / 6.0, u = 1 - t;
+      out.push_back({u * u * p0x + 2 * u * t * b.first + t * t * p2x, u * u * p0z + 2 * u * t * b.second + t * t * p2z});
+    }
+  }
+  return out;
+}
 // the nearest point of a set of polylines
 std::pair<double, double> nearestOn(double px, double pz, const std::vector<const RoadIn*>& ws, double& dist) {
   dist = 1e30;
@@ -934,7 +966,20 @@ struct BuildingIn {
   bool polygon;  // pts is one closed ring (point-in-polygon works)
   bool terraced = false;  // wall to wall with a neighbour (or building=terrace): the game's city houses in a row
   int row = -1;           // the row of buildings wall to wall it belongs to (two or more), -1 none
+  bool fastFood = false;  // a McDonald's, Burger King or KFC (or such a point inside it): the game's fast food restaurant
 };
+// a McDonald's, Burger King or KFC by OSM's brand, its wikidata or name (owner 2026-11-15: the fast food restaurant where
+// they stand on their own)
+template <class T>
+bool isBigFastFood(const T& tags) {
+  if (tags.str("amenity") != "fast_food") return false;
+  const std::string wd = tags.str("brand:wikidata");
+  if (wd == "Q38076" || wd == "Q177054" || wd == "Q524757") return true;
+  std::string s = tags.str("brand") + "|" + tags.str("name");
+  for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return s.find("mcdonald") != std::string::npos || s.find("burger king") != std::string::npos || s.find("kfc") != std::string::npos ||
+         s.find("kentucky fried") != std::string::npos;
+}
 // a tree to plant: its cell and what it grows in (0 wood, 1 scrub, 2 park, 3 a single tree or a row, 4 orchard)
 struct TreeIn {
   int first = 0, second = 0;
@@ -995,6 +1040,15 @@ struct ImportData {
   std::vector<char> tramBridges;                                   // per tram line: on a bridge
   // public beaches (natural=beach, leisure=beach_resort; not access=private): their rings (cells)
   std::vector<std::vector<std::pair<double, double>>> beaches;
+  // OSM's fences, walls and hedges (owner 2026-11-15: fences where plots meet): their lines (cells) and kind (0 wooden
+  // fence, 1 chain link, 2 metal railing, 3 split rail, 4 wall, 5 hedge)
+  struct BarrierIn {
+    std::vector<std::pair<double, double>> pts;
+    int kind = 0;
+  };
+  std::vector<BarrierIn> barriers;
+  std::vector<PointIn> trafficPts;                         // OSM's traffic signals (22), stop (23) and give-way (24) nodes
+  std::vector<std::pair<double, double>> fastFoodPts;      // McDonald's, Burger King and KFC mapped as points (cells)
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
   // the shoreline (owner 2026-11-15: the Saalbach's edges looked jagged): per corner (x, z) the signed distance in cells
@@ -1395,12 +1449,14 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
            ";way[\"railway\"~\"^(rail|light_rail)$\"]" + b + ";node[\"railway\"~\"^(station|halt)$\"]" + b +
            ";way[\"highway\"=\"service\"]" + b + ";way[\"railway\"=\"tram\"]" + b +
            ";node[\"amenity\"~\"^(fountain|bench|waste_basket|bicycle_parking|telephone|post_box|toilets|clock|vending_machine|taxi|recycling|shelter)$\"]" + b +
-           ";node[\"highway\"=\"street_lamp\"]" + b + ";node[\"historic\"~\"^(memorial|monument)$\"]" + b +
+           ";node[\"highway\"~\"^(street_lamp|traffic_signals|stop|give_way)$\"]" + b + ";node[\"traffic_sign\"~\"city_limit|DE:310\"]" + b +
+           ";node[\"advertising\"=\"column\"]" + b + ";node[\"barrier\"=\"bollard\"]" + b + ";node[\"historic\"~\"^(memorial|monument)$\"]" + b +
            ";node[\"tourism\"=\"artwork\"]" + b + ";node[\"shop\"=\"kiosk\"]" + b + ";nwr[\"leisure\"~\"^(playground|pitch|picnic_table|outdoor_seating)$\"]" + b +
            ";nwr[\"amenity\"~\"^(marketplace|fountain|restaurant|cafe|bar|pub|ice_cream|fast_food|biergarten)$\"]" + b +
            ";way[\"landuse\"=\"allotments\"]" + b +
            ";way[\"landuse\"~\"^(grass|meadow|village_green|cemetery|recreation_ground)$\"]" + b +
-           ";way[\"leisure\"~\"^(park|garden|common)$\"]" + b + ";way[\"natural\"=\"grassland\"]" + b + ";";
+           ";way[\"leisure\"~\"^(park|garden|common)$\"]" + b + ";way[\"natural\"=\"grassland\"]" + b +
+           ";way[\"barrier\"~\"^(fence|wall|hedge|city_wall)$\"]" + b + ";";
     if (flags & kBuildings)
       q += "way[\"building\"]" + b + ";relation[\"building\"]" + b + ";way[\"landuse\"~\"^(residential|commercial|retail|"
            "industrial)$\"]" + b + ";";
@@ -1485,6 +1541,20 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             if (st.x >= 0 && st.z >= 0 && st.x < W && st.z < L) data->stations.push_back(st);
             continue;
           }
+          if (flags & kStreets) {  // traffic lights, stop and give-way signs where OSM maps them (owner 2026-11-15)
+            const std::string hwn = tags.str("highway");
+            const int tk = hwn == "traffic_signals" ? 22 : hwn == "stop" ? 23 : hwn == "give_way" ? 24 : -1;
+            if (tk >= 0) {
+              PointIn pt;
+              pt.x = fr.cellX(lonToMx(el.num("lon"))), pt.z = fr.cellZ(latToMy(el.num("lat"))), pt.kind = tk;
+              if (pt.x >= 1 && pt.z >= 1 && pt.x < W - 1 && pt.z < L - 1) data->trafficPts.push_back(pt);
+              continue;
+            }
+          }
+          if ((flags & kBuildings) && isBigFastFood(tags)) {  // (its building, found later, becomes the fast food restaurant)
+            const double fx = fr.cellX(lonToMx(el.num("lon"))), fz = fr.cellZ(latToMy(el.num("lat")));
+            if (fx >= 0 && fz >= 0 && fx < W && fz < L) data->fastFoodPts.push_back({fx, fz});
+          }
           if (flags & kStreets) {  // street furniture (owner 2026-11-14: much OSM data still unused)
             static const std::map<std::string, int> kAmenity = {{"fountain", 0}, {"bench", 1}, {"waste_basket", 2},
                 {"bicycle_parking", 3}, {"telephone", 4}, {"post_box", 5}, {"toilets", 6}, {"clock", 12}};
@@ -1493,6 +1563,10 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             else if (tags.str("highway") == "street_lamp") kind = 7;
             else if (tags.str("shop") == "kiosk") kind = 11;
             else if (tags.str("leisure") == "playground") kind = 13;
+            // owner 2026-11-15 (decoration where it makes sense): town signs, advertising columns, bollards
+            else if (const std::string ts = tags.str("traffic_sign"); ts.find("city_limit") != std::string::npos || ts.find("DE:310") != std::string::npos) kind = 25;
+            else if (tags.str("advertising") == "column") kind = 26;
+            else if (tags.str("barrier") == "bollard") kind = 27;
             int sub = 0;
             // statues (owner 2026-11-15: many wrongly placed): only memorials and artworks that stand as a figure or a
             // stone, by their type (sub 1 statue, 2 bust, 3 obelisk / stele / war memorial, 4 sculpture, 5 stone);
@@ -1563,6 +1637,26 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
                        lu == "allotments" || lu == "forest" || lu == "orchard" || le == "park" || le == "garden" || le == "common" ||
                        le == "playground" || le == "pitch" || nat == "grassland" || nat == "wood" || nat == "scrub"))
           greenEdges.push_back(ringEdges);  // (and on: the branches below still read it)
+        if (const std::string br = tags.str("barrier"); type == "way" && (br == "fence" || br == "wall" || br == "hedge" || br == "city_wall")) {
+          // a fence, wall or hedge (owner 2026-11-15): its kind by OSM's fence_type; a fence of no type: a wooden one, a
+          // long one (over 80 m: around works, sports grounds, railways) chain link
+          if (flags & kStreets) {
+            ImportData::BarrierIn bi;
+            bi.pts = pts;
+            const std::string ft = tags.str("fence_type");
+            double len = 0;
+            for (size_t k = 0; k + 1 < pts.size(); ++k) len += std::hypot(pts[k + 1].first - pts[k].first, pts[k + 1].second - pts[k].second);
+            if (br == "hedge") bi.kind = 5;
+            else if (br != "fence") bi.kind = 4;
+            else if (ft == "chain_link" || ft == "wire" || ft == "mesh") bi.kind = 1;
+            else if (ft == "metal" || ft == "railing" || ft == "bars" || ft == "metal_bars") bi.kind = 2;
+            else if (ft == "split_rail" || ft == "post_and_rail" || ft == "electric") bi.kind = 3;
+            else if (ft.empty() && len * cellM > 80) bi.kind = 1;
+            else bi.kind = 0;
+            data->barriers.push_back(std::move(bi));
+          }
+          continue;
+        }
         if ((nat == "beach" || le == "beach_resort") && type == "way" && closed) {  // a beach (2026-11-15)
           if ((flags & kWater) && tags.str("access") != "private" && tags.str("access") != "no") data->beaches.push_back(pts);
           continue;
@@ -1583,28 +1677,34 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           };
           const bool openBeerGarden = am == "biergarten" && tags.str("building").empty();
           const size_t paintBefore = data->paintAreas.size();
+          // (their painted outline with rounded corners, 4 m: owner 2026-11-15)
+          auto rounded = [&]() {
+            std::vector<PaintRing> out;
+            for (const PaintRing& r : rings) out.push_back(roundCorners(r, 4.0 / cellM));
+            return out;
+          };
           const std::string why = type + " " + std::to_string(uint64_t(el.num("id"))) + " " + (square ? "square" : am.empty() ? hw : am) +
                                   " area:highway=" + tags.str("area:highway") + " place=" + tags.str("place") + " name=" + tags.str("name");
           if (closed && square) {
-            data->paintAreas.push_back({rings, 2});
+            data->paintAreas.push_back({rounded(), 2});
             if (type == "way") {
               AreaIn ar{pts, 0};
               ar.name = tags.str("name");
               data->areas.push_back(ar);
             }
           } else if (closed && am == "marketplace") {
-            data->paintAreas.push_back({rings, 2});
+            data->paintAreas.push_back({rounded(), 2});
             if (type == "way") data->areas.push_back({pts, 2});
           } else if (closed && am == "parking" && tags.str("parking") != "underground" && tags.str("parking") != "multi-storey" &&
                      tags.str("parking") != "rooftop" && tags.str("parking") != "lane" && tags.str("parking") != "street_side" &&
                      tags.str("parking") != "on_street") {  // (parking lanes lie on the streets' shoulders: no strips beside them)
-            data->paintAreas.push_back({rings, 0});
+            data->paintAreas.push_back({rounded(), 0});
             if (type == "way") data->areas.push_back({pts, 1});
           } else if (hw == "service" && type == "way" && closed && tags.str("area") == "yes") {
             // service areas (yards, forecourts) in asphalt. Bands of paint along pedestrian streets and service roads
             // are left out (owner 2026-11-14: painted cells along a slanted line make a saw-tooth strip; pedestrian
             // streets are footpath curves of their own)
-            data->paintAreas.push_back({rings, 0});
+            data->paintAreas.push_back({rounded(), 0});
           } else if (hw == "pedestrian" && type == "way" && !closed) {
             // a pedestrian street: a band of paving stones 6 m wide with exact edges (owner 2026-11-14), a rectangle per
             // leg and an octagon at each bend; buildings may stand on it
@@ -1715,6 +1815,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           bi.id = uint64_t(el.num("id"));
           bi.polygon = type == "way";
           bi.terraced = tags.str("building") == "terrace";
+          bi.fastFood = isBigFastFood(tags);
           if (bi.polygon && pts.size() > 1 && pts.front() == pts.back()) pts.pop_back();
           bi.pts = std::move(pts);
           data->buildings.push_back(std::move(bi));
@@ -2142,7 +2243,10 @@ struct Apply {
   std::vector<Drag> drags;  // alleys
   std::map<std::pair<int, int>, uint32_t> network;
   std::vector<uint8_t> used;  // cells taken by roads, buildings, trees, water
-  int buildingsLeft = 0;      // OSM buildings no template went into
+  // per cell the painted area that laid its paving (whole or its edge), −1 none: the grass slivers close only between
+  // two areas, not along one area's own border (owner 2026-11-15: that turned the cut border cells into whole ones)
+  std::vector<int> paintOwner;
+  int buildingsLeft = 0;     // OSM buildings no template went into
   int footprintsFilled = 0;   // footprints filled with several buildings (fillFootprint)
   int procPlaced = 0;         // procedural buildings (placeProcBuilding)
   std::vector<int> made;
@@ -2151,6 +2255,13 @@ struct Apply {
   std::vector<char> inRow;  // buildings a row of city houses took
   std::vector<std::pair<double, double>> yardSeeds;  // free cells behind the rows of houses (cells)
   std::vector<std::vector<std::pair<double, double>>> yardBands;  // a band of pavement behind each row (corner coordinates)
+  // where two houses of a row meet: the line between their yards starts there at the back wall and runs away from the
+  // street (cells; owner 2026-11-15: fences where plots meet)
+  struct YardSplit {
+    double x = 0, z = 0, vx = 0, vz = 0;
+    uint32_t row = 0;  // the row's hash (one kind of fence a row)
+  };
+  std::vector<YardSplit> yardSplits;
   int stationsPlaced = 0;
   std::vector<std::array<double, 4>> stationFrames;  // placed stations: centre (cells) and front  // REGS_OSM_GRID: the streets on the block grid (before the curve tools)
   int curvesMade = 0;
@@ -3980,20 +4091,28 @@ int placeBlock(VM& vm, GridObj* grid, Apply& a, const std::vector<const Building
     double t = r.corner[0] && !r.corner[1] ? r.t[0] : r.corner[1] && !r.corner[0] ? r.t[1] - used : r.t[0] + (len - used) * 0.5;
     int here = 0;
     double back = 0;
+    std::vector<double> joins;  // between two placed houses (along the row)
+    bool lastPlaced = false;
     for (const Candidate* c : run) {
       const double tc = t + c->w * 0.5;
+      bool ok = false;
       for (double shift : {0.0, 0.5, 1.0}) {
         double across = r.front + c->l * 0.5 + shift;
         double px = r.ox + r.ux * tc + r.vx * across, pz = r.oz + r.uz * tc + r.vz * across;
         if (placeAt(vm, grid, a, c->name, px, pz, -r.vx, -r.vz, free0, 3) >= 0) {
           ++a.buildingsPlaced, ++here;
           back = std::max(back, r.front + c->l + shift);
+          ok = true;
           break;
         }
       }
+      if (ok && lastPlaced) joins.push_back(t);
+      lastPlaced = ok;
       t += c->w;
     }
     if (!here) continue;
+    for (double tj : joins)
+      a.yardSplits.push_back({r.ox + r.ux * tj + r.vx * back, r.oz + r.uz * tj + r.vz * back, r.vx, r.vz, hr});
     placed += here;
     for (const BuildingIn* b : r.members) a.inRow[size_t(b - a.d->buildings.data())] = 1;
     // the yard's pavement along the houses' backs: a band 2.2 cells deep (painted with exact edges, decorateYards)
@@ -4232,10 +4351,14 @@ std::vector<PaintRing> traceCells(const std::set<std::pair<int, int>>& cells) {
 struct Painter {
   GridData& g;
   int x0 = 1 << 30, z0 = 1 << 30, x1 = -1, z1 = -1;
+  std::vector<int>* owner = nullptr;  // Apply::paintOwner (each paint() an area of its own)
+  int nextOwner = 1 << 24;
+  int ownerAt(size_t i) const { return owner && i < owner->size() ? (*owner)[i] : -1; }
   template <class F>
   std::vector<size_t> paint(const std::vector<PaintRing>& rings, int type, F allow) {
     std::vector<size_t> out;
     type &= 7;
+    const int id = nextOwner++;
     for (const PaintAreaCell& c : paintAreaCells(g.width, g.length, rings)) {
       size_t i = size_t(c.z) * size_t(g.width) + size_t(c.x);
       uint16_t& f = g.flags[i];
@@ -4251,6 +4374,7 @@ struct Painter {
       } else {
         continue;
       }
+      if (owner && i < owner->size()) (*owner)[i] = id;
       out.push_back(i);
       x0 = std::min(x0, c.x), z0 = std::min(z0, c.z), x1 = std::max(x1, c.x), z1 = std::max(z1, c.z);
     }
@@ -4376,10 +4500,13 @@ struct Painter {
         int votes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         bool pair = false;
         for (auto& dv : kDir) {
-          int ta = -1, tb = -1;
-          for (int k = 1; k <= 2 && ta < 0; ++k) ta = pavedAt(x + dv[0] * k, z + dv[1] * k);
-          for (int k = 1; k <= 2 && tb < 0; ++k) tb = pavedAt(x - dv[0] * k, z - dv[1] * k);
-          if (ta >= 0 && tb >= 0) pair = true, ++votes[ta & 7], ++votes[tb & 7];
+          int ta = -1, tb = -1, oa = -1, ob = -1;
+          for (int k = 1; k <= 2 && ta < 0; ++k)
+            if ((ta = pavedAt(x + dv[0] * k, z + dv[1] * k)) >= 0) oa = ownerAt(size_t(z + dv[1] * k) * size_t(W) + size_t(x + dv[0] * k));
+          for (int k = 1; k <= 2 && tb < 0; ++k)
+            if ((tb = pavedAt(x - dv[0] * k, z - dv[1] * k)) >= 0) ob = ownerAt(size_t(z - dv[1] * k) * size_t(W) + size_t(x - dv[0] * k));
+          // (two areas: a border cell between its own area's border cells stays cut; owner 2026-11-15)
+          if (ta >= 0 && tb >= 0 && (oa != ob || oa < 0)) pair = true, ++votes[ta & 7], ++votes[tb & 7];
         }
         if (!pair) continue;
         int best = 0;
@@ -4559,6 +4686,222 @@ int riverRailings(VM& vm, GridObj* grid, Apply& a) {
   return made;
 }
 
+// traffic lights and signs at the street junctions (owner 2026-11-15), three arms and more, no roundabouts: traffic
+// lights where OSM maps traffic signals near the junction or two large roads cross (four arms, three of them large),
+// on every incoming arm's right-hand pavement before the junction (the one with an arm over the road on large roads);
+// else a stop or give-way sign where OSM maps one on the arm, and a give-way sign on a small street meeting two large
+// arms. Before a junction of large roads a direction sign 25 units back on each large arm. REGS_OSM_SIGNTEST=x,z
+// (world) lays the game's signs in a row there to see them
+int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
+  GridData& g = *grid->data;
+  const ImportData& d = *a.d;
+  const int W = g.width, L = g.length;
+  const float cs = g.cellSize;
+  auto pickEnv = [&](const char* env, std::initializer_list<const char*> names) {
+    const char* e = std::getenv(env);
+    return e && grid->templates.count(e) ? std::string(e) : firstOf(grid, names);
+  };
+  const std::string lights = pickEnv("REGS_OSM_SIGN_LIGHTS", {"traffic-lights01"});
+  // (seen in the game 2026-11-16: sign01 give way, 02 keep right, 03 danger, 04 no stopping, 05 motorway, 07 limit 100,
+  // 08 stop, 10 a level crossing's marker, 11 a blue direction board, junctionsign the yellow direction sign; the
+  // light with the arm reaches along its front, not over the road: the plain one everywhere)
+  const std::string lightsArm = pickEnv("REGS_OSM_SIGN_LIGHTSARM", {"traffic-lights01"});
+  const std::string giveWay = pickEnv("REGS_OSM_SIGN_GIVEWAY", {"traffic-sign01"});
+  const std::string stopSign = pickEnv("REGS_OSM_SIGN_STOP", {"traffic-sign08", "traffic-sign01"});
+  const std::string direction = pickEnv("REGS_OSM_SIGN_DIRECTION", {"junctionsign"});
+  auto cellOf = [&](const render::Vec3& p, double& x, double& z) { x = p.x / cs + W * 0.5, z = p.z / cs + L * 0.5; };
+  auto ok = [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6 && u != 7; };
+  if (const char* t = std::getenv("REGS_OSM_SIGNTEST")) {
+    float wx = 0, wz = 0;
+    std::sscanf(t, "%f,%f", &wx, &wz);
+    // (two rows each: the first facing −z, the second +z, so one of them shows its face)
+    const std::vector<std::vector<const char*>> groups = {
+        {"traffic-sign01", "traffic-sign02", "traffic-sign03", "traffic-sign04", "traffic-sign05", "traffic-sign07", "traffic-sign08"},
+        {"traffic-sign09", "traffic-sign10", "traffic-sign11", "traffic-sign13", "traffic-lights01", "traffic-lights02", "junctionsign"},
+        {"areasign-01", "areasign-02", "parking-sign", "signpost"}};
+    double row = 0;
+    for (const auto& grp : groups)
+      for (int face = -1; face <= 1; face += 2, row += 2.5) {
+        int k = 0;
+        for (const char* n : grp) {
+          if (grid->templates.count(n))
+            placeAt(vm, grid, a, n, wx / cs + W * 0.5 + k * 1.6, wz / cs + L * 0.5 + row, 0, face, [](uint8_t) { return true; }, 0);
+          ++k;
+        }
+      }
+  }
+  std::vector<CurveJunction> js = findCurveJunctions(g);
+  int nLights = 0, nSigns = 0, nDir = 0;
+  for (const CurveJunction& j : js) {
+    if (j.arms.size() < 3) continue;
+    bool skip = false;
+    int big = 0;
+    for (const CurveArm& arm : j.arms) {
+      if (arm.ring || arm.kind > 2) skip = true;
+      if (arm.kind >= 1) ++big;
+    }
+    double jx, jz;
+    cellOf(j.centre, jx, jz);
+    // a junction of footpaths in the green (a park, a meadow): the old signpost at a corner, at about every other one
+    bool paths = true;
+    for (const CurveArm& arm : j.arms) paths = paths && arm.kind == 3;
+    if (paths && !d.green.empty() && jx >= 1 && jz >= 1 && jx < W - 1 && jz < L - 1 && d.green[size_t(jz) * size_t(W) + size_t(jx)] &&
+        hash32(uint64_t(std::llround(jx * 16)) * 131 + uint64_t(std::llround(jz * 16))) % 2 == 0) {
+      const render::Vec3 sum = j.arms[0].out + j.arms[1].out;
+      const render::Vec3 o = std::hypot(sum.x, sum.z) > 0.1f ? render::normalize(sum) : render::Vec3{-j.arms[0].out.z, 0, j.arms[0].out.x};
+      const float hw = curveProfile(3).halfWidth;
+      cellOf(j.centre + o * (j.radius + hw + 0.8f), jx, jz);
+      if (placeAt(vm, grid, a, firstOf(grid, {"signpost"}), jx, jz, -o.x, -o.z, ok, 6) >= 0) ++nSigns;
+      continue;
+    }
+    if (skip) continue;
+    bool signals = big >= 3 && j.arms.size() >= 4;
+    for (const PointIn& pt : d.trafficPts)
+      if (pt.kind == 22 && std::hypot(pt.x - jx, pt.z - jz) <= j.radius / cs + 3.0) signals = true;
+    for (const CurveArm& arm : j.arms) {
+      if (arm.flow == 2) continue;  // (one-way away from the junction: nobody comes in there)
+      const float hw = curveProfile(arm.kind).halfWidth;
+      const render::Vec3 right{arm.out.z, 0, -arm.out.x};
+      double px, pz, mx, mz;
+      cellOf(arm.mouth + arm.out * 2.0f + right * (hw - 0.5f), px, pz);
+      cellOf(arm.mouth + arm.out * 3.0f, mx, mz);
+      int osmSign = 0;
+      for (const PointIn& pt : d.trafficPts)
+        if ((pt.kind == 23 || pt.kind == 24) && std::hypot(pt.x - mx, pt.z - mz) <= 4.0) osmSign = pt.kind;
+      std::string name = signals ? (arm.kind >= 1 ? lightsArm : lights)
+                         : osmSign == 23 ? stopSign
+                         : (osmSign == 24 || (arm.kind == 0 && big >= 2)) ? giveWay
+                                                                          : std::string();
+      const int y = int(std::lround(arm.mouth.y * 256.0f / cs));
+      if (!name.empty() && placeAt(vm, grid, a, name, px, pz, arm.out.x, arm.out.z, ok, 6, y) >= 0) ++(signals ? nLights : nSigns);
+      if (!direction.empty() && arm.kind >= 1 && big >= 3 && arm.curve >= 0 && curveLength(g.curves[size_t(arm.curve)]) > 45.0f) {
+        cellOf(arm.mouth + arm.out * 25.0f + right * (hw - 0.5f), px, pz);
+        if (placeAt(vm, grid, a, direction, px, pz, arm.out.x, arm.out.z, ok, 6) >= 0) ++nDir;
+      }
+    }
+  }
+  LOG_INFO("osm: %d traffic lights, %d signs, %d direction signs at %zu junctions (%zu OSM traffic nodes)", nLights, nSigns, nDir,
+           js.size(), d.trafficPts.size());
+  return nLights + nSigns + nDir;
+}
+
+// advertising in logical places (owner 2026-11-16): along the streets in town (six buildings or more within 6 cells)
+// - posters on the side walls of houses where a gap opens to the street (the game's street ads and sliding ads hang at
+//   their cell's −x edge, the big wall ads by large roads), about one gap in three, 10 cells apart;
+// - billboards (2 cells wide, facing along their model's z) along large roads on free ground behind the pavement,
+//   facing the road, 45 cells apart;
+// - advertising columns at a corner of about one town junction in four
+int placeAds(VM& vm, GridObj* grid, Apply& a) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  const float cs = g.cellSize;
+  auto have = [&](std::initializer_list<const char*> names) {
+    std::vector<std::string> out;
+    for (const char* n : names)
+      if (grid->templates.count(n)) out.push_back(n);
+    return out;
+  };
+  const std::vector<std::string> boards = have({"cityad-02", "cityad-03", "cityad-04"});
+  const std::vector<std::string> posters = have({"street-ad-01", "street-ad-02", "street-ad-03", "street-ad-04", "street-ad-05",
+                                                 "street-ad-06", "street-ad-07", "sliding-ad-01", "sliding-ad-02"});
+  const std::vector<std::string> wallAds = have({"wallad-01", "wallad-02", "wallad-03", "wallad-04", "wallad-05", "wallad-06"});
+  auto usedAt = [&](double x, double z) -> int {
+    const int cx = int(std::floor(x)), cz = int(std::floor(z));
+    if (cx < 1 || cz < 1 || cx >= W - 1 || cz >= L - 1) return -1;
+    return a.used[size_t(cz) * size_t(W) + size_t(cx)];
+  };
+  auto freeAt = [&](double x, double z) {
+    const int u = usedAt(x, z);
+    return u == 0 || u == 8;
+  };
+  auto town = [&](double x, double z) {
+    int n = 0;
+    for (int dz = -6; dz <= 6; dz += 2)
+      for (int dx = -6; dx <= 6; dx += 2) n += usedAt(x + dx, z + dz) == 3 ? 1 : 0;
+    return n >= 6;
+  };
+  // (spacing: the placed ones by 16-cell buckets)
+  std::map<std::pair<int, int>, std::vector<std::pair<double, double>>> placedBoards, placedPosters;
+  auto farFrom = [](std::map<std::pair<int, int>, std::vector<std::pair<double, double>>>& m, double x, double z, double r) {
+    const int bx = int(std::floor(x / 16)), bz = int(std::floor(z / 16)), k = int(std::ceil(r / 16));
+    for (int dz = -k; dz <= k; ++dz)
+      for (int dx = -k; dx <= k; ++dx) {
+        auto it = m.find({bx + dx, bz + dz});
+        if (it == m.end()) continue;
+        for (auto& q : it->second)
+          if (std::hypot(q.first - x, q.second - z) < r) return false;
+      }
+    return true;
+  };
+  auto remember = [](std::map<std::pair<int, int>, std::vector<std::pair<double, double>>>& m, double x, double z) {
+    m[{int(std::floor(x / 16)), int(std::floor(z / 16))}].push_back({x, z});
+  };
+  auto okFree = [](uint8_t u) { return u == 0 || u == 8; };
+  std::vector<CurveJunction> js = findCurveJunctions(g);
+  int nBoards = 0, nPosters = 0, nColumns = 0;
+  for (size_t ci = 0; ci < g.curves.size(); ++ci) {
+    const CurveRoad& c = g.curves[ci];
+    if (c.kind > 2 || c.bridge) continue;
+    float t0, t1;
+    curveTrims(js, int(ci), t0, t1);
+    const float len = curveLength(c);
+    if (len - t0 - t1 < 15) continue;
+    const double hw = curveProfile(c.kind).halfWidth / cs;
+    for (const CurveSample& sm : sampleCurveRange(c, t0 + 6.0f, len - t1 - 6.0f, cs)) {
+      const double px = sm.p.x / cs + W * 0.5, pz = sm.p.z / cs + L * 0.5;
+      const double dl = std::hypot(sm.dir.x, sm.dir.z);
+      if (dl < 1e-6) continue;
+      const double tx = sm.dir.x / dl, tz = sm.dir.z / dl;
+      for (int side = -1; side <= 1; side += 2) {
+        const double nx = sm.right.x * side, nz = sm.right.z * side;
+        double off = hw + 0.5;  // (the first cell beyond the street's margin)
+        while (off < hw + 3.0 && usedAt(px + nx * off, pz + nz * off) == 2) off += 1.0;
+        const double q1x = px + nx * off, q1z = pz + nz * off;
+        if (!freeAt(q1x, q1z) || !town(q1x, q1z)) continue;
+        const uint32_t h = hash32(uint64_t(std::llround(q1x * 8)) * 2654435761ull + uint64_t(std::llround(q1z * 8)));
+        // a poster on a house's side wall by a gap
+        for (int s = -1; s <= 1 && !posters.empty(); s += 2) {
+          if (usedAt(q1x + tx * s, q1z + tz * s) != 3 || h % 3 != 0 || !farFrom(placedPosters, q1x, q1z, 10)) continue;
+          const std::vector<std::string>& pool = c.kind >= 1 && !wallAds.empty() && (h >> 8) % 2 ? wallAds : posters;
+          double fx, fz;
+          armFront(-tx * s, -tz * s, fx, fz);  // (the model's +x away from the wall)
+          const double cxc = std::floor(q1x) + 0.5, czc = std::floor(q1z) + 0.5;  // (the cell's centre: the poster on its edge)
+          if (placeAt(vm, grid, a, pool[(h >> 11) % pool.size()], cxc, czc, fx, fz, okFree, 6) >= 0) {
+            ++nPosters, remember(placedPosters, q1x, q1z);
+            break;
+          }
+        }
+        // a billboard by a large road: two free cells along it and one behind
+        if (c.kind >= 1 && !boards.empty() && freeAt(q1x + nx, q1z + nz) && freeAt(q1x + tx, q1z + tz) && freeAt(q1x - tx, q1z - tz) &&
+            farFrom(placedBoards, q1x, q1z, 45) && (h >> 4) % 4 == 0) {
+          const double bx = q1x + nx * 0.4, bz = q1z + nz * 0.4;
+          if (placeAt(vm, grid, a, boards[(h >> 13) % boards.size()], bx, bz, -nx, -nz, okFree, 6) >= 0)
+            ++nBoards, remember(placedBoards, bx, bz);
+        }
+      }
+    }
+  }
+  // advertising columns at town junctions' corners
+  const std::string column = firstOf(grid, {"ad-pole", "old-ad-pole"});
+  for (const CurveJunction& j : js) {
+    if (column.empty() || j.arms.size() < 3) continue;
+    bool streets = true;
+    for (const CurveArm& arm : j.arms) streets = streets && arm.kind <= 2 && !arm.ring;
+    const double jx = j.centre.x / cs + W * 0.5, jz = j.centre.z / cs + L * 0.5;
+    if (!streets || !town(jx, jz) || hash32(uint64_t(std::llround(jx * 16)) * 7 + uint64_t(std::llround(jz * 16)) * 13) % 4 != 0) continue;
+    const render::Vec3 sum = j.arms[0].out + j.arms[1].out;
+    if (std::hypot(sum.x, sum.z) < 0.1f) continue;
+    const render::Vec3 o = render::normalize(sum);
+    const float hw = std::max(curveProfile(j.arms[0].kind).halfWidth, curveProfile(j.arms[1].kind).halfWidth);
+    const render::Vec3 p = j.centre + o * (j.radius + hw * 0.4f);
+    if (placeAt(vm, grid, a, column, p.x / cs + W * 0.5, p.z / cs + L * 0.5, -o.x, -o.z,
+                [](uint8_t u) { return u == 0 || u == 2 || u == 5 || u == 8; }, 6) >= 0)
+      ++nColumns;
+  }
+  LOG_INFO("osm: advertising: %d posters on side walls, %d billboards, %d advertising columns", nPosters, nBoards, nColumns);
+  return nPosters + nBoards + nColumns;
+}
+
 // OSM's street furniture where it is mapped; benches, kiosks and the like face the street they stand by, lamps reach
 // over it; points on the carriageway move to its kerb
 void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, double>>& lamps) {
@@ -4644,6 +4987,13 @@ void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, 
       case 17: name = firstOf(grid, {"gazebo", "pavillion"}); break;
       case 18: name = firstOf(grid, {"markettableset"}); break;
       case 19: case 20: case 21: continue;  // terraces, beer gardens, markets: generated (buildTerrace, buildSeating, buildMarket)
+      case 25:  // a town sign: at the kerb, facing along the street
+        name = firstOf(grid, {"areasign-01", "areasign-02"});
+        if (st) fx = st->tx, fz = st->tz;
+        break;
+      case 26: name = firstOf(grid, {"ad-pole"}); break;
+      case 27: name = firstOf(grid, {"pollard01", "pollard02"}); break;
+      default: continue;
     }
     if (name.empty()) continue;
     if (placeAt(vm, grid, a, name, px, pz, fx, fz, ok, 6) >= 0) {
@@ -5314,6 +5664,73 @@ int decorateParking(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, int budge
   return made;
 }
 
+// the way into a car park (owner 2026-11-15: car parks connected to a street through concrete, the parking sign at the
+// street pointing to it): the point of its outline nearest the outer edge of a street's pavement (a street outside it,
+// within 8 cells of that edge, the band between them clear of buildings, water, tracks, trees and decor); where the car
+// park does not reach the street, a band of concrete 5 m wide from a cell inside its outline to under the pavement;
+// the parking sign at the pavement's outer edge beside the way, its panel over the pavement, facing along the street.
+// drive: set when a band was laid. Returns 1 when the sign stands
+int parkingAccess(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, Painter& painter, bool& drive) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  drive = false;
+  if (ar.pts.size() < 3 || polyArea(ar.pts) < 12) return 0;
+  const double hwid = 2.5 / std::max(0.5, a.d->cellM);
+  auto blocked = [&](double x, double z) {
+    const int cx = int(std::floor(x)), cz = int(std::floor(z));
+    if (cx < 1 || cz < 1 || cx >= W - 1 || cz >= L - 1) return true;
+    const uint8_t u = a.used[size_t(cz) * size_t(W) + size_t(cx)];
+    return u == 1 || u == 3 || u == 4 || u == 6 || u == 7;
+  };
+  struct Best {
+    double gap = 1e9, bx = 0, bz = 0, nx = 0, nz = 0, tx = 0, tz = 0, sx = 0, sz = 0, hw = 0;
+  } best;
+  const size_t n = ar.pts.size();
+  for (size_t i = 0; i < n; ++i) {
+    const auto p0 = ar.pts[i], p1 = ar.pts[(i + 1) % n];
+    const int steps = std::max(1, int(std::hypot(p1.first - p0.first, p1.second - p0.second) / 0.5));
+    for (int s = 0; s < steps; ++s) {
+      const double bx = p0.first + (p1.first - p0.first) * s / steps, bz = p0.second + (p1.second - p0.second) * s / steps;
+      const StreetIndex::P* st = g_streets.nearest(bx, bz, 12.0);
+      if (!st || st->kind > 2 || insideRing(ar.pts, st->x, st->z)) continue;
+      const double dx = bx - st->x, dz = bz - st->z, dc = std::hypot(dx, dz), gap = dc - st->hw;
+      if (dc < 1e-6 || gap > 8.0 || gap >= best.gap) continue;
+      const double nx = dx / dc, nz = dz / dc, tx = -nz, tz = nx;
+      bool clear = true;
+      for (double t = st->hw; t <= dc && clear; t += 0.5)
+        for (double w : {-hwid, 0.0, hwid}) clear = clear && !blocked(st->x + nx * t + tx * w, st->z + nz * t + tz * w);
+      if (!clear) continue;
+      best = {gap, bx, bz, nx, nz, tx, tz, st->x, st->z, st->hw};
+    }
+  }
+  if (best.gap > 8.0) return 0;
+  if (best.gap > 0.2) {  // the band: from a cell inside the outline to under the pavement
+    const double ax = best.bx + best.nx * 1.0, az = best.bz + best.nz * 1.0;
+    const double ex = best.sx + best.nx * (best.hw - 0.4), ez = best.sz + best.nz * (best.hw - 0.4);
+    const PaintRing band{{ax + best.tx * hwid, az + best.tz * hwid}, {ex + best.tx * hwid, ez + best.tz * hwid},
+                         {ex - best.tx * hwid, ez - best.tz * hwid}, {ax - best.tx * hwid, az - best.tz * hwid}};
+    for (size_t i : painter.paint({band}, 1, [&](size_t i) {
+           const uint8_t u = a.used[i];
+           return (u == 0 || u == 2 || u == 5 || u == 8) && (g.flags[i] & 0x48) != 0x8;
+         }))
+      if (a.used[i] != 2) a.used[i] = 5;
+    drive = true;
+  }
+  // the sign: on the pavement's outer edge, on the side of the way where it fits
+  const std::string sign = firstOf(grid, {"parking-sign"});
+  if (sign.empty()) return 0;
+  for (int side : {1, -1}) {
+    const double px = best.sx + best.nx * (best.hw - 0.35) + best.tx * side * (hwid + 0.7);
+    const double pz = best.sz + best.nz * (best.hw - 0.35) + best.tz * side * (hwid + 0.7);
+    if (placeAt(vm, grid, a, sign, px, pz, -best.nx, -best.nz, [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6 && u != 7; }, 6) >= 0) {
+      if (std::getenv("REGS_DEBUG_OSM"))
+        LOG_INFO("osm: parking way at world %.0f, %.0f (gap %.1f cells)", (best.sx - W * 0.5) * g.cellSize, (best.sz - L * 0.5) * g.cellSize, best.gap);
+      return 1;
+    }
+  }
+  return 0;
+}
+
 // street lamps along the curves where OSM maps none: small streets on one side, wide roads and avenues on both
 // (staggered); every 28 m (32 m on wide roads, 20 m on footpaths), clear of the junctions; the plain post on small
 // streets, the large arm lamp reaching over wide roads, the old lantern by footpaths
@@ -5380,6 +5797,91 @@ void streetLamps(VM& vm, GridObj* grid, Apply& a, const std::vector<std::pair<do
 // close it within 6000 cells, else the 6 cells behind the houses); bushes along
 // the houses' backs, trees in the open, and the residents' things: sandboxes, swings, sheds, bicycle stands, benches,
 // flower beds, now and then a garden fountain, a gazebo or a statue
+// ---- fences (owner 2026-11-15: fences where plots meet) ----
+// The game's fence pieces run along their model's z; most stand at the −x edge of their cell (their wall's centre
+// `wallX` units off the model's centre), the garden wall is two cells long. A line of them: a piece every `len` along
+// the polyline (cells), the model's +x turned to one side and the piece shifted so its wall lies on the line. Cells it
+// covers must be ground, paving, an empty footprint or a street margin not under the street; it stops at buildings,
+// water and tracks (stop = true) and skips trees and other things. Marks its cells as decor (6)
+struct FenceKind {
+  const char* name;
+  double wallX, len;  // units, cells
+};
+const FenceKind* fenceKind(GridObj* grid, int kind) {
+  static const FenceKind kKinds[] = {{"plank-fence2", -1.43, 1}, {"chainlink-fence", -1.48, 1}, {"iron-fence", 0.0, 1},
+                                     {"farm-fence", -1.39, 1},   {"brick-wall", 0.0, 1},       {"hedge", 0.0, 1}};
+  if (kind < 0 || kind > 5) return nullptr;
+  const FenceKind* k = &kKinds[kind];
+  if (!grid->templates.count(k->name)) k = grid->templates.count("plank-fence2") ? &kKinds[0] : nullptr;
+  return k;
+}
+int fenceLine(VM& vm, GridObj* grid, Apply& a, const FenceKind& fk, const std::vector<std::pair<double, double>>& line, bool stop,
+              int budget) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  const double shift = fk.wallX / g.cellSize;
+  int made = 0;
+  double carry = fk.len * 0.5;  // (the pieces run on over the line's bends)
+  for (size_t k = 0; k + 1 < line.size() && made < budget; ++k) {
+    const double ax = line[k].first, az = line[k].second, dx = line[k + 1].first - ax, dz = line[k + 1].second - az;
+    const double l = std::hypot(dx, dz);
+    if (l < 1e-6) continue;
+    const double ux = dx / l, uz = dz / l, mx = -uz, mz = ux;
+    double t = carry;
+    for (; t <= l && made < budget; t += fk.len) {
+      const double px = ax + ux * t, pz = az + uz * t;
+      const int cx = int(std::floor(px)), cz = int(std::floor(pz));
+      if (cx < 1 || cz < 1 || cx >= W - 1 || cz >= L - 1) continue;
+      const size_t i = size_t(cz) * size_t(W) + size_t(cx);
+      const uint8_t u = a.used[i];
+      if (u == 1 || u == 3 || u == 7 || (u == 2 && (g.flags[i] & 0x0F00))) {
+        if (stop) return made;
+        continue;
+      }
+      double fx, fz;
+      armFront(mx, mz, fx, fz);
+      if (placeAt(vm, grid, a, fk.name, px - mx * shift, pz - mz * shift, fx, fz,
+                  [&](uint8_t v) { return v == 0 || v == 5 || v == 8 || v == 2; }, 6) >= 0)
+        ++made;
+    }
+    carry = t - l;
+  }
+  return made;
+}
+
+// OSM's fences, walls and hedges along their lines, then fences between the yards of neighbouring houses in a row:
+// from the back wall away from the street, up to 7 cells or the first building, water or track; not at every
+// join (about two in three), one kind a row (wooden fence, hedge, the low garden wall, chain link)
+void placeFences(VM& vm, GridObj* grid, Apply& a) {
+  const ImportData& d = *a.d;
+  int osm = 0, yards = 0;
+  // (the short ones first: the plots' fences and hedges, then the long ones along railways and works, up to the budget)
+  std::vector<std::pair<double, const ImportData::BarrierIn*>> order;
+  for (const ImportData::BarrierIn& b : d.barriers) {
+    double len = 0;
+    for (size_t k = 0; k + 1 < b.pts.size(); ++k) len += std::hypot(b.pts[k + 1].first - b.pts[k].first, b.pts[k + 1].second - b.pts[k].second);
+    order.push_back({len, &b});
+  }
+  std::sort(order.begin(), order.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+  for (const auto& [len, b] : order) {
+    if (osm >= 12000) break;
+    if (const FenceKind* fk = fenceKind(grid, b->kind)) osm += fenceLine(vm, grid, a, *fk, b->pts, false, 12000 - osm);
+  }
+  static const FenceKind kGarden{"garden-fence", -1.05, 2};
+  for (const Apply::YardSplit& s : a.yardSplits) {
+    if (yards >= 6000) break;
+    const uint32_t h = hash32(uint64_t(s.row) * 977 + uint64_t(std::llround(s.x * 16)) * 31 + uint64_t(std::llround(s.z * 16)));
+    if (h % 3 == 0) continue;
+    const int pick = int(s.row % 10);
+    const FenceKind* fk = pick < 5 ? fenceKind(grid, 0) : pick < 8 ? fenceKind(grid, 5) : pick < 9 ? &kGarden : fenceKind(grid, 1);
+    if (fk == &kGarden && !grid->templates.count(kGarden.name)) fk = fenceKind(grid, 0);
+    if (!fk) continue;
+    yards += fenceLine(vm, grid, a, *fk, {{s.x + s.vx * 0.3, s.z + s.vz * 0.3}, {s.x + s.vx * 7.3, s.z + s.vz * 7.3}}, true, 6000 - yards);
+  }
+  LOG_INFO("osm: fences: %zu OSM barriers (%d pieces), %d pieces between yards (%zu joins)", d.barriers.size(), osm, yards,
+           a.yardSplits.size());
+}
+
 void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, Painter& painter) {
   GridData& g = *grid->data;
   const int W = g.width, L = g.length;
@@ -5575,6 +6077,23 @@ void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const
       fits = fits || (c.w <= ex + 0.6 && c.l <= ez + 0.6) || (c.l <= ex + 0.6 && c.w <= ez + 0.6);
     if (!fits) cands.clear();
   }
+  // a McDonald's, Burger King or KFC standing on its own (not wall to wall, not a hall or centre over three times the
+  // restaurant's size): the game's fast food restaurant (owner 2026-11-15)
+  bool fastFood = false;
+  if (!b.terraced && b.row < 0) {
+    fastFood = b.fastFood;
+    for (const auto& p : a.d->fastFoodPts)
+      if (!fastFood && b.polygon && insideRing(b.pts, p.first, p.second)) fastFood = true;
+  }
+  if (fastFood && cands.empty()) {
+    auto it = cache.find("commercial");
+    if (it == cache.end()) it = cache.emplace("commercial", categoryTemplates(vm, grid, buildingsList, "commercial")).first;
+    for (const Candidate& c : it->second)
+      if (c.name == "fastfood" && c.w * c.l * 3.0 >= ex * ez) cands.push_back(c);
+    fastFood = !cands.empty();
+    if (fastFood && std::getenv("REGS_DEBUG_OSM"))
+      LOG_INFO("osm: fast food restaurant at world %.0f, %.0f", (ccx - W * 0.5) * g.cellSize, (ccz - L * 0.5) * g.cellSize);
+  }
   auto fb = kFallback.find(b.category);
   for (const std::string& c : fb == kFallback.end() ? std::vector<std::string>{b.category, "residential"} : fb->second) {
     if (!cands.empty()) break;
@@ -5625,7 +6144,7 @@ void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const
   }
   // a big footprint gets several buildings in a row or grid inside it
   int nx = 1, nz = 1;
-  if (chosen.score < (b.terraced ? 0.7 : 0.45) && b.polygon) {
+  if (chosen.score < (b.terraced ? 0.7 : 0.45) && b.polygon && !fastFood) {
     nx = std::max(1, int(ex / chosen.sx)), nz = std::max(1, int(ez / chosen.sz));
     while (nx * nz > 16) nx > nz ? --nx : --nz;
     if (streetSide >= 0 && b.terraced) (streetSide & 1) ? nx = 1 : nz = 1;  // one row along the street
@@ -6711,11 +7230,14 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       // car parks and squares painted with exact edges (no saw tooth along slanted outlines; owner 2026-11-14): whole
       // cells and the border cells cut along the outline; nothing is built on either
       int painted = 0;
-      for (auto& [rings, type] : d.paintAreas) {
+      a.paintOwner.assign(size_t(W) * size_t(L), -1);
+      for (size_t k = 0; k < d.paintAreas.size(); ++k) {
+        const auto& [rings, type] = d.paintAreas[k];
         int px0, pz0, px1, pz1;
         for (const PaintAreaCell& c : paintArea(g, rings, type & 7, px0, pz0, px1, pz1)) {
           size_t i = size_t(c.z) * size_t(W) + size_t(c.x);
           if (d.water[i]) continue;
+          if (a.paintOwner[i] < 0 || c.full) a.paintOwner[i] = int(k);
           if (!(type & 0x100)) a.used[i] = 5;
           flags[i] = uint16_t(g.flags[i] & kGround);
           ++painted;
@@ -6742,10 +7264,13 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
             int votes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
             bool pair = false;
             for (auto& dv : kDir) {
-              int ta = -1, tb = -1;
-              for (int k = 1; k <= 2 && ta < 0; ++k) ta = pavedAt(x + dv[0] * k, z + dv[1] * k);
-              for (int k = 1; k <= 2 && tb < 0; ++k) tb = pavedAt(x - dv[0] * k, z - dv[1] * k);
-              if (ta >= 0 && tb >= 0) pair = true, ++votes[ta & 7], ++votes[tb & 7];
+              int ta = -1, tb = -1, oa = -1, ob = -1;
+              for (int k = 1; k <= 2 && ta < 0; ++k)
+                if ((ta = pavedAt(x + dv[0] * k, z + dv[1] * k)) >= 0) oa = a.paintOwner[size_t(z + dv[1] * k) * size_t(W) + size_t(x + dv[0] * k)];
+              for (int k = 1; k <= 2 && tb < 0; ++k)
+                if ((tb = pavedAt(x - dv[0] * k, z - dv[1] * k)) >= 0) ob = a.paintOwner[size_t(z - dv[1] * k) * size_t(W) + size_t(x - dv[0] * k)];
+              // (two areas: not one area's own border or notch; owner 2026-11-15)
+              if (ta >= 0 && tb >= 0 && (oa != ob || oa < 0)) pair = true, ++votes[ta & 7], ++votes[tb & 7];
             }
             if (!pair) continue;
             int best = 0;
@@ -7065,6 +7590,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     std::vector<std::pair<double, double>> lamps;
     placePoints(vm, grid, a, lamps);
     Painter painter{g};
+    painter.owner = &a.paintOwner;
     {  // generated places (owner 2026-11-15)
       auto where = [&](const char* what, double x, double z, int n) {
         if (n > 0 && std::getenv("REGS_DEBUG_OSM"))
@@ -7150,9 +7676,19 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     LOG_INFO("osm: %d things filling squares, %d on beaches", filled, beaches);
     for (const AreaIn& ar : d.areas)
       if (ar.kind == 1) bays += decorateParking(vm, grid, a, ar, 3000 - bays);
-    LOG_INFO("osm: %d squares furnished, %d parking bays", squares, bays);
+    int signs = 0, ways = 0;
+    for (const AreaIn& ar : d.areas)
+      if (ar.kind == 1) {
+        bool drive = false;
+        signs += parkingAccess(vm, grid, a, ar, painter, drive);
+        ways += drive ? 1 : 0;
+      }
+    LOG_INFO("osm: %d squares furnished, %d parking bays, %d ways into car parks, %d parking signs", squares, bays, ways, signs);
     if (!a.gridStreets) streetLamps(vm, grid, a, lamps);
     if (!a.gridStreets) LOG_INFO("osm: %d railings along streets by the water", riverRailings(vm, grid, a));
+    if (!a.gridStreets) junctionSigns(vm, grid, a);
+    if (!a.gridStreets) placeAds(vm, grid, a);
+    placeFences(vm, grid, a);
     decorateYards(vm, grid, a, fu, painter);
     {
       // ground, trees, decor, empty footprints, the painted areas' border cells (used 5 with an edge), street margins
@@ -7160,7 +7696,9 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         const uint8_t u = a.used[i];
         return u == 0 || u == 4 || u == 6 || u == 8 ||
                (u == 5 && g.paintEdges.count(paintEdgeKey(int(i % size_t(W)), int(i / size_t(W)))) != 0) ||
-               (u == 2 && !(g.flags[i] & 0x0F00));  // (a street margin not under the street: its grass shows)
+               // (a street margin not wholly under the street: its grass shows in the quarters the street leaves; owner
+               // 2026-11-15: those made blocky grass between car parks and the street)
+               (u == 2 && (g.flags[i] & 0x0F00) != 0x0F00);
       };
       const int gaps = painter.closeGaps(groundCell);
       painter.fillPockets(groundCell,
@@ -7263,7 +7801,16 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       }
       if (now() - t0 > budget) break;
     }
+    const double tLoop = now();
     gridEditEnd(vm, grid);
+    {  // REGS_DEBUG_OSM: how the slices go on a big map (2026-11-16: the tree stage crawled on 2048 × 2048)
+      static int slice = 0;
+      static double sumLoop = 0, sumEnd = 0;
+      sumLoop += tLoop - t0, sumEnd += now() - tLoop;
+      if (std::getenv("REGS_DEBUG_OSM") && (++slice % 25 == 0 || a.next >= d.trees.size()))
+        LOG_INFO("osm: trees slice %d: %zu of %zu cells, %d trees, %.1f s planting, %.1f s finishing (so far)", slice, a.next,
+                 d.trees.size(), a.treesPlaced, sumLoop, sumEnd);
+    }
     if (!treeNames.empty() && a.next < d.trees.size()) {
       setP(8, float(a.next) / float(d.trees.size()));
       return false;
@@ -7542,10 +8089,15 @@ void registerOsmNatives(VM& vm) {
       g_apply = std::make_unique<Apply>();
       g_apply->d = g_import.data;
       g_import.state = 4;
+      // the simulation hears of the import once, at its end (a rebuild after every slice: a minute each on a big map)
+      gridEditHoldSimulation(v, grid, true);
     }
     double budget = argc > 3 ? v.toFloat(a[3]) : 0.03;
     bool done = applySlice(v, grid, player, a[1], a[2], budget);
-    if (done) g_apply.reset();
+    if (done) {
+      g_apply.reset();
+      gridEditHoldSimulation(v, grid, false);
+    }
     return Value::boolean(done);
   });
   // the satellite picture on the ground: regsOsmOverlay() → 0 none, 1 hidden, 2 shown; regsOsmShowOverlay(on)
