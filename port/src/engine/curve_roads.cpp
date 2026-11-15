@@ -288,6 +288,22 @@ bool curveTunnelOpen(const GridData& g, const CurveRoad& c, float s, CurveEnds c
   const float L = curveLength(c), portal = curveProfile(c.kind).piece * curvePieces(c).stretch + margin;
   return (s <= portal && !curveEndContinues(g, c, 0)) || (s >= L - portal && !curveEndContinues(g, c, 1));
 }
+const char* expressTransitionPiece(int kind) {
+  return kind == 1 ? "road_express_large_basic" : kind == 2 ? "road_express_avenue_basic" : "";
+}
+int curveExpressTransition(const GridData& g, const CurveRoad& c, int end) {
+  if (!curveIsExpress(c.kind)) return -1;
+  const float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  const float dx = end ? c.dx1 : c.dx0, dz = end ? c.dz1 : c.dz0;
+  for (const CurveRoad& k : g.curves) {
+    if (k.kind != 1 && k.kind != 2) continue;
+    for (int ke = 0; ke < 2; ++ke) {
+      float kx = ke ? k.x1 : k.x0, kz = ke ? k.z1 : k.z0, kdx = ke ? k.dx1 : k.dx0, kdz = ke ? k.dz1 : k.dz0;
+      if (std::fabs(kx - x) < 0.2f && std::fabs(kz - z) < 0.2f && std::fabs(kdx * dx + kdz * dz) > 0.985f) return k.kind;
+    }
+  }
+  return -1;
+}
 bool curveEndContinues(const GridData& g, const CurveRoad& c, int end) {
   float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
   for (const CurveRoad& k : g.curves) {

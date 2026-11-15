@@ -818,7 +818,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       auto needCurve = [&](const CurveRoad& c) {
         const CurveProfile& pf = curveProfile(c.kind);
         need(pf.straight), need(pf.deadend), need(pf.pillar);
-        if (curveIsExpress(c.kind)) need(rampPortPiece(true)), need(rampPortPiece(false));
+        if (curveIsExpress(c.kind)) need(rampPortPiece(true)), need(rampPortPiece(false)), need(expressTransitionPiece(1)), need(expressTransitionPiece(2));
         if (c.ends & 4) need(pf.tram), need(curveTramDeadend(c.kind));
         if (c.bridge == 1) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind)), need(curveBridgeEnd(c.kind));
         if (c.bridge == 2) need(curveTunnelPiece(c.kind)), need(curveTunnelEnd(c.kind));
@@ -902,6 +902,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             const char* abut = curveBridgeEnd(c.kind);
             if (!curveEndContinues(g, c, 0)) first = {abut, 1.0f};
             if (!curveEndContinues(g, c, 1)) last = {abut, -1.0f};
+          }
+          // an express road's end on a large road or avenue: the game's transition piece (its express side, +x, inward)
+          if (!straight && curveIsExpress(c.kind)) {
+            int t0k = curveExpressTransition(g, c, 0), t1k = curveExpressTransition(g, c, 1);
+            if (t0k >= 0) first = {expressTransitionPiece(t0k), 1.0f};
+            if (t1k >= 0) last = {expressTransitionPiece(t1k), -1.0f};
           }
           // a tunnel's portals: the mouth (-x) toward the tube
           if (straight && c.bridge == 2) {

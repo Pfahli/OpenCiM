@@ -744,6 +744,13 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         for (const RampPort& rp : ramps)
           if (rp.piece == i && basePs == pathsOf(templateObject(pf.straight)))
             if (PathSetObj* rps = pathsOf(templateObject(rampPortPiece(rp.enter)))) ps = rps, rampPortBend(rp, sg, across);
+        // an end on a large road or avenue: the transition piece's paths (terrain.cpp draws it there)
+        if (curveIsExpress(c.kind) && basePs == pathsOf(templateObject(pf.straight)))
+          for (int end = 0; end < 2; ++end) {
+            int tk = curveExpressTransition(g, c, end);
+            if (tk < 0 || i != (end ? cp.count - 1 : 0) || (end && i == 0)) continue;
+            if (PathSetObj* tps = pathsOf(templateObject(expressTransitionPiece(tk)))) ps = tps, sg = end ? -1.0f : 1.0f, across = 0.0f;
+          }
         for (const auto& [name, p] : ps->paths) {
           if (!track && !keep(p)) continue;
           CurveSample a = curveAt(shape, s0 + sg * p.p0.x * cp.stretch), b = curveAt(shape, s0 + sg * p.p1.x * cp.stretch);

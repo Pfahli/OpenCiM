@@ -88,6 +88,11 @@ bool curveEndOnRampPort(const GridData& g, const CurveRoad& c, int end);
 // the entry / exit piece's template, and the bend that puts it on the express curve (appendBentMesh's side and across)
 const char* rampPortPiece(bool enter);
 void rampPortBend(const RampPort& rp, float& side, float& across);
+// express road to large road or avenue (2026-11-15): an express curve's end met smoothly by a large-road or avenue
+// curve's end takes the game's transition piece there (road_express_large_basic / road_express_avenue_basic: the
+// express road on its +x side, the other road's lanes on its -x side). Returns the other road's kind, or -1.
+int curveExpressTransition(const GridData& g, const CurveRoad& c, int end);
+const char* expressTransitionPiece(int kind);
 // whether a curve's end (0 start, 1 end) meets another curve of the same structure (CurveRoad::bridge: plain, bridge,
 // tunnel)
 bool curveEndContinues(const GridData& g, const CurveRoad& c, int end);

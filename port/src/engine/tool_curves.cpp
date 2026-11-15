@@ -177,7 +177,10 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   const GridData& g = *grid->data;
   const float reach2 = std::max(36.0f, pf.halfWidth * pf.halfWidth);
   for (const CurveRoad& c : g.curves) {
-    if (c.kind != g_state.kind) continue;  // only the same kind of road joins
+    // only the same kind of road joins; an express road and a large road or avenue join through the transition piece
+    auto wide = [](int k) { return k == 1 || k == 2; };
+    if (c.kind != g_state.kind && !(curveIsExpress(c.kind) && wide(g_state.kind)) && !(curveIsExpress(g_state.kind) && wide(c.kind)))
+      continue;
     CurveEnds free = curveFreeEnds(g, c);
     free.free0 = free.free0 && !(c.ends & 8);  // an end on a grass tram track is taken
     free.free1 = free.free1 && !(c.ends & 16);
