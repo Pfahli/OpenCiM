@@ -387,7 +387,7 @@ function regsCurveToolFor($k, $way, $shape) {
   regsCurveToolKind($k);
   $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
   regsCurveToolMode($shape);
-  regsCurveToolOneWay($k == 0 ? $way : 0);
+  regsCurveToolOneWay($k <= 2 ? $way : 0);
   regsCurveToolBridge(false);
   regsCursorInfoStart();
 }
@@ -406,14 +406,20 @@ function regsCurveTunnelFor($k) {
   regsCurveToolBridge(2);
 }
 
+// the one-way tab's lane buttons: 1 / 2 a small road with one / two lanes, 3 a large road, 4 an avenue (all lanes one way)
+function regsOneWayFor($n, $shape) {
+  if ($n <= 2) regsCurveToolFor(0, $n, $shape);
+  else regsCurveToolFor($n - 2, 2, $shape);
+}
+
 function regsOneWayLanesSet($n) {
   $regsOneWayLanes = $n;
-  regsCurveToolFor(0, $n, $regsOneWayShape);
+  regsOneWayFor($n, $regsOneWayShape);
 }
 
 function regsOneWayShapeSet($m) {
   $regsOneWayShape = $m;
-  regsCurveToolFor(0, $regsOneWayLanes, $m);
+  regsOneWayFor($regsOneWayLanes, $m);
 }
 
 function regsRoundaboutTool($n) {
@@ -451,6 +457,8 @@ regsTabButton($regsTab, null, "/metro/ui/toolbar/express-eramp", macro :: regsCu
 $regsTab = regsAddRoadType("oneway", $regsRs.$regs_type_oneway_hint);
 regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/oneway-1", macro :: regsOneWayLanesSet(1), $regsRs.$regs_oneway1_hint);
 regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/oneway-2", macro :: regsOneWayLanesSet(2), $regsRs.$regs_oneway2_hint);
+regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/curve-large", macro :: regsOneWayLanesSet(3), $regsRs.$regs_oneway_large_hint);
+regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/curve-avenue", macro :: regsOneWayLanesSet(4), $regsRs.$regs_oneway_avenue_hint);
 $regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/curve-small", "/regs/ui/toolbar/curve-free"];
 for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
   // the shapes on the tab's second row

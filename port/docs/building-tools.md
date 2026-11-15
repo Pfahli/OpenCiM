@@ -181,6 +181,12 @@ track and on railway curves alike (engine/sim_graph.cpp `addRailTwin`, `linkTram
 Small roads, 1 lane (on the centre line, no divider) or 2 lanes, arrows on every lane every 25 units. Where a one-way
 end meets a two-way road its lanes merge into / split from the right-hand lane. Cars and trams never run against it.
 
+One-way large roads and avenues (2026-11-15): the one-way tab's third and fourth lane buttons (the large road's and the
+avenue's curve icons) draw them; all four lanes run in the drawing direction (the piece's paths against the curve turned
+round, sim_graph.cpp `bentNodes`). Where an end meets a two-way road the left-hand lanes split from / merge into the
+right-hand ones on the piece next to it; at junctions all their lanes go one way. The road looks as the two-way one
+(no arrows yet). Checked: a one-way large road merging into a two-way one, test cars only in its direction.
+
 ### Roundabouts
 
 A ring of four one-way quarter-circle small-road curves, counter-clockwise seen from above (right-hand traffic), 1 or
@@ -364,7 +370,7 @@ reads the cell flags only (a cut cell counts as its flags say).
 
 ## 4. Not done
 
-Express roads splitting or joining each other (interchanges); underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
+Express roads splitting or joining each other (interchanges); underground metro, switches and stations on track curves; arrows on one-way large roads and avenues; large-road or avenue roundabouts; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 
 ## 5. Files

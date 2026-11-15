@@ -72,7 +72,8 @@ struct Snap {
 struct State {
   int mode = 1;  // 0 straight, 1 curved, 2 freeform, 3 remove
   int kind = 0;  // the road kind drawn (CurveProfile): 0 small, 1 large, 2 avenue, 3 alley
-  int oneWay = 0;  // small roads: 0 both ways, 1 one-way with one lane, 2 one-way with two lanes (in the drawing direction)
+  int oneWay = 0;  // 0 both ways; small roads 1 one-way with one lane, 2 with two lanes; large roads and avenues: any
+                   // non-zero one-way with all their lanes (in the drawing direction)
   int bridge = 0;  // new curves are bridges (1) or tunnels (2) (regsCurveToolBridge; REGS_TEST_CURVE_BRIDGE=1 / 2 at start)
   int step = 0;  // 0 nothing picked, 1 the start, 2 (curved) the bend point too
   Vec3 start, bend;
@@ -491,7 +492,8 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   bool endBlock = forced && sn.block && st.step > 0;
   c.ends = uint8_t((st.startBlock ? 1 : 0) | (endBlock ? 2 : 0));
   // an end on a grass tram track: the curve gets tracks that run on into it (its turning circle lies over the track)
-  if (c.kind == 0 && st.oneWay) c.ends |= uint8_t(0x20 | (st.oneWay == 1 ? 0x40 : 0));  // one-way, as drawn
+  // one-way, as drawn: small roads with one or two lanes, large roads and avenues with all their lanes (2026-11-15)
+  if (c.kind <= 2 && st.oneWay) c.ends |= uint8_t(0x20 | (c.kind == 0 && st.oneWay == 1 ? 0x40 : 0));
   c.bridge = uint8_t(st.bridge);
   if (st.startBlock && st.startEnd.tram) c.ends |= 8 | 4;
   if (endBlock && sn.end.tram) c.ends |= 16 | 4;

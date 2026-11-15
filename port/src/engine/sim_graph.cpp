@@ -858,6 +858,12 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     if (curveIsExpress(c.kind))
       for (const RampPort& rp : usedRampPorts(g))
         if (sameCurve(g.curves[size_t(rp.express)], c)) ramps.push_back(rp);
+    // one-way large roads and avenues (ends bit 5, 2026-11-15): every lane runs from the start to the end (the piece's
+    // paths against the curve turned round); where an end meets a two-way road (curveOneWayMeets) the left-hand lanes
+    // split from / merge into the right-hand ones on the piece next to it
+    const bool oneWay = (c.ends & 0x20) && (c.kind == 1 || c.kind == 2);
+    bool meet0 = false, meet1 = false;
+    if (oneWay) curveOneWayMeets(g, c, t0, t1, meet0, meet1);
     auto lay = [&](PathSetObj* basePs) {
       if (!basePs) return;
       for (int i = 0; i < cp.count && kept > 0.05f; ++i) {
@@ -874,8 +880,19 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
             if (tk < 0 || i != (end ? cp.count - 1 : 0) || (end && i == 0)) continue;
             if (PathSetObj* tps = pathsOf(templateObject(expressTransitionPiece(tk)))) ps = tps, sg = end ? -1.0f : 1.0f, across = 0.0f;
           }
-        for (const auto& [name, p] : ps->paths) {
-          if (!track && !keep(p)) continue;
+        for (const auto& [name, p0path] : ps->paths) {
+          if (!track && !keep(p0path)) continue;
+          PathRecord p = p0path;
+          if (oneWay && ps == basePs && sg > 0 && p.f0.x + p.f1.x < 0) {  // against the curve: turned round
+            std::swap(p.p0, p.p1);
+            Vec3 f0 = p.f1 * -1.0f, f1 = p.f0 * -1.0f;
+            p.f0 = f0, p.f1 = f1;
+          }
+          if (oneWay && ps == basePs) {
+            const float half = pf.piece * 0.5f - 0.01f;
+            if (meet0 && i == 0 && p.p0.x <= -half && p.p0.z < 0) p.p0.z = -p.p0.z;                    // split from the right
+            if (meet1 && i == cp.count - 1 && p.p1.x >= half && p.p1.z < 0) p.p1.z = -p.p1.z;          // merge into it
+          }
           CurveSample a = curveAt(shape, s0 + sg * p.p0.x * cp.stretch), b = curveAt(shape, s0 + sg * p.p1.x * cp.stretch);
           LaneNode n;
           n.flags = p.flags & ~kPathStop;
@@ -928,6 +945,12 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     }
   };
   std::vector<CurveJunction> junctions = findCurveJunctions(g);
+  if (std::getenv("REGS_DEBUG_CURVES"))
+    for (size_t ci = 0; ci < g.curves.size(); ++ci) {
+      const CurveRoad& c = g.curves[ci];
+      LOG_INFO("curve %zu: kind %d ends %02x from %.1f,%.1f dir %.2f,%.2f to %.1f,%.1f dir %.2f,%.2f", ci, c.kind, c.ends, c.x0, c.z0,
+               c.dx0, c.dz0, c.x1, c.z1, c.dx1, c.dz1);
+    }
   for (size_t ci = 0; ci < g.curves.size(); ++ci) {
     const CurveRoad& c = g.curves[ci];
     float trim0, trim1;
@@ -1046,9 +1069,17 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
           if (X.flow == 0) {
             for (int k = ln.count - 1; k >= 0; --k) pts.push_back(X.mouth + rx * (incoming ? -ln.offset[k] : ln.offset[k]));
           } else if ((X.flow == 1) == incoming) {
-            if (X.single) pts.push_back(X.mouth);
-            else if (incoming) pts = {X.mouth - rx * 1.5f, X.mouth + rx * 1.5f};
-            else pts = {X.mouth + rx * 1.5f, X.mouth - rx * 1.5f};
+            if (X.single) {
+              pts.push_back(X.mouth);
+            } else if (X.kind == 0) {
+              if (incoming) pts = {X.mouth - rx * 1.5f, X.mouth + rx * 1.5f};
+              else pts = {X.mouth + rx * 1.5f, X.mouth - rx * 1.5f};
+            } else {  // a one-way large road or avenue: all its lanes one way, the rightmost first
+              std::vector<float> offs;
+              for (int k = ln.count - 1; k >= 0; --k) offs.push_back(-ln.offset[k]);
+              for (int k = 0; k < ln.count; ++k) offs.push_back(ln.offset[k]);
+              for (float o : offs) pts.push_back(X.mouth + rx * (incoming ? o : -o));
+            }
           }
           return pts;
         };

@@ -519,7 +519,8 @@ bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, V
     return true;
   }
   if ((a.flow == 1) != incoming) return false;
-  p = a.single ? a.mouth : a.mouth + r * (incoming ? -1.5f : 1.5f);
+  const float off = a.kind == 0 ? 1.5f : curveTramOffset(a.kind);
+  p = a.single ? a.mouth : a.mouth + r * (incoming ? -off : off);
   return true;
 }
 

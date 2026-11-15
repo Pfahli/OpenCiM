@@ -259,7 +259,8 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     }
     std::vector<int> lanes;
     for (int n : s.graph.curveNodes)
-      if ((s.graph.nodes[size_t(n)].flags & kPathClassMask) == tt.medium && !(s.graph.nodes[size_t(n)].flags & (kPathDeleted | kPathIntersection)))
+      if ((tt.medium == kPathTrain ? (s.graph.nodes[size_t(n)].flags & kPathClassMask) == tt.medium : (s.graph.nodes[size_t(n)].flags & tt.medium) != 0) &&
+          !(s.graph.nodes[size_t(n)].railTwin && tt.medium == kPathTram) && !(s.graph.nodes[size_t(n)].flags & (kPathDeleted | kPathIntersection)))
         lanes.push_back(n);
     int model = modelFor(vm, grid, s, tt.model);
     if (int(cars.size()) < std::atoi(t) && carClock >= 0.5f && lanes.size() > 1 && model >= 0) {
