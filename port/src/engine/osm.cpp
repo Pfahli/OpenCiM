@@ -5796,7 +5796,8 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     GroundOverlay& o = groundOverlay();
     o.bgra = d.satellite;
     o.width = d.satW, o.height = d.satH;
-    o.visible = true;
+    o.visible = false;  // shown with the map button by the minimap (editor.script extension)
+    o.generation = grid->generation;
     ++o.version;
   }
   LOG_INFO("osm: applied: %d curves, %d road pieces, %d blocks without, %d buildings, %d trees", a.curvesMade, a.roadsOk,
@@ -6050,9 +6051,14 @@ void registerOsmNatives(VM& vm) {
     return Value::boolean(done);
   });
   // the satellite picture on the ground: regsOsmOverlay() → 0 none, 1 hidden, 2 shown; regsOsmShowOverlay(on)
-  implementGlobal(vm, u"regsOsmOverlay", [](VM&, Object*, int, const Value*) {
+  implementGlobal(vm, u"regsOsmOverlay", [](VM& v, Object*, int, const Value*) {
     GroundOverlay& o = groundOverlay();
-    return Value::integer(o.bgra.empty() ? 0 : o.visible ? 2 : 1);
+    Value* main = v.findGlobal(u"MAIN");
+    Object* m = main ? main->object() : nullptr;
+    Value* gv = m ? m->findVar(u"grid") : nullptr;
+    GridObj* grid = gv ? dynamic_cast<GridObj*>(gv->object()) : nullptr;
+    if (o.bgra.empty() || !grid || grid->generation != o.generation) return Value::integer(0);  // none for this map
+    return Value::integer(o.visible ? 2 : 1);
   }, 0, 0);
   implementGlobal(vm, u"regsOsmShowOverlay", [](VM& v, Object*, int, const Value* a) {
     GroundOverlay& o = groundOverlay();

@@ -26,6 +26,8 @@
 #include "engine/scene3d.h"
 #include "engine/sim.h"
 #include "engine/surface_map.h"
+#include "engine/osm.h"
+#include "render/gl.h"
 #include "render/glsl.h"
 
 namespace regs::engine {
@@ -785,6 +787,95 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
 // port curved roads (engine/curve_roads.h): every curve in one world-space mesh of the small road's own materials
 // (road_small_basic: asphalt, markings, walkways), rebuilt when they change, and the curve tool's preview tinted green
 // (fits) or red; the surface map learns their asphalt and pavements for the mods' shader hooks
+// port: the OSM import's satellite picture on the ground (engine/osm.h GroundOverlay; owner's request 2026-11-07: in
+// the editor, shown with a map button by the minimap): one mesh over the cells whose ground is drawn (not those under
+// the cover of items and curves), 0.03 units over the terrain and pulled forward a little (polygon offset), so the
+// ground shows it and the streets' asphalt (0.05 over the ground levelled under it) and all else on the ground cover
+// it; the picture unlit (emission only) and three quarters opaque. Rebuilt with a new picture, a map load, map edits
+// (items, curves) or changed heights (checked every 30 frames while shown).
+void collectGroundOverlay(Display& d, GridObj* grid, std::vector<DrawItem>& items) {
+  struct State {
+    uint32_t texture = 0;
+    uint64_t version = ~0ull, generation = ~0ull, heights = 0, items = ~0ull, curves = ~0ull;
+    GpuMesh mesh;
+    bool built = false;
+    int frames = 0;
+    std::vector<GpuMaterial> materials;
+  };
+  static State st;
+  const GroundOverlay& o = groundOverlay();
+  const GridData& g = *grid->data;
+  if (!o.visible || o.bgra.empty() || o.generation != grid->generation || g.height.empty()) return;
+  auto hashHeights = [&]() {
+    uint64_t h = 1469598103934665603ull;
+    for (int16_t v : g.height) h = (h ^ uint16_t(v)) * 1099511628211ull;
+    return h;
+  };
+  bool rebuild = !st.built || st.version != o.version || st.generation != grid->generation || st.items != grid->itemsVersion ||
+                 st.curves != grid->curvesVersion;
+  if (!rebuild && ++st.frames >= 30) {
+    st.frames = 0;
+    rebuild = hashHeights() != st.heights;
+  }
+  if (rebuild) {
+    if (st.version != o.version || !st.texture) {  // the picture
+      if (!st.texture) gl::GenTextures(1, &st.texture);
+      gl::BindTexture(gl::TEXTURE_2D, st.texture);
+      gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR);
+      gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+      gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
+      gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
+      gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+      gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, o.width, o.height, 0, gl::BGRA, gl::UNSIGNED_BYTE, o.bgra.data());
+      gl::GenerateMipmap(gl::TEXTURE_2D);
+      GpuMaterial m;
+      m.flags = kMatDiffuseMap | kMatAlphaBlend | kMatNoShadow;
+      m.textures = {st.texture};
+      for (int k = 0; k < 3; ++k) m.ambient[k] = m.diffuse[k] = 0, m.emission[k] = 1;
+      m.ambient[3] = m.diffuse[3] = 1;
+      m.depthOffset = -0.3f;
+      m.surfaceClass = kSurfaceOverlay;
+      st.materials = {m};
+    }
+    if (st.built) d.r3d().destroy(st.mesh);
+    st.built = false;
+    const int W = g.width, L = g.length;
+    const float cs = g.cellSize;
+    MeshData m;
+    m.positions.reserve(size_t(W + 1) * size_t(L + 1) * 3);
+    for (int z = 0; z <= L; ++z)
+      for (int x = 0; x <= W; ++x) {
+        const int hx = std::min(x, W - 1), hz = std::min(z, L - 1);
+        m.positions.insert(m.positions.end(), {(float(x) - W * 0.5f) * cs, float(g.height[size_t(hz) * size_t(W) + size_t(hx)]) * cs / 256.0f + 0.03f,
+                                               (float(z) - L * 0.5f) * cs});
+        m.normals.insert(m.normals.end(), {0.0f, 1.0f, 0.0f});
+        m.uv0.insert(m.uv0.end(), {float(x) / float(W), float(z) / float(L)});
+      }
+    for (int z = 0; z < L; ++z)
+      for (int x = 0; x < W; ++x) {
+        const size_t ci = size_t(z) * size_t(W) + size_t(x);
+        if ((g.flags[ci] & 0x0F00) || (ci < g.curveCover.size() && g.curveCover[ci])) continue;  // no ground drawn there
+        const uint32_t a = uint32_t(z * (W + 1) + x), b = a + 1, c = a + uint32_t(W + 1), e = c + 1;
+        m.indices.insert(m.indices.end(), {a, c, b, b, c, e});
+      }
+    Submesh sm;
+    sm.vertexCount = uint32_t(m.vertexCount());
+    sm.indexCount = uint32_t(m.indices.size());
+    m.submeshes = {sm};
+    m.radius = 1e6f;
+    st.mesh = d.r3d().upload(m);
+    st.built = true;
+    st.version = o.version, st.generation = grid->generation, st.heights = hashHeights(), st.frames = 0;
+    st.items = grid->itemsVersion, st.curves = grid->curvesVersion;
+  }
+  DrawItem it;
+  it.mesh = &st.mesh;
+  it.materials = &st.materials;
+  it.alpha = o.opacity;
+  it.surfaceClass = kSurfaceOverlay;
+  items.push_back(it);
+}
+
 void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vector<DrawItem>& items) {
   GridData& g = *grid->data;
   if (g.curves.empty() && !grid->hasCurvePreview && !tc.curvesBuilt && !tc.curvePreviewBuilt) return;
@@ -1261,6 +1352,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     items.push_back(it);
   }
   collectCurves(d, vm, grid, tc, items);  // port curved roads
+  collectGroundOverlay(d, grid, items);    // port OSM import: the satellite picture on the ground
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame
