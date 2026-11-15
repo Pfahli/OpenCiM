@@ -395,7 +395,8 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   autosave).
   Railings by the water (owner 2026-11-15; osm.cpp riverRailings): the game's street railing every 6 units at the outer
   edge of a street's or footpath's pavement where water lies within 4.5 units beyond it (not on bridges or in junctions).
-  Since then: the iron fence on its stone base (one a cell, joined), also where the ground beside the road lies 1.5
+  Since then: the garden fence (a low wall with stone pillars, the owner's pick; two cells a piece, joined; the fence
+  models run along their model z, the street railings along x, so fences are turned by armFront), also where the ground beside the road lies 1.5
   units and more under it (cliffs); REGS_OSM_RAILING picks another template. Streets by the water no longer dip: the
   bank lowering stops at streets and paved areas (a quay wall), and a street point near water takes the elevation
   data's height of the dry cells around it.

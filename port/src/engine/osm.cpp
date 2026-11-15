@@ -4512,7 +4512,7 @@ int riverRailings(VM& vm, GridObj* grid, Apply& a) {
   const int W = g.width, L = g.length;
   const float cs = g.cellSize;
   static const char* pick = std::getenv("REGS_OSM_RAILING");
-  const std::string name = pick && grid->templates.count(pick) ? std::string(pick) : firstOf(grid, {"iron-fence", "street-railing-02"});
+  const std::string name = pick && grid->templates.count(pick) ? std::string(pick) : firstOf(grid, {"garden-fence", "iron-fence", "street-railing-02"});
   auto groundAt = [&](float wx, float wz) {
     const int x = std::clamp(int(std::floor(wx / cs + W * 0.5f)), 0, W - 1), z = std::clamp(int(std::floor(wz / cs + L * 0.5f)), 0, L - 1);
     return float(g.height[size_t(z) * size_t(W) + size_t(x)]) * cs / 256.0f;
@@ -4531,8 +4531,11 @@ int riverRailings(VM& vm, GridObj* grid, Apply& a) {
     curveTrims(js, int(ci), t0, t1);
     const float len = curveLength(c), hw = curveProfile(c.kind).halfWidth;
     if (len - t0 - t1 < 8) continue;
-    // (a fence piece is about one cell long: every cell, so they join; the street railing every 6 units)
-    const float step = name.rfind("street-railing", 0) == 0 ? 6.0f : 3.0f;
+    // the street railings run along their model's x, the fences along z (owner 2026-11-15: the fences stood across the
+    // street); a fence piece is one cell long (every cell, so they join), the garden fence (a low wall with a pillar at
+    // its end, owner's pick) two cells, its wall 1.05 units to the model's −x
+    const bool alongX = name.rfind("street-railing", 0) == 0, garden = name.rfind("garden-fence", 0) == 0;
+    const float step = alongX || garden ? 6.0f : 3.0f, shift = garden ? 1.05f : 0.0f;
     for (const CurveSample& sm : sampleCurveRange(c, t0 + 2.0f, len - t1 - 2.0f, step))
       for (int side = -1; side <= 1; side += 2) {
         const render::Vec3 n = sm.right * float(side);
@@ -4542,9 +4545,11 @@ int riverRailings(VM& vm, GridObj* grid, Apply& a) {
           drop = drop || groundAt(sm.p.x + n.x * (hw + off), sm.p.z + n.z * (hw + off)) < sm.p.y - 1.5f;
         }
         if (!water && !drop) continue;
-        const render::Vec3 e = sm.p + n * (hw - 0.3f);
+        const render::Vec3 e = sm.p + n * (hw - 0.3f + shift);
         const double px = e.x / cs + W * 0.5, pz = e.z / cs + L * 0.5;
-        if (placeAt(vm, grid, a, name, px, pz, n.x, n.z, [](uint8_t u) { return u != 3; }, 0,
+        double fx = n.x, fz = n.z;
+        if (!alongX) armFront(n.x, n.z, fx, fz);  // (the model's +x away from the street)
+        if (placeAt(vm, grid, a, name, px, pz, fx, fz, [](uint8_t u) { return u != 3; }, 0,
                     int(std::lround(sm.p.y * 256.0f / cs))) >= 0) {
           if (made % 10 == 0 && std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: railing at world %.0f, %.0f", e.x, e.z);
           ++made;
