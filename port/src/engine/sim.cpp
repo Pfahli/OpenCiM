@@ -274,6 +274,8 @@ bool isMarked(const SimState& s, int n) {
 }
 
 // FUN_100e14b0: free, not marked (junction nodes excepted), not a blocker, and no crossing node held by another
+// port: trams on railway tracks: how often a tram or a train had to wait for the other on shared track (REGS_DEBUG_SIM)
+int g_railShareWaits = 0;
 bool canEnter(const SimState& s, int n, int id, bool ignoreMarks) {
   const NodeRt& r = s.rt[size_t(n)];
   const LaneNode& nd = s.graph.nodes[size_t(n)];
@@ -283,8 +285,10 @@ bool canEnter(const SimState& s, int n, int id, bool ignoreMarks) {
   if (nd.flags & kPathBlocker) return false;
   for (int c : nd.crossings) {
     const NodeRt& cr = s.rt[size_t(c)];
-    if ((cr.occupant >= 0 && cr.occupant != id) || (cr.marker && !ignoreMarks) || (s.graph.nodes[size_t(c)].flags & kPathBlocker))
+    if ((cr.occupant >= 0 && cr.occupant != id) || (cr.marker && !ignoreMarks) || (s.graph.nodes[size_t(c)].flags & kPathBlocker)) {
+      if (cr.occupant >= 0 && (nd.railTwin || s.graph.nodes[size_t(c)].railTwin)) ++g_railShareWaits;
       return false;
+    }
   }
   return true;
 }
@@ -2128,6 +2132,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
         }
       LOG_INFO("sim: traffic %d road (%d citizen cars, avg %.0f; %d background at density %.2f), %d trains, %d boats (cap %d), %d aircraft (runway entries %zu, gates %zu/%zu, exits %zu); %d spawned, %d despawned (%d stuck); %d overlapping pairs",
                s->roadLive, s->roadLive - s->extraLive, s->citizenCarsAvg, s->extraLive, trafficDensity(*s), s->trainsLive, s->boatsLive, int(std::sqrt(float(s->waterStarts.size()))), s->aircraftLive, s->airEntries.size(), s->airGatesIn.size(), s->airGatesOut.size(), s->airExits.size(), s->spawned, s->despawned, s->stuck, overlaps);
+      if (g_railShareWaits) LOG_INFO("sim: trams and trains waited for each other on shared track %d times", g_railShareWaits);
       for (const Mover& m : s->movers)
         if (m.live && m.aircraft) {
           Vec3 p = unitPose(*s, m, m.units[0], m.dist).position;

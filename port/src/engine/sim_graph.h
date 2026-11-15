@@ -36,6 +36,7 @@ struct LaneNode {
   std::vector<int> crossings; // nodes that cross or touch this one (§2.4): one may only be entered while the others
                               // are not held
   int inDegree = 0;
+  bool railTwin = false;      // port: the tram lane laid on a railway lane (trams on railway tracks, addRailTwin)
 };
 
 struct LaneGraph {
@@ -46,6 +47,7 @@ struct LaneGraph {
   float cellSize = 3;
   std::vector<int> buckets;                 // head node per 8×8-cell bucket
   std::vector<int> curveNodes;              // port: the curved roads' lanes (rebuildCurveNodes), after the items'
+  std::vector<int> railLinks;               // port: tram connectors between tram tracks and railway tracks (linkTramsToRail)
 
   // FUN_100e2070: nodes with cellX ∈ [x−3, x+w+3], cellZ ∈ [z−3, z+l+3] and all mask bits, in bucket row,
   // bucket column, bucket list order

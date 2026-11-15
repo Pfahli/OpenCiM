@@ -539,6 +539,86 @@ void finishLaneNode(LaneNode& n) {
 
 namespace {
 
+// port: trams on railway tracks (owner's request 2026-11-15). A railway lane (GRID_PATH_TRAIN) gets a twin of the tram
+// class on the same curve (no START / END / STOP / PARK: trams do not enter or leave the map there or halt at train
+// platforms), so tram lines route over railway tracks; the two lie on each other, so linkCrossings makes them
+// crossings and trams and trains wait for each other there.
+void addRailTwin(LaneGraph& G, int ni, std::vector<int>& list, std::vector<int>& scratch) {
+  if ((G.nodes[size_t(ni)].flags & kPathClassMask) != kPathTrain || (G.nodes[size_t(ni)].flags & kPathDeleted)) return;
+  const LaneNode& o = G.nodes[size_t(ni)];
+  LaneNode t;
+  t.flags = (o.flags & ~(kPathClassMask | kPathStart | kPathEnd | kPathExternal | kPathStop | kPathPark | kPathAlternativeStop |
+                         kPathConnectTo | kPathConnectFrom)) |
+            kPathTram;
+  t.item = o.item;
+  t.p0 = o.p0, t.p1 = o.p1, t.f0 = o.f0, t.f1 = o.f1;
+  t.railTwin = true;
+  finishLaneNode(t);
+  int ti = int(G.nodes.size());
+  G.nodes.push_back(t);
+  insertNode(G, ti, scratch);
+  list.push_back(ti);
+}
+
+// port: connectors where a tram track ends at a railway track: from a street tram lane's end with no successor to a
+// rail twin starting within 14 units ahead (going on the same way), and from a rail twin's end to a street tram lane
+// that starts there without a predecessor. Ends that meet (within 0.1) link by themselves (insertNode).
+void linkTramsToRail(LaneGraph& G) {
+  removeNodeList(G, G.railLinks);
+  G.railLinks.clear();
+  std::vector<int> found, scratch;
+  std::vector<LaneNode> made;
+  const float cs = G.cellSize;
+  for (size_t i = 0; i < G.nodes.size(); ++i) {
+    const LaneNode& T = G.nodes[i];
+    if ((T.flags & kPathClassMask) != kPathTram || (T.flags & kPathDeleted)) continue;
+    if (!T.railTwin && !T.next.empty()) continue;  // a street tram lane: only its dead ends
+    G.query(int(T.p1.x / cs) + G.width / 2 - 5, int(T.p1.z / cs) + G.length / 2 - 5, 10, 10, 0, found);
+    int best = -1;
+    float bestD = 14.0f;
+    for (int si : found) {
+      const LaneNode& S = G.nodes[size_t(si)];
+      if ((S.flags & kPathClassMask) != kPathTram || (S.flags & kPathDeleted) || S.railTwin == T.railTwin) continue;
+      if (!S.railTwin && S.inDegree > 0) continue;  // a street tram lane: only where it starts without a predecessor
+      Vec3 d = S.p0 - T.p1;
+      float len = std::sqrt(dot(d, d));
+      if (len < 0.1f || len >= bestD) continue;
+      if (dot(T.f1, d * (1.0f / len)) < 0.5f || dot(T.f1, S.f0) < 0.7f) continue;
+      best = si, bestD = len;
+    }
+    if (best < 0) continue;
+    LaneNode c;
+    c.flags = kPathTram;
+    c.item = -1;
+    c.p0 = T.p1, c.p1 = G.nodes[size_t(best)].p0, c.f0 = T.f1, c.f1 = G.nodes[size_t(best)].f0;
+    finishLaneNode(c);
+    made.push_back(c);
+  }
+  for (LaneNode& c : made) {
+    int ci = int(G.nodes.size());
+    G.nodes.push_back(c);
+    insertNode(G, ci, scratch);
+    G.railLinks.push_back(ci);
+  }
+  if (std::getenv("REGS_DEBUG_SIM")) {  // the rail twins and how many of them cross the railway lane under them
+    int twins = 0, crossing = 0;
+    for (const LaneNode& n : G.nodes)
+      if (n.railTwin && !(n.flags & kPathDeleted)) {
+        ++twins;
+        for (int c : n.crossings)
+          if ((G.nodes[size_t(c)].flags & kPathClassMask) == kPathTrain) {
+            ++crossing;
+            break;
+          }
+      }
+    LOG_INFO("lane graph: %d tram lanes on railway tracks, %d of them crossing their railway lane", twins, crossing);
+  }
+  if (!made.empty()) {
+    linkCrossings(G, G.nodes.size() - made.size());
+    LOG_INFO("lane graph: %zu tram connectors between tram tracks and railway tracks", made.size());
+  }
+}
+
 // gsGridObject::addPaths: one node per path of a placed item, inserted and linked (§2.1-2.3)
 void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vector<int>& scratch) {
   const GridData::Item& it = g.items[i];
@@ -572,6 +652,9 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
     list.push_back(ni);
   }
   std::reverse(list.begin(), list.end());  // prepended: descending path names
+  // port: trams on railway tracks (owner's request 2026-11-15, as Karlsruhe's tram-trains): a tram lane on every railway
+  // lane, after the item's own lanes so the save's lane numbers stay
+  for (size_t k = 0, n0 = list.size(); k < n0; ++k) addRailTwin(G, list[k], list, scratch);
 }
 
 }  // namespace
@@ -645,6 +728,7 @@ void buildLaneGraph(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, cons
   for (const auto& n : G.nodes) links += n.next.size();
   LOG_INFO("lane graph: %zu nodes (%d generated water lanes), %zu links", G.nodes.size(), G.latticeCount, links);
   LOG_INFO("lane graph: %zu crossing pairs", linkCrossings(G));
+  linkTramsToRail(G);
 }
 
 void addItemNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, const std::vector<uint32_t>& items) {
@@ -654,6 +738,7 @@ void addItemNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, const 
   for (uint32_t i : items)
     if (i < g.items.size() && G.itemNodes[i].empty()) addPaths(g, G, i, templateOf(vm, grid, g, g.items[i].type), scratch);
   linkCrossings(G, first);
+  linkTramsToRail(G);
 }
 
 void removeItemNodes(LaneGraph& G, uint32_t item) {
@@ -953,6 +1038,12 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         }
       }
   }
+  // trams on railway tracks: a tram twin on every railway lane of the curves (addRailTwin)
+  {
+    std::vector<int> twins;
+    for (size_t i = first, n0 = G.nodes.size(); i < n0; ++i) addRailTwin(G, int(i), twins, scratch);
+    G.curveNodes.insert(G.curveNodes.end(), twins.begin(), twins.end());
+  }
   // map-edge ends (curveEndOffMap): the lanes starting on the map's border are the traffic's way in (START), those
   // ending there its way out (END), both EXTERNAL as on the game's map-edge pieces (vehicles fade out there)
   {
@@ -971,6 +1062,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     if (any) LOG_INFO("curved roads: map edge: %d lanes in, %d out", starts, ends);
   }
   linkCrossings(G, first);
+  linkTramsToRail(G);
   if (std::getenv("REGS_DEBUG_CURVES"))  // express ramps: the lanes meeting at each port and their links
     for (const RampPort& rp : usedRampPorts(g)) {
       int in = 0, out = 0, linked = 0;

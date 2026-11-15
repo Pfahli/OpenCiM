@@ -144,6 +144,22 @@ menu's track tab with the same three for the railway.
   off the stations' ends, the curve between their dead ends): the line's route runs over the curve and its train
   shuttles between the platforms (`REGS_TEST_LINE=2`).
 
+### Trams on railway tracks
+
+Trams run on the railway's tracks too (owner's request 2026-11-15, like Karlsruhe's tram-trains), on the grid's double
+track and on railway curves alike (engine/sim_graph.cpp `addRailTwin`, `linkTramsToRail`):
+- Every railway lane gets a tram lane on the same curve (not START / END / STOP / PARK: trams neither enter the map nor
+  halt at train platforms there). It comes after the item's own lanes, so saved lane numbers stay. Nothing is drawn.
+- Where a tram track ends at a railway track (a street or grass tram track's dead end within 14 units, heading the same
+  way) a tram connector joins them both ways; ends that meet exactly join by themselves.
+- The tram lane and the railway lane under it cross each other, so a tram and a train never hold the same piece: each
+  waits for the other (`REGS_DEBUG_SIM=1` counts the waits in the traffic summary).
+- Checked (2026-11-15): two small roads with tram tracks joined by a railway curve, a tram line from a stop on one road
+  over the railway to a stop on the other (`REGS_TEST_LINE=1`); with a test train on the same railway
+  (`REGS_TEST_CURVE_TRAINS=1`) both kept running, waited for each other and never got stuck. Vienna's save loads as
+  before (all vehicles placed).
+- Not yet: tram stops beside a railway track (the stop tool takes tram tracks only).
+
 ### One-way streets
 
 Small roads, 1 lane (on the centre line, no divider) or 2 lanes, arrows on every lane every 25 units. Where a one-way
@@ -321,6 +337,7 @@ reads the cell flags only (a cut cell counts as its flags say).
 | `REGS_START=editor:<map>` / `map:<map>` / `save:<name>`, `REGS_START_RUN=1` | straight into the editor or a game (main.script) |
 | `REGS_DEBUG_CURVES=1` | tool previews, snaps, junction fitting, "N junctions, M turn lanes, K joined both ways", tram ends |
 | `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>`, `REGS_TEST_CURVE_METRO=<n>` | n cars / trams / metro cars on random trips between curve lanes (engine/snowplows.cpp) |
+| `REGS_TEST_CURVE_TRAINS=<n>` | n locomotives end to end over the railway curves (trams on railway tracks) |
 | `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |
 | `REGS_TEST_HILL=x,z,r,h` | at map load: a smooth hill of radius r and height h around world point x, z (unlocked corners; tunnel tests, engine/grid.cpp) |
