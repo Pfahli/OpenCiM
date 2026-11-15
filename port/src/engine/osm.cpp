@@ -4115,6 +4115,46 @@ struct Painter {
     }
     return out;
   }
+  // the grass slivers between the paving it laid and other paving (owner 2026-11-15): a ground cell allow(cell) accepts
+  // with paving within 2 cells on two opposite sides takes the paving most of those have
+  template <class F>
+  int closeGaps(F allow) {
+    if (x1 < x0) return 0;
+    const int W = g.width, L = g.length;
+    const int bx0 = std::max(0, x0 - 2), bz0 = std::max(0, z0 - 2), bx1 = std::min(W - 1, x1 + 2), bz1 = std::min(L - 1, z1 + 2);
+    const std::vector<uint16_t> src(g.flags);
+    auto pavedAt = [&](int x, int z) -> int {
+      if (x < 0 || z < 0 || x >= W || z >= L) return -1;
+      const uint16_t f = src[size_t(z) * size_t(W) + size_t(x)];
+      if ((f & 0x48) == 0x8) return f & 7;
+      auto e = g.paintEdges.find(paintEdgeKey(x, z));
+      return e == g.paintEdges.end() ? -1 : int(e->second.type);
+    };
+    static const int kDir[4][2] = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
+    int closed = 0;
+    for (int z = bz0; z <= bz1; ++z)
+      for (int x = bx0; x <= bx1; ++x) {
+        const size_t i = size_t(z) * size_t(W) + size_t(x);
+        const uint16_t f = src[i];
+        if ((f & (0x2000 | 0x8 | 0x20 | 0x80)) || g.paintEdges.count(paintEdgeKey(x, z)) || !allow(i)) continue;
+        int votes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        bool pair = false;
+        for (auto& dv : kDir) {
+          int ta = -1, tb = -1;
+          for (int k = 1; k <= 2 && ta < 0; ++k) ta = pavedAt(x + dv[0] * k, z + dv[1] * k);
+          for (int k = 1; k <= 2 && tb < 0; ++k) tb = pavedAt(x - dv[0] * k, z - dv[1] * k);
+          if (ta >= 0 && tb >= 0) pair = true, ++votes[ta & 7], ++votes[tb & 7];
+        }
+        if (!pair) continue;
+        int best = 0;
+        for (int t = 1; t < 8; ++t)
+          if (votes[t] > votes[best]) best = t;
+        g.flags[i] = uint16_t((f & 0xFF98) | 0x8 | best);
+        x0 = std::min(x0, x), z0 = std::min(z0, z), x1 = std::max(x1, x), z1 = std::max(z1, z);
+        ++closed;
+      }
+    return closed;
+  }
 };
 
 // the template of `lib` that covers the target cells best (IoU at least minIoU), its furniture placed on the target
@@ -6210,6 +6250,42 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           ++painted;
         }
       }
+      // the grass slivers between paved areas (owner 2026-11-15: "random patches"): a plain ground cell with paving within
+      // 2 cells on two opposite sides takes the paving most of those have (gaps up to 3 cells close; lawns stay)
+      if (!d.paintAreas.empty()) {
+        const std::vector<uint16_t> src(g.flags);
+        auto pavedAt = [&](int x, int z) -> int {  // its paving type, or -1
+          if (x < 0 || z < 0 || x >= W || z >= L) return -1;
+          const uint16_t f = src[size_t(z) * size_t(W) + size_t(x)];
+          if ((f & 0x48) == 0x8) return f & 7;
+          auto e = g.paintEdges.find(paintEdgeKey(x, z));
+          return e == g.paintEdges.end() ? -1 : int(e->second.type);
+        };
+        int closed = 0;
+        static const int kDir[4][2] = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
+        for (int z = 0; z < L; ++z)
+          for (int x = 0; x < W; ++x) {
+            const size_t i = size_t(z) * size_t(W) + size_t(x);
+            const uint16_t f = src[i];
+            if ((f & (0x2000 | 0x8 | 0x20 | 0x80)) || d.water[i] || g.paintEdges.count(paintEdgeKey(x, z))) continue;
+            int votes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+            bool pair = false;
+            for (auto& dv : kDir) {
+              int ta = -1, tb = -1;
+              for (int k = 1; k <= 2 && ta < 0; ++k) ta = pavedAt(x + dv[0] * k, z + dv[1] * k);
+              for (int k = 1; k <= 2 && tb < 0; ++k) tb = pavedAt(x - dv[0] * k, z - dv[1] * k);
+              if (ta >= 0 && tb >= 0) pair = true, ++votes[ta & 7], ++votes[tb & 7];
+            }
+            if (!pair) continue;
+            int best = 0;
+            for (int t = 1; t < 8; ++t)
+              if (votes[t] > votes[best]) best = t;
+            g.flags[i] = uint16_t((f & 0xFF98) | 0x8 | best);
+            flags[i] = uint16_t(g.flags[i] & kGround);
+            ++closed;
+          }
+        if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d grass slivers between paved areas closed", closed);
+      }
       gridEditCellsChanged(grid, 0, 0, W - 1, L - 1, true);
       if (a.timeline) timelineRecordPatch(vm, a.timeline, 0, 0, W, L, heights, flags);
       if (a.timeline && !d.paintAreas.empty()) timelineRecordPaintEdges(vm, a.timeline, g, 0, 0, W, L);
@@ -6600,6 +6676,10 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     LOG_INFO("osm: %d squares furnished, %d parking bays", squares, bays);
     if (!a.gridStreets) streetLamps(vm, grid, a, lamps);
     decorateYards(vm, grid, a, fu, painter);
+    {
+      const int gaps = painter.closeGaps([&](size_t i) { const uint8_t u = a.used[i]; return u == 0 || u == 4 || u == 6 || u == 8; });
+      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d grass slivers by the yards' paving closed", gaps);
+    }
     if (painter.x1 >= painter.x0) {  // the yards' pavement: on the timeline as a patch and the edges
       gridEditCellsChanged(grid, painter.x0, painter.z0, painter.x1, painter.z1, false);
       if (a.timeline) {
