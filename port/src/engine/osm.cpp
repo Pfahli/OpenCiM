@@ -4724,6 +4724,378 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
 
 // debugging (REGS_DEBUG_OSM_RAILS=<png>): the map at a pixel per cell: water blue, OSM's railways (after merging) yellow,
 // the railway curves red, other curves grey, stations green
+// ---- level crossings (owner 2026-11-15: "Bahnübergänge") ----
+// Where a railway crosses a small road on the ground, the game's level crossing goes in: track_double_cross_small (4 × 4
+// cells, the road along its local x with its lanes at z ±1.5, the double track along z at x ±1.5, barriers that lower
+// while a train holds the crossing, and the bell). The piece is turned freely to the track (orient and the port's yaw);
+// the track is cut 6 units each side of the crossing and its two halves end on the piece; the road is cut further off
+// and joined to the piece's road sides by short connector curves that bend it square to the track (the piece crosses
+// at right angles). Large roads, avenues, streets with tram tracks (the piece has none), bridges and crossings flatter
+// than 30° are left as they are.
+struct LevelCrossing {
+  render::Vec3 p;  // centre (world units, y = the piece's height)
+  render::Vec3 t;  // the track's direction there (flat, unit)
+};
+
+std::vector<LevelCrossing> cutLevelCrossings(std::vector<CurveRoad>& cs) {
+  using render::Vec3;
+  std::vector<LevelCrossing> out;
+  int embedded = 0, skipped = 0;
+  std::set<std::pair<long long, long long>> rejected;  // crossings already looked at and left (by point)
+  auto flat = [](Vec3 v) {
+    v.y = 0;
+    return render::normalize(v);
+  };
+  auto dot2 = [](const Vec3& a, const Vec3& b) { return a.x * b.x + a.z * b.z; };
+  struct Box {
+    float x0, z0, x1, z1;
+  };
+  auto boxOf = [](const std::vector<CurveSample>& sm, float grow) {
+    Box b{1e30f, 1e30f, -1e30f, -1e30f};
+    for (const CurveSample& k : sm)
+      b.x0 = std::min(b.x0, k.p.x), b.z0 = std::min(b.z0, k.p.z), b.x1 = std::max(b.x1, k.p.x), b.z1 = std::max(b.z1, k.p.z);
+    b.x0 -= grow, b.z0 -= grow, b.x1 += grow, b.z1 += grow;
+    return b;
+  };
+  for (int guard = 0; guard < 2000; ++guard) {
+    // the first crossing of a track and a road not yet looked at
+    int ti = -1, ri = -1;
+    float sT = 0, sR = 0;
+    Vec3 P{};
+    std::vector<std::vector<CurveSample>> smp(cs.size());
+    std::vector<Box> box(cs.size());
+    for (size_t i = 0; i < cs.size(); ++i)
+      if (!cs[i].bridge && (cs[i].kind == 6 || cs[i].kind <= 2)) smp[i] = sampleCurve(cs[i], 1.0f), box[i] = boxOf(smp[i], 0.5f);
+    for (size_t i = 0; i < cs.size() && ti < 0; ++i) {
+      if (cs[i].kind != 6 || cs[i].bridge) continue;
+      const auto& A = smp[i];
+      for (size_t j = 0; j < cs.size() && ti < 0; ++j) {
+        if (cs[j].kind > 2 || cs[j].bridge || smp[j].empty()) continue;
+        if (box[i].x1 < box[j].x0 || box[j].x1 < box[i].x0 || box[i].z1 < box[j].z0 || box[j].z1 < box[i].z0) continue;
+        const auto& B = smp[j];
+        for (size_t a = 0; a + 1 < A.size() && ti < 0; ++a)
+          for (size_t b = 0; b + 1 < B.size(); ++b) {
+            const Vec3 &p0 = A[a].p, &p1 = A[a + 1].p, &q0 = B[b].p, &q1 = B[b + 1].p;
+            float dx = p1.x - p0.x, dz = p1.z - p0.z, ex = q1.x - q0.x, ez = q1.z - q0.z;
+            float den = dx * ez - dz * ex;
+            if (std::fabs(den) < 1e-9f) continue;
+            float u = ((q0.x - p0.x) * ez - (q0.z - p0.z) * ex) / den, v = ((q0.x - p0.x) * dz - (q0.z - p0.z) * dx) / den;
+            if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+            Vec3 X{p0.x + dx * u, p0.y + (p1.y - p0.y) * u, p0.z + dz * u};
+            std::pair<long long, long long> key{std::llround(X.x * 4), std::llround(X.z * 4)};
+            if (rejected.count(key)) continue;
+            ti = int(i), ri = int(j), P = X;
+            sT = A[a].s + (A[a + 1].s - A[a].s) * u, sR = B[b].s + (B[b + 1].s - B[b].s) * v;
+            rejected.insert(key);  // looked at now (taken or left)
+            break;
+          }
+      }
+    }
+    if (ti < 0) break;
+    const CurveRoad T = cs[size_t(ti)], R = cs[size_t(ri)];
+    std::vector<CurveSample> shT = curveShape(T), shR = curveShape(R);
+    const float LT = curveLength(T), LR = curveLength(R);
+    Vec3 t = flat(curveAt(shT, sT).dir), r = flat(curveAt(shR, sR).dir);
+    const char* why = "";
+    bool placed = false;
+    do {  // the level crossing piece
+    if (R.kind != 0 || (R.ends & 0x80)) {
+      why = "not a small road";
+      break;
+    }
+    if (R.ends & 4) {
+      why = "tram street";
+      break;
+    }
+    if (std::fabs(dot2(t, r)) > 0.866f) {
+      why = "flatter than 30 deg";
+      break;
+    }
+    // the piece's turn: its local +z along the track (x' = x·c + z·s, z' = −x·s + z·c with the angle π + orient·90° + yaw)
+    const float ang = std::atan2(t.x, t.z);
+    Vec3 u{std::cos(ang), 0, -std::sin(ang)};  // its local +x (the road)
+    if (dot2(u, r) < 0) u = u * -1.0f;         // along the road's own direction
+    const float bend = std::acos(std::clamp(std::fabs(dot2(u, r)), 0.0f, 1.0f));
+    if (sT - 6.0f < 3.0f || sT + 6.0f > LT - 3.0f) {
+      why = "track end";
+      break;
+    }
+    const float y = curveAt(shT, sT).p.y;
+    const Vec3 E0 = P - u * 6.0f, E1 = P + u * 6.0f;  // the piece's road sides
+    // each side of the road on to the piece: cut far enough off for a connector that bends it square to the track; with
+    // no room (a junction or an end right by the track) a free end becomes a short stub, a junction moves off the track
+    // to 18 units from the crossing (the other streets' ends there with it) and a connector leads to it
+    auto ends = [&](int side) {  // the other road curves' ends at R's end on that side
+      std::vector<std::pair<int, int>> v;
+      const float ex = side ? R.x1 : R.x0, ez = side ? R.z1 : R.z0;
+      for (size_t i = 0; i < cs.size(); ++i) {
+        if (int(i) == ri || curveJoinClass(cs[i].kind) != 0) continue;
+        if (std::fabs(cs[i].x0 - ex) < 0.2f && std::fabs(cs[i].z0 - ez) < 0.2f) v.push_back({int(i), 0});
+        if (std::fabs(cs[i].x1 - ex) < 0.2f && std::fabs(cs[i].z1 - ez) < 0.2f) v.push_back({int(i), 1});
+      }
+      return v;
+    };
+    auto hd = [](CurveRoad& c) { c.a = c.b = std::max(0.5f, 0.4f * std::hypot(c.x1 - c.x0, c.z1 - c.z0)); };
+    struct Side {
+      bool ok = false;
+      CurveRoad keep;                            // R's part on this side (cut), or none
+      bool hasKeep = false;
+      std::vector<CurveRoad> add;                // connectors and stubs
+      std::vector<std::pair<int, CurveRoad>> moved;  // other curves whose end moves with a junction
+      const char* why = "";
+    };
+    auto makeSide = [&](int side) {
+      Side S;
+      const Vec3 E = side ? E1 : E0;
+      // room for a junction's trim where three or more streets meet (a joint of two or a free end needs little)
+      const float room = side ? LR - sR : sR, margin = ends(side).size() >= 2 ? 10.0f : 3.0f;
+      for (float k : {1.0f, 0.6f, 0.35f}) {  // cut
+        const float D = bend < 0.1f ? 6.0f : 6.0f + k * (8.0f + 14.0f * std::sin(bend));
+        if (room - D < margin) continue;
+        CurveRoad first, second;
+        splitCurve(R, side ? sR + D : sR - D, first, second);
+        CurveRoad part = side ? second : first;
+        if (D <= 6.0f) {
+          if (side) part.x0 = E.x, part.z0 = E.z, part.y0 = y, part.dx0 = u.x, part.dz0 = u.z, part.ends |= 1;
+          else part.x1 = E.x, part.z1 = E.z, part.y1 = y, part.dx1 = u.x, part.dz1 = u.z, part.ends |= 2;
+        } else {
+          CurveRoad C = part;
+          C.stops.clear();
+          if (side) {
+            C.x0 = E.x, C.y0 = y, C.z0 = E.z, C.dx0 = u.x, C.dz0 = u.z;
+            C.x1 = part.x0, C.y1 = part.y0, C.z1 = part.z0, C.dx1 = part.dx0, C.dz1 = part.dz0;
+            C.ends = uint8_t((R.ends & 0x60) | 1);
+          } else {
+            C.x0 = part.x1, C.y0 = part.y1, C.z0 = part.z1, C.dx0 = part.dx1, C.dz0 = part.dz1;
+            C.x1 = E.x, C.y1 = y, C.z1 = E.z, C.dx1 = u.x, C.dz1 = u.z;
+            C.ends = uint8_t((R.ends & 0x60) | 2);
+          }
+          hd(C);
+          if (curveMinRadius(C) < 7.0f) continue;
+          S.add.push_back(C);
+        }
+        S.keep = part, S.hasKeep = true, S.ok = true;
+        return S;
+      }
+      if (R.ends & (side ? 2 : 1)) {  // on a block (a map-edge stub): it cannot move
+        S.why = "block";
+        return S;
+      }
+      std::vector<std::pair<int, int>> at = ends(side);
+      CurveRoad C = R;
+      C.stops.clear();
+      C.ends = uint8_t((R.ends & 0x60) | (side ? 1 : 2));
+      const float sg = side ? 1.0f : -1.0f;  // away from the crossing along the road
+      if (at.empty()) {  // a free end: a stub 8 units on
+        const Vec3 F = E + u * (8.0f * sg);
+        if (side) C.x0 = E.x, C.z0 = E.z, C.x1 = F.x, C.z1 = F.z;
+        else C.x0 = F.x, C.z0 = F.z, C.x1 = E.x, C.z1 = E.z;
+        C.y0 = C.y1 = y, C.dx0 = C.dx1 = u.x, C.dz0 = C.dz1 = u.z;
+        hd(C);
+        S.add.push_back(C), S.ok = true;
+        return S;
+      }
+      const Vec3 J{side ? R.x1 : R.x0, side ? R.y1 : R.y0, side ? R.z1 : R.z0};
+      const float along = dot2(J - P, u) * sg;
+      // the nearest place for the junction that leaves the connector longer than the junction's trim (the curves' own
+      // junction shapes, findCurveJunctions) and the moved streets bent no tighter than their kind allows
+      for (float need : {12.0f, 14.0f, 16.0f, 19.0f, 23.0f}) {
+        const Vec3 J2 = J + u * (sg * std::max(0.0f, need - along));
+        S.moved.clear();
+        GridData tmp;
+        bool bad = false;
+        for (auto [ci, e] : at) {
+          CurveRoad o = cs[size_t(ci)];
+          if (o.ends & (e ? 2 : 1)) {
+            S.why = "other on a block";
+            return S;
+          }
+          if (e) o.x1 = J2.x, o.z1 = J2.z;
+          else o.x0 = J2.x, o.z0 = J2.z;
+          if (curveLength(o) < 10.0f || curveMinRadius(o) < curveProfile(o.kind).minRadius) bad = true;
+          S.moved.push_back({ci, o});
+          tmp.curves.push_back(o);
+        }
+        if (bad) {
+          S.why = "other too short or bent";
+          continue;
+        }
+        CurveRoad Cn = C;
+        if (side) Cn.x0 = E.x, Cn.z0 = E.z, Cn.y0 = y, Cn.dx0 = u.x, Cn.dz0 = u.z, Cn.x1 = J2.x, Cn.z1 = J2.z, Cn.y1 = J.y, Cn.dx1 = u.x, Cn.dz1 = u.z;
+        else Cn.x0 = J2.x, Cn.z0 = J2.z, Cn.y0 = J.y, Cn.dx0 = u.x, Cn.dz0 = u.z, Cn.x1 = E.x, Cn.z1 = E.z, Cn.y1 = y, Cn.dx1 = u.x, Cn.dz1 = u.z;
+        hd(Cn);
+        tmp.curves.push_back(Cn);
+        for (const CurveJunction& j : findCurveJunctions(tmp))
+          for (const CurveArm& arm : j.arms) {
+            const float len = curveLength(tmp.curves[size_t(arm.curve)]);
+            if (size_t(arm.curve) + 1 == tmp.curves.size() ? arm.trim > len - 1.5f : arm.trim > len - 6.0f) bad = true;
+          }
+        if (bad) {
+          S.why = "junction too close";
+          continue;
+        }
+        S.add.push_back(Cn), S.ok = true;
+        return S;
+      }
+      return S;
+    };
+    Side S0 = makeSide(0), S1 = makeSide(1);
+    bool done = S0.ok && S1.ok;
+    for (auto& [ci, o] : S0.moved)  // a curve moved by both sides: no
+      for (auto& [cj, o2] : S1.moved) done = done && ci != cj;
+    if (done) {
+      CurveRoad A, B, T1, tmid;
+      splitCurve(T, sT + 6.0f, A, B);
+      splitCurve(A, sT - 6.0f, T1, tmid);
+      const Vec3 F0 = P - t * 6.0f, F1 = P + t * 6.0f;
+      T1.x1 = F0.x, T1.z1 = F0.z, T1.y1 = y, T1.dx1 = t.x, T1.dz1 = t.z, T1.ends |= 2;
+      B.x0 = F1.x, B.z0 = F1.z, B.y0 = y, B.dx0 = t.x, B.dz0 = t.z, B.ends |= 1;
+      cs[size_t(ti)] = T1;
+      cs.push_back(B);
+      for (Side* S : {&S0, &S1})
+        for (auto& [ci, o] : S->moved) cs[size_t(ci)] = o;
+      std::vector<CurveRoad> fresh;
+      for (Side* S : {&S0, &S1}) {
+        if (S->hasKeep) fresh.push_back(S->keep);
+        for (CurveRoad& c : S->add) fresh.push_back(c);
+      }
+      cs[size_t(ri)] = fresh[0];
+      for (size_t k = 1; k < fresh.size(); ++k) cs.push_back(fresh[k]);
+      out.push_back({{P.x, y, P.z}, t});
+      if (std::getenv("REGS_DEBUG_OSM"))
+        LOG_INFO("osm: level crossing at world %.1f, %.1f, height %.1f (bend %.0f deg, %zu streets moved)", P.x, P.z, y, bend * 57.3f,
+                 S0.moved.size() + S1.moved.size());
+      placed = true;
+    } else {
+      why = "no room";
+      if (std::getenv("REGS_DEBUG_OSM"))
+        LOG_INFO("osm: crossing %.0f,%.0f: road %.1f/%.1f (%x), track %.1f/%.1f, bend %.0f (%s/%s)", P.x, P.z, sR, LR, R.ends, sT,
+                 LT, bend * 57.3f, S0.why, S1.why);
+    }
+    } while (false);
+    if (placed) continue;
+    // no piece (a larger road, a tram street, a flat angle, junctions right by the track): the rails let into the road,
+    // the track's stretch under the roads drawn as the street tram strip (bridge 2: CurveRoad::bridge, terrain.cpp),
+    // from where its bed and both rails' edges leave every road's surface (junctions included: their arms meet there)
+    struct Near {
+      std::vector<CurveSample> shape;
+      float hw, cw;  // half width, kerb
+    };
+    std::vector<Near> roads;
+    for (size_t i = 0; i < cs.size(); ++i) {
+      const CurveRoad& c = cs[i];
+      if (curveIsTrack(c.kind) || c.kind == 3 || c.bridge) continue;
+      if (smp[i].empty() || box[i].x1 < P.x - 80 || box[i].x0 > P.x + 80 || box[i].z1 < P.z - 80 || box[i].z0 > P.z + 80) continue;
+      roads.push_back({curveShape(c), curveProfile(c.kind).halfWidth, curveProfile(c.kind).carriageway});
+    }
+    // a road the track crosses: its whole width; one alongside (its pavement may brush the bed): its carriageway
+    auto onRoad = [&](float sAt) {
+      CurveSample k = curveAt(shT, sAt);
+      const Vec3 kd = flat(k.dir);
+      for (Vec3 q : {k.p, k.p + k.right * 3.0f, k.p - k.right * 3.0f})
+        for (const Near& n : roads) {
+          float side, ss;
+          curveNearest(n.shape, q.x, q.z, side, ss);
+          const bool across = std::fabs(dot2(flat(curveAt(n.shape, ss).dir), kd)) < 0.85f;
+          if (std::fabs(side) < (across ? n.hw : n.cw) + 0.05f) return true;
+        }
+      return false;
+    };
+    float s0 = sT, s1 = sT;
+    while (s0 > 0 && sT - s0 < 45 && onRoad(s0)) s0 -= 0.25f;
+    while (s1 < LT && s1 - sT < 45 && onRoad(s1)) s1 += 0.25f;
+    if (s0 < 2.0f || s1 > LT - 2.0f || sT - s0 >= 45 || s1 - sT >= 45) {
+      ++skipped;
+      if (std::getenv("REGS_DEBUG_OSM"))
+        LOG_INFO("osm: crossing %.0f,%.0f left (%s; rails in the road: %.1f..%.1f of %.1f)", P.x, P.z, why, s0, s1, LT);
+      continue;
+    }
+    {
+      CurveRoad A, C3, A1, mid;
+      splitCurve(T, s1, A, C3);
+      splitCurve(A, s0, A1, mid);
+      const float yr = curveAt(shR, sR).p.y;  // the road's height: the rails lie in its asphalt
+      mid.bridge = 2;
+      mid.y0 = mid.y1 = yr, A1.y1 = yr, C3.y0 = yr;
+      cs[size_t(ti)] = A1;
+      cs.push_back(mid), cs.push_back(C3);
+      ++embedded;
+      if (std::getenv("REGS_DEBUG_OSM"))
+        LOG_INFO("osm: crossing %.0f,%.0f: rails in the road over %.1f units (%s)", P.x, P.z, s1 - s0, why);
+    }
+  }
+  LOG_INFO("osm: level crossings: %zu with barriers, %d with the rails let into the road, %d left", out.size(), embedded, skipped);
+  return out;
+}
+
+// the level crossings' pieces, the ground levelled under them and their cells kept free (track cells)
+void placeLevelCrossings(VM& vm, GridObj* grid, Apply& a, const std::vector<LevelCrossing>& lc) {
+  if (lc.empty()) return;
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  const float cs = g.cellSize;
+  gridEditBegin(vm, grid);
+  int x0 = 1 << 30, z0 = 1 << 30, x1 = -1, z1 = -1, made = 0;
+  for (const LevelCrossing& c : lc) {
+    const double ang = std::atan2(double(c.t.x), double(c.t.z));
+    const double q = (ang - kPi) / (kPi / 2), k = std::round(q);
+    const int orient = ((int(k) % 4) + 4) % 4;
+    const float yaw = float((q - k) * kPi / 2);
+    const double px = c.p.x / cs + W * 0.5, pz = c.p.z / cs + L * 0.5;
+    const int x = int(std::lround(px - 2)), z = int(std::lround(pz - 2));
+    if (x < 1 || z < 1 || x + 5 >= W || z + 5 >= L) continue;
+    const int yi = int(std::lround(c.p.y * 256.0f / cs));
+    // the piece sets its 4 × 4 cells' corners to its height (the pavement's) and locks them: turned, those corners stick
+    // out beside it over the streets' asphalt, so they get back the heights the streets gave them
+    std::vector<int16_t> before;
+    for (int zz = z; zz <= z + 4; ++zz)
+      for (int xx = x; xx <= x + 4; ++xx) before.push_back(g.height[size_t(zz) * size_t(W) + size_t(xx)]);
+    int it = addItem(vm, grid, a, "track_double_cross_small", x, yi, z, orient);
+    if (it < 0) continue;
+    for (int zz = z, k = 0; zz <= z + 4; ++zz)
+      for (int xx = x; xx <= x + 4; ++xx) g.height[size_t(zz) * size_t(W) + size_t(xx)] = before[size_t(k++)];
+    ++made;
+    GridData::Item& item = g.items[size_t(it)];
+    item.yaw = std::fabs(yaw) < 1e-4f ? 0.0f : yaw;
+    item.offX = float((px - (x + 2)) * cs), item.offZ = float((pz - (z + 2)) * cs);
+    // the ground: flat just under the piece's road (−0.2) over its square and a unit around it, eased out over 3 more
+    const float ux = float(std::cos(ang)), uz = float(-std::sin(ang)), tx = c.t.x, tz = c.t.z;
+    const int16_t target = int16_t(std::lround((c.p.y - 0.25f) * 256.0f / cs));
+    for (int zz = int(pz) - 6; zz <= int(pz) + 6; ++zz)
+      for (int xx = int(px) - 6; xx <= int(px) + 6; ++xx) {
+        if (xx < 0 || zz < 0 || xx >= W || zz >= L) continue;
+        const float wx = (float(xx) - W * 0.5f) * cs - c.p.x, wz = (float(zz) - L * 0.5f) * cs - c.p.z;  // a corner
+        const float d = std::max(std::fabs(wx * ux + wz * uz), std::fabs(wx * tx + wz * tz)) - 7.0f;
+        const size_t ci = size_t(zz) * size_t(W) + size_t(xx);
+        const bool mine = xx >= x && xx <= x + 4 && zz >= z && zz <= z + 4;
+        if (d > 3.0f || ((g.flags[ci] & 0x1000) && !mine)) continue;
+        const float w = d <= 0 ? 1.0f : 1.0f - d / 3.0f;
+        g.height[ci] = int16_t(std::lround(float(g.height[ci]) + (float(target) - float(g.height[ci])) * w * w * (3 - 2 * w)));
+        x0 = std::min(x0, xx), z0 = std::min(z0, zz), x1 = std::max(x1, xx), z1 = std::max(z1, zz);
+        // the cell (its centre in the square): a track's (no furniture, no buildings)
+        const float cx = wx + cs * 0.5f, cz = wz + cs * 0.5f;
+        if (std::max(std::fabs(cx * ux + cz * uz), std::fabs(cx * tx + cz * tz)) <= 7.0f) a.used[ci] = 7;
+      }
+  }
+  if (x1 >= x0) {
+    gridEditCellsChanged(grid, std::max(0, x0 - 1), std::max(0, z0 - 1), x1, z1, true);
+    if (a.timeline) {
+      const int pw = x1 - x0 + 1, pl = z1 - z0 + 1;
+      std::vector<int16_t> hs(size_t(pw) * size_t(pl));
+      std::vector<uint16_t> fs(hs.size());
+      for (int zz = 0; zz < pl; ++zz)
+        for (int xx = 0; xx < pw; ++xx) {
+          size_t i = size_t(z0 + zz) * size_t(W) + size_t(x0 + xx);
+          hs[size_t(zz) * size_t(pw) + size_t(xx)] = g.height[i];
+          fs[size_t(zz) * size_t(pw) + size_t(xx)] = uint16_t(g.flags[i] & 0x203F);
+        }
+      timelineRecordPatch(vm, a.timeline, x0, z0, pw, pl, hs, fs);
+    }
+  }
+  gridEditEnd(vm, grid);
+  if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d level crossing pieces placed", made);
+}
+
 void debugRails(const GridData& g, const ImportData& d, const char* path) {
   const int W = g.width, L = g.length;
   std::vector<uint8_t> px(size_t(W) * size_t(L) * 4, 0);
@@ -5031,8 +5403,10 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       }
       LOG_INFO("osm: %zu tram lines, %d street curves with tram tracks", d.tramLines.size(), tracked);
     }
+    std::vector<LevelCrossing> crossings = cutLevelCrossings(cs);
     addCurvesBulk(vm, grid, a.timeline, cs);
     markCurveCells(g, cs, a.used);
+    placeLevelCrossings(vm, grid, a, crossings);
     if (std::getenv("REGS_DEBUG_OSM")) {
       int w;
       float up = groundAbovePavement(g, cs, w);

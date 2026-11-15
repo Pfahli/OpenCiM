@@ -933,6 +933,20 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         }
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
+        if (c.bridge == 2 && curveIsTrack(c.kind)) {  // a level crossing's rails let into the road (OSM import): the
+                                                      // street tram strip just over the asphalt, no bed
+          ObjectObj* o = nullptr;
+          int b = templateOf("tram_small_basic", &o);
+          const float kept = curveLength(c) - t0 - t1;
+          if (b < 0 || !o || !o->data || kept <= 0.05f) return;
+          CurvePieces cp = curvePieces(c, kept);
+          std::vector<CurveSample> shape = curveShape(c);
+          const MeshData& sm = slicedOf(o->data.get());
+          for (int i = 0; i < cp.count; ++i)
+            appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * curveProfile(c.kind).piece * cp.stretch, 1.0f, 0.0f, m,
+                           cp.stretch, -0.18f);
+          return;
+        }
         if (c.bridge && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
           // shorter than 3/4 of a span piece (after the junctions' trims): the plain road (a span squeezed that much
           // shows its girders instead of a deck)

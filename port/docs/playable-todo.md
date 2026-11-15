@@ -293,8 +293,19 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   Squares, market places and car parks are dry (water under them dropped). Street trams: railway=tram ways (not in
   tunnels) give the road curves along which 60 % of the samples lie within the carriageway the tram tracks (ends 0x4);
   tested in Karlsruhe (most of its centre's trams run in the tunnel now).
-  Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); level crossings
-  (tracks have no crossing piece on curves); trams on their own track bed (railway=tram off the streets).
+  Level crossings (owner 2026-11-15, osm.cpp cutLevelCrossings / placeLevelCrossings): where a railway curve crosses a
+  small road, the game's track_double_cross_small (barriers, lights, bell; the road along its local x, the track along
+  z) is turned freely onto the track (orient + yaw, offX/offZ); the track ends on its two track sides, the road is cut
+  off and joined to its road sides by connector curves that bend it square to the track; with no room (a junction right
+  by the track) a free end becomes a stub and a junction moves off the track (as near as the junction's own trim
+  allows, findCurveJunctions on the moved curves). The piece's own levelling (it sets and locks its 4 × 4 cells'
+  corners at its pavement height) is undone around the turned piece. Where no piece fits (larger roads, tram streets,
+  flatter than 30°, junctions on both sides) the rails are let into the road: the track's stretch under the roads is a
+  curve with bridge = 2, drawn as the street tram strip at the road's height (terrain.cpp), its lanes those of the
+  double track. Tested in Münzesheim (a piece) and Unteröwisheim (rails in the road between two junctions); REGS_DEBUG_OSM
+  logs each crossing, REGS_DEBUG_TOPDOWN=x,z,h,d,y looks at it from d units south.
+  Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); trams on their own
+  track bed (railway=tram off the streets).
 - [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 

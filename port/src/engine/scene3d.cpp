@@ -159,11 +159,14 @@ void cameraView(VM& vm, Object* cam, Vec3& eye, Vec3& look, Vec3& up) {
   eye = p + rotEngine(q, off);
   look = p + rotEngine(q, Vec3{off.x, off.y, std::min(off.z - 1.0f, 0.0f)});
   up = rotEngine(q, Vec3{0, 1, 0});
-  // screenshots: REGS_DEBUG_TOPDOWN=x,z,height puts the floating camera straight above world (x, z), north up
+  // screenshots: REGS_DEBUG_TOPDOWN=x,z,height puts the floating camera straight above world (x, z), north up; a
+  // fourth number d looks at it from d units south instead (at the ground height y, a fifth number)
   if (floating)
     if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) {
-      float x = 0, z = 0, h = 200;
-      if (std::sscanf(td, "%f,%f,%f", &x, &z, &h) >= 2) eye = {x, h, z}, look = {x, 0, z}, up = {0, 0, -1};
+      float x = 0, z = 0, h = 200, d = 0, y = 0;
+      int n = std::sscanf(td, "%f,%f,%f,%f,%f", &x, &z, &h, &d, &y);
+      if (n >= 4 && d != 0) eye = {x, y + h, z + d}, look = {x, y, z}, up = {0, 1, 0};
+      else if (n >= 2) eye = {x, h, z}, look = {x, 0, z}, up = {0, 0, -1};
     }
 }
 
