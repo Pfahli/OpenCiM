@@ -338,6 +338,17 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
     pubs every other one): from the place toward its street, on the first free ground two tables deep, a row of tables
     (parasols between a cafe's, flower pots or a pub's sign at the ends).
   - Single props: vending machines, taxi ranks, recycling containers, shelters, picnic tables.
+  - Fuller places (owner: places looked empty): markets get a second pass of stands on a lattice in the room the rows
+    left; every other square gets its free paving filled (fillSquare: a lattice of 4.5 cells, about one thing per 20
+    cells: trees, benches facing the middle, flower beds, bins, lanterns, bike stands by the edge, now and then an
+    advertising pillar, a phone box or a kiosk).
+  - Footpaths over paving (owner: no grass beneath them): a footpath curve with 70 % of its length on painted paving is
+    not drawn (CurveRoad::bridge 3); the paving shows, its lanes and walk map stay.
+  - Beaches (natural=beach, leisure=beach_resort, not private): the ground ramps from the beach's landward edge down to
+    just above the water line, the water before it is shallow and deepens over 10 cells, its cells get the most worn
+    ground variant; parasols in loose rows two cells and more from the water, a beach bar (kiosk, tables), bins and a
+    toilet along the edge, motorboats off the shore. Not yet seen in the game: the Overpass servers timed out for
+    Warnemuende (2026-11-15). The game has no deck chairs or towels.
   Open: tram stops on beds
   (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
   off a bed (a merged track's kept stretch overlaps the bed instead of a switch).

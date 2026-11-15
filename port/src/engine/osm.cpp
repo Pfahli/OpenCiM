@@ -4596,6 +4596,8 @@ int fillSquare(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, const Furnish&
       if (std::string(name) == "old-streetlamp") armFront(fx, fz, ffx, ffz);
       if (putIn(vm, grid, a, ar.pts, firstOf(grid, {name, "pbench-01"}), px, pz, ffx, ffz) >= 0) ++made;
     }
+  if (made && std::getenv("REGS_DEBUG_OSM"))
+    LOG_INFO("osm: square filled at world %.0f, %.0f (%d things, %.0f cells)", (cx - W * 0.5) * g.cellSize, (cz - L * 0.5) * g.cellSize, made, area);
   return made;
 }
 
