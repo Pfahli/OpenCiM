@@ -142,6 +142,7 @@ $regs_osm_terrain = "Gelände verwenden";
 $regs_osm_water = "Wasser übernehmen";
 $regs_osm_trees = "Bäume pflanzen";
 $regs_osm_streets = "Straßen platzieren";
+$regs_osm_trams = "Straßenbahngleise legen";
 $regs_osm_buildings = "Gebäude platzieren";
 $regs_osm_satellite = "Satellitenbild auf den Boden legen";
 $regs_osm_attribution = "Bilder © Esri, Maxar, Earthstar Geographics · Kartendaten © OpenStreetMap-Mitwirkende (ODbL) · Höhen © Mapzen/AWS";

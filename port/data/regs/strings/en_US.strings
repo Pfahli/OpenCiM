@@ -142,6 +142,7 @@ $regs_osm_terrain = "Use terrain";
 $regs_osm_water = "Take water";
 $regs_osm_trees = "Plant trees";
 $regs_osm_streets = "Place streets";
+$regs_osm_trams = "Lay tram tracks";
 $regs_osm_buildings = "Place buildings";
 $regs_osm_satellite = "Lay the satellite picture on the ground";
 $regs_osm_attribution = "Imagery © Esri, Maxar, Earthstar Geographics · Map data © OpenStreetMap contributors (ODbL) · Heights © Mapzen/AWS";

@@ -25,10 +25,12 @@ $cellsL = 256;
 $scales = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0];
 // the options stay for the session
 if (!(defined MAIN.$regsOsmOptions)) {
-  MAIN.$regsOsmOptions = map ["terrain", true, "water", true, "trees", true, "streets", true, "buildings", true,
-                              "satellite", true, "scale", 0];
+  MAIN.$regsOsmOptions = map ["terrain", true, "water", true, "trees", true, "streets", true, "trams", true,
+                              "buildings", true, "satellite", true, "scale", 0];
 }
 $opt = MAIN.$regsOsmOptions;
+// (owner's request 2026-11-15: the tram tracks may be left out; options of an older session lack the key)
+if (!(defined $opt["trams"])) $opt["trams"] = true;
 // controls (declared here: a variable first set inside a function would be local to it)
 $box = null;
 $modal = null;
@@ -173,6 +175,7 @@ function flags() {
   if ($opt["streets"]) $f = $f + 8;
   if ($opt["buildings"]) $f = $f + 16;
   if ($opt["satellite"]) $f = $f + 32;
+  if ($opt["trams"]) $f = $f + 128;
   return $f;
 }
 
@@ -336,8 +339,9 @@ function build() {
   checkbox(280, "water", $rs.$regs_osm_water);
   checkbox(308, "trees", $rs.$regs_osm_trees);
   checkbox(336, "streets", $rs.$regs_osm_streets);
-  checkbox(364, "buildings", $rs.$regs_osm_buildings);
-  checkbox(392, "satellite", $rs.$regs_osm_satellite);
+  checkbox(364, "trams", $rs.$regs_osm_trams);
+  checkbox(392, "buildings", $rs.$regs_osm_buildings);
+  checkbox(420, "satellite", $rs.$regs_osm_satellite);
   with ($statusLabel = MAIN.$ui.createLabel($box.$content, 170, $box.$content.height - 45, 650, 25, "")) {
     .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
   }

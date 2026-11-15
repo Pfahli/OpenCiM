@@ -1122,7 +1122,8 @@ void tramBeds(ImportData& d) {
   LOG_INFO("osm: %zu tram tracks, %d stretches on their own bed (%d ends joined to streets)", trams.size(), beds, joined);
 }
 
-enum ImportFlags { kTerrain = 1, kWater = 2, kTrees = 4, kStreets = 8, kBuildings = 16, kSatellite = 32, kClear = 64 };
+// kTrams (owner's request 2026-11-15): the tram lines' tracks (street trams and tram beds); off, the streets get none
+enum ImportFlags { kTerrain = 1, kWater = 2, kTrees = 4, kStreets = 8, kBuildings = 16, kSatellite = 32, kClear = 64, kTrams = 128 };
 
 struct ImportJob {
   std::mutex mx;
@@ -1548,7 +1549,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         }
         // tram lines (owner 2026-11-14): the streets they run along get the curve's street tram tracks
         if ((flags & kStreets) && type == "way" && tags.str("railway") == "tram") {
-          if (tags.str("tunnel").empty() && tags.num("layer", 0) >= 0) {
+          if ((flags & kTrams) && tags.str("tunnel").empty() && tags.num("layer", 0) >= 0) {
             data->tramLines.push_back(pts);
             const std::string br = tags.str("bridge");
             data->tramBridges.push_back(!br.empty() && br != "no");
@@ -5979,7 +5980,7 @@ void registerOsmNatives(VM& vm) {
     return Value::heap(VT::Array, arr.get());
   }, 0, 0);
   // regsOsmImportStart(cellsW, cellsL, flags): downloads the rectangle's data (flags: 1 terrain, 2 water, 4 trees,
-  // 8 streets, 16 buildings, 32 satellite picture, 64 remove the map's objects first)
+  // 8 streets, 16 buildings, 32 satellite picture, 64 remove the map's objects first, 128 tram tracks)
   implementGlobal(vm, u"regsOsmImportStart", [](VM& v, Object*, int, const Value* a) {
     if (!g_view.hasArea) return Value::boolean(false);
     Frame fr;

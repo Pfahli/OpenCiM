@@ -312,6 +312,8 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   roads' join class, so a bed meets its street at a junction (the street gets the junction point; a bed's end within 9
   cells of a street is joined to it too), where the trams run on between the bed and the street's tracks. Tested at
   Durlacher Tor, Karlsruhe (9 beds, 9 ends joined).
+  The import window has a checkbox for the tram tracks (owner 2026-11-15, flag 128): off, neither street trams nor
+  tram beds are laid.
   The satellite picture on the ground (owner 2026-11-07; terrain.cpp collectGroundOverlay): after an import with the
   picture, a button with a satellite above the minimap's own two (editor.script extension; icon drawn by
   tools/make-satellite-icon.ps1) lays it on the ground or takes it away: one mesh over the cells whose ground is drawn
