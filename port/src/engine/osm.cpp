@@ -1491,12 +1491,24 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             int kind = -1;
             if (auto it = kAmenity.find(tags.str("amenity")); it != kAmenity.end()) kind = it->second;
             else if (tags.str("highway") == "street_lamp") kind = 7;
-            else if (tags.str("historic") == "memorial") kind = 8;
-            else if (tags.str("historic") == "monument") kind = 9;
-            else if (tags.str("tourism") == "artwork") kind = 10;
             else if (tags.str("shop") == "kiosk") kind = 11;
             else if (tags.str("leisure") == "playground") kind = 13;
             int sub = 0;
+            // statues (owner 2026-11-15: many wrongly placed): only memorials and artworks that stand as a figure or a
+            // stone, by their type (sub 1 statue, 2 bust, 3 obelisk / stele / war memorial, 4 sculpture, 5 stone);
+            // Stolpersteine, plaques, ghost bikes, murals, graffiti and the like are no statues, nor those of no type
+            {
+              static const std::map<std::string, int> kFigure = {{"statue", 1},   {"bust", 2},         {"obelisk", 3}, {"stele", 3},
+                                                                 {"war_memorial", 3}, {"sculpture", 4}, {"stone", 5}};
+              const bool memorial = tags.str("historic") == "memorial", artwork = tags.str("tourism") == "artwork";
+              if (kind < 0 && (memorial || artwork)) {
+                auto f = kFigure.find(tags.str(memorial ? "memorial" : "artwork_type"));
+                if (f != kFigure.end()) kind = memorial ? 8 : 10, sub = f->second;
+                else continue;  // (not a statue: nothing placed)
+              } else if (kind < 0 && tags.str("historic") == "monument") {
+                kind = 9;
+              }
+            }
             {
               const std::string am = tags.str("amenity");
               if (kind >= 0) {
@@ -4540,14 +4552,32 @@ void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, 
   auto ok = [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6 && u != 7; };
   for (const PointIn& pt : d.points) {
     double px = pt.x, pz = pt.z, tx = 0, tz = -1;  // toward the street
-    const StreetIndex::P* st = g_streets.nearest(px, pz, 3.0);
+    const bool statue = pt.kind == 8 || pt.kind == 9 || pt.kind == 10;
+    const StreetIndex::P* st = g_streets.nearest(px, pz, statue ? 8.0 : 3.0);
     if (st) {
       double dx = px - st->x, dz = pz - st->z, dc = std::hypot(dx, dz);
       if (dc > 1e-6) {
         double nx = dx / dc, nz = dz / dc;
-        if (dc < st->cw + 0.35) px = st->x + nx * (st->cw + 0.4), pz = st->z + nz * (st->cw + 0.4);
+        if (!statue && dc < st->cw + 0.35) px = st->x + nx * (st->cw + 0.4), pz = st->z + nz * (st->cw + 0.4);
         tx = -nx, tz = -nz;
       }
+    }
+    if (statue) {  // a statue: off the street and its pavement, on free ground or paving, at the point or up to 3 cells off
+      const std::string name = pt.kind == 9 ? firstOf(grid, {"rider-statue", "obelisk", "standing-statue"})
+                               : pt.sub == 1 ? firstOf(grid, {"standing-statue"})
+                               : pt.sub == 2 ? firstOf(grid, {"garden-statue-01", "standing-statue"})
+                               : pt.sub == 3 ? firstOf(grid, {"obelisk", "standing-statue"})
+                               : pt.sub == 5 ? firstOf(grid, {"garden-statue-03", "sculpture-01"})
+                                             : firstOf(grid, {"sculpture-01", "standing-statue"});
+      auto free = [](uint8_t u) { return u == 0 || u == 5; };
+      bool done = false;
+      for (int r = 0; r <= 3 && !done; ++r)
+        for (int dz = -r; dz <= r && !done; ++dz)
+          for (int dx = -r; dx <= r && !done; ++dx) {
+            if (std::max(std::abs(dx), std::abs(dz)) != r) continue;
+            if (placeAt(vm, grid, a, name, px + dx, pz + dz, tx, tz, free, 6) >= 0) done = true, ++made;
+          }
+      continue;
     }
     double fx = tx, fz = tz;
     std::string name;
@@ -4574,9 +4604,7 @@ void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, 
         else if (st) name = firstOf(grid, {"street-light01", "old-streetlamp"});
         else name = firstOf(grid, {"old-streetlamp", "street-light01"}), armFront(tx, tz, fx, fz);
         break;
-      case 8: name = firstOf(grid, {"standing-statue", "obelisk"}); break;
-      case 9: name = firstOf(grid, {"obelisk", "rider-statue", "standing-statue"}); break;
-      case 10: name = firstOf(grid, {"sculpture-01", "standing-statue"}); break;
+      case 8: case 9: case 10: continue;  // (statues: above)
       case 11: name = firstOf(grid, {"kiosk-02", "kiosk-01"}); break;
       case 12: name = firstOf(grid, {"street-clock"}); break;
       case 13:  // a playground: one of the usual size around it (unless it lies in a playground's area: that one)

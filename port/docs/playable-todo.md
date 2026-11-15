@@ -402,6 +402,11 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   once inside, a little above it outside), so the terrain cuts the water plane along the true shore inside the cells
   instead of along their staircase; cells the true shape covers well are drawn as water too (planning keeps the old
   mask). Open: steep channel walls show the cliff texture.
+  Statues (owner 2026-11-15: many wrongly placed): only memorials and artworks of a figure type become statues (statue,
+  bust, obelisk / stele / war memorial, sculpture, stone, each its own model; historic=monument a rider statue);
+  Stolpersteine, plaques, ghost bikes, murals, graffiti and untyped ones are left out (Karlsruhe: about 100 of them had
+  become statues). A statue stands on free ground or paving at its point or up to 3 cells off, never on a street's
+  pavement, facing the nearest street.
   Open: tram stops on beds
   (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
   off a bed (a merged track's kept stretch overlaps the bed instead of a switch).
