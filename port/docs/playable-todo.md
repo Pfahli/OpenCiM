@@ -344,7 +344,7 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
     advertising pillar, a phone box or a kiosk).
   - Footpaths without grass beneath them (owner): the footpath texture is a gravel path on grass covering the piece's
     whole width; the footpath curves and their junctions are drawn in a mesh of their own with a copy of the footpath
-    material whose grass is transparent (alpha from how far green leads red and blue; terrain.cpp keyedFootpathTexture),
+    material whose grass is transparent (alpha from blue against the brighter of red and green: grass and its mix at the edge are low in blue; terrain.cpp keyedFootpathTexture),
     so the ground around the gravel shows, paving or grass. (A first try left footpaths over paving out altogether; the
     owner missed them.)
   - Beaches (natural=beach, leisure=beach_resort, not private): the ground ramps from just above the water line at the

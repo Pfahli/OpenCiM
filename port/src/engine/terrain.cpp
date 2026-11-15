@@ -889,7 +889,7 @@ void collectGroundOverlay(Display& d, GridObj* grid, std::vector<DrawItem>& item
 }
 
 // the footpath texture with its grass made transparent (owner 2026-11-15: footpaths without grass beneath them, the
-// ground around them showing): alpha falls off where green leads red and blue (grass); the gravel and its dirt rim stay.
+// ground around them showing); the gravel stays.
 // 0 when the texture cannot be read
 uint32_t keyedFootpathTexture(VM& vm) {
   static uint32_t tex = 0;
@@ -903,10 +903,13 @@ uint32_t keyedFootpathTexture(VM& vm) {
   std::vector<uint8_t> rgba;
   int w = 0, h = 0;
   if (!parseDds(file, img, &err) || !decodeRgba(img, 0, rgba, w, h)) return 0;
+  // grass and the grass-dirt mix at the path edge are low in blue (grass ~ 49 63 16, edge ~ 63 55 30, gravel ~ 74 66 49):
+  // alpha by blue against the brighter of red and green, 0 below 0.40, 1 above 0.62 (smooth); a key on green leading
+  // left a dark olive rim (owner 2026-11-15: "still green edges")
   for (size_t i = 0; i + 3 < rgba.size(); i += 4) {
     const float r = rgba[i], gr = rgba[i + 1], b = rgba[i + 2];
-    const float lead = gr - std::max(r, b);  // grass: green leads by 10 and more
-    rgba[i + 3] = uint8_t(255.0f * (1.0f - std::clamp((lead - 3.0f) / 9.0f, 0.0f, 1.0f)));
+    const float t = std::clamp((b / std::max({r, gr, 1.0f}) - 0.40f) / 0.22f, 0.0f, 1.0f);
+    rgba[i + 3] = uint8_t(255.0f * t * t * (3.0f - 2.0f * t));
   }
   gl::GenTextures(1, &tex);
   gl::BindTexture(gl::TEXTURE_2D, tex);
