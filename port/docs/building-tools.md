@@ -120,8 +120,8 @@ links into it. One ramp per express piece.
 - Ramps join roads (small, large, avenue) at junction points like a road (no zebra crossing over a ramp arm).
 - Checked (2026-11-15): an entry and an exit on a straight express road (lanes linked, "curved roads: ramp entry/exit"
   with `REGS_DEBUG_CURVES=1`); test cars (`REGS_TEST_CURVE_CARS`) drove down the ramp and merged into the outer lane.
-- Open: the elevated ramp's pillars (`ramp_elevated_pillar`, placed a cell under the deck every 24 units) do not show
-  yet; ramps on curved express pieces and express bridges are not checked.
+- The elevated ramp stands on `ramp_elevated_pillar` columns every 24 units (checked from a low camera, 2026-11-15).
+- Not checked: ramps on curved express pieces and on express bridges.
 
 ### Tracks
 
@@ -320,14 +320,13 @@ reads the cell flags only (a cut cell counts as its flags say).
 | `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |
 | `REGS_TEST_HILL=x,z,r,h` | at map load: a smooth hill of radius r and height h around world point x, z (unlocked corners; tunnel tests, engine/grid.cpp) |
-| `--at N:tilt:<t>`, `N:zoom:<z>`, `N:dir:<n>` | test runs: the camera's tilt (screenshot mode), zoom and direction (app/main.cpp) |
+| `--at N:tilt:<t>`, `N:zoom:<z>`, `N:dir:<n>` | test runs: the camera's tilt (screenshot mode; 0 looks level, about 0.2 low over the ground), zoom and direction (app/main.cpp). Zoom and direction reset the tilt to the zoom's own: give tilt last |
 | `REGS_TEST_PAINT_AREA=1` or `=x,z` | at map load: a turned car park in asphalt, a round square and an L in paving stones around the map centre (or cell x, z), with cut edges (engine/grid.cpp) |
 | `REGS_DUMP_TEMPLATES=a,b` (`REGS_DUMP_VERTICES=1`) | a template's size, mesh bounds and UVs per material, paths |
 
 ## 4. Not done
 
-Express roads splitting or joining each other (interchanges), the express-to-avenue transition piece; the elevated
-ramp's pillars; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
+Express roads splitting or joining each other (interchanges), the express-to-avenue transition piece; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 
 ## 5. Files
