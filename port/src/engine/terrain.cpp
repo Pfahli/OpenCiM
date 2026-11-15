@@ -831,7 +831,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       LOG_WARN("curved roads: no template road_small_basic, not drawn");
     } else {
       bool tram = false;
-      for (const CurveRoad& c : g.curves) tram = tram || (c.ends & 4);
+      for (const CurveRoad& c : g.curves) tram = tram || (c.ends & 4) || curveIsTramBed(c.kind);
       if (grid->hasCurvePreview) tram = tram || (grid->curvePreview.ends & 4);
       int tramBase = tram ? templateOf("tram_small_basic", nullptr) : -1;
       auto upload = [&](MeshData& m, GpuMesh& out, bool& built) {
@@ -891,7 +891,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             LOG_INFO("curves:   s %4.1f cell %d,%d road %.1f ground top %.1f flags %04x", s, kx, kz, k.p.y, float(top) * g.cellSize / 256.0f, fl);
           }
         }
-        if (c.ends & 4) pieces(pf.tram);
+        if ((c.ends & 4) && !curveIsTramBed(c.kind)) pieces(pf.tram);  // (a tram bed's tram piece: its lanes only)
         if (straight && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
                                                          // its foot 8 cells under the deck as the span's own parts
           ObjectObj* po = nullptr;

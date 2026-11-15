@@ -261,6 +261,9 @@ const CurveProfile& curveProfile(int kind) {
       {9, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "track_double_basic", "track_double_deadend", "", 4.5f, ""},
       // the express road: 30 wide like the avenue (three lanes each way at 5, 9, 13 around a 6-wide median), no pavement
       {7, 24, 24.0f, 15.0f, 15.0f, 9.0f, 30.0f, "road_express_basic", "road_express_deadend", "", 12.0f, ""},
+      // the tram bed: drawn as the double track (its mesh and dead end), its lanes the tram piece's (pf.tram; the
+      // tram dead end's at a free end, sim_graph.cpp)
+      {0xa, 24, 12.0f, 3.0f, 3.0f, 9.0f, 5.0f, "track_double_basic", "track_double_deadend", "tram_small_basic", 4.5f, ""},
   };
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
@@ -357,7 +360,8 @@ bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, V
 const CurveLanes& curveLanes(int kind) {
   static const CurveLanes k[kCurveKinds] = {
       {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0},
-      {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}, {0, {0, 0}, 0}};  // tracks: their pieces' paths only
+      {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}, {0, {0, 0}, 0},
+      {0, {0, 0}, 0}};  // tracks and tram beds: their pieces' paths only
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
 
@@ -985,7 +989,7 @@ std::vector<CurveJunction> findCurveJunctions(const GridData& g, const std::vect
       CurveArm arm;
       arm.curve = ends[k].curve;
       arm.end = ends[k].end;
-      arm.tram = (c.ends & 4) != 0;
+      arm.tram = (c.ends & 4) != 0 || curveIsTramBed(c.kind);
       arm.kind = c.kind;
       if (c.ends & 0x20) arm.flow = arm.end ? 1 : 2, arm.single = (c.ends & 0x40) != 0, arm.ring = (c.ends & 0x80) != 0;
       size_t n = d.size(), hit = n;  // the first sample from the junction's end at the radius
@@ -1338,7 +1342,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   };
   // zebra crossings: bars across each arm just inside its mouth, cycling through the atlas' bar variants
   for (const CurveArm& A : j.arms) {
-    if (A.ring) continue;  // no crossing over a roundabout's ring
+    if (A.ring || curveIsTramBed(A.kind)) continue;  // no crossing over a roundabout's ring or a tram bed
     Vec3 in = A.out * -1.0f, r = rightOf(A.out), m0 = at(A.mouth);
     int bars = std::max(1, int((2.0f * curveProfile(A.kind).carriageway - 0.32f) / 0.93f));
     float first = -(float(bars) * 0.93f - 0.32f) * 0.5f;

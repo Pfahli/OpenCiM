@@ -42,17 +42,23 @@ struct CurveProfile {
   float capOffset;       // the dead-end piece's centre beyond a free end
   const char* pillar;    // elevated tracks: the pillar template set under every joint of their pieces ("" none)
 };
-constexpr int kCurveKinds = 8;
+constexpr int kCurveKinds = 9;
 // tracks (owner's request 2026-11-08): 4 metro on the ground, 5 elevated metro, 6 the editor's railway (double track);
 // bent like the road kinds, joined smoothly to their own kind only (no junctions), never under tram tracks or stops
 inline bool curveIsTrack(int kind) { return kind >= 4 && kind <= 6; }
 inline bool curveIsElevated(int kind) { return kind == 5; }
-// which curve ends may meet: roads of all kinds, footpaths, and each track kind on its own
-inline int curveJoinClass(int kind) { return kind >= 3 ? kind : 0; }
+// 8: a tram track on its own bed (2026-11-15, the OSM import's railway=tram off the streets): drawn as the railway's
+// double track (its ballast bed, sleepers and rails at ±1.5, the bumper at a free end), its lanes the tram piece's
+// (tram_small_basic, tram_small_deadend: trams of the player's lines run on it); no car lanes and no pavement, but
+// joined to the roads like a road kind: it meets streets at junctions (the trams run on between it and their tracked
+// arms)
+inline bool curveIsTramBed(int kind) { return kind == 8; }
+// which curve ends may meet: roads of all kinds and tram beds, footpaths, and each track kind on its own
+inline int curveJoinClass(int kind) { return kind >= 3 && kind != 8 ? kind : 0; }
 // 7: the express road (2026-11-13), bent like the avenue; joined smoothly to express roads only, no pedestrians on it
 inline bool curveIsExpress(int kind) { return kind == 7; }
 // kinds whose ends only join smoothly (no junction pieces): tracks and express roads
-inline bool curveNoJunctions(int kind) { return kind >= 4; }
+inline bool curveNoJunctions(int kind) { return kind >= 4 && kind != 8; }
 const CurveProfile& curveProfile(int kind);
 // a bridge curve's span template bent along it and its pillar, per kind ("" none)
 const char* curveBridgePiece(int kind);

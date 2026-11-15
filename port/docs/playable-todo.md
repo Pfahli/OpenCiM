@@ -304,8 +304,17 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   curve with bridge = 2, drawn as the street tram strip at the road's height (terrain.cpp), its lanes those of the
   double track. Tested in Münzesheim (a piece) and Unteröwisheim (rails in the road between two junctions); REGS_DEBUG_OSM
   logs each crossing, REGS_DEBUG_TOPDOWN=x,z,h,d,y looks at it from d units south.
-  Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); trams on their own
-  track bed (railway=tram off the streets).
+  Trams on their own bed (owner 2026-11-15, osm.cpp tramBeds): the tram ways are merged into double tracks (both
+  directions' tracks closer than 6 m, mergeTracks with the tram kind) and cut where they run along a street (within its
+  half width and half a cell: street trams as before); the stretches off the streets (10 cells and longer) become curves
+  of kind 8 (curve_roads.h curveIsTramBed): drawn as the railway's double track (ballast, sleepers, bumper), their lanes
+  the tram piece's (tram_small_basic, tram_small_deadend at a free end), so the player's trams can run on them; in the
+  roads' join class, so a bed meets its street at a junction (the street gets the junction point; a bed's end within 9
+  cells of a street is joined to it too), where the trams run on between the bed and the street's tracks. Tested at
+  Durlacher Tor, Karlsruhe (9 beds, 9 ends joined).
+  Open: the satellite picture on the ground (editor only, toggled by a map button by the minimap); tram stops on beds
+  (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
+  off a bed (a merged track's kept stretch overlaps the bed instead of a switch).
 - [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
