@@ -751,7 +751,7 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
     float core = 0;
     for (const CurveArm& a : j.arms) {
       const CurveRoad& ac = g.curves[size_t(a.curve)];
-      if (ac.bridge) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
+      if (ac.bridge == 1) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
       else core = std::max(core, curveProfile(ac.kind).halfWidth);
     }
     for (int z = cz0; z <= cz1; ++z)
@@ -1429,7 +1429,7 @@ void levelTerrainUnderJunctions(GridObj* grid, const CurveRoad& c) {
     float core = 0;
     for (const CurveArm& a : j.arms) {
       const CurveRoad& ac = g.curves[size_t(a.curve)];
-      if (ac.bridge) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
+      if (ac.bridge == 1) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
       else core = std::max(core, curveProfile(ac.kind).halfWidth);
     }
     auto water = [&](int x, int z) {

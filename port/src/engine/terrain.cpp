@@ -1024,6 +1024,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         }
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
+        if (c.bridge == 3) return;  // a footpath over paving: the paving shows (CurveRoad::bridge)
         if (c.bridge == 2 && curveIsTrack(c.kind)) {  // a level crossing's rails let into the road (OSM import): the
                                                       // street tram strip just over the asphalt, no bed
           ObjectObj* o = nullptr;
@@ -1086,6 +1087,9 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         return it == fills.end() ? none : it->second;
       };
       for (const CurveJunction& j : junctions) {
+        bool drawn = false;  // footpaths over paving only: nothing drawn
+        for (const CurveArm& arm : j.arms) drawn = drawn || g.curves[size_t(arm.curve)].bridge != 3;
+        if (!drawn) continue;
         int fb = -1;
         if (j.kind == 3) {
           const PlanarUV& uv = fillOf(curveProfile(3).straight, 0, fb);

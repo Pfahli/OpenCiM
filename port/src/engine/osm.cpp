@@ -991,6 +991,8 @@ struct ImportData {
   std::vector<std::pair<std::vector<PaintRing>, int>> paintAreas;
   std::vector<std::vector<std::pair<double, double>>> tramLines;  // railway=tram (cells): the streets they run on get tracks
   std::vector<char> tramBridges;                                   // per tram line: on a bridge
+  // public beaches (natural=beach, leisure=beach_resort; not access=private): their rings (cells)
+  std::vector<std::vector<std::pair<double, double>>> beaches;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
   std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (1 asphalt, 3 paving stones; 4 a
@@ -1390,7 +1392,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     if (flags & kWater)
       q += "way[\"natural\"~\"^(water|coastline)$\"]" + b + ";relation[\"natural\"=\"water\"]" + b +
            ";way[\"landuse\"~\"^(reservoir|basin)$\"]" + b + ";way[\"waterway\"~\"^(river|canal|riverbank|dock)$\"]" + b +
-           ";relation[\"waterway\"=\"riverbank\"]" + b + ";";
+           ";relation[\"waterway\"=\"riverbank\"]" + b + ";way[\"natural\"=\"beach\"]" + b + ";way[\"leisure\"=\"beach_resort\"]" + b + ";";
     if (flags & kTrees)
       q += "way[\"natural\"~\"^(wood|scrub)$\"]" + b + ";relation[\"natural\"=\"wood\"]" + b +
            ";way[\"landuse\"~\"^(forest|orchard)$\"]" + b + ";relation[\"landuse\"=\"forest\"]" + b +
@@ -1529,6 +1531,10 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         if (pts.size() < 2) continue;
         std::string hw = tags.str("highway"), nat = tags.str("natural"), lu = tags.str("landuse"), ww = tags.str("waterway"),
                     le = tags.str("leisure");
+        if ((nat == "beach" || le == "beach_resort") && type == "way" && closed) {  // a beach (2026-11-15)
+          if ((flags & kWater) && tags.str("access") != "private" && tags.str("access") != "no") data->beaches.push_back(pts);
+          continue;
+        }
         // paved places (owner 2026-11-08): squares and pedestrian areas in paving stones, car parks in the industrial
         // pavement, pedestrian streets with a band of paving stones
         if (flags & kStreets) {
@@ -3370,7 +3376,7 @@ float groundAbovePavement(const GridData& g, const std::vector<CurveRoad>& cs, i
 void markCurveCells(const GridData& g, const std::vector<CurveRoad>& cs, std::vector<uint8_t>& used) {
   const float cell = g.cellSize;
   for (const CurveRoad& c : cs) {
-    float r = curveProfile(c.kind).halfWidth + (c.bridge ? 4.0f : 1.5f);  // bridges: room for their parapets and ramps
+    float r = curveProfile(c.kind).halfWidth + (c.bridge == 1 ? 4.0f : 1.5f);  // bridges: room for their parapets and ramps
     for (const CurveSample& s : sampleCurve(c, 1.5f)) {
       int x0 = int(std::floor((s.p.x - r) / cell + g.width * 0.5f)), x1 = int(std::floor((s.p.x + r) / cell + g.width * 0.5f));
       int z0 = int(std::floor((s.p.z - r) / cell + g.length * 0.5f)), z1 = int(std::floor((s.p.z + r) / cell + g.length * 0.5f));
@@ -4540,6 +4546,119 @@ int buildMarket(VM& vm, GridObj* grid, Apply& a, const Ring& ring, uint32_t h, c
         if (putIn(vm, grid, a, ring, firstOf(grid, {"marketsign"}), px, pz, sAt < 0 ? -f.ux : f.ux, sAt < 0 ? -f.uz : f.uz) >= 0) ++made;
       }
     }
+  }
+  // a second pass (owner 2026-11-15: places looked empty): the room the rows left (paths across the square break them)
+  // on a lattice of stands with narrow walkways between them, facing either way
+  for (double tAt = -f.wid * 0.5 + 2.0; tAt <= f.wid * 0.5 - 2.0; tAt += 4.6)
+    for (double sAt = -f.len * 0.5 + 2.0; sAt <= sEnd - 1.5; sAt += 3.4) {
+      auto [px, pz] = f.at(sAt, tAt);
+      if (!kept(px, pz)) continue;
+      const uint32_t hk = hash32(h * 57 + uint32_t(std::lround((sAt + 500) * 7)) * 131 + uint32_t(std::lround((tAt + 500) * 7)));
+      const double side = (hk & 1) ? 1.0 : -1.0;
+      const char* name = hk % 7 == 0 ? "markettableset" : kStands[(hk >> 3) % 4];
+      if (putIn(vm, grid, a, ring, firstOf(grid, {name}), px, pz, f.vx * side, f.vz * side) >= 0) ++made;
+    }
+  return made;
+}
+
+// a square's free paving filled (owner 2026-11-15: places looked empty): on a lattice of 4.5 cells, jittered, about one
+// thing per 20 cells: trees, benches facing the middle, flower beds, litter bins, lanterns, bicycle stands by the edge,
+// now and then an advertising pillar, a phone box or a kiosk
+int fillSquare(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, const Furnish& fu, uint32_t h) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  const double area = polyArea(ar.pts);
+  PlaceFrame f;
+  if (area < 30 || !placeFrame(ar.pts, f)) return 0;
+  auto [cx, cz] = ringCentre(ar.pts);
+  const int budget = int(area / 20);
+  int made = 0;
+  const double o = double(h % 100) / 100.0 * 4.5;
+  for (double tAt = -f.wid * 0.5 + 1.2 + std::fmod(o, 2.0); tAt <= f.wid * 0.5 - 1.2 && made < budget; tAt += 4.5)
+    for (double sAt = -f.len * 0.5 + 1.2 + o * 0.5; sAt <= f.len * 0.5 - 1.2 && made < budget; sAt += 4.5) {
+      const uint32_t hk = hash32(h * 41 + uint32_t(std::lround((sAt + 500) * 3)) * 977 + uint32_t(std::lround((tAt + 500) * 3)));
+      auto [px, pz] = f.at(sAt + (double(hk % 100) / 100.0 - 0.5) * 1.2, tAt + (double((hk >> 8) % 100) / 100.0 - 0.5) * 1.2);
+      bool edge = false;  // within 2 cells of the square's edge
+      for (int k = 0; k < 8 && !edge; ++k) edge = !insideRing(ar.pts, px + 2.0 * std::cos(k * kPi / 4), pz + 2.0 * std::sin(k * kPi / 4));
+      const double fx = cx - px, fz = cz - pz;
+      const int pick = int((hk >> 16) % 20);
+      if (pick < 6) {  // a tree
+        const int x = int(std::floor(px)), z = int(std::floor(pz));
+        if (x > 0 && z > 0 && x < W - 1 && z < L - 1 && placeFree(a.used[size_t(z) * size_t(W) + size_t(x)]) && insideRing(ar.pts, px, pz))
+          made += plantAt(vm, grid, a, firstOf(grid, {"street-tree"}).empty() ? fu.pick(fu.trees, hk) : (hk & 2 ? fu.pick(fu.trees, hk) : "street-tree"), x, z, hk);
+        continue;
+      }
+      const char* name = pick < 10 ? "pbench-01" : pick < 12 ? ((hk & 1) ? "street-flowerbed-01" : "street-flowerbed-02")
+                       : pick < 14 ? "street-litterbin" : pick < 16 ? "old-streetlamp"
+                       : pick < 18 ? (edge ? "bicycle-holder-01" : "pbench-01")
+                       : pick == 18 ? ((hk & 4) ? "old-ad-pole" : "ad-pole") : ((hk & 8) ? "phone-booth" : "kiosk-02");
+      double ffx = fx, ffz = fz;
+      if (std::string(name) == "old-streetlamp") armFront(fx, fz, ffx, ffz);
+      if (putIn(vm, grid, a, ar.pts, firstOf(grid, {name, "pbench-01"}), px, pz, ffx, ffz) >= 0) ++made;
+    }
+  return made;
+}
+
+// a public beach (owner 2026-11-15): parasols in loose rows parallel to the water two cells and more from it, a beach bar
+// (a kiosk with tables and parasols) at the landward edge, litter bins along it, a toilet on a big beach and a boat or
+// two off the shore
+int buildBeach(VM& vm, GridObj* grid, Apply& a, const Ring& ring, uint32_t h) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  const ImportData& d = *a.d;
+  PlaceFrame f;
+  if (polyArea(ring) < 20 || !placeFrame(ring, f) || d.water.size() != size_t(W) * size_t(L)) return 0;
+  auto wetAt = [&](int x, int z) { return x >= 0 && z >= 0 && x < W && z < L && d.water[size_t(z) * size_t(W) + size_t(x)]; };
+  auto waterDist = [&](double px, double pz) {  // to the nearest water cell (up to 12)
+    const int cx = int(std::floor(px)), cz = int(std::floor(pz));
+    double best = 13;
+    for (int dz = -12; dz <= 12; ++dz)
+      for (int dx = -12; dx <= 12; ++dx)
+        if (wetAt(cx + dx, cz + dz)) best = std::min(best, std::hypot(dx, dz));
+    return best;
+  };
+  int made = 0, bins = 0;
+  double farD = -1, farX = 0, farZ = 0, nearX = 0, nearZ = 0, nearD = 1e9;
+  for (double tAt = -f.wid * 0.5 + 1.0; tAt <= f.wid * 0.5 - 1.0; tAt += 3.8)
+    for (double sAt = -f.len * 0.5 + 1.0; sAt <= f.len * 0.5 - 1.0 && made < 400; sAt += 3.2) {
+      const uint32_t hk = hash32(h * 23 + uint32_t(std::lround((sAt + 900) * 5)) * 613 + uint32_t(std::lround((tAt + 900) * 5)));
+      auto [px, pz] = f.at(sAt + (double(hk % 100) / 100.0 - 0.5) * 1.6, tAt + (double((hk >> 8) % 100) / 100.0 - 0.5) * 1.6);
+      if (!insideRing(ring, px, pz)) continue;
+      const double wd = waterDist(px, pz);
+      if (wd < nearD) nearD = wd, nearX = px, nearZ = pz;
+      if (wd > farD && wd < 13) farD = wd, farX = px, farZ = pz;
+      if (wd < 2.0 || wd > 12.5 || (hk >> 16) % 10 < 3) continue;  // the water's edge free; gaps between
+      if (putIn(vm, grid, a, ring, firstOf(grid, {"marketumbrella"}), px, pz, f.vx, f.vz) >= 0) ++made;
+    }
+  if (farD > 3) {  // the beach bar and its bins
+    const StreetIndex::P* st = g_streets.nearest(farX, farZ, 20.0);
+    double fx = st ? st->x - farX : nearX - farX, fz = st ? st->z - farZ : nearZ - farZ;
+    if (putIn(vm, grid, a, ring, firstOf(grid, {"kiosk-03", "kiosk-02"}), farX, farZ, fx, fz) >= 0) {
+      ++made;
+      const double bx = nearX - farX, bz = nearZ - farZ, bl = std::max(1e-6, std::hypot(bx, bz));
+      for (int k = -1; k <= 1; ++k) {
+        const double qx = farX + bx / bl * 2.6 - bz / bl * k * 2.6, qz = farZ + bz / bl * 2.6 + bx / bl * k * 2.6;
+        if (putIn(vm, grid, a, ring, firstOf(grid, {"markettableset"}), qx, qz, bx, bz) >= 0) ++made;
+      }
+    }
+    alongEdge(ring, 6.0, 1.0, [&](double px, double pz, double nx, double nz, int k) {
+      if (bins >= 8 || waterDist(px, pz) < 3) return;
+      if (putIn(vm, grid, a, ring, firstOf(grid, {k % 5 == 2 && polyArea(ring) >= 300 ? "public-toilet" : "street-litterbin"}), px, pz, nx, nz) >= 0)
+        ++made, ++bins;
+    });
+  }
+  if (nearD < 3) {  // boats off the shore: on water 4 to 7 cells out, at the water line
+    const double bx = nearX - farX, bz = nearZ - farZ, bl = std::hypot(bx, bz);
+    if (bl > 1e-6)
+      for (int k = 0; k < 2; ++k) {
+        const double off = 4.0 + 3.0 * k, side = (k ? -3.0 : 2.0);
+        const double qx = nearX + bx / bl * off - bz / bl * side, qz = nearZ + bz / bl * off + bx / bl * side;
+        const int x = int(std::floor(qx)), z = int(std::floor(qz));
+        if (!wetAt(x, z)) continue;
+        if (placeAt(vm, grid, a, firstOf(grid, {k ? "motorboat-02" : "motorboat-01a"}), qx, qz, -bz, bx, [](uint8_t u) { return u == 1; }, 0,
+                    -0x140) >= 0)
+          ++made;
+      }
   }
   return made;
 }
@@ -5870,6 +5989,72 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         heights.swap(out);
         g.height = heights;
       }
+      // beaches (owner 2026-11-15: a very slow gradient into the water): the ground of a beach ramps from its landward
+      // edge down to just above the water line at the water; the water before a beach is shallow, deepening slowly over
+      // 10 cells (the sea floor shows through); the beach's cells get the most worn ground variant (sandy, 7)
+      if (!d.heights.empty() && water && !d.beaches.empty()) {
+        const int N = W * L;
+        auto chamfer = [&](std::vector<float>& dist) {  // two passes, 1 and √2 steps
+          for (int pass = 0; pass < 2; ++pass)
+            for (int k = 0; k < N; ++k) {
+              const int i = pass ? N - 1 - k : k, x = i % W, z = i / W, sx = pass ? 1 : -1;
+              float& v = dist[size_t(i)];
+              auto nb = [&](int dx, int dz, float c) {
+                const int nx = x + dx, nz = z + dz;
+                if (nx >= 0 && nz >= 0 && nx < W && nz < L) v = std::min(v, dist[size_t(nz) * size_t(W) + size_t(nx)] + c);
+              };
+              nb(sx, 0, 1.0f), nb(0, sx, 1.0f), nb(sx, sx, 1.4142f), nb(-sx, sx, 1.4142f);
+            }
+        };
+        std::vector<float> toWater(size_t(N), 1e9f), toLand(size_t(N), 1e9f), toBeach(size_t(N), 1e9f);
+        std::vector<uint8_t> beachCell(size_t(N), 0);
+        for (const auto& b : d.beaches) {
+          Edges e;
+          addRing(e, b, true);
+          fillEdges(e, W, L, [&](int x, int z) { beachCell[size_t(z) * size_t(W) + size_t(x)] = 1; });
+        }
+        for (int i = 0; i < N; ++i) {
+          if (d.water[size_t(i)]) toWater[size_t(i)] = 0;
+          else toLand[size_t(i)] = 0;
+          if (beachCell[size_t(i)]) toBeach[size_t(i)] = 0;
+        }
+        chamfer(toWater), chamfer(toLand), chamfer(toBeach);
+        // per beach: its depth (the farthest of its cells from the water, at most 40)
+        std::vector<float> depthOf(size_t(N), 0);
+        for (const auto& b : d.beaches) {
+          Edges e;
+          addRing(e, b, true);
+          float deep = 0;
+          std::vector<int> cells;
+          fillEdges(e, W, L, [&](int x, int z) {
+            const int i = z * W + x;
+            if (!d.water[size_t(i)] && toWater[size_t(i)] < 40) deep = std::max(deep, toWater[size_t(i)]), cells.push_back(i);
+          });
+          for (int i : cells) depthOf[size_t(i)] = std::max(depthOf[size_t(i)], std::max(deep, 4.0f));
+        }
+        int shaped = 0;
+        for (int z = 0; z < L; ++z)
+          for (int x = 0; x < W; ++x) {
+            const size_t i = size_t(z) * size_t(W) + size_t(x);
+            bool wetCorner = false;  // a corner of a water cell (the corners are indexed like the cells)
+            for (int dz = -1; dz <= 0; ++dz)
+              for (int dx = -1; dx <= 0; ++dx)
+                if (x + dx >= 0 && z + dz >= 0 && d.water[size_t(z + dz) * size_t(W) + size_t(x + dx)]) wetCorner = true;
+            if (beachCell[i] && !wetCorner && depthOf[i] > 0) {
+              const double t = std::clamp(double(toWater[i]) / double(depthOf[i]), 0.0, 1.0);
+              const int lo = -0x128;  // just above the water line (-0x140)
+              if (heights[i] > lo) heights[i] = int16_t(std::lround(lo + (heights[i] - lo) * t * t));
+              uint16_t& fl = g.flags[i];
+              if (!(fl & 0x8)) fl = uint16_t((fl & ~0x7u) | 0x7), flags[i] = uint16_t(fl & kGround);
+              ++shaped;
+            } else if (wetCorner && toBeach[i] < 12) {  // a water corner before a beach: shallow
+              const int h = int(std::lround(-0x158 - toLand[i] * 0x22));
+              heights[i] = int16_t(std::max(int(heights[i]), std::max(h, -0x300)));
+            }
+          }
+        g.height = heights;
+        if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu beaches, %d cells shaped", d.beaches.size(), shaped);
+      }
       if (!d.heights.empty()) levelUnderRoads(g, a.network, d.water, heights);
       // car parks and squares painted with exact edges (no saw tooth along slanted outlines; owner 2026-11-14): whole
       // cells and the border cells cut along the outline; nothing is built on either
@@ -6040,6 +6225,21 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       LOG_INFO("osm: %zu tram lines, %d street curves with tram tracks", d.tramLines.size(), tracked);
     }
     std::vector<LevelCrossing> crossings = cutLevelCrossings(cs);
+    {  // footpaths over paving (owner 2026-11-15: no grass beneath them): drawn by the paving itself (bridge 3)
+      int hidden = 0;
+      for (CurveRoad& c : cs) {
+        if (c.kind != 3 || c.bridge) continue;
+        int on = 0, all = 0;
+        for (const CurveSample& sm : sampleCurve(c, 1.0f)) {
+          const int x = int(std::floor(sm.p.x / g.cellSize + W * 0.5)), z = int(std::floor(sm.p.z / g.cellSize + L * 0.5));
+          if (x < 0 || z < 0 || x >= W || z >= L) continue;
+          ++all;
+          if ((g.flags[size_t(z) * size_t(W) + size_t(x)] & 0x8) || g.paintEdges.count(paintEdgeKey(x, z))) ++on;
+        }
+        if (all && on * 10 >= all * 7) c.bridge = 3, ++hidden;
+      }
+      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d footpaths over paving drawn by it", hidden);
+    }
     addCurvesBulk(vm, grid, a.timeline, cs);
     markCurveCells(g, cs, a.used);
     placeLevelCrossings(vm, grid, a, crossings);
@@ -6224,13 +6424,18 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       LOG_INFO("osm: places: %d markets, %d playgrounds, %d pitches, %d allotment things, %d beer gardens and seating, %d terraces",
                markets, playgrounds, pitches, plots, seating, terraces);
     }
-    int squares = 0, bays = 0;
+    int squares = 0, bays = 0, filled = 0;
     for (const AreaIn& ar : d.areas)
       if (ar.kind == 0 || ar.kind == 2) {  // (a square made a market: its edge only, as a market place)
         AreaIn c = ar;
         if (marketAreas.count(&ar)) c.kind = 2;
         decorateSquare(vm, grid, a, c, fu), ++squares;
+        if (!marketAreas.count(&ar) && ar.kind == 0) filled += fillSquare(vm, grid, a, ar, fu, hash32(uint64_t(std::llround(ar.pts[0].first * 64)) * 31ull + uint64_t(std::llround(ar.pts[0].second * 64))));
       }
+    int beaches = 0;
+    for (const auto& b : d.beaches)
+      beaches += buildBeach(vm, grid, a, b, hash32(uint64_t(std::llround(b[0].first * 64)) * 77ull + uint64_t(std::llround(b[0].second * 64))));
+    LOG_INFO("osm: %d things filling squares, %d on beaches", filled, beaches);
     for (const AreaIn& ar : d.areas)
       if (ar.kind == 1) bays += decorateParking(vm, grid, a, ar, 3000 - bays);
     LOG_INFO("osm: %d squares furnished, %d parking bays", squares, bays);

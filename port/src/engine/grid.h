@@ -67,6 +67,8 @@ struct GridData {
     // the second byte of the kind in section 0x07F00000 and the timeline bytes
     // 2 on a track (2026-11-15, the OSM import's level crossings without the crossing piece): its rails let into the road
     // it crosses, drawn as the street tram strip at the road's height (no bed); like a bridge it leaves the ground alone
+    // 3 on a footpath (2026-11-15, owner: footpaths without grass beneath them on paved ground): not drawn, the ground's
+    // own paving shows (the path keeps its lanes and walk map); no ground levelling or cover
     uint8_t bridge = 0;
   };
   std::vector<CurveRoad> curves;
