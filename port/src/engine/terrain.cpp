@@ -1224,10 +1224,11 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           m.flags |= kMatAlphaTest;
           GpuMaterial mp = m;
           if (!m.textures.empty()) m.textures[0] = keyedFootpathTexture(vm, 0), mp.textures[0] = keyedFootpathTexture(vm, 1);
-          m.depthOffset = mp.depthOffset = -1.0f;
+          m.depthOffset = mp.depthOffset = -3.0f;
           tc.pathMaterials = {m, mp};
-          // (owner 2026-11-15: the paths stood too high) 0.2 down: just over the ground levelled 0.25 under them
-          for (size_t v = 1; v < paths.positions.size(); v += 3) paths.positions[v] -= 0.2f;
+          // (owner 2026-11-15: the paths stood too high) 0.12 down, 0.13 over the ground levelled under them, pulled
+          // forward (0.2 down clipped into ground the levelling had not reached)
+          for (size_t v = 1; v < paths.positions.size(); v += 3) paths.positions[v] -= 0.12f;
           if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, paths, Mat4(), tc.pathMaterials, true);
           upload(paths, tc.paths, tc.pathsBuilt);
         }

@@ -4379,6 +4379,47 @@ std::string firstOf(GridObj* grid, std::initializer_list<const char*> names) {
   return {};
 }
 
+// railings along the streets by the water (owner 2026-11-15): at the outer edge of a street's pavement (a footpath's
+// edge), every 6 units, where water lies within 4.5 units beyond it; not on bridges (they have their own) nor in the
+// junctions; the game's street railing (2 cells along the street)
+int riverRailings(VM& vm, GridObj* grid, Apply& a) {
+  GridData& g = *grid->data;
+  const ImportData& d = *a.d;
+  const int W = g.width, L = g.length;
+  const float cs = g.cellSize;
+  const std::string name = firstOf(grid, {"street-railing-02", "street-railing-01", "iron-fence"});
+  if (name.empty() || d.water.size() != size_t(W) * size_t(L)) return 0;
+  auto wet = [&](float wx, float wz) {
+    const int x = int(std::floor(wx / cs + W * 0.5f)), z = int(std::floor(wz / cs + L * 0.5f));
+    return x >= 0 && z >= 0 && x < W && z < L && d.water[size_t(z) * size_t(W) + size_t(x)] != 0;
+  };
+  std::vector<CurveJunction> js = findCurveJunctions(g);
+  int made = 0;
+  for (size_t ci = 0; ci < g.curves.size() && made < 3000; ++ci) {
+    const CurveRoad& c = g.curves[ci];
+    if (c.kind > 3 || c.bridge || (c.ends & 0x80)) continue;
+    float t0, t1;
+    curveTrims(js, int(ci), t0, t1);
+    const float len = curveLength(c), hw = curveProfile(c.kind).halfWidth;
+    if (len - t0 - t1 < 8) continue;
+    for (const CurveSample& sm : sampleCurveRange(c, t0 + 3.0f, len - t1 - 3.0f, 6.0f))
+      for (int side = -1; side <= 1; side += 2) {
+        const render::Vec3 n = sm.right * float(side);
+        bool water = false;
+        for (float off : {1.0f, 2.5f, 4.5f}) water = water || wet(sm.p.x + n.x * (hw + off), sm.p.z + n.z * (hw + off));
+        if (!water) continue;
+        const render::Vec3 e = sm.p + n * (hw - 0.3f);
+        const double px = e.x / cs + W * 0.5, pz = e.z / cs + L * 0.5;
+        if (placeAt(vm, grid, a, name, px, pz, n.x, n.z, [](uint8_t u) { return u != 3; }, 0,
+                    int(std::lround(sm.p.y * 256.0f / cs))) >= 0) {
+          if (made % 10 == 0 && std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: railing at world %.0f, %.0f", e.x, e.z);
+          ++made;
+        }
+      }
+  }
+  return made;
+}
+
 // OSM's street furniture where it is mapped; benches, kiosks and the like face the street they stand by, lamps reach
 // over it; points on the carriageway move to its kerb
 void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, double>>& lamps) {
@@ -6912,6 +6953,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       if (ar.kind == 1) bays += decorateParking(vm, grid, a, ar, 3000 - bays);
     LOG_INFO("osm: %d squares furnished, %d parking bays", squares, bays);
     if (!a.gridStreets) streetLamps(vm, grid, a, lamps);
+    if (!a.gridStreets) LOG_INFO("osm: %d railings along streets by the water", riverRailings(vm, grid, a));
     decorateYards(vm, grid, a, fu, painter);
     {
       // ground, trees, decor, empty footprints, the painted areas' border cells (used 5 with an edge), street margins
