@@ -342,8 +342,11 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
     left; every other square gets its free paving filled (fillSquare: a lattice of 4.5 cells, about one thing per 20
     cells: trees, benches facing the middle, flower beds, bins, lanterns, bike stands by the edge, now and then an
     advertising pillar, a phone box or a kiosk).
-  - Footpaths over paving (owner: no grass beneath them): a footpath curve with 70 % of its length on painted paving is
-    not drawn (CurveRoad::bridge 3); the paving shows, its lanes and walk map stay.
+  - Footpaths without grass beneath them (owner): the footpath texture is a gravel path on grass covering the piece's
+    whole width; the footpath curves and their junctions are drawn in a mesh of their own with a copy of the footpath
+    material whose grass is transparent (alpha from how far green leads red and blue; terrain.cpp keyedFootpathTexture),
+    so the ground around the gravel shows, paving or grass. (A first try left footpaths over paving out altogether; the
+    owner missed them.)
   - Beaches (natural=beach, leisure=beach_resort, not private): the ground ramps from just above the water line at the
     water to the land's own height at the beach's landward edge (by the share of the way across, squared: low and flat in
     front, the rise at the back, no cliff); the water before it is shallow and deepens over 10 cells; the strip between

@@ -6553,21 +6553,6 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       LOG_INFO("osm: %zu tram lines, %d street curves with tram tracks", d.tramLines.size(), tracked);
     }
     std::vector<LevelCrossing> crossings = cutLevelCrossings(cs);
-    {  // footpaths over paving (owner 2026-11-15: no grass beneath them): drawn by the paving itself (bridge 3)
-      int hidden = 0;
-      for (CurveRoad& c : cs) {
-        if (c.kind != 3 || c.bridge) continue;
-        int on = 0, all = 0;
-        for (const CurveSample& sm : sampleCurve(c, 1.0f)) {
-          const int x = int(std::floor(sm.p.x / g.cellSize + W * 0.5)), z = int(std::floor(sm.p.z / g.cellSize + L * 0.5));
-          if (x < 0 || z < 0 || x >= W || z >= L) continue;
-          ++all;
-          if ((g.flags[size_t(z) * size_t(W) + size_t(x)] & 0x8) || g.paintEdges.count(paintEdgeKey(x, z))) ++on;
-        }
-        if (all && on * 10 >= all * 7) c.bridge = 3, ++hidden;
-      }
-      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d footpaths over paving drawn by it", hidden);
-    }
     addCurvesBulk(vm, grid, a.timeline, cs);
     markCurveCells(g, cs, a.used);
     placeLevelCrossings(vm, grid, a, crossings);

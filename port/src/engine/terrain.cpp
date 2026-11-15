@@ -30,6 +30,8 @@
 #include "engine/proc_buildings.h"
 #include "render/gl.h"
 #include "render/glsl.h"
+#include "render/image.h"
+#include "vfs/vfs.h"
 
 namespace regs::engine {
 
@@ -886,6 +888,38 @@ void collectGroundOverlay(Display& d, GridObj* grid, std::vector<DrawItem>& item
   items.push_back(it);
 }
 
+// the footpath texture with its grass made transparent (owner 2026-11-15: footpaths without grass beneath them, the
+// ground around them showing): alpha falls off where green leads red and blue (grass); the gravel and its dirt rim stay.
+// 0 when the texture cannot be read
+uint32_t keyedFootpathTexture(VM& vm) {
+  static uint32_t tex = 0;
+  static bool tried = false;
+  if (tried) return tex;
+  tried = true;
+  std::vector<uint8_t> file;
+  if (!vm.vfs().read("metro/objects/alleys/footpath.dds", file)) return 0;
+  Image img;
+  std::string err;
+  std::vector<uint8_t> rgba;
+  int w = 0, h = 0;
+  if (!parseDds(file, img, &err) || !decodeRgba(img, 0, rgba, w, h)) return 0;
+  for (size_t i = 0; i + 3 < rgba.size(); i += 4) {
+    const float r = rgba[i], gr = rgba[i + 1], b = rgba[i + 2];
+    const float lead = gr - std::max(r, b);  // grass: green leads by 10 and more
+    rgba[i + 3] = uint8_t(255.0f * (1.0f - std::clamp((lead - 3.0f) / 9.0f, 0.0f, 1.0f)));
+  }
+  gl::GenTextures(1, &tex);
+  gl::BindTexture(gl::TEXTURE_2D, tex);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT);
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+  gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::RGBA, gl::UNSIGNED_BYTE, rgba.data());
+  gl::GenerateMipmap(gl::TEXTURE_2D);
+  return tex;
+}
+
 void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vector<DrawItem>& items) {
   GridData& g = *grid->data;
   if (g.curves.empty() && !grid->hasCurvePreview && !tc.curvesBuilt && !tc.curvePreviewBuilt) return;
@@ -893,7 +927,8 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
     tc.curvesVersion = grid->curvesVersion;
     if (tc.curvesBuilt) d.r3d().destroy(tc.curves);
     if (tc.curvePreviewBuilt) d.r3d().destroy(tc.curvePreview);
-    tc.curvesBuilt = tc.curvePreviewBuilt = false;
+    if (tc.pathsBuilt) d.r3d().destroy(tc.paths);
+    tc.curvesBuilt = tc.curvePreviewBuilt = tc.pathsBuilt = false;
     // a template's first material in tc.materials and its object (its type joins the map when none of its items is
     // there yet: a map with curves but no small road or tram track)
     auto templateOf = [&](const std::string& name, ObjectObj** object) {
@@ -1034,7 +1069,6 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         }
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
-        if (c.bridge == 3) return;  // a footpath over paving: the paving shows (CurveRoad::bridge)
         if (c.bridge == 2 && curveIsTrack(c.kind)) {  // a level crossing's rails let into the road (OSM import): the
                                                       // street tram strip just over the asphalt, no bed
           ObjectObj* o = nullptr;
@@ -1078,12 +1112,13 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), 3.0f, m);
         }
       };
-      MeshData all;
+      MeshData all, paths;  // paths: the footpaths (their own transparent-grass material)
       std::vector<CurveJunction> junctions = findCurveJunctions(g);
+      const bool keyed = keyedFootpathTexture(vm) != 0;
       for (size_t i = 0; i < g.curves.size(); ++i) {
         float t0, t1;
         curveTrims(junctions, int(i), t0, t1);
-        curveMesh(g.curves[i], all, t0, t1);
+        curveMesh(g.curves[i], keyed && g.curves[i].kind == 3 ? paths : all, t0, t1);
       }
       // junctions: roads fill with the small road's asphalt (one texture for all road kinds) and its pavement, footpaths
       // with the footpath; the fill's texture plane is fitted to the template's own mesh once
@@ -1097,13 +1132,10 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         return it == fills.end() ? none : it->second;
       };
       for (const CurveJunction& j : junctions) {
-        bool drawn = false;  // footpaths over paving only: nothing drawn
-        for (const CurveArm& arm : j.arms) drawn = drawn || g.curves[size_t(arm.curve)].bridge != 3;
-        if (!drawn) continue;
         int fb = -1;
         if (j.kind == 3) {
           const PlanarUV& uv = fillOf(curveProfile(3).straight, 0, fb);
-          buildJunctionMesh(j, fb, uv, -1, all);
+          buildJunctionMesh(j, fb, uv, -1, keyed ? paths : all);
         } else {
           const PlanarUV& uv = fillOf("road_small_basic", 0, fb);
           buildJunctionMesh(j, fb, uv, base + 2, all, base + 1, tramBase);
@@ -1111,6 +1143,18 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       }
       if (tc.surfaceMap && all.vertexCount()) surfaceMapPaint(*tc.surfaceMap, all, Mat4(), tc.materials, true);
       upload(all, tc.curves, tc.curvesBuilt);
+      if (paths.vertexCount()) {  // every footpath part with the footpath material copy (one material, index 0)
+        int fp = templateOf(curveProfile(3).straight, nullptr);
+        if (fp >= 0 && size_t(fp) < tc.materials.size()) {
+          GpuMaterial m = tc.materials[size_t(fp)];
+          if (!m.textures.empty()) m.textures[0] = keyedFootpathTexture(vm);
+          m.flags |= kMatAlphaTest;
+          tc.pathMaterials = {m};
+          for (Submesh& sm : paths.submeshes) sm.material = 0;
+          if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, paths, Mat4(), tc.pathMaterials, true);
+          upload(paths, tc.paths, tc.pathsBuilt);
+        }
+      }
       if (grid->hasCurvePreview) {
         MeshData p;
         bool ring = !grid->curvePreviewMore.empty();
@@ -1128,6 +1172,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
     DrawItem it;
     it.mesh = &tc.curves;
     it.materials = &tc.materials;
+    items.push_back(it);
+  }
+  if (tc.pathsBuilt && !tc.paths.parts.empty()) {
+    DrawItem it;
+    it.mesh = &tc.paths;
+    it.materials = &tc.pathMaterials;
     items.push_back(it);
   }
   if (grid->hasCurvePreview && tc.curvePreviewBuilt && !tc.curvePreview.parts.empty()) {
