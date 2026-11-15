@@ -148,8 +148,12 @@ menu's track tab with the same three for the railway.
 
 Trams run on the railway's tracks too (owner's request 2026-11-15, like Karlsruhe's tram-trains), on the grid's double
 track and on railway curves alike (engine/sim_graph.cpp `addRailTwin`, `linkTramsToRail`):
-- Every railway lane gets a tram lane on the same curve (not START / END / STOP / PARK: trams neither enter the map nor
-  halt at train platforms there). It comes after the item's own lanes, so saved lane numbers stay. Nothing is drawn.
+- Every railway lane gets tram lanes on the same curve, both ways (as tram tracks have both ways on each track; the way
+  against the railway's own direction at an eighth of the speed, so routes keep right and use it only to turn at a
+  stop). Not START / END / PARK: trams do not enter the map there; a station's platform tracks keep STOP. They come
+  after the item's own lanes, so saved lane numbers stay. Nothing is drawn.
+- At a railway track's dead end a tram turning loop joins the end of one track to the other track, so a line turns at
+  the end of the railway as on a loop.
 - Where a tram track ends at a railway track (a street or grass tram track's dead end within 14 units, heading the same
   way) a tram connector joins them both ways; ends that meet exactly join by themselves.
 - The tram lane and the railway lane under it cross each other, so a tram and a train never hold the same piece: each
@@ -158,7 +162,19 @@ track and on railway curves alike (engine/sim_graph.cpp `addRailTwin`, `linkTram
   over the railway to a stop on the other (`REGS_TEST_LINE=1`); with a test train on the same railway
   (`REGS_TEST_CURVE_TRAINS=1`) both kept running, waited for each other and never got stuck. Vienna's save loads as
   before (all vehicles placed).
-- Not yet: tram stops beside a railway track (the stop tool takes tram tracks only).
+- Tram stops on railway (2026-11-15): the tram stop tool takes straight grid railway blocks (a small-road tram stop of
+  the chosen design beside the track bed; engine/tool_objects.cpp `stopPreview`, conflicts in grid_edit.cpp) and
+  railway curves (curve stops, `curveTakesStop`). The stop's platform is the railway's tram lane on its side, running
+  with the platform on its right; the other way on the same track is its second platform, where trams turn round
+  (sim.cpp `stopPlatforms`; legs take either, `segmentBetween`).
+- Train stations are tram stops (2026-11-15): every `station-track` and `terminal-track` item registers as a tram
+  stop (its bubble, catchment, line tool), its platform the tram lane of its STOP track (`simIsTrainStation`).
+  Vienna and Berlin have 23 each.
+- Checked (2026-11-15): two tram stops on a grid railway (one each side) and two on a railway curve, a tram line
+  between them (turning at the railway's end); in Vienna a loop between a terminal and a through station, about 13
+  game minutes, passengers boarding, no jams, the city's own lines as before. `REGS_TEST_LINE_ITEMS=a,b` builds a test
+  loop over those items, `REGS_DEBUG_LEGS=1` logs each stop's platforms and legs.
+- Background passenger trains do not stop for tram passengers; trams and trains still wait for each other.
 
 ### One-way streets
 

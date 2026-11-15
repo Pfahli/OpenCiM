@@ -246,7 +246,9 @@ void curveCapFrame(const CurveRoad& c, int end, bool openPlusX, render::Vec3& o,
 // (small roads: bus 01-03 and tram; large roads and avenues: their bus stops, stop_bus0N_large / _avenue)
 std::string stopTemplateName(const CurveRoad::Stop& st, int kind = 0);
 // the kinds that take stops: small roads, large roads and avenues (bus and tram; a tram stop needs the curve's tracks)
-inline bool curveTakesStop(int kind, int stopKind) { return kind >= 0 && kind <= 2 && stopKind >= 0 && stopKind <= 1; }
+inline bool curveTakesStop(int kind, int stopKind) {
+  return (kind >= 0 && kind <= 2 && stopKind >= 0 && stopKind <= 1) || (kind == 6 && stopKind == 1);  // railway: tram stops
+}
 // where a stop's model stands, out from the road's centre line (its own z = 0 line): the kerb (small 3, large 6,
 // avenue 10.5); an avenue's tram stop at the edge of its middle strip (4.5: platform between track and carriageway, its
 // crossing over the carriageway to the pavement)

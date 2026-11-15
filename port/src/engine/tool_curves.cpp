@@ -1197,7 +1197,7 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
         w.lastS = s, w.lastSide = st.side;
         float L = curveLength(c);
         if (s < 7.0f || s > L - 7.0f) w.ok = false;
-        if (st.kind == 1 && !(c.ends & 4)) w.ok = false;  // a tram stop needs tracks
+        if (st.kind == 1 && !(c.ends & 4) && c.kind != 6) w.ok = false;  // a tram stop needs tracks (the railway has them)
         for (const CurveRoad::Stop& o : c.stops)
           if (o.side == st.side && std::fabs(o.s - s) < 14.0f) w.ok = false;
         w.after.stops.push_back(st);
@@ -1422,9 +1422,9 @@ void registerCurveTool(VM& vm) {
     if (argc > 0) v.vfs().asyncWrites = v.truthy(a[0]);
     return Value::boolean(v.vfs().asyncWrites);
   }, 0, 1);
-  // regsToolBusy(player): a tool is in the middle of a drag (resetTool would cancel it): the autosave waits
+  // regsToolBusy(player): a tool is in the middle of a drag or a curved road (resetTool would cancel it): the autosave waits
   implementGlobal(vm, u"regsToolBusy", [](VM& v, Object*, int argc, const Value* a) {
-    bool busy = false;  // (the curve tool keeps its road through resetTool: only the drags count)
+    bool busy = g_state.step > 0;  // a curved road being drawn (resetTool loses its next click)
     if (argc > 0)
       if (Object* p = v.resolve(a[0]).object()) busy = busy || toolState(p).inProgress;
     return Value::boolean(busy);

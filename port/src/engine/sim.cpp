@@ -35,6 +35,8 @@
 namespace regs::engine {
 
 using namespace regs::script;
+
+bool simIsTrainStation(const std::string& templateName) { return templateName == "station-track" || templateName == "terminal-track"; }
 using render::DrawItem;
 using render::Mat4;
 using render::Vec3;
@@ -1508,6 +1510,7 @@ void collectSources(SimState& s) {
 }
 
 // the stop vector entry of a stop item (registration 0x10119070: type and catchment from the item type)
+
 bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   const GridData& g = *grid->data;
   ClassInfo* stopClass = vm.findClass("gsTransportStopController");
@@ -1517,8 +1520,11 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   auto t = grid->templates.find(g.types[it.type]);
   if (t == grid->templates.end()) return false;
   int tflags = fieldInt(vm, t->second.get(), u"flags", 0);
-  if (!(tflags & 0x2000) || (it.flags & 0x100000)) return false;  // GRID_ITEM_STOP, not GRID_ITEM_TEMP
-  int type = fieldInt(vm, t->second.get(), u"type", 0);
+  // port (owner's request 2026-11-15): a train station's track (station-track, terminal-track) is a tram stop, its
+  // platform tracks' tram lanes the platforms (trams on railway tracks)
+  const bool station = simIsTrainStation(g.types[it.type]);
+  if ((!(tflags & 0x2000) && !station) || (it.flags & 0x100000)) return false;  // GRID_ITEM_STOP, not GRID_ITEM_TEMP
+  int type = station ? 10 : fieldInt(vm, t->second.get(), u"type", 0);
   int stopType = (type == 2 || type == 5 || type == 6) ? 0
                  : (type >= 10 && type <= 12)          ? 1
                  : (type >= 13 && type <= 15)          ? 2
@@ -1544,6 +1550,7 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   o->fieldValues[u"attractiveness"] = Value::real(1.0f);
   o->fieldValues[u"passengerCount"] = Value::integer(0);
   o->fieldValues[u"<item>"] = Value::integer(int(i));
+  if (station && debugSim()) LOG_INFO("sim: train station item %zu (%s at %d,%d) is a tram stop too", i, g.types[it.type].c_str(), it.x, it.z);
   s.stopOfItem[int(i)] = int(s.stops.size());
   s.stops.push_back(o);
   if (auto* to = transport(o.get()); to && grid->sim.get() == &s) to->sim = grid->sim;
@@ -1609,11 +1616,61 @@ void stopPlatforms(VM& vm, GridObj* grid, SimState& s, const LineState& line, Li
   Vec3 c{(float(it.x) + float(sx) * 0.5f - float(g.width) * 0.5f) * cs, float(itemHeight(g, it, uint32_t(tf), ty)) * cs / 256.0f,
          (float(it.z) + float(sz) * 0.5f - float(g.length) * 0.5f) * cs};
   if (line.type == 3 || line.type == 4) c.y = -1.25f * cs;
+  if (simIsTrainStation(g.types[it.type])) ty = 10;  // a train station serves trams (registerStop)
   if (line.type == 0 && ty >= 10 && ty <= 12) {  // port: a bus at a tram stop (the add-stop tool admits street ones)
     st.platform = busPlatformInFootprint(s, it.x, it.z, sx, sz, c);
     return;
   }
   st.platform = s.graph.nearest(c, mask);
+  // port: trams on railway tracks (2026-11-15). A tram stop on a railway block or beside a railway curve has no tram STOP
+  // lane of its own: its platform is the railway's tram lane on the stop's side (the one nearest to a point 3 units
+  // out from the stop's centre toward its side: its connections, as the stop tool set them; for a curve's anchor item,
+  // whose centre lies beside the track, its centre)
+  if (line.type == 1 && ty >= 10 && ty <= 12) {
+    const float reach = float(std::max(sx, sz) + 2) * cs;
+    auto within = [&](int n) {
+      if (n < 0) return false;
+      Vec3 m = (s.graph.nodes[size_t(n)].p0 + s.graph.nodes[size_t(n)].p1) * 0.5f - c;
+      return m.x * m.x + m.z * m.z <= reach * reach;
+    };
+    if (!within(st.platform)) {
+      uint32_t conn = gridItemConnections(vm, grid, uint32_t(st.item)) & 0xffu;
+      Vec3 side{conn & 0x04 ? 1.0f : conn & 0x40 ? -1.0f : 0.0f, 0, conn & 0x10 ? 1.0f : conn & 0x01 ? -1.0f : 0.0f};
+      Vec3 at = c + side * 3.0f;
+      std::vector<int> found;
+      s.graph.query(it.x - 2, it.z - 2, sx + 4, sz + 4, kPathTram, found);
+      int best = -1;
+      float bestD = 0;
+      for (int n : found) {
+        const LaneNode& L = s.graph.nodes[size_t(n)];
+        if (!L.railTwin || (L.flags & kPathDeleted) || !within(n)) continue;
+        // the way that has the platform on its right (right-hand traffic), when the stop's side is known
+        Vec3 dir = L.p1 - L.p0, right{-dir.z, 0, dir.x};
+        if ((side.x != 0 || side.z != 0) && dot(right, side) <= 0) continue;
+        Vec3 m = (L.p0 + L.p1) * 0.5f - at;
+        float d = m.x * m.x + m.z * m.z + 16.0f * m.y * m.y;
+        if (best < 0 || d < bestD) best = n, bestD = d;
+      }
+      // the other way: the opposite lane of the same track (the tram turns round there, reverseConsist)
+      if (best >= 0) st.platform = best, st.altPlatform = oppositeNode(s.graph, best);
+      if (debugSim() && best >= 0) {
+        // how far the platform's lane leads on (successors followed straight on)
+        int steps = 0, cur = best;
+        while (steps < 200 && !s.graph.nodes[size_t(cur)].next.empty()) cur = s.graph.nodes[size_t(cur)].next[0], ++steps;
+        const LaneNode& P = s.graph.nodes[size_t(best)];
+        LOG_INFO("sim: tram stop item %d on railway: platform %d (%zu next, %d in, flags %x), other way %d; %d lanes on to %.1f,%.1f",
+                 st.item, best, P.next.size(), P.inDegree, P.flags, st.altPlatform, steps, s.graph.nodes[size_t(cur)].p1.x,
+                 s.graph.nodes[size_t(cur)].p1.z);
+      }
+      if (best >= 0) return;
+    }
+  }
+  if (debugSim() && line.type == 1 && simIsTrainStation(g.types[it.type])) {
+    const LaneNode* P = st.platform >= 0 ? &s.graph.nodes[size_t(st.platform)] : nullptr;
+    LOG_INFO("sim: station item %d (%s) platform %d: %s, rail twin %d, item %d, %zu next, %d in, at %.1f,%.1f -> %.1f,%.1f (centre %.1f,%.1f)",
+             st.item, g.types[it.type].c_str(), st.platform, P ? "found" : "none", P ? int(P->railTwin) : -1, P ? P->item : -1,
+             P ? P->next.size() : 0, P ? P->inDegree : 0, P ? P->p0.x : 0, P ? P->p0.z : 0, P ? P->p1.x : 0, P ? P->p1.z : 0, c.x, c.z);
+  }
   // FUN_10110c10 with alt: the ALTERNATIVE_STOP node, if the stop has one (not another stop's)
   st.altPlatform = s.graph.nearest(c, (mask & ~kPathStop) | kPathAlternativeStop);
   if (st.altPlatform >= 0) {
@@ -1621,6 +1678,10 @@ void stopPlatforms(VM& vm, GridObj* grid, SimState& s, const LineState& line, Li
     float reach = float(std::max(sx, sz) + 2) * cs;
     if (d.x * d.x + d.z * d.z > reach * reach) st.altPlatform = -1;
   }
+  // port: a tram at a train station (its platform a railway track's tram lane) without another platform: the opposite
+  // lane of its track, where it turns round
+  if (line.type == 1 && st.platform >= 0 && st.altPlatform < 0 && s.graph.nodes[size_t(st.platform)].railTwin)
+    st.altPlatform = oppositeNode(s.graph, st.platform);
 }
 
 // FUN_10114200: the leg from stop a's platform to stop b's. Metro and boat lines, or a primary platform with
@@ -1636,7 +1697,10 @@ float segmentBetween(SimState& s, const LineState& line, const LineStopState& a,
     Vec3 d = s.graph.nodes[size_t(a.platform)].p1 - s.graph.nodes[size_t(b.platform)].p0;
     reachable = true, bestCost = std::sqrt(dot(d, d)) / 6.0f;
   } else {
-    bool alt = line.type == 2 || line.type == 3 || (a.platform >= 0 && (s.graph.nodes[size_t(a.platform)].flags & kPathFindAlternative));
+    // port: trams at stops on railway tracks take their other platform too (the other way, stopPlatforms)
+    auto railStop = [&](int p) { return p >= 0 && s.graph.nodes[size_t(p)].railTwin; };
+    bool alt = line.type == 2 || line.type == 3 || (a.platform >= 0 && (s.graph.nodes[size_t(a.platform)].flags & kPathFindAlternative)) ||
+               (line.type == 1 && (railStop(a.platform) || railStop(b.platform)));
     std::vector<int> path;
     float cost = 0;
     for (int from : {a.platform, alt ? a.altPlatform : -1})
@@ -1675,6 +1739,12 @@ int relinkLine(VM& vm, GridObj* grid, SimState& s, LineState& line) {
   size_t n = line.stops.size();
   for (size_t k = 0; k < n; ++k)
     if (!computeSegment(s, line, k) && (k + 1 < n || line.closed)) ++unreachable;
+  if (static const bool dbg = std::getenv("REGS_DEBUG_LEGS") != nullptr; dbg)
+    for (size_t k = 0; k < n; ++k) {
+      const LineStopState& st = line.stops[k];
+      LOG_INFO("legs: line type %d stop %zu (item %d): platform %d alt %d; leg %d -> %d, %zu nodes, cost %.0f, %s", line.type, k,
+               st.item, st.platform, st.altPlatform, st.legStart, st.legEnd, st.path.size(), st.cost, st.reachable ? "reachable" : "unreachable");
+    }
   return unreachable;
 }
 
@@ -2045,13 +2115,56 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
           const GridData& g = *grid->data;
           if (size_t(item) >= g.items.size() || g.items[size_t(item)].removed) continue;
           const std::string& name = g.types[g.items[size_t(item)].type];
-          if (name.rfind(kPrefix[std::clamp(type, 0, 2)], 0) != 0) continue;
+          // trams also take the train stations (trams on railway tracks); REGS_TEST_LINE_STATIONS=1: only those,
+          // REGS_TEST_LINE_ITEMS=a,b,...: only those items, in that order (added after this loop)
+          const bool station = type == 1 && simIsTrainStation(name);
+          if (std::getenv("REGS_TEST_LINE_ITEMS")) continue;
+          if (std::getenv("REGS_TEST_LINE_STATIONS") && !station) continue;
+          if (name.rfind(kPrefix[std::clamp(type, 0, 2)], 0) != 0 && !station) continue;
           if (lineAddStop(vm, grid, *s, li, item, false) >= 0) ++added;
+        }
+        if (const char* items = std::getenv("REGS_TEST_LINE_ITEMS")) {
+          int first = -1;
+          for (const char* p = items; *p;) {
+            int item = std::atoi(p);
+            if (first < 0) first = item;
+            if (lineAddStop(vm, grid, *s, li, item, false) >= 0) ++added;
+            while (*p && *p != ',') ++p;
+            if (*p == ',') ++p;
+          }
+          if (first >= 0) lineAddStop(vm, grid, *s, li, first, false);  // the first again: the line becomes a loop
+        }
+        // REGS_TEST_LINE_STATIONS with REGS_DEBUG_SIM: which train stations' platforms reach which (trams)
+        if (std::getenv("REGS_TEST_LINE_STATIONS") && debugSim()) {
+          std::vector<std::pair<int, int>> plat;  // item, platform
+          for (const auto& [item, stop] : s->stopOfItem) {
+            const GridData& g = *grid->data;
+            if (size_t(item) >= g.items.size() || !simIsTrainStation(g.types[g.items[size_t(item)].type])) continue;
+            LineState tmp;
+            tmp.type = 1;
+            LineStopState st;
+            st.item = item;
+            stopPlatforms(vm, grid, *s, tmp, st);
+            if (st.platform >= 0) plat.push_back({item, st.platform});
+          }
+          int pairs = 0;
+          std::string list;
+          for (auto& a : plat)
+            for (auto& b : plat) {
+              std::vector<int> path;
+              float cost = 0;
+              if (a.first != b.first && s->graph.search(a.second, b.second, true, path, cost)) {
+                ++pairs;
+                if (pairs <= 12) list += " " + std::to_string(a.first) + ">" + std::to_string(b.first) + "(" + std::to_string(int(cost)) + ")";
+              }
+            }
+          LOG_INFO("test: %zu station platforms, %d reachable pairs:%s", plat.size(), pairs, list.c_str());
         }
         Value tpl = vm.call(vm.getMember(vm.getMember(*main, u"$grid"), u"getGridObject"), {Value::string(utf8ToUtf16(model))});
         vm.call(vm.getMember(line, u"addVehicle"), {tpl});
         vm.setMember(line, u"active", Value::boolean(true));
         LOG_INFO("test: line %d (type %d) with %d stops and a %s", li, type, added, model);
+        if (std::getenv("REGS_DEBUG_LEGS") && li >= 0 && size_t(li) < s->lines.size()) relinkLine(vm, grid, *s, s->lines[size_t(li)]);
       } catch (const std::exception& e) {
         LOG_WARN("test: line failed: %s", e.what());
       }

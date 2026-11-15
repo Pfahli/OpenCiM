@@ -51,6 +51,9 @@ bool servesType(int lineType, int itemType) {
 bool isStopOf(VM& vm, GridObj* grid, uint32_t item, int lineType) {
   if (!grid->data || item >= grid->data->items.size() || grid->data->items[item].removed) return false;
   GridItemShape sh = gridItemShape(vm, grid, item);
+  // port: a train station's track serves tram lines (trams on railway tracks)
+  const GridData& g = *grid->data;
+  if (lineType == 1 && g.items[item].type < g.types.size() && simIsTrainStation(g.types[g.items[item].type])) return true;
   if (!(sh.flags & kFlagStop)) return false;
   if (servesType(lineType, sh.type)) return true;
   // port QoL (docs/ui/lines.md §6, settings regsBusAtTramStops): a bus line also takes a tram stop in a street, one

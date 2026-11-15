@@ -651,9 +651,12 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   } else if (!stopA) {  // a stop on its road or track
     if (sb.type >= 0xd && sb.type <= 0xf) return false;
     if (ca == (turn(cb, 2) | turn(cb, 6)) && samePair()) return false;
+    // port: a tram stop on a railway block (trams on railway tracks, 2026-11-15): the block's track along the stop's side
+    if (sa.type == 9 && sb.type == 10 && ya == yb && (ca >> 24) == ((turn(cb, 2) | turn(cb, 6)) & 0xff)) return false;
   } else if (!stopB) {
     if (sa.type >= 0xd && sa.type <= 0xf) return false;
     if (cb == (turn(ca, 2) | turn(ca, 6)) && samePair()) return false;
+    if (sb.type == 9 && sa.type == 10 && ya == yb && (cb >> 24) == ((turn(ca, 2) | turn(ca, 6)) & 0xff)) return false;
   } else {
     if (ca != cb) return false;
     if (sa.type == sb.type && ia.x == ib.x && ia.z == ib.z && ya == yb && ia.type != ib.type) return false;

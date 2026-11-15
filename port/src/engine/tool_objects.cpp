@@ -481,12 +481,15 @@ int stopPreview(VM& vm, GridObj* grid, int cx, int cz, int toolMode, int toolTyp
     Info n = infoOf(vm, grid, o);
     if (!n.ok) continue;
     bool bus = n.type() >= 2 && n.type() <= 6, tram = n.type() >= 10 && n.type() <= 12;
-    if (!((bus && toolMode == 0) || (tram && toolMode == 1))) continue;
+    // port (owner's request 2026-11-15): a tram stop on a straight railway block (the double track), for trams on
+    // railway tracks; it is made as a small-road tram stop, its platform beside the track bed
+    const bool rail = n.type() == 9 && toolMode == 1 && (n.conn == 0x44000000u || n.conn == 0x11000000u);
+    if (!((bus && toolMode == 0) || (tram && toolMode == 1) || rail)) continue;
     Info root = n.parent >= 0 ? infoOf(vm, grid, uint32_t(n.parent)) : n;
     if ((root.ok ? root.flags : n.flags) & 0xe000) continue;  // stops, bridges, tunnels
     auto [rx, rz] = roadXZ(n);
     int shift = n.type() == 5 || n.type() == 0xb ? 8 : n.type() == 6 || n.type() == 0xc ? 16 : 0;
-    uint32_t c = n.conn;
+    uint32_t c = rail ? n.conn >> 24 : n.conn;
     auto is = [&](uint32_t pattern) { return c == pattern || c == pattern << 8 || c == pattern << 16; };
     road = int(o);
     if (is(0x44)) mask |= (cz <= rz + 1 ? 0x01u : 0x10u) << shift;              // east-west: north or south side
@@ -504,7 +507,10 @@ int stopPreview(VM& vm, GridObj* grid, int cx, int cz, int toolMode, int toolTyp
       if (s.ok && (s.flags & kFlagStop) && !(s.conn & mask)) name = o < g.names.size() ? g.names[o] : std::string();
     }
     auto [rx, rz] = roadXZ(r);
-    stop = createRoadItem(vm, grid, rx, r.y, rz, mask, 0, r.type(), toolType, r.flags | kFlagStop);
+    if (r.type() == 9)  // on a railway block: a small-road tram stop (type 10) of the tool's design
+      stop = createRoadItem(vm, grid, rx, r.y, rz, mask, 0, 10, toolType, kFlagStop);
+    else
+      stop = createRoadItem(vm, grid, rx, r.y, rz, mask, 0, r.type(), toolType, r.flags | kFlagStop);
     if (stop >= 0) {
       if (!name.empty() && g.names[size_t(stop)].empty()) g.names[size_t(stop)] = name;
       addItemFlags(grid, uint32_t(stop), kFlagJoin);
@@ -1494,6 +1500,13 @@ void registerObjectTools(VM& vm) {
     arr->items = {Value::real(float(total)), Value::real(float(fine)), Value::integer(turnable ? 1 : 0), Value::integer(snapped ? 1 : 0)};
     return Value::heap(VT::Array, arr.get());
   }, 1, 1);
+}
+
+// the connections of a placed item (its template's, turned with it): a stop's side (sim.cpp stopPlatforms)
+uint32_t gridItemConnections(VM& vm, GridObj* grid, uint32_t item) {
+  if (!grid || !grid->data || item >= grid->data->items.size()) return 0;
+  Info n = infoOf(vm, grid, item);
+  return n.ok ? n.conn : 0;
 }
 
 }  // namespace regs::engine

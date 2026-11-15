@@ -540,24 +540,35 @@ void finishLaneNode(LaneNode& n) {
 namespace {
 
 // port: trams on railway tracks (owner's request 2026-11-15). A railway lane (GRID_PATH_TRAIN) gets a twin of the tram
-// class on the same curve (no START / END / STOP / PARK: trams do not enter or leave the map there or halt at train
-// platforms), so tram lines route over railway tracks; the two lie on each other, so linkCrossings makes them
+// class on the same curve (no START / END / PARK: trams do not enter or leave the map there; a station's platform
+// tracks keep STOP), so tram lines route over railway tracks; the two lie on each other, so linkCrossings makes them
 // crossings and trams and trains wait for each other there.
 void addRailTwin(LaneGraph& G, int ni, std::vector<int>& list, std::vector<int>& scratch) {
   if ((G.nodes[size_t(ni)].flags & kPathClassMask) != kPathTrain || (G.nodes[size_t(ni)].flags & kPathDeleted)) return;
   const LaneNode& o = G.nodes[size_t(ni)];
   LaneNode t;
-  t.flags = (o.flags & ~(kPathClassMask | kPathStart | kPathEnd | kPathExternal | kPathStop | kPathPark | kPathAlternativeStop |
-                         kPathConnectTo | kPathConnectFrom)) |
+  // a train station's platform track (STOP, ALTERNATIVE_STOP: station-track, terminal-track) keeps its marks: trams
+  // halt there as at a tram stop (the station is a tram stop too, registerStop)
+  t.flags = (o.flags & ~(kPathClassMask | kPathStart | kPathEnd | kPathExternal | kPathPark | kPathConnectTo | kPathConnectFrom)) |
             kPathTram;
   t.item = o.item;
   t.p0 = o.p0, t.p1 = o.p1, t.f0 = o.f0, t.f1 = o.f1;
   t.railTwin = true;
-  finishLaneNode(t);
-  int ti = int(G.nodes.size());
-  G.nodes.push_back(t);
-  insertNode(G, ti, scratch);
-  list.push_back(ti);
+  // and the other way on the same track, as tram tracks have both ways on each track: trams turn round at a stop there
+  // (reverseConsist) and reach a stop on either track; the two cross each other, so only one tram holds the piece
+  LaneNode r = t;
+  r.p0 = t.p1, r.p1 = t.p0, r.f0 = t.f1 * -1.0f, r.f1 = t.f0 * -1.0f;
+  for (LaneNode* n : {&t, &r}) {
+    finishLaneNode(*n);
+    // the way against the railway's own direction: slow (an eighth of the speed), so routes keep to the right-hand track
+    // and its turning loops and run against it only for a short turn at a stop (head-on meetings with trains lock both
+    // until the jam relief)
+    if (n == &r) n->speedLimit *= 0.125f;
+    int ti = int(G.nodes.size());
+    G.nodes.push_back(*n);
+    insertNode(G, ti, scratch);
+    list.push_back(ti);
+  }
 }
 
 // port: connectors where a tram track ends at a railway track: from a street tram lane's end with no successor to a
@@ -594,12 +605,39 @@ void linkTramsToRail(LaneGraph& G) {
     finishLaneNode(c);
     made.push_back(c);
   }
+  // a railway track's dead end: a tram turning loop onto the other track (from a tram lane ending there with no way on to
+  // one of the other track starting within 9 units back the other way), so trams turn at the end of a line as on a loop
+  int loops = 0;
+  for (size_t i = 0; i < G.nodes.size(); ++i) {
+    const LaneNode& T = G.nodes[i];
+    if (!T.railTwin || (T.flags & kPathDeleted) || !T.next.empty()) continue;
+    G.query(int(T.p1.x / cs) + G.width / 2 - 4, int(T.p1.z / cs) + G.length / 2 - 4, 8, 8, 0, found);
+    int best = -1;
+    float bestD = 81.0f;
+    for (int si : found) {
+      const LaneNode& S = G.nodes[size_t(si)];
+      if (!S.railTwin || (S.flags & kPathDeleted) || S.inDegree > 0 || dot(T.f1, S.f0) > -0.7f) continue;
+      Vec3 d = S.p0 - T.p1;
+      float d2 = dot(d, d);
+      if (d2 < 4.0f || d2 >= bestD) continue;  // not the same track's other way (it lies on it)
+      best = si, bestD = d2;
+    }
+    if (best < 0) continue;
+    LaneNode c;
+    c.flags = kPathTram;
+    c.item = -1;
+    c.p0 = T.p1, c.p1 = G.nodes[size_t(best)].p0, c.f0 = T.f1, c.f1 = G.nodes[size_t(best)].f0;
+    finishLaneNode(c);
+    made.push_back(c);
+    ++loops;
+  }
   for (LaneNode& c : made) {
     int ci = int(G.nodes.size());
     G.nodes.push_back(c);
     insertNode(G, ci, scratch);
     G.railLinks.push_back(ci);
   }
+  if (loops) LOG_INFO("lane graph: %d tram turning loops at railway dead ends", loops);
   if (std::getenv("REGS_DEBUG_SIM")) {  // the rail twins and how many of them cross the railway lane under them
     int twins = 0, crossing = 0;
     for (const LaneNode& n : G.nodes)
