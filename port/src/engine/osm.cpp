@@ -1331,6 +1331,9 @@ std::string buildingCategory(const Json& tags, int& levels) {
   if (kSkip.count(b)) return {};
   auto it = kMap.find(b);
   if (it != kMap.end()) return it->second;
+  // (2026-11-15) a building of no clear kind with a shop, a place to eat or an office in it: commercial or workplace
+  if (!tags.str("shop").empty() || eateryKind(tags.str("amenity")) != 0) return "commercial";
+  if (!tags.str("office").empty()) return "workplace";
   return "?";  // yes and others: from the land use around, else residential
 }
 
@@ -5767,6 +5770,36 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     }
   }
   if (ring.size() < 3) return false;
+  // a self-crossing outline (its lobes would wind both ways: walls facing inward, invisible): its convex hull when that
+  // is hardly larger, else no procedural building
+  {
+    bool crossing = false;
+    for (size_t i = 0; i < ring.size() && !crossing; ++i)
+      for (size_t j = i + 2; j < ring.size() && !crossing; ++j) {
+        if (i == 0 && j + 1 == ring.size()) continue;  // neighbours through the closing edge
+        crossing = streets::segCross(ring[i], ring[(i + 1) % ring.size()], ring[j], ring[(j + 1) % ring.size()]);
+      }
+    if (crossing) {
+      auto pts = ring;
+      std::sort(pts.begin(), pts.end());
+      pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+      Ring hull;
+      auto cross = [](std::pair<double, double> o2, std::pair<double, double> p2, std::pair<double, double> q) {
+        return (p2.first - o2.first) * (q.second - o2.second) - (p2.second - o2.second) * (q.first - o2.first);
+      };
+      for (int pass = 0; pass < 2 && pts.size() >= 3; ++pass) {
+        const size_t start = hull.size();
+        for (size_t k = 0; k < pts.size(); ++k) {
+          auto q = pass ? pts[pts.size() - 1 - k] : pts[k];
+          while (hull.size() >= start + 2 && cross(hull[hull.size() - 2], hull.back(), q) <= 0) hull.pop_back();
+          hull.push_back(q);
+        }
+        hull.pop_back();
+      }
+      if (hull.size() < 3 || polyArea(hull) > 1.3 * polyArea(ring)) return false;
+      ring = hull;
+    }
+  }
   const double area = polyArea(ring);
   if (area < kMin) return false;
   double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
@@ -5785,15 +5818,29 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     }
   if (cells.empty() || busy * 100 > int(cells.size() + busy) * 15) return false;
   GridData::ProcBuilding pb;
+  // halls only for industry, farms and railways (owner 2026-11-15: no warehouses in the town centre); offices for
+  // workplaces, shops (shop windows and signs below, a big low store from 700 cells and at most two levels) for
+  // commercial buildings, plaster or brick for the others
   const std::string& cat = b.category;
-  const bool hall = cat == "industry" || cat == "railway" || cat == "workplace" || cat == "farm" ||
-                    (cat == "commercial" && area >= 700 && b.levels <= 2);
-  pb.style = hall ? 0 : (hash32(b.id) & 1) ? 1 : 2;
+  const bool hall = cat == "industry" || cat == "railway" || cat == "farm";
+  bool officeB = cat == "workplace", shopB = cat == "commercial";
+  // a big town house (owner 2026-11-15: offices and modern shops in the centre): a third of them a business house with
+  // shops on the ground floor, from four levels a third an office block, the rest plaster or brick
+  if (!hall && !officeB && !shopB && (cat == "blockhouses" || cat == "residential")) {
+    const uint32_t hv = hash32(b.id * 7 + 3) % 3;
+    if (hv == 1) shopB = true;
+    else if (hv == 2 && b.levels >= 4) officeB = true;
+  }
+  const bool bigStore = shopB && cat == "commercial" && area >= 700 && b.levels <= 2;
+  pb.style = hall ? 0 : officeB ? 3 : shopB ? 4 : (hash32(b.id) & 1) ? 1 : 2;
   if (hall) pb.height = float(b.levels > 0 ? std::max(6.0, b.levels * 4.5) : (area > 1500 ? 10.0 : 8.0));
+  else if (bigStore) pb.height = 7.0f;
+  else if (officeB) pb.height = float(4.2 + (std::max(b.levels > 0 ? b.levels : 5, 2) - 1) * 3.6);
+  else if (shopB) pb.height = float(4.2 + (std::max(b.levels > 0 ? b.levels : 4, 2) - 1) * 3.2);
   else pb.height = float((b.levels > 0 ? b.levels : (cat == "government" ? 3 : 4)) * 3.2);
   const float cs = g.cellSize;
   for (auto& q : ring) pb.outline.push_back({float((q.first - W * 0.5) * cs), float((q.second - L * 0.5) * cs)});
-  if (!hall && ring.size() == 4) {
+  if ((pb.style == 1 || pb.style == 2) && ring.size() == 4) {  // (gabled roofs on plaster and brick houses only)
     const double s01 = std::hypot(ring[1].first - ring[0].first, ring[1].second - ring[0].second);
     const double s12 = std::hypot(ring[2].first - ring[1].first, ring[2].second - ring[1].second);
     if (std::min(s01, s12) <= 15.0) pb.roof = 1;
@@ -5805,7 +5852,8 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
   if (const StreetIndex::P* st = g_streets.nearest(cx, cz, std::max(x1 - x0, z1 - z0) * 0.5 + 8.0))
     pb.frontX = float(st->x - cx), pb.frontZ = float(st->z - cz);
   if (std::getenv("REGS_DEBUG_OSM"))
-    LOG_INFO("osm: procedural %s at world %.0f, %.0f: %.0f cells, %zu corners, height %.1f, roof %d", hall ? "hall" : pb.style == 1 ? "plaster" : "brick",
+    LOG_INFO("osm: procedural %s at world %.0f, %.0f: %.0f cells, %zu corners, height %.1f, roof %d",
+             hall ? "hall" : pb.style == 1 ? "plaster" : pb.style == 2 ? "brick" : pb.style == 3 ? "office" : bigStore ? "store" : "shop",
              (cx - W * 0.5) * cs, (cz - L * 0.5) * cs, area, ring.size(), pb.height, pb.roof);
   for (size_t i : cells) a.used[i] = 3;
   g.procBuildings.push_back(pb);

@@ -93,25 +93,59 @@ Tex rollerDoorTex() {  // a roller door: slats, a row of small windows
     }
   return t;
 }
-Tex plasterTex() {  // plaster (one tile: 3.6 × 3.2 units, a floor's cornice at the bottom)
+Tex plasterTex(Rgb k) {  // plaster of a tint (one tile: 3.6 × 3.2 units, a floor's cornice at the bottom)
   Tex t;
   for (int y = 0; y < 256; ++y)
     for (int x = 0; x < 256; ++x) {
       const float n = 0.92f + 0.08f * noise(x / 3, y / 3, 5) - 0.04f * noise(x / 40, y / 40, 8);
-      Rgb c{0.86f * n, 0.80f * n, 0.68f * n};
-      if (y < 8) c = {0.74f * n, 0.69f * n, 0.59f * n};
-      t.set(x, y, c.r, c.g, c.b);
+      const float c = y < 8 ? 0.86f : 1.0f;
+      t.set(x, y, k.r * n * c, k.g * n * c, k.b * n * c);
     }
   return t;
 }
-Tex brickTex() {
+Tex brickTex(Rgb k) {
   Tex t;
   for (int y = 0; y < 256; ++y)
     for (int x = 0; x < 256; ++x) {
       const int row = y / 16, off = (row & 1) ? 16 : 0;
       const bool mortar = (y % 16) < 2 || ((x + off) % 32) < 2;
       const float n = 0.85f + 0.15f * noise((x + off) / 32, row, 7);
-      Rgb c = mortar ? Rgb{0.70f, 0.66f, 0.60f} : Rgb{0.58f * n, 0.27f * n, 0.20f * n};
+      Rgb c = mortar ? Rgb{0.70f, 0.66f, 0.60f} : Rgb{k.r * n, k.g * n, k.b * n};
+      t.set(x, y, c.r, c.g, c.b);
+    }
+  return t;
+}
+Tex panelTex(Rgb k) {  // cladding panels with open joints (a panel 1.8 × 1.6 units)
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const bool joint = (x % 128) < 3 || (y % 128) < 3;
+      const float n = 0.95f + 0.05f * noise(x / 128, y / 128, 61) - 0.03f * noise(x / 8, y / 8, 62);
+      Rgb c = joint ? Rgb{k.r * 0.55f, k.g * 0.55f, k.b * 0.55f} : Rgb{k.r * n, k.g * n, k.b * n};
+      t.set(x, y, c.r, c.g, c.b);
+    }
+  return t;
+}
+Tex spandrelTex(Rgb k) {  // an office's spandrel: smooth metal sheets with fine horizontal lines
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const float n = 0.94f + 0.06f * noise(x / 64, y / 2, 71);
+      const float line = (y % 32) < 1 ? 0.8f : 1.0f;
+      t.set(x, y, k.r * n * line, k.g * n * line, k.b * n * line);
+    }
+  return t;
+}
+Tex signTex(Rgb k) {  // a shop's fascia: its colour, a light edge, blocky white lettering in the middle
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      Rgb c = k;
+      if (y < 12 || y > 243) c = {0.85f, 0.85f, 0.85f};
+      const int col = x / 14;
+      const bool letter = y > 80 && y < 176 && (x % 14) < 10 && (x / 8) % 32 < 22 && (x / 8) % 32 > 3 &&
+                          noise(col, (y - 80) / 24, 81) > 0.35f;
+      if (letter) c = {0.97f, 0.96f, 0.92f};
       t.set(x, y, c.r, c.g, c.b);
     }
   return t;
@@ -418,71 +452,154 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   std::vector<std::pair<float, float>> o = src.outline;
   if (signedArea(o) < 0) std::reverse(o.begin(), o.end());
   Builder bd;
-  const bool hall = src.style == 0, brick = src.style == 2;
-  const int wallMat = hall ? kProcHall : brick ? kProcBrick : kProcPlaster;
-  const float y = src.y, top = src.y + src.height, skirt = src.y - 2.5f;
-  const float bay = hall ? 6.0f : 3.6f, fh = hall ? src.height : 3.2f;
-  const float uScale = hall ? 6.0f : 3.6f, vScale = hall ? 6.0f : 3.2f;
+  const int type = src.style;  // 0 hall, 1 plaster, 2 brick, 3 office, 4 shop
+  const bool hall = type == 0, brick = type == 2, office = type == 3, shop = type == 4;
+  uint32_t seed = hashU(uint32_t(std::lround(o[0].first * 16)) * 31u + uint32_t(std::lround(o[0].second * 16)));
+  const uint32_t var = hashU(seed ^ 0xFACADEu);  // the facade variant
+  const bool bigBox = shop && src.height <= 7.5f;  // a big low store: one tall floor, an entrance front, its sign
+  const bool punched = office && ((var >> 5) & 1);  // an office of panels with single windows, else ribbons and fins
+  const int winStyle = int((var >> 6) % 4);         // houses: cross windows, tall ones, wide ones, pairs
+  const bool cornice = !hall && !office && !bigBox && ((var >> 8) & 1);
+  int wallMat, groundMat, frameMat = (var >> 4) % 3 == 0 ? kProcFrameDark : kProcFrame;
+  const int signMat = kProcSign + int((var >> 9) % 4);
+  if (hall) wallMat = groundMat = kProcHall;
+  else if (office) wallMat = groundMat = punched ? kProcPanel + int((var >> 2) % 3) : kProcSpandrel + int(var % 3), frameMat = kProcFrameDark;
+  else if (shop) wallMat = groundMat = ((var >> 5) & 1) || bigBox ? kProcPanel + int((var >> 2) % 3) : kProcPlaster + int(var % 4), frameMat = kProcFrameDark;
+  else if (brick) wallMat = groundMat = kProcBrick + int(var % 3);
+  else wallMat = kProcPlaster + int(var % 4), groundMat = ((var >> 3) & 1) ? kProcTrim : wallMat;
+  // (the skirt reaches 12 down: on a slope the walls go into the ground, no floating wing)
+  const float y = src.y, top = src.y + src.height, skirt = src.y - 12.0f;
+  const float bay = hall ? 6.0f : 3.6f;
+  const float uScale = hall ? 6.0f : office ? 3.2f : 3.6f, vScale = hall ? 6.0f : office ? 3.6f : 3.2f;
   const float fl = std::hypot(src.frontX, src.frontZ);
   const float fx = fl > 1e-6f ? src.frontX / fl : 0, fz = fl > 1e-6f ? src.frontZ / fl : 0;
-  uint32_t seed = hashU(uint32_t(std::lround(o[0].first * 16)) * 31u + uint32_t(std::lround(o[0].second * 16)));
-  const int floors = hall ? 1 : std::max(1, int(std::floor(src.height / fh + 0.3f)));
-  const float floorsTop = hall ? top : std::min(top, y + float(floors) * fh);
+  // the floors: halls and big stores one; offices and shops a tall ground floor (4.2) and floors of 3.6 / 3.2; houses 3.2
+  std::vector<std::pair<float, float>> floors;  // bottom, height
+  if (hall || bigBox) {
+    floors.push_back({y, src.height});
+  } else {
+    const float first = office || shop ? 4.2f : 3.2f, rest = office ? 3.6f : 3.2f;
+    for (float y0 = y; floors.size() < 60;) {
+      const float hgt = floors.empty() ? first : rest;
+      if (y0 + hgt > top + 0.3f) break;
+      floors.push_back({y0, std::min(hgt, top - y0)});
+      y0 += hgt;
+    }
+    if (floors.empty()) floors.push_back({y, src.height});
+  }
+  const float floorsTop = floors.back().first + floors.back().second;
   uint32_t windowNo = 0;
   auto paneFor = [&]() {  // dark (a third) or one of the three lit groups (they switch on one after another at dusk)
-    const uint32_t h = hashU(seed ^ (windowNo++ * 0x9e3779b9u));
-    return (h % 100) < 32 ? int(kProcGlass) : int(kProcGlassLit0) + int((h >> 8) % 3);
+    const uint32_t hh = hashU(seed ^ (windowNo++ * 0x9e3779b9u));
+    return (hh % 100) < 32 ? int(kProcGlass) : int(kProcGlassLit0) + int((hh >> 8) % 3);
   };
-  // ---- the walls: per floor and bay a window in a recess, doors on the walls facing the street ----
+  // a band standing out of the wall over its whole length (cornices, shop fascias): front, top and underside
+  auto band = [&](const WallFrame& w, float len, float s0, float s1, float yy, float hgt, float out, int frontMat, int edgeMat) {
+    bd.quad(frontMat, w.at(s0, yy, -out), w.at(s1, yy, -out), w.at(s1, yy + hgt, -out), w.at(s0, yy + hgt, -out), w.n, s0 / 4.0f, 0, s1 / 4.0f, 1);
+    bd.quad(edgeMat, w.at(s0, yy + hgt, -out), w.at(s1, yy + hgt, -out), w.at(s1, yy + hgt, 0), w.at(s0, yy + hgt, 0), {0, 1, 0}, 0, 0, len / 4, 0.1f);
+    bd.quad(edgeMat, w.at(s0, yy, 0), w.at(s1, yy, 0), w.at(s1, yy, -out), w.at(s0, yy, -out), {0, -1, 0}, 0, 0, len / 4, 0.1f);
+    const Vec3 al{w.dx, 0, w.dz};
+    bd.quad(edgeMat, w.at(s0, yy, 0), w.at(s0, yy, -out), w.at(s0, yy + hgt, -out), w.at(s0, yy + hgt, 0), al * -1.0f, 0, 0, 0.1f, 0.1f);
+    bd.quad(edgeMat, w.at(s1, yy, 0), w.at(s1, yy, -out), w.at(s1, yy + hgt, -out), w.at(s1, yy + hgt, 0), al, 0, 0, 0.1f, 0.1f);
+  };
+  // ---- the walls: per floor and bay an opening in a recess, doors on the walls facing the street ----
   for (size_t i = 0; i < o.size(); ++i) {
-    const auto [ax, az] = o[i];
-    const auto [bx, bz] = o[(i + 1) % o.size()];
+    auto [ax, az] = o[i];
+    auto [bx, bz] = o[(i + 1) % o.size()];
     const float len = std::hypot(bx - ax, bz - az);
     if (len < 0.05f) continue;
+    {  // the outward side must lie outside (a part of an outline winding the other way: the wall turned round)
+      const float mx = (ax + bx) * 0.5f + (bz - az) / len * 0.25f, mz = (az + bz) * 0.5f - (bx - ax) / len * 0.25f;
+      if (insidePoly(o, mx, mz)) std::swap(ax, bx), std::swap(az, bz);
+    }
     const WallFrame w{ax, az, (bx - ax) / len, (bz - az) / len, {(bz - az) / len, 0, -(bx - ax) / len}};
-    bd.quad(wallMat, w.at(0, skirt, 0), w.at(len, skirt, 0), w.at(len, y, 0), w.at(0, y, 0), w.n, 0, (skirt - y) / vScale, len / uScale, 0);
+    bd.quad(groundMat, w.at(0, skirt, 0), w.at(len, skirt, 0), w.at(len, y, 0), w.at(0, y, 0), w.n, 0, (skirt - y) / vScale, len / uScale, 0);
     if (top - floorsTop > 0.01f)
       bd.quad(wallMat, w.at(0, floorsTop, 0), w.at(len, floorsTop, 0), w.at(len, top, 0), w.at(0, top, 0), w.n, 0, (floorsTop - y) / vScale,
               len / uScale, (top - y) / vScale);
-    const int bays = std::max(1, int(std::round(len / bay)));
-    const float bw = len / float(bays);
     const bool facing = fl > 1e-6f ? (w.n.x * fx + w.n.z * fz) > 0.5f : len > 12.0f;
-    const int doors = facing ? std::max(1, bays / 4) : 0;
-    auto isDoorBay = [&](int k) {
-      for (int dd = 0; dd < doors; ++dd)
-        if (k == int((float(dd) + 0.5f) * float(bays) / float(doors))) return true;
-      return false;
-    };
-    for (int f = 0; f < floors; ++f) {
-      const float y0 = y + float(f) * fh;
+    for (size_t f = 0; f < floors.size(); ++f) {
+      const float y0 = floors[f].first, fh = floors[f].second;
+      const bool ground = f == 0;
+      const int mat = ground ? groundMat : wallMat;
+      const float bayT = hall ? 6.0f : bigBox ? 3.0f : office ? (punched ? 2.0f : 1.6f) : (shop && ground) ? 3.0f : bay;
+      const int bays = std::max(1, int(std::round(len / bayT)));
+      const float bw = len / float(bays);
+      const int doors = facing && ground ? std::max(1, bays / (office ? 7 : shop ? 3 : 4)) : 0;
+      auto isDoorBay = [&](int k) {
+        for (int dd = 0; dd < doors; ++dd)
+          if (k == int((float(dd) + 0.5f) * float(bays) / float(doors))) return true;
+        return false;
+      };
       for (int k = 0; k < bays; ++k) {
         const float b0 = float(k) * bw;
         auto plain = [&]() {
-          bd.quad(wallMat, w.at(b0, y0, 0), w.at(b0 + bw, y0, 0), w.at(b0 + bw, y0 + fh, 0), w.at(b0, y0 + fh, 0), w.n, b0 / uScale,
+          bd.quad(mat, w.at(b0, y0, 0), w.at(b0 + bw, y0, 0), w.at(b0 + bw, y0 + fh, 0), w.at(b0, y0 + fh, 0), w.n, b0 / uScale,
                   (y0 - y) / vScale, (b0 + bw) / uScale, (y0 - y + fh) / vScale);
         };
-        if (bw < 1.6f) {  // too narrow for an opening
+        // a window centred in the bay (or in each half of it), its mullions and sill
+        auto window = [&](float ww, float o0, float o1, float depth, int mV, int mH, bool sill, int pane) {
+          if (ww > bw - 0.3f || o1 > fh - 0.1f) return plain();
+          const float s0 = (bw - ww) * 0.5f;
+          opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + ww, o0, o1, depth, pane, frameMat, sill, mV, mH);
+        };
+        if (bw < 1.2f) {  // too narrow for an opening
           plain();
           continue;
         }
         if (hall) {
           if (isDoorBay(k) && bw >= 5.4f && fh >= 5.5f) {  // a roller door in its recess, a lamp over it
             const float dw = std::min(4.8f, bw - 0.6f), s0 = (bw - dw) * 0.5f;
-            opening(bd, w, wallMat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0, 4.6f, 0.35f, kProcHallDoor, kProcTrim, false, 0, 0);
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0, 4.6f, 0.35f, kProcHallDoor, kProcTrim, false, 0, 0);
             const Vec3 c = w.at(b0 + bw * 0.5f, y0, -0.14f);
             bd.box(kProcTrim, kProcGlassLit0, c.x, c.z, y0 + 4.8f, y0 + 5.0f, w.dx, w.dz, 0.25f, 0.12f);
           } else if (fh >= 5.0f) {  // the window band under the eaves
             const float o1 = fh - 0.9f, o0 = o1 - 1.6f;
-            opening(bd, w, wallMat, uScale, vScale, y, b0, bw, y0, fh, 0.3f, bw - 0.3f, o0, o1, 0.14f, paneFor(), kProcTrim, false,
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.3f, bw - 0.3f, o0, o1, 0.14f, paneFor(), kProcTrim, false,
                     std::max(1, int(bw / 1.6f)), 0, (bw - 0.6f) / 2.0f, 1);
           } else {
             plain();
           }
           continue;
         }
-        if (f == 0 && isDoorBay(k)) {  // a front door in its recess, a lit fanlight over it, a lamp beside it, a step
+        if (bigBox) {  // the store's front: an entrance of glass around the door bays, else cladding
+          const bool front = facing && (isDoorBay(k) || isDoorBay(k - 1) || isDoorBay(k + 1));
+          if (front && fh >= 4.5f)
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.1f, bw - 0.1f, 0.0f, std::min(3.8f, fh - 1.9f), 0.3f, kProcGlassLit0,
+                    kProcFrameDark, false, isDoorBay(k) ? 1 : 2, 1);
+          else
+            plain();
+          continue;
+        }
+        if (shop && ground) {
+          if (facing) {  // shop windows (lit at dusk) and their doors
+            const bool door = isDoorBay(k);
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.15f, bw - 0.15f, door ? 0.0f : 0.35f, 3.05f, 0.25f, kProcGlassLit0,
+                    kProcFrameDark, false, door ? 1 : 1, door ? 1 : 0);
+          } else {
+            window(1.4f, 1.0f, 2.6f, 0.2f, 1, 0, false, paneFor());
+          }
+          continue;
+        }
+        if (office) {
+          if (ground) {  // the lobby: glass from floor to ceiling, its doors lit
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.08f, bw - 0.08f, 0.15f, std::min(3.7f, fh - 0.3f), 0.25f,
+                    isDoorBay(k) ? kProcGlassLit0 : paneFor(), kProcFrameDark, false, 0, 1);
+          } else if (punched) {
+            window(1.2f, 1.0f, 2.8f, 0.2f, 0, 0, false, paneFor());
+          } else {  // ribbon windows between fins
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.08f, bw - 0.08f, 0.9f, fh - 0.2f, 0.18f, paneFor(), kProcFrameDark, false, 0,
+                    0);
+          }
+          continue;
+        }
+        if (shop) {  // the shop's upper floors: single windows without sills
+          window(1.4f, 0.8f, 2.5f, 0.18f, 1, 0, false, paneFor());
+          continue;
+        }
+        if (ground && isDoorBay(k)) {  // a front door in its recess, a lit fanlight over it, a lamp beside it, a step
           const float dw = 1.4f, s0 = (bw - dw) * 0.5f;
-          opening(bd, w, wallMat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0.0f, 2.45f, 0.30f, kProcDoor, kProcFrame, false, 0, 0);
+          opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0.0f, 2.45f, 0.30f, kProcDoor, frameMat, false, 0, 0);
           bd.quad(kProcGlassLit0, w.at(b0 + s0 + 0.1f, y0 + 2.55f, -0.01f), w.at(b0 + s0 + dw - 0.1f, y0 + 2.55f, -0.01f),
                   w.at(b0 + s0 + dw - 0.1f, y0 + 2.9f, -0.01f), w.at(b0 + s0 + 0.1f, y0 + 2.9f, -0.01f), w.n, 0, 0, 1, 0.3f);
           const Vec3 c = w.at(b0 + s0 + dw + 0.35f, y0, -0.1f);
@@ -493,10 +610,26 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
                   w.at(b0 + s0 + dw + 0.15f, y0 + 0.15f, -0.45f), w.at(b0 + s0 - 0.15f, y0 + 0.15f, -0.45f), w.n, 0, 0, 1, 0.1f);
           continue;
         }
-        const float ww = std::min(1.5f, bw - 0.8f), s0 = (bw - ww) * 0.5f;
-        opening(bd, w, wallMat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + ww, 0.85f, 2.65f, 0.22f, paneFor(), kProcFrame, true, 1, 1);
+        switch (winStyle) {  // the house's windows
+          case 0: window(1.5f, 0.85f, 2.65f, 0.22f, 1, 1, true, paneFor()); break;  // cross windows
+          case 1: window(1.15f, 0.6f, 2.8f, 0.24f, 1, 1, true, paneFor()); break;    // tall ones with a transom
+          case 2: window(1.9f, 0.95f, 2.55f, 0.2f, 2, 0, true, paneFor()); break;    // wide ones
+          default:                                                                    // pairs
+            if (bw < 3.0f) {
+              window(1.2f, 0.8f, 2.7f, 0.22f, 0, 1, true, paneFor());
+            } else {
+              const float hb = bw * 0.5f;
+              for (int p = 0; p < 2; ++p)
+                opening(bd, w, mat, uScale, vScale, y, b0 + hb * float(p), hb, y0, fh, (hb - 0.75f) * 0.5f, (hb + 0.75f) * 0.5f, 0.8f, 2.7f,
+                        0.22f, paneFor(), frameMat, true, 0, 1);
+            }
+        }
       }
+      if (cornice && f + 1 < floors.size()) band(w, len, -0.15f, len + 0.15f, y0 + fh - 0.12f, 0.22f, 0.15f, kProcFrame, kProcFrame);
     }
+    // the shop's fascia over its windows (its sign), the big store's sign high on its front
+    if (shop && facing && !bigBox) band(w, len, 0.1f, len - 0.1f, y + 3.3f, 0.75f, 0.18f, signMat, kProcTrim);
+    if (bigBox && facing && len > 8) band(w, len, len * 0.25f, len * 0.75f, top - 1.7f, 1.1f, 0.15f, signMat, kProcTrim);
   }
   // ---- the roof ----
   float minX = 1e30f, minZ = 1e30f, maxX = -1e30f, maxZ = -1e30f;
@@ -549,7 +682,21 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
     const float vTop = (top - y) / vScale, gu = std::max(1.0f, std::round(2.0f * half / bay));
     bd.tri(wallMat, B, C, m1, render::normalize(Vec3{C.z - B.z, 0, B.x - C.x}), 0, vTop, gu, vTop, gu * 0.5f, vTop + rh / vScale);
     bd.tri(wallMat, D, A, m0, render::normalize(Vec3{A.z - D.z, 0, D.x - A.x}), 0, vTop, gu, vTop, gu * 0.5f, vTop + rh / vScale);
+    // solar panels on the south-facing slope of some houses (flush over the tiles), no roof windows there
+    const int solarSide = (hashU(seed ^ 0x50a7u) % 100) < 40 ? (nAB.z >= nCD.z ? 0 : 1) : -1;
+    if (solarSide >= 0) {
+      const Vec3 e0 = solarSide ? C : A, e1 = solarSide ? D : B, nn = solarSide ? nCD : nAB;
+      const Vec3 along = render::normalize(e1 - e0);
+      Vec3 up = render::normalize(cross3(nn, along));
+      if (up.y < 0) up = up * -1.0f;
+      for (float sl = slope * 0.2f; sl + 1.6f < slope * 0.7f; sl += 1.7f)
+        for (float al = lr * 0.25f; al + 1.0f < lr * 0.75f; al += 1.05f) {
+          const Vec3 p0 = e0 + along * al + up * sl + nn * 0.05f;
+          bd.quad(kProcSolar, p0, p0 + along * 1.0f, p0 + along * 1.0f + up * 1.6f, p0 + up * 1.6f, nn, 0, 0, 1, 1);
+        }
+    }
     for (int side = 0; side < 2; ++side) {  // roof windows: framed panes just over the tiles, lit at night like windows
+      if (side == solarSide) continue;
       const Vec3 e0 = side ? C : A, e1 = side ? D : B, nn = side ? nCD : nAB;
       const Vec3 along = render::normalize(e1 - e0);
       Vec3 toRidge = render::normalize(cross3(nn, along));
@@ -573,9 +720,12 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   } else if (triangulate(o, tris)) {
     const int roofMat = hall ? kProcRoofMetal : kProcRoofFlat;
     const float ry = top + 0.02f, us = hall ? 6.0f : 8.0f;
+    // the roof's texture along the building (owner 2026-11-15: it did not follow the building's angle)
+    auto ru = [&](size_t k) { return (o[k].first * ux + o[k].second * uz) / us; };
+    auto rv = [&](size_t k) { return (o[k].first * vx + o[k].second * vz) / us; };
     for (auto& t : tris)
       bd.tri(roofMat, {o[t[0]].first, ry, o[t[0]].second}, {o[t[1]].first, ry, o[t[1]].second}, {o[t[2]].first, ry, o[t[2]].second}, {0, 1, 0},
-             o[t[0]].first / us, o[t[0]].second / us, o[t[1]].first / us, o[t[1]].second / us, o[t[2]].first / us, o[t[2]].second / us);
+             ru(t[0]), rv(t[0]), ru(t[1]), rv(t[1]), ru(t[2]), rv(t[2]));
     const float ph = hall ? 0.5f : 0.8f;  // the parapet, its cap and inner face
     for (size_t i = 0; i < o.size(); ++i) {
       const auto [ax, az] = o[i];
@@ -595,7 +745,30 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
       s0 = std::min(s0, s), s1 = std::max(s1, s), t0 = std::min(t0, t), t1 = std::max(t1, t);
     }
     const float area = float(signedArea(o));
-    if (hall) {  // roof lanterns: glazed ridges every 9 units across the hall, along its long side
+    // solar panels in rows along the building, each tilted toward the side facing south (+z)
+    auto solarRows = [&](int maxPanels) {
+      const float sv = vz >= 0 ? 1.0f : -1.0f;  // the panels' low edge toward +v·sv (the south-facing side)
+      int panels = 0;
+      for (float t = t0 + 2.0f; t < t1 - 1.5f && panels < maxPanels; t += 2.4f)
+        for (float s = s0 + 1.5f; s < s1 - 1.5f && panels < maxPanels; s += 1.9f) {
+          const float px = ux * s + vx * t, pz = uz * s + vz * t;
+          if (!fits(px, pz, 0.95f, 0.65f, 0.5f) || !freeAt(px, pz, 1.1f)) continue;
+          const float h0 = top + 0.25f, h1 = top + 0.9f;
+          auto P3 = [&](float a, float b, float hh) { return Vec3{px + ux * a + vx * b, hh, pz + uz * a + vz * b}; };
+          const Vec3 a = P3(-0.85f, -0.55f * sv, h1), b = P3(0.85f, -0.55f * sv, h1), c = P3(0.85f, 0.55f * sv, h0), e = P3(-0.85f, 0.55f * sv, h0);
+          Vec3 nn = render::normalize(cross3(b - a, c - a));
+          if (nn.y < 0) nn = nn * -1.0f;
+          bd.quad(kProcSolar, a, b, c, e, nn, 0, 0, 1, 1);
+          bd.quad(kProcTrim, {a.x, top, a.z}, {b.x, top, b.z}, b, a, render::normalize(Vec3{-vx * sv, 0, -vz * sv}), 0, 0, 1, 0.2f);
+          bd.tri(kProcTrim, {a.x, top, a.z}, a, {e.x, top, e.z}, {-ux, 0, -uz}, 0, 0, 0, 0.2f, 0.2f, 0);
+          bd.tri(kProcTrim, {b.x, top, b.z}, b, {c.x, top, c.z}, {ux, 0, uz}, 0, 0, 0, 0.2f, 0.2f, 0);
+          taken.push_back({px, pz, 0.9f});
+          ++panels;
+        }
+    };
+    const bool hallSolar = hall && ((var >> 12) & 1);
+    if (hallSolar) solarRows(400);
+    if (hall && !hallSolar) {  // roof lanterns: glazed ridges every 9 units across the hall, along its long side
       for (float t = t0 + 6.0f; t < t1 - 5.0f; t += 9.0f) {
         const float sl = (s1 - s0) - 8.0f;
         if (sl < 6) break;
@@ -650,7 +823,8 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
           taken.push_back({cx, cz, 2.1f});
           break;
         }
-      if ((hashU(seed ^ 0x5017u) % 100) < 40) {  // solar panels in rows, tilted to the south (+z)
+      if ((hashU(seed ^ 0x5017u) % 100) < 45) solarRows(120);
+      if (false) {  // (the old world-aligned rows)
         int panels = 0;
         for (float pz = minZ + 2.0f; pz < maxZ - 1.5f && panels < 60; pz += 2.4f)
           for (float px = minX + 1.5f; px < maxX - 1.5f && panels < 60; px += 1.9f) {
@@ -717,9 +891,15 @@ void collectProcBuildings(Display& d, GridObj* grid, std::vector<render::DrawIte
   if (g.procBuildings.empty()) return;
   if (st.materials.empty()) {  // the textures, drawn once (in ProcMaterial order)
     const Tex glass = glassTex();
-    const Tex texs[kProcMaterialCount] = {hallWallTex(), rollerDoorTex(), plasterTex(), brickTex(), doorLeafTex(), gravelTex(), tilesTex(),
-                                          metalRoofTex(), plainTex(0.62f, 0.62f, 0.60f, 21), plainTex(0.90f, 0.89f, 0.86f, 22), glass, glass,
-                                          glass, glass, solarTex(), grilleTex()};
+    const Tex texs[kProcMaterialCount] = {
+        hallWallTex(), rollerDoorTex(),
+        plasterTex({0.86f, 0.80f, 0.68f}), plasterTex({0.86f, 0.71f, 0.46f}), plasterTex({0.74f, 0.77f, 0.80f}), plasterTex({0.86f, 0.66f, 0.58f}),
+        brickTex({0.58f, 0.27f, 0.20f}), brickTex({0.38f, 0.23f, 0.17f}), brickTex({0.78f, 0.65f, 0.44f}),
+        doorLeafTex(), gravelTex(), tilesTex(), metalRoofTex(), plainTex(0.62f, 0.62f, 0.60f, 21), plainTex(0.90f, 0.89f, 0.86f, 22),
+        plainTex(0.20f, 0.21f, 0.22f, 23), glass, glass, glass, glass, solarTex(), grilleTex(),
+        panelTex({0.80f, 0.80f, 0.78f}), panelTex({0.30f, 0.31f, 0.33f}), panelTex({0.74f, 0.66f, 0.54f}),
+        spandrelTex({0.24f, 0.25f, 0.27f}), spandrelTex({0.32f, 0.38f, 0.46f}), spandrelTex({0.42f, 0.34f, 0.24f}),
+        signTex({0.70f, 0.12f, 0.10f}), signTex({0.10f, 0.25f, 0.60f}), signTex({0.08f, 0.45f, 0.20f}), signTex({0.85f, 0.62f, 0.08f})};
     for (int k = 0; k < kProcMaterialCount; ++k) {
       render::GpuMaterial m;
       m.flags = render::kMatDiffuseMap;
@@ -741,6 +921,11 @@ void collectProcBuildings(Display& d, GridObj* grid, std::vector<render::DrawIte
     const float e = smooth01(kOn[k], kOn[k] + 0.2f, night) * (k == 2 ? 0.40f : 0.52f);  // (× 2.5 at night: the scene's emission scale)
     render::GpuMaterial& m = st.materials[size_t(kProcGlassLit0 + k)];
     m.emission[0] = 1.0f * e, m.emission[1] = 0.78f * e, m.emission[2] = 0.45f * e;
+  }
+  for (int k = 0; k < 4; ++k) {  // the shop signs lit too
+    const float e = smooth01(0.12f, 0.32f, night) * 0.35f;
+    render::GpuMaterial& m = st.materials[size_t(kProcSign + k)];
+    for (int c = 0; c < 3; ++c) m.emission[c] = e;
   }
   if (!st.built || st.version != grid->procVersion || st.generation != grid->generation) {
     if (st.built) d.r3d().destroy(st.mesh);

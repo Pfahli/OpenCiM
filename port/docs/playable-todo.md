@@ -383,7 +383,14 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   groups one after another (emission from night01, night_lights.h vehicleNight01). Flat roofs: gravel with tar seams,
   drains and moss, glazed skylights (lit at night), solar panels in rows tilted south, a stair house with a door, air
   conditioners with a fan grille, vent pipes; halls: glazed roof lanterns with glazing bars; gabled roofs: framed roof
-  windows, brick chimneys. Not yet: shadows, picking and the bulldozer, jobs
+  windows, brick chimneys. Types and variety (owner 2026-11-15: warehouses only in industrial areas, offices and modern
+  shops in town, different facades): halls only for industry, farms and railways; workplaces become office blocks
+  (spandrels with ribbon windows or cladding with single windows, a glazed lobby), commercial buildings shops (lit shop
+  windows and a coloured fascia sign below; a low one from 700 cells a big store with a glass entrance and its sign), a
+  third of the big town houses a business house with shops below, a third of those from four levels an office. Houses:
+  4 plaster tints, 3 brick colours, cross / tall / wide / paired windows, cornices, white or dark frames. Solar panels on
+  45 % of flat roofs, half the halls, 40 % of gabled roofs (south slope); roof textures and panel rows follow the
+  building; the walls reach 12 units into the ground (no floating wing on a slope). Not yet: shadows, picking and the bulldozer, jobs
   and homes in the simulation; a reload of a saved map with them not yet seen (the section is written: checked in the
   autosave).
   Open: tram stops on beds

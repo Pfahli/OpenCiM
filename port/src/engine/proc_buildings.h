@@ -34,9 +34,14 @@ bool procBuildingFromBytes(const std::vector<uint8_t>& raw, GridData::ProcBuildi
 
 // the materials' indices (submesh materials of the mesh): walls, doors, roofs, trim (grey) and frames (white), glass
 // dark and in three lit groups (switching on at dusk one after another), solar panels, an air conditioner's grille
-enum ProcMaterial { kProcHall, kProcHallDoor, kProcPlaster, kProcBrick, kProcDoor, kProcRoofFlat, kProcRoofTiles, kProcRoofMetal,
-                    kProcTrim, kProcFrame, kProcGlass, kProcGlassLit0, kProcGlassLit1, kProcGlassLit2, kProcSolar, kProcGrille,
-                    kProcMaterialCount };
+// (2026-11-15: facade variants as texture variants: plaster in 4 tints, brick in 3, cladding panels and office spandrels
+// in 3 each, shop signs in 4 colours; the built-in shader has no per-part tint)
+enum ProcMaterial { kProcHall = 0, kProcHallDoor = 1, kProcPlaster = 2 /* 4 */, kProcBrick = 6 /* 3 */, kProcDoor = 9, kProcRoofFlat = 10,
+                    kProcRoofTiles = 11, kProcRoofMetal = 12, kProcTrim = 13, kProcFrame = 14, kProcFrameDark = 15, kProcGlass = 16,
+                    kProcGlassLit0 = 17, kProcGlassLit1 = 18, kProcGlassLit2 = 19, kProcSolar = 20, kProcGrille = 21,
+                    kProcPanel = 22 /* 3 */, kProcSpandrel = 25 /* 3 */, kProcSign = 28 /* 4 */, kProcMaterialCount = 32 };
+// GridData::ProcBuilding::style: 0 hall (industry), 1 plaster, 2 brick, 3 office, 4 shop (shop windows and signs on the
+// ground floor; a low one is a big box store); the facade variant (tint, windows, cornices, base) from the outline's hash
 // a building's mesh in world space (appended): walls, doors, roof and its details
 void buildProcBuildingMesh(const GridData::ProcBuilding& b, render::MeshData& out);
 // the map's procedural buildings as draw items (one mesh, rebuilt when GridObj::procVersion moves)
