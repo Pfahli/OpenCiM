@@ -319,6 +319,25 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   tools/make-satellite-icon.ps1) lays it on the ground or takes it away: one mesh over the cells whose ground is drawn
   (not under the cover of items and curves), just over the terrain and under the streets' asphalt, unlit and three
   quarters opaque. It belongs to the map it was imported onto (GridObj::generation) and is not saved.
+  Generated places (owner 2026-11-15: templates for common structures with variables like their size; osm.cpp
+  buildMarket, buildPlayground, buildPitch, buildAllotments, buildSeating, buildTerrace): laid out in the place's minimum
+  rectangle and scaled to it, a prop only where its turned footprint lies inside and its cells are free.
+  - Markets (amenity=marketplace areas, squares whose name holds "markt"/"market"/"march", squares with a marketplace
+    point): rows of stands back to back with 3-cell aisles, cross aisles, tables with parasols, baskets, signs at the
+    aisles' ends, a big tent at one end of large ones; OSM's fountains and monuments keep 4.5 cells free. A marketplace
+    point on no square gets a small market (14 × 10 cells).
+  - Playgrounds (leisure=playground areas, points: 8 × 8 cells): merry-go-round from 150 cells, sandboxes, pairs of swings,
+    a sand pile, each farthest from the others; benches facing in, litter bins, bushes and trees along the edge.
+  - Pitches (leisure=pitch by sport): tennis courts and basketball fields side by side, their players over every other; a
+    football pitch only as the game's whole field.
+  - Allotments (landuse=allotments): rows of plots 7 × 9 cells behind painted paths, each with a shed, a tree, flower
+    beds, sometimes a gnome or a swing, hedges between the plots.
+  - Beer gardens (amenity=biergarten; a point gets 10 × 8 cells beside it) and outdoor seating areas: tables in a grid,
+    trees (beer gardens, with their sign toward the street) or parasols.
+  - Terraces before cafes, restaurants, pubs and fast food (OSM's outdoor_seating, else cafes always, restaurants and
+    pubs every other one): from the place toward its street, on the first free ground two tables deep, a row of tables
+    (parasols between a cafe's, flower pots or a pub's sign at the ends).
+  - Single props: vending machines, taxi ranks, recycling containers, shelters, picnic tables.
   Open: tram stops on beds
   (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
   off a bed (a merged track's kept stretch overlaps the bed instead of a switch).
