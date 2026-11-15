@@ -913,8 +913,29 @@ uint32_t keyedFootpathTexture(VM& vm, int paved = 0) {
     const float t = std::clamp((b / std::max({r, gr, 1.0f}) - 0.40f) / 0.22f, 0.0f, 1.0f);
     rgba[i + 3] = uint8_t(255.0f * t * t * (3.0f - 2.0f * t));
   }
-  // the paved one: slabs a sixteenth of the texture (about 0.4 units on a path piece) with joints, a kerb where the path's
-  // alpha falls off (its edge), the same alpha
+  // the paved one: the gravel path's outline smoothed (its alpha blurred over 7 texels, cut at a half: a clean edge
+  // instead of the gravel's fraying, owner 2026-11-15), slabs about 0.4 units with joints, a narrow kerb line inside
+  // the edge
+  std::vector<float> soft(size_t(w) * size_t(h));
+  for (size_t i = 0; i < soft.size(); ++i) soft[i] = rgba[i * 4 + 3] / 255.0f;
+  {
+    const int R = 7;
+    std::vector<float> tmp(soft.size());
+    for (int pass = 0; pass < 2; ++pass) {
+      for (int y = 0; y < h; ++y)  // along x (wrapping: the texture repeats)
+        for (int x = 0; x < w; ++x) {
+          float acc = 0;
+          for (int k = -R; k <= R; ++k) acc += soft[size_t(y) * size_t(w) + size_t((x + k + w) % w)];
+          tmp[size_t(y) * size_t(w) + size_t(x)] = acc / float(2 * R + 1);
+        }
+      for (int y = 0; y < h; ++y)  // along y
+        for (int x = 0; x < w; ++x) {
+          float acc = 0;
+          for (int k = -R; k <= R; ++k) acc += tmp[size_t((y + k + h) % h) * size_t(w) + size_t(x)];
+          soft[size_t(y) * size_t(w) + size_t(x)] = acc / float(2 * R + 1);
+        }
+    }
+  }
   std::vector<uint8_t> slabs(rgba);
   auto hash = [](uint32_t v) {
     v ^= v >> 16, v *= 0x7feb352d, v ^= v >> 15, v *= 0x846ca68b, v ^= v >> 16;
@@ -924,15 +945,16 @@ uint32_t keyedFootpathTexture(VM& vm, int paved = 0) {
   for (int y = 0; y < h; ++y)
     for (int x = 0; x < w; ++x) {
       uint8_t* q = slabs.data() + (size_t(y) * size_t(w) + size_t(x)) * 4;
-      const float a = q[3] / 255.0f;
+      const float a = soft[size_t(y) * size_t(w) + size_t(x)];
       const int sx = (x + ((y / cell) & 1) * cell / 2) / cell, sy = y / cell;  // a running bond
       const bool joint = (x + ((y / cell) & 1) * cell / 2) % cell == 0 || y % cell == 0;
       const float shade = 0.92f + 0.08f * float(hash(uint32_t(sx) * 92821u ^ uint32_t(sy) * 68917u) & 255) / 255.0f;
       float r = 0.63f * shade, g = 0.62f * shade, b = 0.59f * shade;
       if (joint) r *= 0.78f, g *= 0.78f, b *= 0.78f;
-      if (a < 0.9f) r = g = 0.47f, b = 0.46f;  // the kerb along the edge
+      if (a < 0.58f) r = g = 0.50f, b = 0.49f;  // the kerb line along the edge
       q[0] = uint8_t(r * 255), q[1] = uint8_t(g * 255), q[2] = uint8_t(b * 255);
-      q[3] = uint8_t(std::min(255.0f, a * 1.25f * 255.0f));  // (a little wider: the kerb shows whole)
+      const float e = std::clamp((a - 0.46f) / 0.04f, 0.0f, 1.0f);  // the edge, cut at a half
+      q[3] = uint8_t(255.0f * e);
     }
   for (int k = 0; k < 2; ++k) {
     gl::GenTextures(1, &tex[k]);
@@ -1202,7 +1224,10 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           m.flags |= kMatAlphaTest;
           GpuMaterial mp = m;
           if (!m.textures.empty()) m.textures[0] = keyedFootpathTexture(vm, 0), mp.textures[0] = keyedFootpathTexture(vm, 1);
+          m.depthOffset = mp.depthOffset = -1.0f;
           tc.pathMaterials = {m, mp};
+          // (owner 2026-11-15: the paths stood too high) 0.2 down: just over the ground levelled 0.25 under them
+          for (size_t v = 1; v < paths.positions.size(); v += 3) paths.positions[v] -= 0.2f;
           if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, paths, Mat4(), tc.pathMaterials, true);
           upload(paths, tc.paths, tc.pathsBuilt);
         }
