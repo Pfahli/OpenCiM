@@ -54,6 +54,7 @@ The tool refuses a road that the junction would use up (an arm shorter than the 
 | metro, elevated | 6 | – | 20 | bent `metro_elevated_basic`, pillars under every joint; ground left as it is |
 | railway (double track) | 6 | – | 20 | bent `track_double_basic`; track tab of the traffic menu |
 | express road | 30 | 3 (±5, ±9, ±13) | 30 | bent `road_express_basic`, median, no pavement; express tab; joins only express roads, smoothly (no junctions), no pedestrians; bridges with `bridge_rexpress_gap` |
+| ramp | 6 | 1 on the centre line, used both ways (as the game's) | 12 | bent `road_ramp_basic`; express tab; joins roads at junctions and express roads at their entries and exits (below); elevated: `ramp_elevated_basic`; no pedestrians |
 
 ### Bridges (curves)
 
@@ -73,6 +74,54 @@ A curve can be a bridge (`CurveRoad::bridge = 1`). It is meant for the OSM impor
   `REGS_TEST_CURVE_BRIDGE=1`.
 - Checked (2026-11-13): small-road, large-road and avenue bridges (spans, parapets, pillar posts) over the S-curve; the
   OSM import's Saalbach bridge in Bruchsal.
+- Abutments (2026-11-15): a bridge's ends that do not continue on another bridge curve (on land: a road, a junction, a
+  free end) take the kind's end span instead of the gap span (`bridge_rsmall_end`, `_rlarge_end`, `_ravenue_end`,
+  `_tdouble_end`, `_rexpress_end`): its abutment wall on the land side (the template's local −x), as the game's
+  bridge tool puts it (`curveBridgeEnd`). Checked on a large-road bridge.
+
+### Tunnels (curves)
+
+A curve can be a tunnel (`CurveRoad::bridge = 2`, 2026-11-15): the kind's tunnel tube bent along it (`tunnel_rsmall_gap`,
+`_rlarge_gap`, `_ravenue_gap`, `_tdouble_gap`, `_rexpress_gap`) and its portal (`tunnel_*_end`: the mouth with its
+frame 6 high on the template's −x side, wing walls falling to the open road) on the first and last piece where the
+tunnel does not continue on another tunnel curve.
+- The road runs at the curve's own heights (y0 to y1), like a bridge's deck. Only the portals cut the ground: under
+  their pieces it is levelled to the road and covered; a cell behind each mouth (and beside the road there) it comes
+  down to the portal's top, so the frame stands clear in front of the hill. Over the tube the ground stays as it is: no
+  cover, no walk map, items over it are not in the way (`curveTunnelOpen`).
+- Editor: the small-road, large-road, avenue and express tabs get a tunnel button (the tab's tunnel icon): the curve
+  tool in curve mode laying tunnels (`regsCurveToolBridge(2)`). The ground over the tube must stand at least 6 over
+  the road (the portal's height), or the preview is red. Test switches `REGS_TEST_CURVE_BRIDGE=2`, `REGS_TEST_HILL`.
+- Lanes are the kind's as on any curve.
+- Checked (2026-11-15): a large-road tunnel through a test hill (both portals, the frames clear, the hill whole over the
+  tube).
+
+### Map edge
+
+A curve end on the map's border leaving it straight out (within 0.5 units of the edge, within 18° of the outward
+direction; `curveEndOffMap`) leads off the map, as the game's map-edge pieces (`road_*_porta/b`, `road_small_port`,
+`track_double_port`, which are plain road with EXTERNAL lanes) do: no dead end there, and the lanes starting on the
+border are the traffic's way in (START), those ending there its way out (END), both EXTERNAL. Roads, express roads and
+the railway (`curveKindLeavesMap`). The curve tool snaps an end within the road's half width + 6 of the border onto it.
+Checked (2026-11-15): a large road to the east edge; in a game the traffic sources take its two lanes in and out, and a
+route runs in from the edge, round the far dead end and out (`REGS_DEBUG_SIM=1` logs "traffic sources").
+
+### Express ramps
+
+Ramps (curve kind 8) join an express curve where the game's entry and exit pieces would be (`RampPort`, 2026-11-15).
+Every express piece has four ports: on each side an entry (half a block before the piece's centre, in the traffic's
+direction on that side) and an exit (half a block after it), 18 out from the centre line, the ramp meeting the road at
+45°. A ramp end on a port turns that express piece into `road_express_enter` or `road_express_exit`, bent along the
+curve (`rampPortBend`: the entry piece's road lies 3 to −z of its origin, the exit's 3 to +z; on the left side, and for
+exits on the right, turned round); its slip lane joins or leaves the outer lane of that side, and the ramp's lane
+links into it. One ramp per express piece.
+- Editor: the express tab ends with a ramp and an elevated ramp button (the game's icons), the curve tool in curve mode.
+  A ramp end snaps to the nearest free port the ramp reaches going on (an entry from behind, an exit from ahead).
+- Ramps join roads (small, large, avenue) at junction points like a road (no zebra crossing over a ramp arm).
+- Checked (2026-11-15): an entry and an exit on a straight express road (lanes linked, "curved roads: ramp entry/exit"
+  with `REGS_DEBUG_CURVES=1`); test cars (`REGS_TEST_CURVE_CARS`) drove down the ramp and merged into the outer lane.
+- Open: the elevated ramp's pillars (`ramp_elevated_pillar`, placed a cell under the deck every 24 units) do not show
+  yet; ramps on curved express pieces and express bridges are not checked.
 
 ### Tracks
 
@@ -270,12 +319,15 @@ reads the cell flags only (a cut cell counts as its flags say).
 | `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>`, `REGS_TEST_CURVE_METRO=<n>` | n cars / trams / metro cars on random trips between curve lanes (engine/snowplows.cpp) |
 | `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |
+| `REGS_TEST_HILL=x,z,r,h` | at map load: a smooth hill of radius r and height h around world point x, z (unlocked corners; tunnel tests, engine/grid.cpp) |
+| `--at N:tilt:<t>`, `N:zoom:<z>`, `N:dir:<n>` | test runs: the camera's tilt (screenshot mode), zoom and direction (app/main.cpp) |
 | `REGS_TEST_PAINT_AREA=1` or `=x,z` | at map load: a turned car park in asphalt, a round square and an L in paving stones around the map centre (or cell x, z), with cut edges (engine/grid.cpp) |
 | `REGS_DUMP_TEMPLATES=a,b` (`REGS_DUMP_VERTICES=1`) | a template's size, mesh bounds and UVs per material, paths |
 
 ## 4. Not done
 
-Tunnels on curves, express-road junctions and ramps, abutments at bridge ends; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
+Express roads splitting or joining each other (interchanges), the express-to-avenue transition piece; the elevated
+ramp's pillars; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 
 ## 5. Files
