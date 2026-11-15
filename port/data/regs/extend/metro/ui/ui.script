@@ -1,0 +1,11 @@
+// ReGS extension of metro/ui/ui.script (used as installed; see VM::extendSource): the status message box (the panel in
+// the middle of the screen for three seconds) stays away while an autosave runs (MAIN.$regsQuietStatus, set by the
+// game's and the editor's autosave: owner's request 2026-11-15, the box every few minutes got in the way).
+//@rename showStatusMessage regsBaseShowStatusMessage
+
+//@base
+
+function showStatusMessage($text) {
+  if (MAIN.$regsQuietStatus : false) return;
+  regsBaseShowStatusMessage($text);
+}

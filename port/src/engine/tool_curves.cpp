@@ -22,6 +22,7 @@
 
 #include "core/log.h"
 #include "core/text.h"
+#include "vfs/vfs.h"
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/grid.h"
@@ -495,11 +496,11 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
 }
 
 // ---- roundabouts (modes 4: one lane, 5: two lanes; owner's request 2026-11-07) ----
-// A ring of four quarter-circle curves (Bézier handles 0.5523·r), one-way counter-clockwise as seen from above (right-hand
+// A ring of four quarter-circle curves (BÃ©zier handles 0.5523Â·r), one-way counter-clockwise as seen from above (right-hand
 // traffic), centre and radius picked with two clicks. Roads join it like any curve: ending on the ring cuts it there
 // and makes a junction, whose lanes keep to the ring's direction.
 std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single) {
-  static const float dx[5] = {1, 0, -1, 0, 1}, dz[5] = {0, -1, 0, 1, 0};  // east, north, west, south (north is −z)
+  static const float dx[5] = {1, 0, -1, 0, 1}, dz[5] = {0, -1, 0, 1, 0};  // east, north, west, south (north is âˆ’z)
   std::vector<CurveRoad> arcs;
   for (int q = 0; q < 4; ++q) {
     CurveRoad c;
@@ -1059,7 +1060,7 @@ std::vector<int> ringOf(const GridData& g, int k) {
 struct Wrap {
   ToolMode orig;
   int mode = 0;
-  int curve = -1;       // the curve pointed at, −1 for none (the original tool runs)
+  int curve = -1;       // the curve pointed at, âˆ’1 for none (the original tool runs)
   bool armed = false;   // pressed on it
   bool ok = false;
   CurveRoad after;      // the curve as the click would leave it
@@ -1412,6 +1413,18 @@ void registerCurveTool(VM& vm) {
       g_state.bridge = x.type() == VT::Int ? std::clamp(v.toInt(x), 0, 2) : v.truthy(x) ? 1 : 0;
     }
     return Value::integer(g_state.bridge);
+  }, 0, 1);
+  // regsAsyncWrites(on): file writes go out on a background thread (the editor's autosave; Vfs::asyncWrites)
+  implementGlobal(vm, u"regsAsyncWrites", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc > 0) v.vfs().asyncWrites = v.truthy(a[0]);
+    return Value::boolean(v.vfs().asyncWrites);
+  }, 0, 1);
+  // regsToolBusy(player): a tool is in the middle of a drag (resetTool would cancel it): the autosave waits
+  implementGlobal(vm, u"regsToolBusy", [](VM& v, Object*, int argc, const Value* a) {
+    bool busy = false;  // (the curve tool keeps its road through resetTool: only the drags count)
+    if (argc > 0)
+      if (Object* p = v.resolve(a[0]).object()) busy = busy || toolState(p).inProgress;
+    return Value::boolean(busy);
   }, 0, 1);
   // regsCurveToolInfo(): [step, length, angle in degrees, fits (0/1), a curve under the cursor (0/1)] for the panel
   implementGlobal(vm, u"regsCurveToolInfo", [](VM&, Object*, int, const Value*) {

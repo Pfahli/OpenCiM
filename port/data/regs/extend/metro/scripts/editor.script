@@ -74,14 +74,23 @@ function regsAutosave() {
   $s.exportVariablesTo($out+".scenario", "locationSetup", "currentDate", "cellSize", "cityDescriptionShort", "regsPackages",
                        "regsSelectedPackages", "regsAutosaveStamp", "regsAutosaveLabel");
   delete $s;
-  MAIN.$ui.showStatusMessage($rs.$regs_autosave_status);
+  // no message box (owner's request 2026-11-15: the popup every few minutes got in the way); the log has the line
   delete $rs;
 }
 
+// the files go out on a background thread, and the save waits while a tool is in the middle of a drag (the
+// save cancels it) - checked again every 5 seconds
 $regsAutosaveThread = thread :: {
   loop {
     wait $regsAutosaveSeconds;
-    if (MAIN.$settings.$regsEditorAutosave : true) regsAutosave();
+    while (regsToolBusy(MAIN.$player)) wait 5.0;
+    if (MAIN.$settings.$regsEditorAutosave : true) {
+      MAIN.$regsQuietStatus = true;
+      regsAsyncWrites(true);
+      regsAutosave();
+      regsAsyncWrites(false);
+      MAIN.$regsQuietStatus = false;
+    }
   }
 };
 

@@ -236,5 +236,6 @@ int main(int argc, char** argv) {
     std::printf("%zu distinct unimplemented natives called:\n", miss.size());
     for (auto& [n, k] : miss) std::printf("  %6d  %s\n", n, k.c_str());
   }
+  regs::Vfs::waitForWrites();  // the editor's autosave writes in the background
   return 0;
 }
