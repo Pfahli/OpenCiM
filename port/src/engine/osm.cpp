@@ -989,6 +989,7 @@ struct ImportData {
   // paving stones (2); rings in corner coordinates (= cells), several even-odd
   // (type | 0x100: buildings may stand on it, a pedestrian street's band)
   std::vector<std::pair<std::vector<PaintRing>, int>> paintAreas;
+  std::vector<std::string> paintWhy;  // per paint area: what OSM feature made it (REGS_DEBUG_OSM_PAINT)
   std::vector<std::vector<std::pair<double, double>>> tramLines;  // railway=tram (cells): the streets they run on get tracks
   std::vector<char> tramBridges;                                   // per tram line: on a bridge
   // public beaches (natural=beach, leisure=beach_resort; not access=private): their rings (cells)
@@ -1550,6 +1551,9 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             if (pt.x >= 1 && pt.z >= 1 && pt.x < W - 1 && pt.z < L - 1) data->points.push_back(pt);
           };
           const bool openBeerGarden = am == "biergarten" && tags.str("building").empty();
+          const size_t paintBefore = data->paintAreas.size();
+          const std::string why = type + " " + std::to_string(uint64_t(el.num("id"))) + " " + (square ? "square" : am.empty() ? hw : am) +
+                                  " area:highway=" + tags.str("area:highway") + " place=" + tags.str("place") + " name=" + tags.str("name");
           if (closed && square) {
             data->paintAreas.push_back({rings, 2});
             if (type == "way") {
@@ -1611,6 +1615,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           } else if (int e = eateryKind(am)) {  // a restaurant's building (it stays a building below)
             if (outdoorSeating(tags, e, uint64_t(el.num("id")))) centroidPoint(19, e);
           }
+          while (data->paintWhy.size() < data->paintAreas.size()) data->paintWhy.push_back(data->paintWhy.size() < paintBefore ? "?" : why);
           if (square || am == "parking" || am == "marketplace" || am == "fountain" || hw == "service" || le == "playground" ||
               le == "pitch" || le == "outdoor_seating" || le == "picnic_table" || lu == "allotments" || openBeerGarden ||
               !tags.str("area:highway").empty())
@@ -1997,6 +2002,8 @@ struct Apply {
   std::vector<Drag> drags;  // alleys
   std::map<std::pair<int, int>, uint32_t> network;
   std::vector<uint8_t> used;  // cells taken by roads, buildings, trees, water
+  int buildingsLeft = 0;      // OSM buildings no template went into
+  int footprintsFilled = 0;   // footprints filled with several buildings (fillFootprint)
   std::vector<int> made;
   Object* timeline = nullptr;
   bool gridStreets = false;
@@ -4153,7 +4160,9 @@ bool placeTemplate(VM& vm, GridObj* grid, Apply& a, const std::vector<TplArea>& 
   int placed = 0;
   if (paintOut && !f.t->paint.empty()) {  // the template's pavement: its outlines per paint, turned onto the target
     std::map<int, std::set<std::pair<int, int>>> byType;
-    for (auto& [cell, t] : f.t->paint) byType[t - 1].insert(cell);
+    // (one paving for all of a yard, the band's along the houses: the templates' mix of concrete, checker and plates made
+    // random patches; owner 2026-11-15)
+    for (auto& [cell, t] : f.t->paint) byType[2].insert(cell), (void)t;
     for (auto& [type, cells] : byType) {
       std::vector<PaintRing> rings = traceCells(cells);
       for (PaintRing& r : rings)
@@ -5051,7 +5060,7 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, Painter& 
   std::set<size_t> paved;
   auto groundOk = [&](size_t i) { uint8_t u = a.used[i]; return u == 0 || u == 4 || u == 6; };
   for (auto& band : a.yardBands)
-    for (size_t i : painter.paint({band}, 0, groundOk)) paved.insert(i);
+    for (size_t i : painter.paint({band}, 2, groundOk)) paved.insert(i);  // paving stones, as the templates' (2026-11-15)
   for (auto& sd : a.yardSeeds) {
     int sx = int(std::floor(sd.first)), sz = int(std::floor(sd.second));
     if (sx < 1 || sz < 1 || sx >= W - 1 || sz >= L - 1 || seen[size_t(sz) * size_t(W) + size_t(sx)] || at(sx, sz)) continue;
@@ -5469,6 +5478,102 @@ void placeStations(VM& vm, GridObj* grid, Apply& a, const std::vector<StationIn>
   }
 }
 
+// a footprint no single template fitted on its free cells (owner 2026-11-15: big buildings were missing, their ground
+// painted as yards): filled with as many buildings of its kind as fit, the largest first, turned to the footprint and
+// facing its street; what stays empty of it is kept from the yards' decoration (used 8)
+int fillFootprint(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
+                  std::map<std::string, std::vector<Candidate>>& cache) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  PlaceFrame f;
+  if (b.pts.size() < 3 || !placeFrame(b.pts, f) || f.len < 2 || f.wid < 2) return 0;
+  static const std::map<std::string, std::vector<std::string>> kKinds = {
+      {"residential", {"residential", "blockhouses"}}, {"blockhouses", {"blockhouses", "residential"}},
+      {"commercial", {"commercial", "workplace", "blockhouses"}}, {"workplace", {"workplace", "commercial"}},
+      {"industry", {"industry", "workplace"}}, {"government", {"government", "workplace", "commercial", "blockhouses"}},
+      {"farm", {"farm", "residential"}}, {"railway", {"railway", "industry"}}};
+  std::vector<std::pair<int, Candidate>> ranked;  // the footprint's own kind first, then its neighbours; the largest first
+  auto kk = kKinds.find(b.category);
+  int rank = 0;
+  for (const std::string& c : kk == kKinds.end() ? std::vector<std::string>{b.category, "residential"} : kk->second) {
+    auto it = cache.find(c);
+    if (it == cache.end()) it = cache.emplace(c, categoryTemplates(vm, grid, buildingsList, c)).first;
+    for (const Candidate& k : it->second)
+      if (k.w * k.l >= 6 && std::min(k.w, k.l) <= f.wid + 0.3 && std::max(k.w, k.l) <= f.len + 0.3) ranked.push_back({rank, k});
+    ++rank;
+  }
+  if (ranked.empty()) return 0;
+  std::stable_sort(ranked.begin(), ranked.end(), [](const auto& x, const auto& y) {
+    return x.first != y.first ? x.first < y.first : x.second.w * x.second.l > y.second.w * y.second.l;
+  });
+  std::vector<Candidate> cands;
+  for (auto& r : ranked) cands.push_back(r.second);
+  // the front: toward the nearest street, on the footprint's axes
+  double fx = -f.vx, fz = -f.vz;
+  if (const StreetIndex::P* st = g_streets.nearest(f.cx, f.cz, std::max(f.len, f.wid) * 0.5 + 6.0)) {
+    const double dx = st->x - f.cx, dz = st->z - f.cz, du = dx * f.ux + dz * f.uz, dv = dx * f.vx + dz * f.vz;
+    if (std::fabs(du) > std::fabs(dv)) fx = f.ux * (du > 0 ? 1 : -1), fz = f.uz * (du > 0 ? 1 : -1);
+    else fx = f.vx * (dv > 0 ? 1 : -1), fz = f.vz * (dv > 0 ? 1 : -1);
+  }
+  // the footprint's convex hull (a relation's outline comes as its outer ways' points one after another, no ring)
+  Ring hull;
+  {
+    auto pts = b.pts;
+    std::sort(pts.begin(), pts.end());
+    pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+    auto cross = [](std::pair<double, double> o, std::pair<double, double> p2, std::pair<double, double> q) {
+      return (p2.first - o.first) * (q.second - o.second) - (p2.second - o.second) * (q.first - o.first);
+    };
+    for (int pass = 0; pass < 2 && pts.size() >= 3; ++pass) {
+      const size_t start = hull.size();
+      for (size_t k = 0; k < pts.size(); ++k) {
+        auto q = pass ? pts[pts.size() - 1 - k] : pts[k];
+        while (hull.size() >= start + 2 && cross(hull[hull.size() - 2], hull.back(), q) <= 0) hull.pop_back();
+        hull.push_back(q);
+      }
+      hull.pop_back();
+    }
+  }
+  if (hull.size() < 3) return 0;
+  const double fa = polyArea(hull);
+  double filled = 0;
+  int made = 0;
+  auto inFoot = [&](double px, double pz, double ax, double az, double hl, double hw) {
+    const double bx = -az, bz = ax;
+    for (int i = 0; i < 4; ++i) {
+      const double sa = (i & 1 ? 1 : -1) * (hl - 0.3), sb = (i & 2 ? 1 : -1) * (hw - 0.3);
+      if (!insideRing(hull, px + ax * sa + bx * sb, pz + az * sa + bz * sb)) return false;
+    }
+    return true;
+  };
+  for (const Candidate& c : cands) {
+    if (made >= 24 || filled >= fa * 0.85) break;
+    for (int turn = 0; turn < 2 && made < 24; ++turn) {  // facing the street, else turned to face along it
+      const double hl = c.l * 0.5, hw = c.w * 0.5;  // the template's length along its front
+      const double ax = turn ? -fz : fx, az = turn ? fx : fz;
+      if (turn && c.w == c.l) break;
+      for (double tAt = -f.wid * 0.5 + 0.5; tAt <= f.wid * 0.5 - 0.5 && made < 24; tAt += 1.0)
+        for (double sAt = -f.len * 0.5 + 0.5; sAt <= f.len * 0.5 - 0.5 && made < 24; sAt += 1.0) {
+          auto [px, pz] = f.at(sAt, tAt);
+          if (!inFoot(px, pz, ax, az, hl, hw)) continue;
+          const std::string name = c.name;
+          int it = -1;
+          it = placeAt(vm, grid, a, name, px, pz, ax, az, [](uint8_t u) { return u == 0 || u == 8; }, 3);
+          if (it < 0) continue;
+          ++made, ++a.buildingsPlaced;
+          filled += double(c.w) * double(c.l);
+        }
+    }
+  }
+  // the rest of the footprint: no yard paint, no yard things
+  double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
+  for (auto& q : b.pts) x0 = std::min(x0, q.first), z0 = std::min(z0, q.second), x1 = std::max(x1, q.first), z1 = std::max(z1, q.second);
+  for (int z = std::max(1, int(z0)); z <= std::min(L - 2, int(z1)); ++z)
+    for (int x = std::max(1, int(x0)); x <= std::min(W - 2, int(x1)); ++x)
+      if (insideRing(hull, x + 0.5, z + 0.5) && a.used[size_t(z) * size_t(W) + size_t(x)] == 0) a.used[size_t(z) * size_t(W) + size_t(x)] = 8;
+  return made;
+}
+
 // a building lined up along its street, else (nothing fits that way) as OSM has it
 void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
                    std::map<std::string, std::vector<Candidate>>& cache) {
@@ -5476,6 +5581,27 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   int before = a.buildingsPlaced;
   placeBuildingAs(vm, grid, a, b, buildingsList, cache, true);
   if (a.buildingsPlaced == before) placeBuildingAs(vm, grid, a, b, buildingsList, cache, false);
+  if (a.buildingsPlaced == before && fillFootprint(vm, grid, a, b, buildingsList, cache) > 0) ++a.footprintsFilled;
+  if (a.buildingsPlaced == before) {
+    ++a.buildingsLeft;
+    if (const char* pd = std::getenv("REGS_DEBUG_OSM_PAINT")) {  // x,z,r (world): the buildings left out around there
+      float px = 0, pz = 0, pr = 60;
+      std::sscanf(pd, "%f,%f,%f", &px, &pz, &pr);
+      const GridData& g = *grid->data;
+      double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30, cx = 0, cz = 0;
+      for (auto& q : b.pts) x0 = std::min(x0, q.first), z0 = std::min(z0, q.second), x1 = std::max(x1, q.first), z1 = std::max(z1, q.second), cx += q.first, cz += q.second;
+      cx /= double(b.pts.size()), cz /= double(b.pts.size());
+      const double wx = (cx - g.width * 0.5) * g.cellSize, wz = (cz - g.length * 0.5) * g.cellSize;
+      int usedBy[8] = {0, 0, 0, 0, 0, 0, 0, 0}, cells = 0;
+      for (int z = std::max(0, int(z0)); z <= std::min(g.length - 1, int(z1)); ++z)
+        for (int x = std::max(0, int(x0)); x <= std::min(g.width - 1, int(x1)); ++x)
+          if (insideRing(b.pts, x + 0.5, z + 0.5)) ++cells, ++usedBy[std::min<int>(7, a.used[size_t(z) * size_t(g.width) + size_t(x)])];
+      if (std::hypot(wx - px, wz - pz) <= pr)
+        LOG_INFO("osm: building %llu left out at world %.0f, %.0f: %s%s %.0fx%.0f, %d cells (free %d road %d bld %d tree %d paved %d)",
+                 (unsigned long long)b.id, wx, wz, b.category.c_str(), b.terraced ? " terraced" : "", x1 - x0, z1 - z0, cells, usedBy[0],
+                 usedBy[2], usedBy[3], usedBy[4], usedBy[5]);
+    }
+  }
 }
 
 // debugging (REGS_DEBUG_OSM_RAILS=<png>): the map at a pixel per cell: water blue, OSM's railways (after merging) yellow,
@@ -6075,6 +6201,22 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       if (a.timeline) timelineRecordPatch(vm, a.timeline, 0, 0, W, L, heights, flags);
       if (a.timeline && !d.paintAreas.empty()) timelineRecordPaintEdges(vm, a.timeline, g, 0, 0, W, L);
       if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu areas painted with exact edges (%d cells)", d.paintAreas.size(), painted);
+      if (const char* pd = std::getenv("REGS_DEBUG_OSM_PAINT")) {  // x,z,r (world): the paint areas around there
+        float px = 0, pz = 0, pr = 60;
+        std::sscanf(pd, "%f,%f,%f", &px, &pz, &pr);
+        for (size_t k = 0; k < d.paintAreas.size(); ++k) {
+          double cx = 0, cz = 0, n = 0;
+          for (auto& r : d.paintAreas[k].first)
+            for (auto& q : r) cx += q.first, cz += q.second, ++n;
+          if (n == 0) continue;
+          const double wx = (cx / n - W * 0.5) * g.cellSize, wz = (cz / n - L * 0.5) * g.cellSize;
+          if (std::hypot(wx - px, wz - pz) > pr) continue;
+          double area = 0;
+          for (auto& r : d.paintAreas[k].first) area += polyArea(r);
+          LOG_INFO("osm: paint %zu type %x at world %.0f, %.0f, %.0f cells: %s", k, d.paintAreas[k].second, wx, wz, area,
+                   k < d.paintWhy.size() ? d.paintWhy[k].c_str() : "?");
+        }
+      }
     }
     a.stage = 2;
     a.next = 0;
@@ -6321,6 +6463,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         houses += n, made += n > 0;
       }
       LOG_INFO("osm: %d of %zu blocks built as rows of city houses (%d houses)", made, blocks.size(), houses);
+      a.buildingsLeft = 0, a.footprintsFilled = 0;
     }
     while (a.next < d.buildings.size()) {
       if (a.inRow[a.next]) {
@@ -6335,6 +6478,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       setP(7, float(a.next) / float(d.buildings.size()));
       return false;
     }
+    LOG_INFO("osm: %d footprints filled with several buildings, %d buildings left out", a.footprintsFilled, a.buildingsLeft);
     a.stage = 4;
     a.next = 0;
   }

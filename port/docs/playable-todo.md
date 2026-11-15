@@ -349,6 +349,12 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
     ground variant; parasols in loose rows two cells and more from the water, a beach bar (kiosk, tables), bins and a
     toilet along the edge, motorboats off the shore. Not yet seen in the game: the Overpass servers timed out for
     Warnemuende (2026-11-15). The game has no deck chairs or towels.
+  Patchy ground fixed (owner 2026-11-15): a footprint no single template fits on its free cells is filled with as
+  many buildings of its kind as fit (fillFootprint: the own kind first, the largest first, on the footprint convex hull,
+  facing the street or turned along it); what stays empty is kept from the yards (used 8), so yard paint no longer
+  covers missing buildings. Karlsruhe Marktplatz: 579 buildings instead of 479 (the town hall was left out). Yards are
+  paved with one paving (stones, 2) instead of the templates mix. REGS_DEBUG_OSM_PAINT=x,z,r logs the paint areas and
+  the buildings left out around a point.
   Open: tram stops on beds
   (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
   off a bed (a merged track's kept stretch overlaps the bed instead of a switch).
