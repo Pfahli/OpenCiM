@@ -414,7 +414,11 @@ at speed 3): every metro halt that is not a turn now has its middle within 1 uni
 turn itself the front stops at the platform node, because the half length would have to come from the turned leg
 (question 2 in §9). Pulling it straight on along the arrival track instead centred those halts too, but two trains
 shuttling between two such stations (`REGS_TEST_TERMINUS`) then met head-on on the track both legs share there and
-the lane claims locked both, so the port keeps the old turn.
+the lane claims locked both, so the port kept the old turn. Since 2026-11-15 the port pulls it straight on again
+(`VehicleState::turnNodes`): the turned leg starts on the opposite of the platform node or of a node or two past it
+(Vienna: one past it), and the turn now runs back over the opposites of the nodes driven onto. Vienna with line 3 cut
+to two end stations (8000 frames at speed 3): all 121 metro halts centred within 1 unit (48 of 96 were off before),
+57 turns, none failed, no jams; trams, buses and boats unchanged.
 
 ### 4.5 Condition, breakdowns, repair [obs]
 

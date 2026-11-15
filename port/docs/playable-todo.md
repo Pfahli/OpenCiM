@@ -115,9 +115,8 @@ modes (the editor's roads, terrain and paint tools come later):
   turn of the mesh). That also puts the waiters of underground and elevated metro stations on their platforms (they
   stood at street level), reached by the stations' stairs. Cim2 not re-measured since (was 1.7 %). Left from before:
   the sunken park's stairs prop (no walk map, blocks its cell), a hotel enclosed by bushes.
-- [ ] Metro trains at the turn of a line (end stations) stop with their front at the platform instead of their
-  middle (`docs/simulation/transport.md` §4.4, port note); all other halts are centred since the leg after a turn
-  pulls its half length too.
+- [x] Metro trains at the turn of a line (end stations) stop with their middle at the platform (2026-11-15: straight on
+  along their own track before turning; `docs/simulation/transport.md` §4.4, port note).
 - [ ] Deviations to revisit: water cells are never walkable (the original treats them as open ground); boats keep
   running across a save (the original removes them).
 - [x] Saves keep the live simulation, including boats, aircraft, animals and the rest of each pedestrian's walk (the

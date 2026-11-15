@@ -770,11 +770,14 @@ void stepTraffic(VM& vm, SimState& s, float dt) {
 // The half train length past the platform the track (ending on stop k's leg end) halts at, so that the middle stands
 // at the stop (transport.md §4.3): lengthNodes >> 1 nodes of the next leg when it goes on from that platform (counted
 // in v.extraNodes, which the next appendLeg skips). Called after every leg, also the first leg after a turn
-// (reverseConsist), which used to go without it. Where the next leg turns round (it starts on the opposite lane: the
-// metro's end stations) nothing is added and the front stops at the platform node: the original pulls the nodes from
-// the pre-loaded next leg there, and how its movement code treats nodes that do not join was not traced (transport.md
-// §9 question 2). Pulling them straight on along the own track instead centred the train, but two trains shuttling
-// between two such stations (REGS_TEST_TERMINUS) then met head-on on the shared track and locked each other.
+// (reverseConsist), which used to go without it. Where the next leg turns round on the same track (it starts on the
+// opposite of the platform node or of a node or two past it: the metro's end stations) the train drives straight on
+// along its own track for the half length (v.turnNodes) and the turned leg starts back over their opposites
+// (2026-11-15; the first try of 2026-11-05 locked two shuttling trains head-on, before the jam relief and with the
+// leg's start a node past the platform not recognised). Checked on Vienna with REGS_TEST_TERMINUS=3 (8000 frames at
+// speed 3): every metro halt's middle within 1 unit of the platform node, 57 turns, no jams. The original pulls the
+// nodes from the pre-loaded next leg there (transport.md §9 question 2, not traced).
+int oppositeNode(const LaneGraph& G, int n);
 void appendHalfLength(SimState& s, VehicleState& v, const LineState& line, int k) {
   const LaneGraph& G = s.graph;
   Mover& m = s.movers[size_t(v.mover)];
@@ -783,15 +786,60 @@ void appendHalfLength(SimState& s, VehicleState& v, const LineState& line, int k
   v.extraNodes = 0;
   if (v.units.empty() || st.legEnd < 0 || m.track.nodes.empty() || m.track.nodes.back() != st.legEnd) return;
   int extra = lengthNodesOf(s, v.units, true) >> 1, before = int(m.track.nodes.size()) - 1;
+  v.turnNodes.clear();
   if (nx.legStart == st.legEnd) {
     for (int i = 0; i < extra && size_t(i) < nx.path.size(); ++i) m.track.push(G, nx.path[size_t(i)]);
     v.extraNodes = std::min(extra, int(nx.path.size()));
     m.limit += v.extraNodes;
+  } else if (line.type != 3 && line.type != 4 && nx.legStart >= 0) {
+    // a turn on the same track (2026-11-15, the metro's end stations): the next leg starts on the opposite of the
+    // platform node or of a node or two straight on past it. The train drives straight on along its own track for
+    // half its length (every node with its opposite, so the turned leg can run back over them) and turns from there.
+    auto straightOn = [&](int cur) {
+      const LaneNode& c = G.nodes[size_t(cur)];
+      int best = -1;
+      float bestDot = 0.9f;
+      for (int n : c.next) {
+        const LaneNode& nn = G.nodes[size_t(n)];
+        if ((nn.flags & kPathClassMask) != (c.flags & kPathClassMask) || (nn.flags & kPathDeleted)) continue;
+        float d = dot(c.f1, nn.f0);
+        if (d > bestDot && oppositeNode(G, n) >= 0) bestDot = d, best = n;
+      }
+      return best;
+    };
+    auto opposes = [&](int a, int b) {  // b runs over a the other way (coincident lanes count)
+      const LaneNode &x = G.nodes[size_t(a)], &y = G.nodes[size_t(b)];
+      Vec3 d0 = x.p0 - y.p1, d1 = x.p1 - y.p0;
+      return dot(d0, d0) < 0.04f && dot(d1, d1) < 0.04f;
+    };
+    int skip = -1;  // how many nodes past the platform the next leg's start lies (0: the platform's opposite)
+    for (int k = 0, cur = st.legEnd; k <= 3 && cur >= 0; ++k, cur = straightOn(cur))
+      if (opposes(cur, nx.legStart)) {
+        skip = k;
+        break;
+      }
+    if (skip >= 0) {
+      int cur = st.legEnd;
+      for (int i = 0; i < std::max(extra, skip); ++i) {
+        int nn = straightOn(cur);
+        if (nn < 0) break;
+        m.track.push(G, nn);
+        v.turnNodes.push_back(nn);
+        cur = nn;
+      }
+      m.limit += int(v.turnNodes.size());
+      v.turnSkip = skip;
+    }
   }
   if (static const bool dbg = std::getenv("REGS_DEBUG_HALT") != nullptr; dbg)
     LOG_INFO("sim: halt length: line type %d, stop %d: %d of %d nodes past the platform (%s)", line.type,
              (k + 1) % int(line.stops.size()), int(m.track.nodes.size()) - 1 - before, extra,
-             nx.legStart == st.legEnd ? "next leg" : "none: the next leg starts on another lane");
+             nx.legStart == st.legEnd ? "next leg" : !v.turnNodes.empty() ? "straight on before the turn" : "none: the next leg starts on another lane");
+  if (static const bool dbg = std::getenv("REGS_DEBUG_HALT") != nullptr; dbg && nx.legStart >= 0 && nx.legStart != st.legEnd) {
+    const LaneNode &a = G.nodes[size_t(st.legEnd)], &b = G.nodes[size_t(nx.legStart)];
+    LOG_INFO("sim: turn: platform %d %.1f,%.1f->%.1f,%.1f len %.1f; next leg %d %.1f,%.1f->%.1f,%.1f; opposite %d",
+             st.legEnd, a.p0.x, a.p0.z, a.p1.x, a.p1.z, a.length, nx.legStart, b.p0.x, b.p0.z, b.p1.x, b.p1.z, oppositeNode(G, st.legEnd));
+  }
 }
 
 // the leg from stop k's platform to the next stop's, plus `extra` nodes of the leg after: every line vehicle but the
@@ -849,7 +897,18 @@ bool reverseConsist(SimState& s, VehicleState& v, LineState& line, int k, int ar
   float end = m.track.start[headIdx] + G.nodes[size_t(m.track.nodes[headIdx])].length;
   // the leg runs back over the opposites of the nodes the train stands on: it may start on the opposite of the head's
   // node or a node or two ahead of it (a terminus without track past the platform); the train keeps its place
-  std::vector<int> nodes{st.legStart};
+  std::vector<int> nodes;
+  // driven on past the platform: back over the nodes beyond the one whose opposite the leg starts on
+  for (int i = int(v.turnNodes.size()) - 1; i >= v.turnSkip; --i) {
+    int o = oppositeNode(G, v.turnNodes[size_t(i)]);
+    if (o < 0) {
+      nodes.clear();
+      break;
+    }
+    nodes.push_back(o);
+  }
+  v.turnNodes.clear();
+  nodes.push_back(st.legStart);
   nodes.insert(nodes.end(), st.path.begin(), st.path.end());
   int opp = oppositeNode(G, m.track.nodes[headIdx]);
   size_t jn = 0;
