@@ -730,13 +730,23 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     const float kept = curveLength(c) - t0 - t1;
     CurvePieces cp = curvePieces(c, kept);
     std::vector<CurveSample> shape = curveShape(c);
-    auto lay = [&](PathSetObj* ps) {
-      if (!ps) return;
+    // an express curve's pieces with a ramp on them: the entry or exit piece's paths (bent as it is drawn, terrain.cpp)
+    std::vector<RampPort> ramps;
+    if (curveIsExpress(c.kind))
+      for (const RampPort& rp : usedRampPorts(g))
+        if (sameCurve(g.curves[size_t(rp.express)], c)) ramps.push_back(rp);
+    auto lay = [&](PathSetObj* basePs) {
+      if (!basePs) return;
       for (int i = 0; i < cp.count && kept > 0.05f; ++i) {
         float s0 = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
+        PathSetObj* ps = basePs;
+        float sg = 1.0f, across = 0.0f;
+        for (const RampPort& rp : ramps)
+          if (rp.piece == i && basePs == pathsOf(templateObject(pf.straight)))
+            if (PathSetObj* rps = pathsOf(templateObject(rampPortPiece(rp.enter)))) ps = rps, rampPortBend(rp, sg, across);
         for (const auto& [name, p] : ps->paths) {
           if (!track && !keep(p)) continue;
-          CurveSample a = curveAt(shape, s0 + p.p0.x * cp.stretch), b = curveAt(shape, s0 + p.p1.x * cp.stretch);
+          CurveSample a = curveAt(shape, s0 + sg * p.p0.x * cp.stretch), b = curveAt(shape, s0 + sg * p.p1.x * cp.stretch);
           LaneNode n;
           n.flags = p.flags & ~kPathStop;
           // a bus stop (large roads, avenues) on this piece: the kerb lane on its side gets STOP where the stop is
@@ -755,10 +765,10 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
                 n.flags |= kPathStop;
           }
           n.item = -1;
-          n.p0 = a.p + a.right * p.p0.z + Vec3{0, p.p0.y, 0};
-          n.p1 = b.p + b.right * p.p1.z + Vec3{0, p.p1.y, 0};
-          n.f0 = render::normalize(a.dir * p.f0.x + a.right * p.f0.z);
-          n.f1 = render::normalize(b.dir * p.f1.x + b.right * p.f1.z);
+          n.p0 = a.p + a.right * (sg * (p.p0.z + across)) + Vec3{0, p.p0.y, 0};
+          n.p1 = b.p + b.right * (sg * (p.p1.z + across)) + Vec3{0, p.p1.y, 0};
+          n.f0 = render::normalize(a.dir * (sg * p.f0.x) + a.right * (sg * p.f0.z));
+          n.f1 = render::normalize(b.dir * (sg * p.f1.x) + b.right * (sg * p.f1.z));
           add(n);
         }
       }
@@ -954,6 +964,17 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     if (any) LOG_INFO("curved roads: map edge: %d lanes in, %d out", starts, ends);
   }
   linkCrossings(G, first);
+  if (std::getenv("REGS_DEBUG_CURVES"))  // express ramps: the lanes meeting at each port and their links
+    for (const RampPort& rp : usedRampPorts(g)) {
+      int in = 0, out = 0, linked = 0;
+      for (size_t i = first; i < G.nodes.size(); ++i) {
+        const LaneNode& n = G.nodes[i];
+        if (dist2(n.p1, rp.p + Vec3{0, -0.2f, 0}) < 0.05f) ++in, linked += n.next.empty() ? 0 : 1;
+        if (dist2(n.p0, rp.p + Vec3{0, -0.2f, 0}) < 0.05f) ++out, linked += n.inDegree > 0 ? 1 : 0;
+      }
+      LOG_INFO("curved roads: ramp %s on express %d piece %d side %d: %d lanes end there, %d start, %d linked",
+               rp.enter ? "entry" : "exit", rp.express, rp.piece, rp.side, in, out, linked);
+    }
   if (junctionFirst < G.nodes.size()) {  // every turn should continue both ways
     size_t joined = 0, total = G.nodes.size() - junctionFirst;
     for (size_t i = junctionFirst; i < G.nodes.size(); ++i)

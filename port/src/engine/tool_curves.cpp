@@ -191,6 +191,25 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
       if (d <= reach2 && d < bestD) bestD = d, best = Snap{true, q, Vec3{c.dx1, 0, c.dz1}, false, {}};
     }
   }
+  // ramps: an express road's entry or exit port (one ramp per express piece; RampPort)
+  if (!best.ok && curveIsRamp(g_state.kind)) {
+    std::vector<RampPort> used = usedRampPorts(g);
+    for (size_t ei = 0; ei < g.curves.size(); ++ei) {
+      if (!curveIsExpress(g.curves[ei].kind)) continue;
+      for (const RampPort& rp : expressRampPorts(g, int(ei))) {
+        bool taken = false;
+        for (const RampPort& u : used) taken = taken || (u.express == rp.express && u.piece == rp.piece);
+        float d = len2(rp.p - p);
+        if (taken || d > 100.0f || d >= bestD) continue;
+        // drawn toward the express road: only the ports the ramp reaches going on (an entry from behind, an exit from
+        // ahead), not the one it would have to hook round into
+        if (g_state.step >= 1 && dot(flat(rp.p - g_state.start), rp.out * -1.0f) < 0.0f) continue;
+        bestD = d, best = Snap{true, rp.p, rp.out, false, {}};
+      }
+    }
+    if (best.ok && std::getenv("REGS_DEBUG_CURVES"))
+      LOG_INFO("curve tool: ramp port at %.1f,%.1f,%.1f, out %.2f,%.2f", best.p.x, best.p.y, best.p.z, best.out.x, best.out.z);
+  }
   // the map's edge (roads, express roads, the railway): the end on the border, leaving the map straight out
   // (curveEndOffMap: no dead end, the traffic's way in and out)
   if (!best.ok && curveKindLeavesMap(g_state.kind)) {
@@ -215,7 +234,8 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   // junction points, in this order: where curve ends meet, the middle of a curve, the middle of a straight block
   const float hw = pf.halfWidth;
   for (const CurveRoad& c : g.curves) {
-    if ((c.kind == 3) != (g_state.kind == 3)) continue;  // road kinds mix at junctions (footpaths among themselves)
+    // road kinds mix at junctions (footpaths among themselves; never tracks or express roads)
+    if (curveJoinClass(c.kind) != curveJoinClass(g_state.kind) || curveNoJunctions(c.kind)) continue;
     for (int end = 0; end < 2; ++end) {
       Vec3 q = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
       float d = len2(q - p);
@@ -246,7 +266,7 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   }
   if (best.ok) return best;
   for (const CurveRoad& c : g.curves) {
-    if ((c.kind == 3) != (g_state.kind == 3)) continue;
+    if (curveJoinClass(c.kind) != curveJoinClass(g_state.kind) || curveNoJunctions(c.kind)) continue;
     std::vector<CurveSample> shape = curveShape(c);
     float side, s;
     curveNearest(shape, p.x, p.z, side, s);

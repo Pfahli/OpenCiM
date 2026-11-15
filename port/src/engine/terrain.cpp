@@ -818,6 +818,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       auto needCurve = [&](const CurveRoad& c) {
         const CurveProfile& pf = curveProfile(c.kind);
         need(pf.straight), need(pf.deadend), need(pf.pillar);
+        if (curveIsExpress(c.kind)) need(rampPortPiece(true)), need(rampPortPiece(false));
         if (c.ends & 4) need(pf.tram), need(curveTramDeadend(c.kind));
         if (c.bridge == 1) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind)), need(curveBridgeEnd(c.kind));
         if (c.bridge == 2) need(curveTunnelPiece(c.kind)), need(curveTunnelEnd(c.kind));
@@ -864,16 +865,29 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           const char* name = nullptr;
           float side = 1.0f;
         };
+        // an express curve's pieces with a ramp on them: the game's entry or exit piece instead (RampPort)
+        std::vector<RampPort> ramps;
+        if (curveIsExpress(c.kind) && !straight)
+          for (const RampPort& rp : usedRampPorts(g))
+            if (sameCurve(g.curves[size_t(rp.express)], c)) ramps.push_back(rp);
         auto pieces = [&](const char* name, EndPiece first = {}, EndPiece last = {}) {
-          auto bend = [&](const char* nm, float s, float side) {
+          auto bend = [&](const char* nm, float s, float side, float across = 0.0f) {
             ObjectObj* o = nullptr;
             int b = nm && nm[0] ? templateOf(nm, &o) : -1;
             if (b < 0 || !o || !o->data) return false;
-            appendBentMesh(slicedOf(o->data.get()), b, shape, s, side, 0.0f, m, cp.stretch);
+            appendBentMesh(slicedOf(o->data.get()), b, shape, s, side, across, m, cp.stretch);
             return true;
           };
           for (int i = 0; i < cp.count; ++i) {
             float s = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
+            bool done = false;
+            for (const RampPort& rp : ramps)
+              if (!done && rp.piece == i && name == pf.straight) {
+                float side, across;
+                rampPortBend(rp, side, across);
+                done = bend(rampPortPiece(rp.enter), s, side, across);
+              }
+            if (done) continue;
             if (i == 0 && first.name && bend(first.name, s, first.side)) continue;
             if (i == cp.count - 1 && i > 0 && last.name && bend(last.name, s, last.side)) continue;
             bend(name, s, 1.0f);
@@ -933,7 +947,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
               float s = t0 + kept * float(i) / float(count + 1);
               CurveSample k = curveAt(shape, s);
               Vec3 ax = render::normalize(Vec3{k.dir.x, 0, k.dir.z});
-              appendPlacedMesh(po->data->mesh, pb, k.p + Vec3{0, -24.0f, 0}, ax, k.right, m);
+              appendPlacedMesh(po->data->mesh, pb, k.p + Vec3{0, curveIsRamp(c.kind) ? -3.0f : -24.0f, 0}, ax, k.right, m);
             }
         }
         if (pf.pillar[0]) {  // elevated tracks: the straight piece's pillar parts (metroe_basic onPlace: a half on each

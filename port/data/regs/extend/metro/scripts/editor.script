@@ -433,6 +433,11 @@ for ($regsI = 0; $regsI < 5; ++$regsI) {
   if ($regsCurveKinds[$regsI] <= 2 || $regsCurveKinds[$regsI] == 7)  // and a curved tunnel, with the tab's tunnel icon
     regsTabButton($regsTab, null, "/metro/ui/toolbar/" + $regsCurveTabs[$regsI] + "-tunnel", macro($regsCurveKinds[$regsI]) :: regsCurveTunnelFor($0), $regsRs.$regs_curve_tunnel_hint);
 }
+// the express tab's ramps (kind 8): on the ground and elevated, drawn as curves (start, bend point, end); an end near an
+// express road takes its entry or exit
+$regsTab = $trafficMenu.$tabs["express"];
+regsTabButton($regsTab, null, "/metro/ui/toolbar/express-ramp", macro :: regsCurveToolFor(8, 0, 1), $regsRs.$regs_curve_ramp_hint);
+regsTabButton($regsTab, null, "/metro/ui/toolbar/express-eramp", macro :: regsCurveBridgeFor(8), $regsRs.$regs_curve_eramp_hint);
 // the road types One-way and Roundabout in the menu's top row
 $regsTab = regsAddRoadType("oneway", $regsRs.$regs_type_oneway_hint);
 regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/oneway-1", macro :: regsOneWayLanesSet(1), $regsRs.$regs_oneway1_hint);

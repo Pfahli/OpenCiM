@@ -42,17 +42,20 @@ struct CurveProfile {
   float capOffset;       // the dead-end piece's centre beyond a free end
   const char* pillar;    // elevated tracks: the pillar template set under every joint of their pieces ("" none)
 };
-constexpr int kCurveKinds = 8;
+constexpr int kCurveKinds = 9;
 // tracks (owner's request 2026-11-08): 4 metro on the ground, 5 elevated metro, 6 the editor's railway (double track);
 // bent like the road kinds, joined smoothly to their own kind only (no junctions), never under tram tracks or stops
 inline bool curveIsTrack(int kind) { return kind >= 4 && kind <= 6; }
 inline bool curveIsElevated(int kind) { return kind == 5; }
 // which curve ends may meet: roads of all kinds, footpaths, and each track kind on its own
-inline int curveJoinClass(int kind) { return kind >= 3 ? kind : 0; }
+inline int curveJoinClass(int kind) { return kind >= 3 && kind != 8 ? kind : 0; }
+// 8: the express road's ramp (2026-11-15, road_ramp_basic: 6 wide, one lane on its centre line used both ways as in the
+// game); joins roads at junctions like a road, and an express road at an entry or exit (RampPort below)
+inline bool curveIsRamp(int kind) { return kind == 8; }
 // 7: the express road (2026-11-13), bent like the avenue; joined smoothly to express roads only, no pedestrians on it
 inline bool curveIsExpress(int kind) { return kind == 7; }
 // kinds whose ends only join smoothly (no junction pieces): tracks and express roads
-inline bool curveNoJunctions(int kind) { return kind >= 4; }
+inline bool curveNoJunctions(int kind) { return kind >= 4 && kind != 8; }
 const CurveProfile& curveProfile(int kind);
 // a bridge curve's span template bent along it and its pillar, per kind ("" none)
 const char* curveBridgePiece(int kind);
@@ -60,6 +63,31 @@ const char* curveBridgePillar(int kind);
 // a bridge curve's end span (the abutment, on the template's local −x side: the land), per kind ("" none); drawn at a
 // bridge's ends that do not continue on another bridge curve (2026-11-15)
 const char* curveBridgeEnd(int kind);
+// ---- express ramps (2026-11-15) ----
+// A ramp curve's end on an express curve's port: that express piece is drawn and laned as the game's entry or exit piece
+// (road_express_enter / road_express_exit, bent along the curve), whose slip lane leaves or joins the outer lane of the
+// traffic on that side. Every piece has four ports: on each side an entry (where the slip lane begins, half a block before
+// the piece's centre in the traffic's direction) and an exit (half a block after it), 18 out from the centre line, the ramp
+// meeting the express road at 45 degrees. One ramp per piece.
+struct RampPort {
+  int express = -1;   // the express curve
+  int piece = 0;      // its piece drawn as the entry or exit piece
+  int side = 1;       // +1 right of the express curve's direction (its traffic runs with it), -1 left (against it)
+  bool enter = true;  // an entry (the ramp's traffic merges in) or an exit
+  float sCentre = 0;  // the piece's centre (arc length on the express curve)
+  render::Vec3 p;     // the ramp's end there (y: the express road's height)
+  render::Vec3 out;   // unit, flat: from the express road into the ramp
+  int ramp = -1, rampEnd = 0;  // usedRampPorts: the ramp curve and which of its ends
+};
+// the ports of an express curve (all pieces, both sides, entry and exit)
+std::vector<RampPort> expressRampPorts(const GridData& g, int expressCurve);
+// the ports a ramp curve's end lies on (within 0.3)
+std::vector<RampPort> usedRampPorts(const GridData& g);
+// whether a ramp curve's end lies on an express port
+bool curveEndOnRampPort(const GridData& g, const CurveRoad& c, int end);
+// the entry / exit piece's template, and the bend that puts it on the express curve (appendBentMesh's side and across)
+const char* rampPortPiece(bool enter);
+void rampPortBend(const RampPort& rp, float& side, float& across);
 // whether a curve's end (0 start, 1 end) meets another curve of the same structure (CurveRoad::bridge: plain, bridge,
 // tunnel)
 bool curveEndContinues(const GridData& g, const CurveRoad& c, int end);

@@ -219,6 +219,8 @@ CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c) {
   // an end on the map's edge leads off the map (its lanes the traffic's way in and out, sim_graph.cpp)
   e.free0 = ((!(c.ends & 1) && !joined(c.x0, c.z0)) || (c.ends & 8)) && !curveEndOffMap(g, c, 0);
   e.free1 = ((!(c.ends & 2) && !joined(c.x1, c.z1)) || (c.ends & 16)) && !curveEndOffMap(g, c, 1);
+  // a ramp's end on an express road's entry or exit
+  if (curveIsRamp(c.kind)) e.free0 = e.free0 && !curveEndOnRampPort(g, c, 0), e.free1 = e.free1 && !curveEndOnRampPort(g, c, 1);
   return e;
 }
 
@@ -246,6 +248,7 @@ const char* curveBridgePiece(int kind) {
     case 2: return "bridge_ravenue_gap";
     case 6: return "bridge_tdouble_gap";
     case 7: return "bridge_rexpress_gap";
+    case 8: return "ramp_elevated_basic";  // the elevated ramp
     default: return "";
   }
 }
@@ -307,8 +310,92 @@ const char* curveBridgePillar(int kind) {
     case 1: return "bridge_rlarge_pillar";
     case 2: return "bridge_ravenue_pillar";
     case 7: return "bridge_rexpress_pillar";
+    case 8: return "ramp_elevated_pillar";
     default: return "";
   }
+}
+
+// ---- express ramps ----
+const char* rampPortPiece(bool enter) { return enter ? "road_express_enter" : "road_express_exit"; }
+
+void rampPortBend(const RampPort& rp, float& side, float& across) {
+  // the entry piece's road runs 3 to -z of its origin (lanes -16..+10), the exit piece's 3 to +z; an entry on the right
+  // side as it is, an exit on the right turned round (its slip lane then leaves the right side's traffic)
+  side = rp.enter ? float(rp.side) : float(-rp.side);
+  across = rp.enter ? 3.0f : -3.0f;
+}
+
+std::vector<RampPort> expressRampPorts(const GridData& g, int ei) {
+  std::vector<RampPort> out;
+  if (ei < 0 || size_t(ei) >= g.curves.size() || !curveIsExpress(g.curves[size_t(ei)].kind)) return out;
+  const CurveRoad& e = g.curves[size_t(ei)];
+  const CurveProfile& pf = curveProfile(e.kind);
+  CurvePieces cp = curvePieces(e);
+  std::vector<CurveSample> shape = curveShape(e);
+  for (int i = 0; i < cp.count; ++i) {
+    const float sc = (float(i) + 0.5f) * pf.piece * cp.stretch;
+    for (int side : {1, -1})
+      for (bool enter : {true, false}) {
+        RampPort rp;
+        rp.express = ei, rp.piece = i, rp.side = side, rp.enter = enter, rp.sCentre = sc;
+        float sg, across;
+        rampPortBend(rp, sg, across);
+        // the slip lane's end in the template: (-6, +15) on the entry piece, (-6, -15) on the exit piece, at 45 degrees
+        const float lx = -6.0f, lz = enter ? 15.0f : -15.0f;
+        CurveSample k = curveAt(shape, sc + sg * lx * cp.stretch);
+        Vec3 dir = render::normalize(Vec3{k.dir.x, 0, k.dir.z}), right = k.right;
+        rp.p = k.p + right * (sg * (lz + across));
+        // the way into the ramp: an entry's ramp comes in forward and inward (the template's (0.71, -0.71)), so out of
+        // the junction it runs back and outward; an exit's leaves forward and outward ((-0.71, -0.71) in its template)
+        Vec3 travel = enter ? dir * (sg * 0.7071f) + right * (sg * -0.7071f) : dir * (sg * -0.7071f) + right * (sg * -0.7071f);
+        rp.out = render::normalize(enter ? travel * -1.0f : travel);
+        out.push_back(rp);
+      }
+  }
+  return out;
+}
+
+std::vector<RampPort> usedRampPorts(const GridData& g) {
+  std::vector<RampPort> used;
+  bool anyRamp = false, anyExpress = false;
+  for (const CurveRoad& c : g.curves) anyRamp = anyRamp || curveIsRamp(c.kind), anyExpress = anyExpress || curveIsExpress(c.kind);
+  if (!anyRamp || !anyExpress) return used;
+  for (size_t ei = 0; ei < g.curves.size(); ++ei) {
+    if (!curveIsExpress(g.curves[ei].kind)) continue;
+    std::vector<RampPort> ports = expressRampPorts(g, int(ei));
+    for (size_t ri = 0; ri < g.curves.size(); ++ri) {
+      const CurveRoad& r = g.curves[ri];
+      if (!curveIsRamp(r.kind)) continue;
+      for (int end = 0; end < 2; ++end) {
+        float x = end ? r.x1 : r.x0, z = end ? r.z1 : r.z0;
+        for (const RampPort& p : ports)
+          if (std::fabs(p.p.x - x) < 0.3f && std::fabs(p.p.z - z) < 0.3f) {
+            RampPort u = p;
+            u.ramp = int(ri), u.rampEnd = end;
+            used.push_back(u);
+            break;
+          }
+      }
+    }
+  }
+  return used;
+}
+
+bool curveEndOnRampPort(const GridData& g, const CurveRoad& c, int end) {
+  if (!curveIsRamp(c.kind)) return false;
+  float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  for (size_t ei = 0; ei < g.curves.size(); ++ei) {
+    const CurveRoad& e = g.curves[ei];
+    if (!curveIsExpress(e.kind)) continue;
+    // near the express curve at all (its ports lie 18 out)
+    std::vector<CurveSample> shape = curveShape(e);
+    float side, s;
+    curveNearest(shape, x, z, side, s);
+    if (std::fabs(std::fabs(side) - 18.0f) > 2.0f) continue;
+    for (const RampPort& p : expressRampPorts(g, int(ei)))
+      if (std::fabs(p.p.x - x) < 0.3f && std::fabs(p.p.z - z) < 0.3f) return true;
+  }
+  return false;
 }
 
 const CurveProfile& curveProfile(int kind) {
@@ -325,6 +412,8 @@ const CurveProfile& curveProfile(int kind) {
       {9, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "track_double_basic", "track_double_deadend", "", 4.5f, ""},
       // the express road: 30 wide like the avenue (three lanes each way at 5, 9, 13 around a 6-wide median), no pavement
       {7, 24, 24.0f, 15.0f, 15.0f, 9.0f, 30.0f, "road_express_basic", "road_express_deadend", "", 12.0f, ""},
+      // the express road's ramp: 6 wide, pieces of 12, its dead end 9 long (centred 4.5 beyond the end)
+      {3, 0, 12.0f, 3.0f, 3.0f, 7.5f, 12.0f, "road_ramp_basic", "road_ramp_deadend", "", 4.5f, ""},
   };
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
@@ -421,7 +510,8 @@ bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, V
 const CurveLanes& curveLanes(int kind) {
   static const CurveLanes k[kCurveKinds] = {
       {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0},
-      {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}, {0, {0, 0}, 0}};  // tracks: their pieces' paths only
+      {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}, {0, {0, 0}, 0},
+      {1, {0, 0}, 0x700}};  // tracks and express roads: their pieces' paths only; ramps: one lane on the centre line
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
 
@@ -1420,7 +1510,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   };
   // zebra crossings: bars across each arm just inside its mouth, cycling through the atlas' bar variants
   for (const CurveArm& A : j.arms) {
-    if (A.ring) continue;  // no crossing over a roundabout's ring
+    if (A.ring || curveIsRamp(A.kind)) continue;  // no crossing over a roundabout's ring or a ramp
     Vec3 in = A.out * -1.0f, r = rightOf(A.out), m0 = at(A.mouth);
     int bars = std::max(1, int((2.0f * curveProfile(A.kind).carriageway - 0.32f) / 0.93f));
     float first = -(float(bars) * 0.93f - 0.32f) * 0.5f;
