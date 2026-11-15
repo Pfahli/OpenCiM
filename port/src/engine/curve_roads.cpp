@@ -259,6 +259,32 @@ const char* curveBridgeEnd(int kind) {
     default: return "";
   }
 }
+const char* curveTunnelPiece(int kind) {
+  switch (kind) {
+    case 0: return "tunnel_rsmall_gap";
+    case 1: return "tunnel_rlarge_gap";
+    case 2: return "tunnel_ravenue_gap";
+    case 6: return "tunnel_tdouble_gap";
+    case 7: return "tunnel_rexpress_gap";
+    default: return "";
+  }
+}
+const char* curveTunnelEnd(int kind) {
+  switch (kind) {
+    case 0: return "tunnel_rsmall_end";
+    case 1: return "tunnel_rlarge_end";
+    case 2: return "tunnel_ravenue_end";
+    case 6: return "tunnel_tdouble_end";
+    case 7: return "tunnel_rexpress_end";
+    default: return "";
+  }
+}
+bool curveTunnelOpen(const GridData& g, const CurveRoad& c, float s, CurveEnds caps, float margin) {
+  if (c.bridge != 2) return true;
+  if (caps.free0) s -= curveProfile(c.kind).capReach;  // a capped shape's arc lengths start at the cap's tip
+  const float L = curveLength(c), portal = curveProfile(c.kind).piece * curvePieces(c).stretch + margin;
+  return (s <= portal && !curveEndContinues(g, c, 0)) || (s >= L - portal && !curveEndContinues(g, c, 1));
+}
 bool curveEndContinues(const GridData& g, const CurveRoad& c, int end) {
   float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
   for (const CurveRoad& k : g.curves) {
@@ -701,8 +727,10 @@ static bool beyondBlockEnd(const CurveRoad& c, float x, float z) {
 
 void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
   GridData& g = *grid->data;
-  if (g.height.empty() || curveIsElevated(c.kind) || c.bridge) return;  // elevated tracks and bridges leave the ground
-  std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
+  if (g.height.empty() || curveIsElevated(c.kind) || c.bridge == 1) return;  // elevated tracks and bridges leave the ground
+  const bool tunnel = c.bridge == 2;  // tunnels: only their portals cut the ground (no rim: the walls hold it)
+  const CurveEnds caps = curveFreeEnds(g, c);
+  std::vector<CurveSample> d = curveShape(c, caps);
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
   const float cs = g.cellSize, hw = curveProfile(c.kind).halfWidth;
@@ -724,7 +752,14 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
       curveNearest(d, wx, wz, side, s);
       float ad = std::fabs(side);
       if (ad > hw + 3.0f || (underItem && ad > hw)) continue;
+      if (tunnel && (ad > hw + 1.5f || !curveTunnelOpen(g, c, s, caps, 3.0f))) continue;
       float target = (curveAt(d, s).p.y - 0.25f) * 256.0f / cs;  // just under the asphalt (−0.2)
+      // a tunnel: a cell behind its mouth and beside the road the ground comes down to the portal's top (6 over the road),
+      // so the portal's frame stands clear in front of the hill; only lowered
+      if (tunnel && (ad > hw || !curveTunnelOpen(g, c, s, caps))) {
+        target = (curveAt(d, s).p.y + 5.8f) * 256.0f / cs;
+        if (target >= float(g.height[ci])) continue;
+      }
       if (underItem && target >= float(g.height[ci])) continue;
       float w = ad <= hw + 0.3f ? 1.0f : 1.0f - smoother((ad - hw - 0.3f) / 2.7f);
       float h = float(g.height[ci]) + (target - float(g.height[ci])) * w;
@@ -758,12 +793,13 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
     return float(lowest) * cs / 256.0f < roadY - 1.0f;
   };
   for (const CurveRoad& c : g.curves) {
-    if (curveIsElevated(c.kind) || c.bridge) continue;  // no ground cover under elevated tracks and bridges
+    if (curveIsElevated(c.kind) || c.bridge == 1) continue;  // no ground cover under elevated tracks and bridges
     int cx0, cz0, cx1, cz1;
     curveCells(g, c, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
     if (cx0 > cx1 || cz0 > cz1) continue;
-    std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
+    const CurveEnds caps = curveFreeEnds(g, c);
+    std::vector<CurveSample> d = curveShape(c, caps);
     for (int z = cz0; z <= cz1; ++z)
       for (int x = cx0; x <= cx1; ++x) {
         bool inside = true;
@@ -771,7 +807,8 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
           float fx = k == 4 ? 0.5f : float(k & 1), fz = k == 4 ? 0.5f : float(k >> 1);
           float side, s, px = (float(x) + fx - float(g.width) * 0.5f) * cs, pz = (float(z) + fz - float(g.length) * 0.5f) * cs;
           curveNearest(d, px, pz, side, s);
-          inside = std::fabs(side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz);
+          inside = std::fabs(side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz) &&
+                   curveTunnelOpen(g, c, s, caps, 3.0f);  // a tunnel's tube: the ground over it stays (but behind the mouth)
         }
         if (!inside) continue;
         {
@@ -798,7 +835,7 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
     float core = 0;
     for (const CurveArm& a : j.arms) {
       const CurveRoad& ac = g.curves[size_t(a.curve)];
-      if (ac.bridge) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
+      if (ac.bridge == 1) bridges.push_back({curveShape(ac), curveProfile(ac.kind).halfWidth});
       else core = std::max(core, curveProfile(ac.kind).halfWidth);
     }
     for (int z = cz0; z <= cz1; ++z)

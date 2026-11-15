@@ -202,7 +202,9 @@ int main(int argc, char** argv) {
               const char16_t* fn = sc.action == "tilt" ? u"setCameraTilt" : sc.action == "zoom" ? u"setCameraZoom" : u"setCameraDirection";
               script::Value arg = sc.action == "dir" ? script::Value::integer(std::atoi(sc.arg.c_str()))
                                                      : script::Value::real(float(std::atof(sc.arg.c_str())));
-              vm.call(vm.getMember(vm.getMember(*main, u"$gameUI"), fn), {arg});
+              script::Value ui = vm.getMember(*main, u"$gameUI");
+              if (sc.action == "tilt") vm.setMember(ui, u"$screenShotMode", script::Value::boolean(true));  // ui.script: tilt only then
+              vm.call(vm.getMember(ui, fn), {arg});
             }
           } catch (...) {
           }

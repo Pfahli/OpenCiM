@@ -72,7 +72,7 @@ struct State {
   int mode = 1;  // 0 straight, 1 curved, 2 freeform, 3 remove
   int kind = 0;  // the road kind drawn (CurveProfile): 0 small, 1 large, 2 avenue, 3 alley
   int oneWay = 0;  // small roads: 0 both ways, 1 one-way with one lane, 2 one-way with two lanes (in the drawing direction)
-  bool bridge = false;  // new curves are bridges (regsCurveToolBridge; REGS_TEST_CURVE_BRIDGE=1 at start)
+  int bridge = 0;  // new curves are bridges (1) or tunnels (2) (regsCurveToolBridge; REGS_TEST_CURVE_BRIDGE=1 / 2 at start)
   int step = 0;  // 0 nothing picked, 1 the start, 2 (curved) the bend point too
   Vec3 start, bend;
   bool startDir = false;  // the start's direction is fixed (a snapped end, or drawing on)
@@ -161,7 +161,7 @@ void reset(VM& vm, GridObj* grid) {
 
 // a free point's height over the ground: the pavement 0.2 over it, elevated tracks two cells (as the grid's elevated
 // track tool)
-float freeLift() { return curveIsElevated(g_state.kind) || g_state.bridge ? 6.0f : 0.2f; }
+float freeLift() { return curveIsElevated(g_state.kind) || g_state.bridge == 1 ? 6.0f : 0.2f; }
 
 // the snap target near p: a dead end's closed side (8 units) or a curve's free end (6 units), the nearer one
 Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
@@ -368,7 +368,8 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
   const GridData& g = *grid->data;
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
-  std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
+  const CurveEnds caps = curveFreeEnds(g, c);
+  std::vector<CurveSample> shape = curveShape(c, caps);
   const float cs = g.cellSize;
   for (uint32_t i : gridItemsNear(vm, grid, x0, z0, x1, z1)) {
     if (i >= g.items.size() || g.items[i].removed) continue;
@@ -388,8 +389,10 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
         float side, s;
         curveNearest(shape, wx, wz, side, s);
         hit = std::fabs(side) < curveProfile(c.kind).halfWidth - 0.5f;
+        // a tunnel passes under what stands over its tube
+        if (hit && !curveTunnelOpen(g, c, s, caps)) hit = false;
         // elevated tracks pass over what stays a cell under them (their pillars stand between)
-        if (hit && (curveIsElevated(c.kind) || c.bridge)) {
+        if (hit && (curveIsElevated(c.kind) || c.bridge == 1)) {
           int top = g.items[i].y + (0x200 - int(g.heightBase)) + sh.height;
           hit = top > int(std::lround(curveAt(shape, s).p.y * 256.0f / cs)) - 0x100;
         }
@@ -465,7 +468,7 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   c.ends = uint8_t((st.startBlock ? 1 : 0) | (endBlock ? 2 : 0));
   // an end on a grass tram track: the curve gets tracks that run on into it (its turning circle lies over the track)
   if (c.kind == 0 && st.oneWay) c.ends |= uint8_t(0x20 | (st.oneWay == 1 ? 0x40 : 0));  // one-way, as drawn
-  c.bridge = st.bridge ? 1 : 0;
+  c.bridge = uint8_t(st.bridge);
   if (st.startBlock && st.startEnd.tram) c.ends |= 8 | 4;
   if (endBlock && sn.end.tram) c.ends |= 16 | 4;
   return true;
@@ -603,6 +606,20 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (curveLength(c) < (st.startSnap.junction ? st.startSnap.radius + 1.0f : 0.0f) + (sn.junction ? sn.radius + 1.0f : 0.0f)) bad = true;
   std::vector<uint32_t> trees, blocking;
   if (!bad && overItems(vm, grid, c, trees, blocking)) bad = true;
+  if (!bad && c.bridge == 2) {  // a tunnel: the ground over its tube as high as the portal (6 over the road)
+    std::vector<CurveSample> shape = curveShape(c);
+    float lowest = 1e9f;
+    for (float s = 0; s <= shape.back().s; s += 1.5f) {
+      if (curveTunnelOpen(g, c, s)) continue;
+      CurveSample k = curveAt(shape, s);
+      int cx = int(std::lround(k.p.x / g.cellSize + float(g.width) * 0.5f)), cz = int(std::lround(k.p.z / g.cellSize + float(g.length) * 0.5f));
+      if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length) continue;
+      float ground = float(g.height[size_t(cz) * size_t(g.width) + size_t(cx)]) * g.cellSize / 256.0f;
+      lowest = std::min(lowest, ground - k.p.y);
+    }
+    if (lowest < 6.0f) bad = true;
+    if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: tunnel, ground over the tube at least %.1f over the road", lowest);
+  }
   // at a junction point the new road must keep 30 degrees from the roads there
   float jAngle = 180.0f;
   if (st.startSnap.junction) jAngle = std::min(jAngle, junctionAngle(st.startSnap, Vec3{c.dx0, 0, c.dz0}));
@@ -1366,11 +1383,15 @@ void registerCurveTool(VM& vm) {
     if (argc > 0) g_state.oneWay = std::clamp(v.toInt(a[0]), 0, 2);
     return Value::integer(g_state.oneWay);
   }, 0, 1);
-  // regsCurveToolBridge([on]): new curves are bridges (deck over the ground as it is, the bridge span and pillars)
-  if (std::getenv("REGS_TEST_CURVE_BRIDGE")) g_state.bridge = true;
+  // regsCurveToolBridge([on]): new curves are bridges (true or 1: deck over the ground as it is, the bridge span and
+  // pillars), tunnels (2: the tube under the ground, portals at the open ends) or plain (false, 0)
+  if (const char* e = std::getenv("REGS_TEST_CURVE_BRIDGE")) g_state.bridge = std::atoi(e) == 2 ? 2 : 1;
   implementGlobal(vm, u"regsCurveToolBridge", [](VM& v, Object*, int argc, const Value* a) {
-    if (argc > 0) g_state.bridge = v.truthy(a[0]);
-    return Value::boolean(g_state.bridge);
+    if (argc > 0) {
+      Value x = v.resolve(a[0]);
+      g_state.bridge = x.type() == VT::Int ? std::clamp(v.toInt(x), 0, 2) : v.truthy(x) ? 1 : 0;
+    }
+    return Value::integer(g_state.bridge);
   }, 0, 1);
   // regsCurveToolInfo(): [step, length, angle in degrees, fits (0/1), a curve under the cursor (0/1)] for the panel
   implementGlobal(vm, u"regsCurveToolInfo", [](VM&, Object*, int, const Value*) {

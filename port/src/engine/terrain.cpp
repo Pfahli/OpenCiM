@@ -819,7 +819,8 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         const CurveProfile& pf = curveProfile(c.kind);
         need(pf.straight), need(pf.deadend), need(pf.pillar);
         if (c.ends & 4) need(pf.tram), need(curveTramDeadend(c.kind));
-        if (c.bridge) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind)), need(curveBridgeEnd(c.kind));
+        if (c.bridge == 1) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind)), need(curveBridgeEnd(c.kind));
+        if (c.bridge == 2) need(curveTunnelPiece(c.kind)), need(curveTunnelEnd(c.kind));
         for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st, c.kind).c_str());
       };
       need("road_small_basic"), need("tram_small_basic"), need(curveProfile(3).straight);
@@ -888,6 +889,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             if (!curveEndContinues(g, c, 0)) first = {abut, 1.0f};
             if (!curveEndContinues(g, c, 1)) last = {abut, -1.0f};
           }
+          // a tunnel's portals: the mouth (-x) toward the tube
+          if (straight && c.bridge == 2) {
+            const char* portal = curveTunnelEnd(c.kind);
+            if (!curveEndContinues(g, c, 0)) first = {portal, -1.0f};
+            if (!curveEndContinues(g, c, 1)) last = {portal, 1.0f};
+          }
           pieces(straight ? straight : pf.straight, first, last);
         }
         static const bool debugBridge = std::getenv("REGS_DEBUG_CURVES") != nullptr;
@@ -915,7 +922,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           }
         }
         if (c.ends & 4) pieces(pf.tram);
-        if (straight && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
+        if (straight && c.bridge == 1 && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
                                                          // its foot 8 cells under the deck as the span's own parts
           ObjectObj* po = nullptr;
           int pb = templateOf(curveBridgePillar(c.kind), &po);
@@ -970,7 +977,11 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (c.ends & 4) deadEnd(curveTramDeadend(c.kind), false);
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
-        if (c.bridge && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
+        if (c.bridge == 2 && curveTunnelPiece(c.kind)[0]) {  // a tunnel: the tube bent along it, portals at its open ends
+          bentRoad(c, m, t0, t1, curveTunnelPiece(c.kind));
+          return;
+        }
+        if (c.bridge == 1 && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
           // shorter than 3/4 of a span piece (after the junctions' trims): the plain road (a span squeezed that much
           // shows its girders instead of a deck)
           const float kept = curveLength(c) - t0 - t1, piece = curveProfile(c.kind).piece;

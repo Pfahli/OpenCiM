@@ -63,6 +63,11 @@ const char* curveBridgeEnd(int kind);
 // whether a curve's end (0 start, 1 end) meets another curve of the same structure (CurveRoad::bridge: plain, bridge,
 // tunnel)
 bool curveEndContinues(const GridData& g, const CurveRoad& c, int end);
+// tunnels (CurveRoad::bridge 2, 2026-11-15): the kind's tunnel tube bent along the curve (tunnel_*_gap) and its portal
+// (tunnel_*_end: the mouth on the template's local -x side, the walls falling to the open road at +x) on the first and
+// last piece where the tunnel does not continue on another tunnel curve ("" none: the kind has no tunnel)
+const char* curveTunnelPiece(int kind);
+const char* curveTunnelEnd(int kind);
 // the street tram dead-end piece (the tracks' end, no lanes) drawn on a large road's or avenue's dead-end piece at a
 // free end of a curve with tracks, per kind ("" none: small roads draw their own turning circle)
 const char* curveTramDeadend(int kind);
@@ -84,6 +89,11 @@ struct CurveSample {
 struct CurveEnds {
   bool free0 = false, free1 = false;  // the start / end touches neither a road block nor another curve
 };
+// a tunnel's open parts: the portal pieces at its ends (arc lengths within a piece of an end that does not continue on
+// a tunnel); the ground there is cut down to the road and covered, over the tube it stays as it is. Any other curve: true.
+// s on curveShape(c, caps) (with a free start's cap its arc lengths start a cap reach earlier)
+// margin: the open parts grown that far into the tube (the strip behind a portal's mouth)
+bool curveTunnelOpen(const GridData& g, const CurveRoad& c, float s, CurveEnds caps = {}, float margin = 0.0f);
 // against the map's curves (the curve itself, by sameCurve, left out); an end off the map (curveEndOffMap) is not free
 CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c);
 // map-edge ends (2026-11-15, as the game's map-edge pieces road_*_port*, track_double_port): an end on the map's border
