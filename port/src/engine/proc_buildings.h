@@ -7,8 +7,10 @@
 // rectangular footprint. The textures are drawn by the port at start (procedural, no game files). A building is a
 // GridData::ProcBuilding: saved in the port's map.grid section kProcBuildingSectionTag, recorded on the editor's
 // timeline (timeline.cpp kRegsProcBuilding) and drawn next to the curved roads (terrain.cpp collectGrid).
-// Not yet: shadows (the default shader has no shadow-pass variant), night lights, picking and the bulldozer, jobs and
-// homes in the simulation.
+// Windows and doors sit in recesses of the walls (reveals, mullions, sills); a share of the windows lights up at dusk in
+// three groups (the cycle's night01). Flat roofs: gravel with seams and drains, skylights, solar panels, a stair house,
+// air conditioners, vent pipes; halls: metal with glazed roof lanterns; gabled roofs: tiles, roof windows, chimneys.
+// Not yet: shadows (the default shader has no shadow-pass variant), picking and the bulldozer, jobs and homes.
 #include <cstdint>
 #include <vector>
 
@@ -30,9 +32,11 @@ void parseProcBuildingSection(const std::vector<uint8_t>& d, size_t body, size_t
 std::vector<uint8_t> procBuildingBytes(const GridData::ProcBuilding& b);
 bool procBuildingFromBytes(const std::vector<uint8_t>& raw, GridData::ProcBuilding& b);
 
-// the materials' indices in procBuildingMaterials (submesh materials of the mesh)
-enum ProcMaterial { kProcHall, kProcHallDoor, kProcPlaster, kProcPlasterDoor, kProcBrick, kProcBrickDoor, kProcRoofFlat,
-                    kProcRoofTiles, kProcRoofMetal, kProcTrim, kProcMaterialCount };
+// the materials' indices (submesh materials of the mesh): walls, doors, roofs, trim (grey) and frames (white), glass
+// dark and in three lit groups (switching on at dusk one after another), solar panels, an air conditioner's grille
+enum ProcMaterial { kProcHall, kProcHallDoor, kProcPlaster, kProcBrick, kProcDoor, kProcRoofFlat, kProcRoofTiles, kProcRoofMetal,
+                    kProcTrim, kProcFrame, kProcGlass, kProcGlassLit0, kProcGlassLit1, kProcGlassLit2, kProcSolar, kProcGrille,
+                    kProcMaterialCount };
 // a building's mesh in world space (appended): walls, doors, roof and its details
 void buildProcBuildingMesh(const GridData::ProcBuilding& b, render::MeshData& out);
 // the map's procedural buildings as draw items (one mesh, rebuilt when GridObj::procVersion moves)

@@ -371,7 +371,13 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   metal roof with skylight strips) or a tiled gabled roof on a four-cornered house up to 15 cells wide. The textures
   are drawn by the port (no game files). Stored as GridData::ProcBuilding in map.grid section 0x07F30000 and as the
   timeline action 0x070810D0 (undo, the day switch; a replay skips a building the map has). Karlsruhe Marktplatz: 10
-  (the town hall in plaster, three halls), Bruchsal 6. Not yet: shadows, night lights, picking and the bulldozer, jobs
+  (the town hall in plaster, three halls), Bruchsal 6. Since 2026-11-15 (owner: more interesting roofs, windows and doors
+  with depth that light up by night): windows and doors sit in recesses (reveals, mullions, sills, a step, a lamp and a
+  lit fanlight by a front door, roller doors with a lamp on halls); two thirds of the panes light up warm at dusk in three
+  groups one after another (emission from night01, night_lights.h vehicleNight01). Flat roofs: gravel with tar seams,
+  drains and moss, glazed skylights (lit at night), solar panels in rows tilted south, a stair house with a door, air
+  conditioners with a fan grille, vent pipes; halls: glazed roof lanterns with glazing bars; gabled roofs: framed roof
+  windows, brick chimneys. Not yet: shadows, picking and the bulldozer, jobs
   and homes in the simulation; a reload of a saved map with them not yet seen (the section is written: checked in the
   autosave).
   Open: tram stops on beds
