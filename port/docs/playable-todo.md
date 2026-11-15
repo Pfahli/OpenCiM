@@ -346,7 +346,8 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
     whole width; the footpath curves and their junctions are drawn in a mesh of their own with a copy of the footpath
     material whose grass is transparent (alpha from blue against the brighter of red and green: grass and its mix at the edge are low in blue; terrain.cpp keyedFootpathTexture),
     so the ground around the gravel shows, paving or grass. (A first try left footpaths over paving out altogether; the
-    owner missed them.)
+    owner missed them.) A footpath over paving or asphalt for half its length or more (and a junction most of whose
+    arms are) is drawn as the same path in light concrete slabs with a darker kerb (owner: nicer on asphalt).
   - Beaches (natural=beach, leisure=beach_resort, not private): the ground ramps from just above the water line at the
     water to the land's own height at the beach's landward edge (by the share of the way across, squared: low and flat in
     front, the rise at the back, no cliff); the water before it is shallow and deepens over 10 cells; the strip between

@@ -891,10 +891,12 @@ void collectGroundOverlay(Display& d, GridObj* grid, std::vector<DrawItem>& item
 // the footpath texture with its grass made transparent (owner 2026-11-15: footpaths without grass beneath them, the
 // ground around them showing); the gravel stays.
 // 0 when the texture cannot be read
-uint32_t keyedFootpathTexture(VM& vm) {
-  static uint32_t tex = 0;
+// paved: 1 the same path in light concrete slabs with a darker kerb along its edge (on asphalt and paving; owner
+// 2026-11-15: footpaths on asphalt should look nicer), 0 the gravel
+uint32_t keyedFootpathTexture(VM& vm, int paved = 0) {
+  static uint32_t tex[2] = {0, 0};
   static bool tried = false;
-  if (tried) return tex;
+  if (tried) return tex[paved & 1];
   tried = true;
   std::vector<uint8_t> file;
   if (!vm.vfs().read("metro/objects/alleys/footpath.dds", file)) return 0;
@@ -911,16 +913,39 @@ uint32_t keyedFootpathTexture(VM& vm) {
     const float t = std::clamp((b / std::max({r, gr, 1.0f}) - 0.40f) / 0.22f, 0.0f, 1.0f);
     rgba[i + 3] = uint8_t(255.0f * t * t * (3.0f - 2.0f * t));
   }
-  gl::GenTextures(1, &tex);
-  gl::BindTexture(gl::TEXTURE_2D, tex);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT);
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-  gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::RGBA, gl::UNSIGNED_BYTE, rgba.data());
-  gl::GenerateMipmap(gl::TEXTURE_2D);
-  return tex;
+  // the paved one: slabs a sixteenth of the texture (about 0.4 units on a path piece) with joints, a kerb where the path's
+  // alpha falls off (its edge), the same alpha
+  std::vector<uint8_t> slabs(rgba);
+  auto hash = [](uint32_t v) {
+    v ^= v >> 16, v *= 0x7feb352d, v ^= v >> 15, v *= 0x846ca68b, v ^= v >> 16;
+    return v;
+  };
+  const int cell = std::max(4, w / 32);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      uint8_t* q = slabs.data() + (size_t(y) * size_t(w) + size_t(x)) * 4;
+      const float a = q[3] / 255.0f;
+      const int sx = (x + ((y / cell) & 1) * cell / 2) / cell, sy = y / cell;  // a running bond
+      const bool joint = (x + ((y / cell) & 1) * cell / 2) % cell == 0 || y % cell == 0;
+      const float shade = 0.92f + 0.08f * float(hash(uint32_t(sx) * 92821u ^ uint32_t(sy) * 68917u) & 255) / 255.0f;
+      float r = 0.63f * shade, g = 0.62f * shade, b = 0.59f * shade;
+      if (joint) r *= 0.78f, g *= 0.78f, b *= 0.78f;
+      if (a < 0.9f) r = g = 0.47f, b = 0.46f;  // the kerb along the edge
+      q[0] = uint8_t(r * 255), q[1] = uint8_t(g * 255), q[2] = uint8_t(b * 255);
+      q[3] = uint8_t(std::min(255.0f, a * 1.25f * 255.0f));  // (a little wider: the kerb shows whole)
+    }
+  for (int k = 0; k < 2; ++k) {
+    gl::GenTextures(1, &tex[k]);
+    gl::BindTexture(gl::TEXTURE_2D, tex[k]);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT);
+    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::RGBA, gl::UNSIGNED_BYTE, (k ? slabs : rgba).data());
+    gl::GenerateMipmap(gl::TEXTURE_2D);
+  }
+  return tex[paved & 1];
 }
 
 void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vector<DrawItem>& items) {
@@ -1118,10 +1143,29 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       MeshData all, paths;  // paths: the footpaths (their own transparent-grass material)
       std::vector<CurveJunction> junctions = findCurveJunctions(g);
       const bool keyed = keyedFootpathTexture(vm) != 0;
+      // a footpath over paving or asphalt for half its length or more: the paved look (material 1 of tc.pathMaterials)
+      std::vector<char> pavedPath(g.curves.size(), 0);
+      for (size_t i = 0; i < g.curves.size(); ++i) {
+        const CurveRoad& c = g.curves[i];
+        if (c.kind != 3) continue;
+        int on = 0, n = 0;
+        for (const CurveSample& sm : sampleCurve(c, 1.5f)) {
+          const int x = int(std::floor(sm.p.x / g.cellSize + g.width * 0.5f)), z = int(std::floor(sm.p.z / g.cellSize + g.length * 0.5f));
+          if (x < 0 || z < 0 || x >= g.width || z >= g.length) continue;
+          ++n;
+          const uint16_t f = g.flags[size_t(z) * size_t(g.width) + size_t(x)];
+          if ((f & 0x48) == 0x8 || g.paintEdges.count(paintEdgeKey(x, z))) ++on;
+        }
+        pavedPath[i] = n && on * 2 >= n;
+      }
       for (size_t i = 0; i < g.curves.size(); ++i) {
         float t0, t1;
         curveTrims(junctions, int(i), t0, t1);
-        curveMesh(g.curves[i], keyed && g.curves[i].kind == 3 ? paths : all, t0, t1);
+        const bool path = keyed && g.curves[i].kind == 3;
+        const size_t before = paths.submeshes.size();
+        curveMesh(g.curves[i], path ? paths : all, t0, t1);
+        if (path)
+          for (size_t k = before; k < paths.submeshes.size(); ++k) paths.submeshes[k].material = pavedPath[i] ? 1 : 0;
       }
       // junctions: roads fill with the small road's asphalt (one texture for all road kinds) and its pavement, footpaths
       // with the footpath; the fill's texture plane is fitted to the template's own mesh once
@@ -1138,7 +1182,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         int fb = -1;
         if (j.kind == 3) {
           const PlanarUV& uv = fillOf(curveProfile(3).straight, 0, fb);
+          const size_t before = paths.submeshes.size();
           buildJunctionMesh(j, fb, uv, -1, keyed ? paths : all);
+          int paved = 0;  // the junction: paved when most of its arms are
+          for (const CurveArm& arm : j.arms) paved += pavedPath[size_t(arm.curve)] ? 1 : -1;
+          if (keyed)
+            for (size_t k = before; k < paths.submeshes.size(); ++k) paths.submeshes[k].material = paved > 0 ? 1 : 0;
         } else {
           const PlanarUV& uv = fillOf("road_small_basic", 0, fb);
           buildJunctionMesh(j, fb, uv, base + 2, all, base + 1, tramBase);
@@ -1150,10 +1199,10 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         int fp = templateOf(curveProfile(3).straight, nullptr);
         if (fp >= 0 && size_t(fp) < tc.materials.size()) {
           GpuMaterial m = tc.materials[size_t(fp)];
-          if (!m.textures.empty()) m.textures[0] = keyedFootpathTexture(vm);
           m.flags |= kMatAlphaTest;
-          tc.pathMaterials = {m};
-          for (Submesh& sm : paths.submeshes) sm.material = 0;
+          GpuMaterial mp = m;
+          if (!m.textures.empty()) m.textures[0] = keyedFootpathTexture(vm, 0), mp.textures[0] = keyedFootpathTexture(vm, 1);
+          tc.pathMaterials = {m, mp};
           if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, paths, Mat4(), tc.pathMaterials, true);
           upload(paths, tc.paths, tc.pathsBuilt);
         }
