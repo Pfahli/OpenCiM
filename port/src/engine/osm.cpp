@@ -997,6 +997,11 @@ struct ImportData {
   std::vector<std::vector<std::pair<double, double>>> beaches;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
+  // the shoreline (owner 2026-11-15: the Saalbach's edges looked jagged): per corner (x, z) the signed distance in cells
+  // to the true water shape (river lines with their width, water areas, the sea), − inside; waterDraw: the cells drawn
+  // as water (the logical ones and those the true shape covers well), whose corners take their heights from it
+  std::vector<float> shoreSd;
+  std::vector<uint8_t> waterDraw;
   // per cell: ground OSM means to be green (parks, gardens, lawns, meadows, cemeteries, playgrounds, pitches, woods):
   // the paving of enclosed pockets keeps off it (2026-11-15)
   std::vector<uint8_t> green;
@@ -1820,6 +1825,113 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       if (!(type & 0x100))
         for (const PaintAreaCell& c : paintAreaCells(W, L, rings))
           if (c.full) water[size_t(c.z) * size_t(W) + size_t(c.x)] = 0;
+  // the shoreline's signed distance per corner (see ImportData::shoreSd): rivers by their lines and widths, water areas
+  // and the sea by their outlines (inside by a scanline's crossings / the sea's cells), up to 4 cells either way; a
+  // corner among water cells only stays under the water, one among land cells only stays dry
+  if (flags & kWater) {
+    const size_t N = size_t(W) * size_t(L);
+    std::vector<float>& sd = data->shoreSd;
+    sd.assign(N, 4.0f);
+    using Seg = std::array<double, 4>;
+    std::map<std::pair<int, int>, std::vector<Seg>> bucket;  // 8 × 8 cells, grown by 4
+    auto addSeg = [&](double ax, double az, double bx, double bz, std::map<std::pair<int, int>, std::vector<Seg>>& b) {
+      for (int gz = int(std::floor((std::min(az, bz) - 4) / 8)); gz <= int(std::floor((std::max(az, bz) + 4) / 8)); ++gz)
+        for (int gx = int(std::floor((std::min(ax, bx) - 4) / 8)); gx <= int(std::floor((std::max(ax, bx) + 4) / 8)); ++gx)
+          b[{gx, gz}].push_back({ax, az, bx, bz});
+    };
+    auto segD = [](double px, double pz, const Seg& e) {
+      const double dx = e[2] - e[0], dz = e[3] - e[1], l2 = dx * dx + dz * dz;
+      const double t = l2 > 0 ? std::clamp(((px - e[0]) * dx + (pz - e[1]) * dz) / l2, 0.0, 1.0) : 0;
+      return std::hypot(px - e[0] - t * dx, pz - e[1] - t * dz);
+    };
+    // rivers
+    for (auto& [line, wc] : rivers) {
+      const double r = std::max(0.5, wc * 0.5);
+      for (size_t i = 0; i + 1 < line.size(); ++i) {
+        auto [ax, az] = line[i];
+        auto [bx, bz] = line[i + 1];
+        const Seg e{ax, az, bx, bz};
+        for (int z = std::max(0, int(std::floor(std::min(az, bz) - r - 4))); z <= std::min(L - 1, int(std::ceil(std::max(az, bz) + r + 4))); ++z)
+          for (int x = std::max(0, int(std::floor(std::min(ax, bx) - r - 4))); x <= std::min(W - 1, int(std::ceil(std::max(ax, bx) + r + 4))); ++x) {
+            float& v = sd[size_t(z) * size_t(W) + size_t(x)];
+            v = std::min(v, float(segD(x, z, e) - r));
+          }
+      }
+    }
+    // water areas: inside by the crossings of each corner row, the distance to the outline
+    if (!waterEdges.empty()) {
+      std::vector<std::vector<double>> rows(static_cast<size_t>(L));
+      for (auto& e : waterEdges) {
+        const double az = e.first.second, bz = e.second.second;
+        if (az == bz) continue;
+        for (int z = std::max(0, int(std::ceil(std::min(az, bz)))); z <= std::min(L - 1, int(std::floor(std::max(az, bz) - 1e-9))); ++z) {
+          if ((az <= z) == (bz <= z)) continue;
+          rows[size_t(z)].push_back(e.first.first + (z - az) * (e.second.first - e.first.first) / (bz - az));
+        }
+        addSeg(e.first.first, e.first.second, e.second.first, e.second.second, bucket);
+      }
+      for (int z = 0; z < L; ++z) {
+        auto& r = rows[size_t(z)];
+        std::sort(r.begin(), r.end());
+        size_t k = 0;
+        bool inside = false;
+        for (int x = 0; x < W; ++x) {
+          while (k < r.size() && r[k] < x) inside = !inside, ++k;
+          float d = 4.0f;
+          auto it = bucket.find({int(std::floor(x / 8.0)), int(std::floor(z / 8.0))});
+          if (it != bucket.end())
+            for (const Seg& e : it->second) d = std::min(d, float(segD(x, z, e)));
+          float& v = sd[size_t(z) * size_t(W) + size_t(x)];
+          v = std::min(v, inside ? -d : d);
+        }
+      }
+    }
+    // the sea (and other water from the cells only): the distance to the coast, the side from its cells
+    std::map<std::pair<int, int>, std::vector<Seg>> coastB;
+    for (auto& e : coast) addSeg(e.first.first, e.first.second, e.second.first, e.second.second, coastB);
+    for (int z = 0; z < L; ++z)
+      for (int x = 0; x < W; ++x) {
+        int wetN = 0, all = 0;
+        for (int dz = -1; dz <= 0; ++dz)
+          for (int dx = -1; dx <= 0; ++dx) {
+            const int cx = x + dx, cz = z + dz;
+            if (cx < 0 || cz < 0 || cx >= W || cz >= L) continue;
+            ++all, wetN += water[size_t(cz) * size_t(W) + size_t(cx)] ? 1 : 0;
+          }
+        float& v = sd[size_t(z) * size_t(W) + size_t(x)];
+        if (!coast.empty()) {
+          float d = 4.0f;
+          auto it = coastB.find({int(std::floor(x / 8.0)), int(std::floor(z / 8.0))});
+          if (it != coastB.end())
+            for (const Seg& e : it->second) d = std::min(d, float(segD(x, z, e)));
+          if (d < 4.0f) v = std::min(v, wetN * 2 >= all ? -d : d);
+        }
+        if (all && wetN == all) v = std::min(v, -0.6f);  // among water cells only: under the water
+        if (wetN == 0) v = std::max(v, 0.6f);             // among land cells only: dry (culverts, squares)
+      }
+    // the cells drawn as water: the logical ones, and those whose corners lie mostly in the true shape
+    data->waterDraw.assign(N, 0);
+    for (int z = 0; z < L; ++z)
+      for (int x = 0; x < W; ++x) {
+        const size_t i = size_t(z) * size_t(W) + size_t(x);
+        if (water[i]) {
+          data->waterDraw[i] = 1;
+          continue;
+        }
+        float lo = 4.0f;
+        for (int dz = 0; dz <= 1; ++dz)
+          for (int dx = 0; dx <= 1; ++dx)
+            if (x + dx < W && z + dz < L) lo = std::min(lo, sd[size_t(z + dz) * size_t(W) + size_t(x + dx)]);
+        if (lo < -0.15f) data->waterDraw[i] = 1;
+      }
+    {
+      size_t wc = 0, dc = 0, neg = 0;
+      for (size_t i = 0; i < N; ++i) wc += water[i], dc += data->waterDraw[i], neg += sd[i] < 0;
+      LOG_INFO("osm: shore: %zu water cells, %zu drawn, %zu corners under water, %zu rivers, %zu area edges", wc, dc, neg, rivers.size(),
+               waterEdges.size());
+      for (auto& [line, wcw] : rivers) LOG_INFO("osm: shore: river of %zu points, %.1f cells wide", line.size(), wcw);
+    }
+  }
   // terrain heights: land from its lowest point at the ground level 0x200, water below the water line
   if ((flags & kTerrain) && haveElev) {
     std::vector<double> land;
@@ -6392,18 +6504,26 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         for (int x = 0; x < W; ++x) {
           size_t i = size_t(z) * size_t(W) + size_t(x);
           int h = d.heights.empty() ? g.height[i] : d.heights[i];
-          // a corner of a water cell lies under the water line
+          // a corner of a water cell: its height from the shoreline's signed distance (the water line −0x140 on the true
+          // shore, so the visible edge follows it inside the cells, not their staircase; owner 2026-11-15), deep inside
           bool wet = false;
+          const std::vector<uint8_t>& wd = d.waterDraw.empty() ? d.water : d.waterDraw;
           for (int dz = -1; dz <= 0 && water; ++dz)
             for (int dx = -1; dx <= 0; ++dx) {
               int cx = x + dx, cz = z + dz;
-              if (cx >= 0 && cz >= 0 && cx < W && cz < L && d.water[size_t(cz) * size_t(W) + size_t(cx)]) wet = true;
+              if (cx >= 0 && cz >= 0 && cx < W && cz < L && wd[size_t(cz) * size_t(W) + size_t(cx)]) wet = true;
             }
-          if (wet) h = std::min(h, -0x300);
+          if (wet) {
+            if (d.shoreSd.empty()) h = std::min(h, -0x300);
+            else {
+              const float sdv = d.shoreSd[i];
+              h = sdv < 0 ? std::max(-0x300, int(std::lround(-0x140 + sdv * 0x380)))  /* (deep at once: the water's colour grows opaque with depth) */ : int(std::lround(-0x140 + std::min(sdv, 2.0f) * 0x60));
+            }
+          }
           g.height[i] = int16_t(h);
           heights[i] = int16_t(h);
           uint16_t f = g.flags[i];
-          if (water) f = uint16_t(d.water[i] ? (f & ~0x3Fu) | 0x2000 : f & ~0x2000u);
+          if (water) f = uint16_t((d.waterDraw.empty() ? d.water[i] : d.waterDraw[i]) ? (f & ~0x3Fu) | 0x2000 : f & ~0x2000u);
           if (!d.heights.empty() && !d.water[i]) f &= uint16_t(~0x3Fu & 0xFFFF);  // new ground: plain grass
           if (!d.paving.empty() && d.paving[i]) {  // the pavement paint (the terrain menu's tool)
             f = uint16_t((f & 0xFFD8) | ((d.paving[i] == 4 ? 2 : d.paving[i] - 1) & 7) | 0x8);
@@ -6425,7 +6545,8 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         }
         const int R = 5;
         const int target = -0x100;  // just above the water line (-0x140)
-        auto wetCell = [&](int x, int z) { return x >= 0 && z >= 0 && x < W && z < L && d.water[size_t(z) * size_t(W) + size_t(x)]; };
+        const std::vector<uint8_t>& wd2 = d.waterDraw.empty() ? d.water : d.waterDraw;
+        auto wetCell = [&](int x, int z) { return x >= 0 && z >= 0 && x < W && z < L && wd2[size_t(z) * size_t(W) + size_t(x)]; };
         std::vector<int16_t> out(heights);
         for (int z = 0; z < L; ++z)
           for (int x = 0; x < W; ++x) {

@@ -396,6 +396,12 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   Railings by the water (owner 2026-11-15; osm.cpp riverRailings): the game's street railing every 6 units at the outer
   edge of a street's or footpath's pavement where water lies within 4.5 units beyond it (not on bridges or in junctions).
   Footpaths lie 0.12 under their level with a polygon offset of -3 (0.2 down clipped into unlevelled ground).
+  Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
+  signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
+  the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at
+  once inside, a little above it outside), so the terrain cuts the water plane along the true shore inside the cells
+  instead of along their staircase; cells the true shape covers well are drawn as water too (planning keeps the old
+  mask). Open: steep channel walls show the cliff texture.
   Open: tram stops on beds
   (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
   off a bed (a merged track's kept stretch overlaps the bed instead of a switch).
