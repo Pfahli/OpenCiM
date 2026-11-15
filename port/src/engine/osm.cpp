@@ -4503,15 +4503,20 @@ std::string firstOf(GridObj* grid, std::initializer_list<const char*> names) {
   return {};
 }
 
-// railings along the streets by the water (owner 2026-11-15): at the outer edge of a street's pavement (a footpath's
-// edge), every 6 units, where water lies within 4.5 units beyond it; not on bridges (they have their own) nor in the
-// junctions; the game's street railing (2 cells along the street)
+// railings along the streets by the water and by drops (owner 2026-11-15): at the outer edge of a street's pavement (a
+// footpath's edge), every 6 units, where water lies within 4.5 units beyond it or the ground there lies 1.5 units and
+// more under the street; not on bridges (they have their own) nor in the junctions; REGS_OSM_RAILING picks the template
 int riverRailings(VM& vm, GridObj* grid, Apply& a) {
   GridData& g = *grid->data;
   const ImportData& d = *a.d;
   const int W = g.width, L = g.length;
   const float cs = g.cellSize;
-  const std::string name = firstOf(grid, {"street-railing-02", "street-railing-01", "iron-fence"});
+  static const char* pick = std::getenv("REGS_OSM_RAILING");
+  const std::string name = pick && grid->templates.count(pick) ? std::string(pick) : firstOf(grid, {"iron-fence", "street-railing-02"});
+  auto groundAt = [&](float wx, float wz) {
+    const int x = std::clamp(int(std::floor(wx / cs + W * 0.5f)), 0, W - 1), z = std::clamp(int(std::floor(wz / cs + L * 0.5f)), 0, L - 1);
+    return float(g.height[size_t(z) * size_t(W) + size_t(x)]) * cs / 256.0f;
+  };
   if (name.empty() || d.water.size() != size_t(W) * size_t(L)) return 0;
   auto wet = [&](float wx, float wz) {
     const int x = int(std::floor(wx / cs + W * 0.5f)), z = int(std::floor(wz / cs + L * 0.5f));
@@ -4526,12 +4531,17 @@ int riverRailings(VM& vm, GridObj* grid, Apply& a) {
     curveTrims(js, int(ci), t0, t1);
     const float len = curveLength(c), hw = curveProfile(c.kind).halfWidth;
     if (len - t0 - t1 < 8) continue;
-    for (const CurveSample& sm : sampleCurveRange(c, t0 + 3.0f, len - t1 - 3.0f, 6.0f))
+    // (a fence piece is about one cell long: every cell, so they join; the street railing every 6 units)
+    const float step = name.rfind("street-railing", 0) == 0 ? 6.0f : 3.0f;
+    for (const CurveSample& sm : sampleCurveRange(c, t0 + 2.0f, len - t1 - 2.0f, step))
       for (int side = -1; side <= 1; side += 2) {
         const render::Vec3 n = sm.right * float(side);
-        bool water = false;
-        for (float off : {1.0f, 2.5f, 4.5f}) water = water || wet(sm.p.x + n.x * (hw + off), sm.p.z + n.z * (hw + off));
-        if (!water) continue;
+        bool water = false, drop = false;
+        for (float off : {1.0f, 2.5f, 4.5f}) {
+          water = water || wet(sm.p.x + n.x * (hw + off), sm.p.z + n.z * (hw + off));
+          drop = drop || groundAt(sm.p.x + n.x * (hw + off), sm.p.z + n.z * (hw + off)) < sm.p.y - 1.5f;
+        }
+        if (!water && !drop) continue;
         const render::Vec3 e = sm.p + n * (hw - 0.3f);
         const double px = e.x / cs + W * 0.5, pz = e.z / cs + L * 0.5;
         if (placeAt(vm, grid, a, name, px, pz, n.x, n.z, [](uint8_t u) { return u != 3; }, 0,
@@ -6571,6 +6581,21 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           addRing(e, b.pts, true);
           fillEdges(e, W, L, [&](int x, int z) { built[size_t(z) * size_t(W) + size_t(x)] = 1; });
         }
+        // (owner 2026-11-15: a street beside the Saalbach dipped to the water) streets and paved areas keep their ground
+        // too: the bank is a quay wall there
+        for (const RoadIn& r : d.roads) {
+          if (r.bridge) continue;
+          const double hw = r.kind == 3 ? 5.5 : (r.kind == 1 || r.kind == 4) ? 4.5 : r.kind == 2 ? 1.0 : 2.5;
+          for (size_t k = 0; k + 1 < r.pts.size(); ++k) {
+            auto a2 = r.pts[k], b2 = r.pts[k + 1];
+            for (int z = std::max(0, int(std::floor(std::min(a2.second, b2.second) - hw))); z <= std::min(L - 1, int(std::ceil(std::max(a2.second, b2.second) + hw))); ++z)
+              for (int x = std::max(0, int(std::floor(std::min(a2.first, b2.first) - hw))); x <= std::min(W - 1, int(std::ceil(std::max(a2.first, b2.first) + hw))); ++x)
+                if (segDist(x + 0.5, z + 0.5, a2, b2) <= hw) built[size_t(z) * size_t(W) + size_t(x)] = 1;
+          }
+        }
+        for (auto& [rings, type] : d.paintAreas)
+          if (!(type & 0x100))
+            for (const PaintAreaCell& c : paintAreaCells(W, L, rings)) built[size_t(c.z) * size_t(W) + size_t(c.x)] = 1;
         const int R = 5;
         const int target = -0x100;  // just above the water line (-0x140)
         const std::vector<uint8_t>& wd2 = d.waterDraw.empty() ? d.water : d.waterDraw;
@@ -6785,7 +6810,27 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       if (!found) n.exit = -1, e.node = -1;  // no stub there: a free end
     }
     for (streets::Node& n : plan.nodes)
-      if (n.alive && n.exit < 0) n.y = groundY(g, n.x, n.z) + 0.2f;
+      if (n.alive && n.exit < 0) {
+        n.y = groundY(g, n.x, n.z) + 0.2f;
+        // by the water (owner 2026-11-15: a street beside the Saalbach dipped): the elevation data's ground of the dry
+        // cells within 2 cells, not the banks shaped down to the water line
+        if (!d.heights.empty() && d.water.size() == size_t(W) * size_t(L)) {
+          const int cx = int(std::floor(n.x / g.cellSize + W * 0.5)), cz = int(std::floor(n.z / g.cellSize + L * 0.5));
+          bool nearWater = false;
+          double sum = 0;
+          int cnt = 0;
+          for (int dz = -3; dz <= 3; ++dz)
+            for (int dx = -3; dx <= 3; ++dx) {
+              const int x = cx + dx, z = cz + dz;
+              if (x < 0 || z < 0 || x >= W || z >= L) continue;
+              const size_t i = size_t(z) * size_t(W) + size_t(x);
+              const bool wetC = d.water[i] || (!d.waterDraw.empty() && d.waterDraw[i]);
+              nearWater = nearWater || wetC;
+              if (!wetC && std::abs(dx) <= 2 && std::abs(dz) <= 2) sum += d.heights[i], ++cnt;
+            }
+          if (nearWater && cnt) n.y = std::max(n.y, float(sum / cnt * g.cellSize / 256.0) + 0.2f);
+        }
+      }
     // bridge decks (fixed 2026-11-14 with the curve session's check of the Bruchsal map: decks lay at the channel bed,
     // hidden by its walls): a point in a channel (water within 5 cells, its ground 2+ units under the highest ground
     // within 5 cells) makes its legs bridges; each run of joined bridge legs gets one deck: the highest of its points
