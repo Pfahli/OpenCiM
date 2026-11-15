@@ -819,7 +819,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         const CurveProfile& pf = curveProfile(c.kind);
         need(pf.straight), need(pf.deadend), need(pf.pillar);
         if (c.ends & 4) need(pf.tram), need(curveTramDeadend(c.kind));
-        if (c.bridge) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind));
+        if (c.bridge) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind)), need(curveBridgeEnd(c.kind));
         for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st, c.kind).c_str());
       };
       need("road_small_basic"), need("tram_small_basic"), need(curveProfile(3).straight);
@@ -857,16 +857,39 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (kept <= 0.05f) return;
         CurvePieces cp = curvePieces(c, kept);
         std::vector<CurveSample> shape = curveShape(c);
-        auto pieces = [&](const char* name) {
-          ObjectObj* o = nullptr;
-          int b = name[0] ? templateOf(name, &o) : -1;
-          if (b < 0 || !o || !o->data) return;
-          const MeshData& sm = slicedOf(o->data.get());
-          for (int i = 0; i < cp.count; ++i)
-            appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
+        // first / last: another piece at that end (a bridge's abutment, a tunnel's portal), turned round (side −1) when
+        // its −x side faces the curve's end
+        struct EndPiece {
+          const char* name = nullptr;
+          float side = 1.0f;
+        };
+        auto pieces = [&](const char* name, EndPiece first = {}, EndPiece last = {}) {
+          auto bend = [&](const char* nm, float s, float side) {
+            ObjectObj* o = nullptr;
+            int b = nm && nm[0] ? templateOf(nm, &o) : -1;
+            if (b < 0 || !o || !o->data) return false;
+            appendBentMesh(slicedOf(o->data.get()), b, shape, s, side, 0.0f, m, cp.stretch);
+            return true;
+          };
+          for (int i = 0; i < cp.count; ++i) {
+            float s = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
+            if (i == 0 && first.name && bend(first.name, s, first.side)) continue;
+            if (i == cp.count - 1 && i > 0 && last.name && bend(last.name, s, last.side)) continue;
+            bend(name, s, 1.0f);
+          }
         };
         const size_t before = m.positions.size();
-        pieces(straight ? straight : pf.straight);
+        {
+          // a bridge's ends on land (not on another bridge curve) take the kind's end span: the abutment on its −x side
+          // (bridge_*_end, as the game's bridge tool puts at a bridge's ends)
+          EndPiece first, last;
+          if (straight && c.bridge == 1) {
+            const char* abut = curveBridgeEnd(c.kind);
+            if (!curveEndContinues(g, c, 0)) first = {abut, 1.0f};
+            if (!curveEndContinues(g, c, 1)) last = {abut, -1.0f};
+          }
+          pieces(straight ? straight : pf.straight, first, last);
+        }
         static const bool debugBridge = std::getenv("REGS_DEBUG_CURVES") != nullptr;
         if (debugBridge && straight) {  // the span's drawn extent and the live ground under the curve's middle
           float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};

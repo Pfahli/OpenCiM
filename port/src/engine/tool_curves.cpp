@@ -191,6 +191,26 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
       if (d <= reach2 && d < bestD) bestD = d, best = Snap{true, q, Vec3{c.dx1, 0, c.dz1}, false, {}};
     }
   }
+  // the map's edge (roads, express roads, the railway): the end on the border, leaving the map straight out
+  // (curveEndOffMap: no dead end, the traffic's way in and out)
+  if (!best.ok && curveKindLeavesMap(g_state.kind)) {
+    const float hx = float(g.width) * g.cellSize * 0.5f, hz = float(g.length) * g.cellSize * 0.5f;
+    const float bx = hx - std::fabs(p.x), bz = hz - std::fabs(p.z), reach = pf.halfWidth + 6.0f;
+    if (std::min(bx, bz) <= reach && bx >= -reach && bz >= -reach) {
+      Vec3 q = p, out;
+      if (bx <= bz) {
+        q.x = p.x < 0 ? -hx : hx;
+        q.z = std::clamp(p.z, -hz + pf.halfWidth, hz - pf.halfWidth);
+        out = Vec3{p.x < 0 ? 1.0f : -1.0f, 0, 0};
+      } else {
+        q.z = p.z < 0 ? -hz : hz;
+        q.x = std::clamp(p.x, -hx + pf.halfWidth, hx - pf.halfWidth);
+        out = Vec3{0, 0, p.z < 0 ? 1.0f : -1.0f};
+      }
+      q.y = p.y + freeLift();
+      return Snap{true, q, out, false, {}};
+    }
+  }
   if (best.ok || curveNoJunctions(g_state.kind)) return best;  // tracks and express roads: no junctions
   // junction points, in this order: where curve ends meet, the middle of a curve, the middle of a straight block
   const float hw = pf.halfWidth;

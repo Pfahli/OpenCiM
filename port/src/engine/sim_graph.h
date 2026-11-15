@@ -16,6 +16,7 @@ constexpr uint32_t kPathIntersection = 0x10, kPathLaneChange = 0x20, kPathStop =
                    kPathTram = 0x800, kPathTrain = 0x1000, kPathMetro = 0x2000, kPathAir = 0x4000, kPathWater = 0x8000,
                    kPathStart = 0x10000, kPathEnd = 0x20000, kPathAlternativeStop = 0x40000,
                    kPathConnectTo = 0x80000, kPathConnectFrom = 0x100000, kPathIgnoreTraffic = 0x200000,
+                   kPathExternal = 0x400000,
                    kPathPark = 0x8000000, kPathWalk = 0x10000000, kPathBlocker = 0x20000000,
                    kPathFindAlternative = 0x40000000;
 constexpr uint32_t kPathDeleted = 0x80;  // a node of a removed item (live edits): unlinked, out of its bucket

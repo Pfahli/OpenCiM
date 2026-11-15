@@ -1427,6 +1427,21 @@ void collectSources(SimState& s) {
     if ((f & kPathStart) && !(f & kPathStop)) s.trainStarts[0].push_back(int(i));
     if ((f & kPathEnd) && !(f & kPathStop)) s.trainEnds[0].push_back(int(i));
   }
+  if (std::getenv("REGS_DEBUG_SIM")) {  // with a path from a map-edge way in to a way out when there is one
+    int ext = 0, routed = -1;
+    for (int a : s.roadStarts)
+      if (s.graph.nodes[size_t(a)].flags & kPathExternal) {
+        ++ext;
+        for (int b : s.roadEnds) {
+          std::vector<int> path;
+          float cost = 0;
+          if (routed < 0 && (s.graph.nodes[size_t(b)].flags & kPathExternal) && s.graph.search(a, b, false, path, cost))
+            routed = int(path.size());
+        }
+      }
+    LOG_INFO("traffic sources: %zu road starts (%d at the map's edge), %zu road ends; edge to edge %s (%d nodes)",
+             s.roadStarts.size(), ext, s.roadEnds.size(), routed >= 0 ? "routed" : "no route", routed);
+  }
 }
 
 // the stop vector entry of a stop item (registration 0x10119070: type and catchment from the item type)

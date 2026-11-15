@@ -194,6 +194,17 @@ struct Builder {
 
 }  // namespace
 
+bool curveEndOffMap(const GridData& g, const CurveRoad& c, int end) {
+  const float hx = float(g.width) * g.cellSize * 0.5f, hz = float(g.length) * g.cellSize * 0.5f;
+  const float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  const float ox = end ? c.dx1 : -c.dx0, oz = end ? c.dz1 : -c.dz0;  // outward along the end
+  if (hx <= 0 || hz <= 0) return false;
+  if (std::fabs(x) >= hx - 0.5f && ox * x > 0 && std::fabs(ox) > 0.95f) return true;
+  return std::fabs(z) >= hz - 0.5f && oz * z > 0 && std::fabs(oz) > 0.95f;
+}
+
+bool curveKindLeavesMap(int kind) { return kind == 0 || kind == 1 || kind == 2 || kind == 6 || kind == 7; }
+
 CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c) {
   auto joined = [&](float x, float z) {
     for (const CurveRoad& k : g.curves) {
@@ -205,8 +216,9 @@ CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c) {
   };
   CurveEnds e;
   // an end on a grass tram track keeps its turning circle too (cars turn there; the tracks run on through it)
-  e.free0 = (!(c.ends & 1) && !joined(c.x0, c.z0)) || (c.ends & 8);
-  e.free1 = (!(c.ends & 2) && !joined(c.x1, c.z1)) || (c.ends & 16);
+  // an end on the map's edge leads off the map (its lanes the traffic's way in and out, sim_graph.cpp)
+  e.free0 = ((!(c.ends & 1) && !joined(c.x0, c.z0)) || (c.ends & 8)) && !curveEndOffMap(g, c, 0);
+  e.free1 = ((!(c.ends & 2) && !joined(c.x1, c.z1)) || (c.ends & 16)) && !curveEndOffMap(g, c, 1);
   return e;
 }
 
@@ -236,6 +248,25 @@ const char* curveBridgePiece(int kind) {
     case 7: return "bridge_rexpress_gap";
     default: return "";
   }
+}
+const char* curveBridgeEnd(int kind) {
+  switch (kind) {
+    case 0: return "bridge_rsmall_end";
+    case 1: return "bridge_rlarge_end";
+    case 2: return "bridge_ravenue_end";
+    case 6: return "bridge_tdouble_end";
+    case 7: return "bridge_rexpress_end";
+    default: return "";
+  }
+}
+bool curveEndContinues(const GridData& g, const CurveRoad& c, int end) {
+  float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  for (const CurveRoad& k : g.curves) {
+    if (sameCurve(k, c) || k.bridge != c.bridge) continue;
+    if ((std::fabs(k.x0 - x) < 0.2f && std::fabs(k.z0 - z) < 0.2f) || (std::fabs(k.x1 - x) < 0.2f && std::fabs(k.z1 - z) < 0.2f))
+      return true;
+  }
+  return false;
 }
 const char* curveTramDeadend(int kind) {
   switch (kind) {

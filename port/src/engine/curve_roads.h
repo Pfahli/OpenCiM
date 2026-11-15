@@ -57,6 +57,12 @@ const CurveProfile& curveProfile(int kind);
 // a bridge curve's span template bent along it and its pillar, per kind ("" none)
 const char* curveBridgePiece(int kind);
 const char* curveBridgePillar(int kind);
+// a bridge curve's end span (the abutment, on the template's local −x side: the land), per kind ("" none); drawn at a
+// bridge's ends that do not continue on another bridge curve (2026-11-15)
+const char* curveBridgeEnd(int kind);
+// whether a curve's end (0 start, 1 end) meets another curve of the same structure (CurveRoad::bridge: plain, bridge,
+// tunnel)
+bool curveEndContinues(const GridData& g, const CurveRoad& c, int end);
 // the street tram dead-end piece (the tracks' end, no lanes) drawn on a large road's or avenue's dead-end piece at a
 // free end of a curve with tracks, per kind ("" none: small roads draw their own turning circle)
 const char* curveTramDeadend(int kind);
@@ -78,8 +84,14 @@ struct CurveSample {
 struct CurveEnds {
   bool free0 = false, free1 = false;  // the start / end touches neither a road block nor another curve
 };
-// against the map's curves (the curve itself, by sameCurve, left out)
+// against the map's curves (the curve itself, by sameCurve, left out); an end off the map (curveEndOffMap) is not free
 CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c);
+// map-edge ends (2026-11-15, as the game's map-edge pieces road_*_port*, track_double_port): an end on the map's border
+// leaving it straight out (within 0.5 units of the edge, its direction within 18° of the outward normal) has no dead end;
+// its lanes are the traffic's way into the map (START) and out of it (END), both EXTERNAL (sim_graph.cpp)
+bool curveEndOffMap(const GridData& g, const CurveRoad& c, int end);
+// the kinds that may lead off the map: roads, the express road and the railway (not footpaths or metro tracks)
+bool curveKindLeavesMap(int kind);
 
 // samples at most `step` apart (at least 2), ends included; the range version only over arc lengths [s0, s1]
 std::vector<CurveSample> sampleCurve(const CurveRoad& c, float step);

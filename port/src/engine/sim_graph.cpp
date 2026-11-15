@@ -936,6 +936,23 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         }
       }
   }
+  // map-edge ends (curveEndOffMap): the lanes starting on the map's border are the traffic's way in (START), those
+  // ending there its way out (END), both EXTERNAL as on the game's map-edge pieces (vehicles fade out there)
+  {
+    const float hx = float(g.width) * g.cellSize * 0.5f, hz = float(g.length) * g.cellSize * 0.5f;
+    auto onBorder = [&](const Vec3& p) { return std::fabs(p.x) >= hx - 0.6f || std::fabs(p.z) >= hz - 0.6f; };
+    bool any = false;
+    for (const CurveRoad& c : g.curves)
+      if (curveEndOffMap(g, c, 0) || curveEndOffMap(g, c, 1)) any = true;
+    int starts = 0, ends = 0;
+    if (any)
+      for (size_t i = first; i < G.nodes.size(); ++i) {
+        LaneNode& n = G.nodes[i];
+        if (onBorder(n.p0) && !onBorder(n.p1)) n.flags |= kPathStart | kPathExternal, ++starts;
+        if (onBorder(n.p1) && !onBorder(n.p0)) n.flags |= kPathEnd | kPathExternal, ++ends;
+      }
+    if (any) LOG_INFO("curved roads: map edge: %d lanes in, %d out", starts, ends);
+  }
   linkCrossings(G, first);
   if (junctionFirst < G.nodes.size()) {  // every turn should continue both ways
     size_t joined = 0, total = G.nodes.size() - junctionFirst;
