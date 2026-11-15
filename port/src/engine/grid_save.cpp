@@ -13,6 +13,7 @@
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/paint_edges.h"
+#include "engine/proc_buildings.h"
 #include "engine/grid.h"
 #include "vfs/vfs.h"
 
@@ -173,6 +174,7 @@ void registerSaveNatives(VM& vm) {
       else if (tag == kCurveSectionTag && g->data) writeCurveSection(*g->data, out);  // port: curved roads
       else if (tag == kItemTurnSectionTag && g->data) writeItemTurns(*g->data, out);  // port: free item turns
       else if (tag == kPaintEdgeSectionTag && g->data) writePaintEdgeSection(*g->data, out);  // port: paint edges
+      else if (tag == kProcBuildingSectionTag && g->data) writeProcBuildingSection(*g->data, out);  // port: procedural buildings
       else if (g_sectionWriter && g_sectionWriter(v, g, tag, chunk)) out.insert(out.end(), chunk.begin(), chunk.end());
       else out.insert(out.end(), src.begin() + std::ptrdiff_t(p), src.begin() + std::ptrdiff_t(end));
       seen.push_back(tag);
@@ -188,6 +190,7 @@ void registerSaveNatives(VM& vm) {
       writeCurveSection(*g->data, out);
     if (g->data && std::find(seen.begin(), seen.end(), kItemTurnSectionTag) == seen.end()) writeItemTurns(*g->data, out);
     if (g->data && std::find(seen.begin(), seen.end(), kPaintEdgeSectionTag) == seen.end()) writePaintEdgeSection(*g->data, out);
+    if (g->data && std::find(seen.begin(), seen.end(), kProcBuildingSectionTag) == seen.end()) writeProcBuildingSection(*g->data, out);
     putU32(out, 4, uint32_t(out.size() - 8));
     return Value::boolean(v.vfs().write(path, out));
   });

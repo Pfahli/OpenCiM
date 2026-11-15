@@ -27,6 +27,7 @@
 #include "engine/sim.h"
 #include "engine/surface_map.h"
 #include "engine/osm.h"
+#include "engine/proc_buildings.h"
 #include "render/gl.h"
 #include "render/glsl.h"
 
@@ -1366,6 +1367,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   }
   collectCurves(d, vm, grid, tc, items);  // port curved roads
   collectGroundOverlay(d, grid, items);    // port OSM import: the satellite picture on the ground
+  collectProcBuildings(d, grid, items);    // port: procedural buildings
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame

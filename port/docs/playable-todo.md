@@ -358,6 +358,19 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   covers missing buildings. Karlsruhe Marktplatz: 579 buildings instead of 479 (the town hall was left out). Yards are
   paved with one paving (stones, 2) instead of the templates mix. REGS_DEBUG_OSM_PAINT=x,z,r logs the paint areas and
   the buildings left out around a point.
+  Grass slivers between paved areas close (a plain ground cell with paving within 2 cells on two opposite sides takes
+  their paving), after the OSM paint and again after the yards' paving (Painter::closeGaps).
+  Procedural buildings (owner 2026-11-15: custom shaped buildings with windows, doors and roofs, big halls;
+  engine/proc_buildings.*): a footprint from 300 cells (REGS_OSM_PROC_MIN) on free ground becomes a building of the
+  port's own: walls raised from the outline (a relation's convex hull), facades repeating per floor and bay (halls:
+  corrugated sheets with a window band and roller doors; houses: plaster or brick with framed windows, front doors with
+  steps), doors on the walls facing the nearest street, a flat roof with a parapet and air conditioning boxes (halls:
+  metal roof with skylight strips) or a tiled gabled roof on a four-cornered house up to 15 cells wide. The textures
+  are drawn by the port (no game files). Stored as GridData::ProcBuilding in map.grid section 0x07F30000 and as the
+  timeline action 0x070810D0 (undo, the day switch; a replay skips a building the map has). Karlsruhe Marktplatz: 10
+  (the town hall in plaster, three halls), Bruchsal 6. Not yet: shadows, night lights, picking and the bulldozer, jobs
+  and homes in the simulation; a reload of a saved map with them not yet seen (the section is written: checked in the
+  autosave).
   Open: tram stops on beds
   (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
   off a bed (a merged track's kept stretch overlaps the bed instead of a switch).

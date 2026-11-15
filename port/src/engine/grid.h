@@ -89,6 +89,18 @@ struct GridData {
     float l[2][3] = {{0, 0, 0}, {0, 0, 0}};
   };
   std::map<uint32_t, PaintEdge> paintEdges;
+  // port: procedural buildings (engine/proc_buildings.h, owner's request 2026-11-15): a footprint outline raised to walls
+  // with a roof, the port's own textures
+  struct ProcBuilding {
+    std::vector<std::pair<float, float>> outline;  // world x, z: a simple polygon (either winding)
+    float y = 0;                                   // the ground floor's level (world)
+    float height = 8;                              // the eaves over y
+    float roofHeight = 0;                          // a gabled roof's ridge over the eaves (0: from the width)
+    uint8_t roof = 0;                              // 0 flat with a parapet, 1 gabled (four corners only)
+    uint8_t style = 0;                             // 0 hall, 1 plaster, 2 brick
+    float frontX = 0, frontZ = 0;                  // toward the street (doors on the walls facing it); 0, 0 unknown
+  };
+  std::vector<ProcBuilding> procBuildings;
 };
 using CurveRoad = GridData::CurveRoad;
 using PaintEdge = GridData::PaintEdge;
@@ -162,6 +174,7 @@ class GridObj : public script::Object {
   uint64_t itemsVersion = 0;  // bumped after each batch of live map edits (engine/grid_edit.h)
   // port curved roads: bumped when GridData::curves or the tool's preview curve changed (the renderer rebuilds)
   uint64_t curvesVersion = 0;
+  uint64_t procVersion = 0;  // port: bumped when GridData::procBuildings changed (the renderer rebuilds)
   bool hasCurvePreview = false;
   GridData::CurveRoad curvePreview;
   bool curvePreviewBad = false;  // drawn red-tinted: the ends do not fit

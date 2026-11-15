@@ -19,6 +19,7 @@
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/paint_edges.h"
+#include "engine/proc_buildings.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/interaction.h"
@@ -43,7 +44,9 @@ constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x0708101
                    kRegsTurn = 0x070810B0,
                    // port: the painted areas' edges of a rect of cells (engine/paint_edges.h paintEdgeActionBytes), kept
                    // in Action::raw
-                   kRegsPaintEdges = 0x070810C0;
+                   kRegsPaintEdges = 0x070810C0,
+                   // port: a procedural building added (engine/proc_buildings.h procBuildingBytes), kept in Action::raw
+                   kRegsProcBuilding = 0x070810D0;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -574,6 +577,17 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       applyCurveEdit(ap.vm, ap.grid, c, add);
       break;
     }
+    case kRegsProcBuilding: {
+      GridData::ProcBuilding b;
+      if (preview || !procBuildingFromBytes(a.raw, b)) break;
+      bool known = false;  // (a replay over the map that has it already, as curves: applyCurveEdit)
+      for (const GridData::ProcBuilding& k : g.procBuildings)
+        known = known || (k.outline == b.outline && k.y == b.y && k.height == b.height && k.style == b.style);
+      if (known) break;
+      g.procBuildings.push_back(std::move(b));
+      ++ap.grid->procVersion;
+      break;
+    }
     default: break;
   }
 }
@@ -795,6 +809,14 @@ void timelineRecordCurve(VM& vm, Object* s, const CurveRoad& c, bool add) {
   Action a;
   a.tag = kRegsCurve;
   a.raw = curveActionBytes(c, add);
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordProcBuilding(VM& vm, Object* s, const GridData::ProcBuilding& b) {
+  if (!s) return;
+  Action a;
+  a.tag = kRegsProcBuilding;
+  a.raw = procBuildingBytes(b);
   recordAction(vm, s, std::move(a));
 }
 

@@ -12,6 +12,7 @@
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/paint_edges.h"
+#include "engine/proc_buildings.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
 #include "engine/sim_graph.h"
@@ -91,6 +92,8 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
       parseCurveSection(d, body, stop, g);
     } else if (tag == kPaintEdgeSectionTag) {  // port: the painted areas' edges (engine/paint_edges.h)
       parsePaintEdgeSection(d, body, stop, g);
+    } else if (tag == kProcBuildingSectionTag) {  // port: procedural buildings (engine/proc_buildings.h)
+      parseProcBuildingSection(d, body, stop, g);
     } else if (tag == kItemTurnSectionTag && body + 4 <= stop) {  // port: items off the grid (Item::yaw, offX, offZ)
       uint32_t count = r.u32(body) & 0x7fffffffu;
       size_t each = (r.u32(body) & 0x80000000u) ? 16 : 8;  // bit 31: with the shifts

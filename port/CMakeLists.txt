@@ -65,6 +65,7 @@ add_library(regs_engine STATIC
   src/engine/osm.cpp
   src/engine/tool_curves.cpp
   src/engine/curve_roads.cpp
+  src/engine/proc_buildings.cpp
   src/engine/tool_terrain.cpp
   src/engine/tool_tracks.cpp
   src/engine/grid_save.cpp

@@ -38,6 +38,7 @@
 #include "engine/host.h"
 #include "engine/interaction.h"
 #include "engine/paint_edges.h"
+#include "engine/proc_buildings.h"
 #include "engine/platform.h"
 #include "engine/timeline.h"
 #include "engine/tool_tracks.h"
@@ -2004,6 +2005,7 @@ struct Apply {
   std::vector<uint8_t> used;  // cells taken by roads, buildings, trees, water
   int buildingsLeft = 0;      // OSM buildings no template went into
   int footprintsFilled = 0;   // footprints filled with several buildings (fillFootprint)
+  int procPlaced = 0;         // procedural buildings (placeProcBuilding)
   std::vector<int> made;
   Object* timeline = nullptr;
   bool gridStreets = false;
@@ -5614,10 +5616,102 @@ int fillFootprint(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Va
   return made;
 }
 
+// a big footprint as a procedural building (owner 2026-11-15: custom shaped buildings, big halls; engine/proc_buildings.h):
+// from 300 cells (REGS_OSM_PROC_MIN), on free ground (85 % of its cells). Its outline: the way's own ring, a relation's
+// convex hull; halls for industry, workplaces, railways and big low shops, else plaster or brick; the height from
+// building:levels (halls 4.5 a level, at least 6; houses 3.2 a floor); a gabled roof on a four-cornered house at most
+// 15 cells wide; the doors on the walls facing the nearest street
+bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
+  GridData& g = *grid->data;
+  const int W = g.width, L = g.length;
+  if (b.terraced || b.pts.size() < 3) return false;
+  static const double kMin = [] {
+    const char* e = std::getenv("REGS_OSM_PROC_MIN");
+    return e ? std::atof(e) : 300.0;
+  }();
+  Ring ring;
+  if (b.polygon) {
+    ring = b.pts;
+    if (ring.size() > 1 && ring.front() == ring.back()) ring.pop_back();
+    for (bool changed = true; changed && ring.size() > 3;) {  // nearly straight corners go
+      changed = false;
+      for (size_t i = 0; i < ring.size() && ring.size() > 3; ++i)
+        if (segDist(ring[i].first, ring[i].second, ring[(i + ring.size() - 1) % ring.size()], ring[(i + 1) % ring.size()]) < 0.25) {
+          ring.erase(ring.begin() + std::ptrdiff_t(i));
+          changed = true;
+        }
+    }
+  } else {
+    auto pts = b.pts;
+    std::sort(pts.begin(), pts.end());
+    pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+    auto cross = [](std::pair<double, double> o, std::pair<double, double> p2, std::pair<double, double> q) {
+      return (p2.first - o.first) * (q.second - o.second) - (p2.second - o.second) * (q.first - o.first);
+    };
+    for (int pass = 0; pass < 2 && pts.size() >= 3; ++pass) {
+      const size_t start = ring.size();
+      for (size_t k = 0; k < pts.size(); ++k) {
+        auto q = pass ? pts[pts.size() - 1 - k] : pts[k];
+        while (ring.size() >= start + 2 && cross(ring[ring.size() - 2], ring.back(), q) <= 0) ring.pop_back();
+        ring.push_back(q);
+      }
+      ring.pop_back();
+    }
+  }
+  if (ring.size() < 3) return false;
+  const double area = polyArea(ring);
+  if (area < kMin) return false;
+  double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
+  for (auto& q : ring) x0 = std::min(x0, q.first), z0 = std::min(z0, q.second), x1 = std::max(x1, q.first), z1 = std::max(z1, q.second);
+  if (x0 < 1 || z0 < 1 || x1 > W - 2 || z1 > L - 2) return false;  // wholly on the map
+  std::vector<size_t> cells;
+  int busy = 0, hi = -0x8000;
+  for (int z = int(z0); z <= int(z1); ++z)
+    for (int x = int(x0); x <= int(x1); ++x) {
+      if (!insideRing(ring, x + 0.5, z + 0.5)) continue;
+      const size_t i = size_t(z) * size_t(W) + size_t(x);
+      if (a.used[i] != 0 && a.used[i] != 8) ++busy;
+      else cells.push_back(i);
+      for (int dz = 0; dz <= 1; ++dz)
+        for (int dx = 0; dx <= 1; ++dx) hi = std::max(hi, int(g.height[size_t(z + dz) * size_t(W) + size_t(x + dx)]));
+    }
+  if (cells.empty() || busy * 100 > int(cells.size() + busy) * 15) return false;
+  GridData::ProcBuilding pb;
+  const std::string& cat = b.category;
+  const bool hall = cat == "industry" || cat == "railway" || cat == "workplace" || cat == "farm" ||
+                    (cat == "commercial" && area >= 700 && b.levels <= 2);
+  pb.style = hall ? 0 : (hash32(b.id) & 1) ? 1 : 2;
+  if (hall) pb.height = float(b.levels > 0 ? std::max(6.0, b.levels * 4.5) : (area > 1500 ? 10.0 : 8.0));
+  else pb.height = float((b.levels > 0 ? b.levels : (cat == "government" ? 3 : 4)) * 3.2);
+  const float cs = g.cellSize;
+  for (auto& q : ring) pb.outline.push_back({float((q.first - W * 0.5) * cs), float((q.second - L * 0.5) * cs)});
+  if (!hall && ring.size() == 4) {
+    const double s01 = std::hypot(ring[1].first - ring[0].first, ring[1].second - ring[0].second);
+    const double s12 = std::hypot(ring[2].first - ring[1].first, ring[2].second - ring[1].second);
+    if (std::min(s01, s12) <= 15.0) pb.roof = 1;
+  }
+  pb.y = float(hi) * cs / 256.0f;
+  double cx = 0, cz = 0;
+  for (auto& q : ring) cx += q.first, cz += q.second;
+  cx /= double(ring.size()), cz /= double(ring.size());
+  if (const StreetIndex::P* st = g_streets.nearest(cx, cz, std::max(x1 - x0, z1 - z0) * 0.5 + 8.0))
+    pb.frontX = float(st->x - cx), pb.frontZ = float(st->z - cz);
+  if (std::getenv("REGS_DEBUG_OSM"))
+    LOG_INFO("osm: procedural %s at world %.0f, %.0f: %.0f cells, %zu corners, height %.1f, roof %d", hall ? "hall" : pb.style == 1 ? "plaster" : "brick",
+             (cx - W * 0.5) * cs, (cz - L * 0.5) * cs, area, ring.size(), pb.height, pb.roof);
+  for (size_t i : cells) a.used[i] = 3;
+  g.procBuildings.push_back(pb);
+  ++grid->procVersion;
+  timelineRecordProcBuilding(vm, a.timeline, pb);
+  ++a.buildingsPlaced, ++a.procPlaced;
+  return true;
+}
+
 // a building lined up along its street, else (nothing fits that way) as OSM has it
 void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Value& buildingsList,
                    std::map<std::string, std::vector<Candidate>>& cache) {
   if (b.category == "railway" && a.stationsPlaced) return;  // the station building stands at its track already
+  if (placeProcBuilding(vm, grid, a, b)) return;  // a big footprint: the port's own building
   int before = a.buildingsPlaced;
   placeBuildingAs(vm, grid, a, b, buildingsList, cache, true);
   if (a.buildingsPlaced == before) placeBuildingAs(vm, grid, a, b, buildingsList, cache, false);
@@ -6084,6 +6178,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         timelineRecordDelete(vm, a.timeline, grid, i);
         gridEditRemoveItem(vm, grid, i);
       }
+      if (!g.procBuildings.empty()) g.procBuildings.clear(), ++grid->procVersion;  // (not on the timeline yet)
       gridEditEnd(vm, grid);
     }
     a.stage = 1;
@@ -6552,7 +6647,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         houses += n, made += n > 0;
       }
       LOG_INFO("osm: %d of %zu blocks built as rows of city houses (%d houses)", made, blocks.size(), houses);
-      a.buildingsLeft = 0, a.footprintsFilled = 0;
+      a.buildingsLeft = 0, a.footprintsFilled = 0, a.procPlaced = 0;
     }
     while (a.next < d.buildings.size()) {
       if (a.inRow[a.next]) {
@@ -6567,7 +6662,8 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       setP(7, float(a.next) / float(d.buildings.size()));
       return false;
     }
-    LOG_INFO("osm: %d footprints filled with several buildings, %d buildings left out", a.footprintsFilled, a.buildingsLeft);
+    LOG_INFO("osm: %d procedural buildings, %d footprints filled with several buildings, %d buildings left out", a.procPlaced,
+             a.footprintsFilled, a.buildingsLeft);
     a.stage = 4;
     a.next = 0;
   }
