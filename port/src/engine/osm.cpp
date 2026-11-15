@@ -997,6 +997,9 @@ struct ImportData {
   std::vector<std::vector<std::pair<double, double>>> beaches;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
+  // per cell: ground OSM means to be green (parks, gardens, lawns, meadows, cemeteries, playgrounds, pitches, woods):
+  // the paving of enclosed pockets keeps off it (2026-11-15)
+  std::vector<uint8_t> green;
   std::vector<uint8_t> paving;   // per cell: 0 none, else the pavement paint type + 1 (1 asphalt, 3 paving stones; 4 a
                                  // pedestrian street's paving stones, buildings allowed)
   std::vector<TreeIn> trees;
@@ -1387,7 +1390,9 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
            ";node[\"highway\"=\"street_lamp\"]" + b + ";node[\"historic\"~\"^(memorial|monument)$\"]" + b +
            ";node[\"tourism\"=\"artwork\"]" + b + ";node[\"shop\"=\"kiosk\"]" + b + ";nwr[\"leisure\"~\"^(playground|pitch|picnic_table|outdoor_seating)$\"]" + b +
            ";nwr[\"amenity\"~\"^(marketplace|fountain|restaurant|cafe|bar|pub|ice_cream|fast_food|biergarten)$\"]" + b +
-           ";way[\"landuse\"=\"allotments\"]" + b + ";";
+           ";way[\"landuse\"=\"allotments\"]" + b +
+           ";way[\"landuse\"~\"^(grass|meadow|village_green|cemetery|recreation_ground)$\"]" + b +
+           ";way[\"leisure\"~\"^(park|garden|common)$\"]" + b + ";way[\"natural\"=\"grassland\"]" + b + ";";
     if (flags & kBuildings)
       q += "way[\"building\"]" + b + ";relation[\"building\"]" + b + ";way[\"landuse\"~\"^(residential|commercial|retail|"
            "industrial)$\"]" + b + ";";
@@ -1451,6 +1456,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
   };
   std::vector<TreeArea> treeAreas;
   std::vector<std::pair<Edges, uint8_t>> pavedAreas;
+  std::vector<Edges> greenEdges;  // the green areas' outlines (ImportData::green)
   // lines of paving: the line, its paving value and half width (metres)
   std::vector<std::pair<std::vector<std::pair<double, double>>, std::pair<uint8_t, double>>> pavedLines;
   std::vector<std::pair<std::vector<std::pair<double, double>>, double>> rivers;  // line, width in cells
@@ -1533,6 +1539,10 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         if (pts.size() < 2) continue;
         std::string hw = tags.str("highway"), nat = tags.str("natural"), lu = tags.str("landuse"), ww = tags.str("waterway"),
                     le = tags.str("leisure");
+        if (closed && (lu == "grass" || lu == "meadow" || lu == "village_green" || lu == "cemetery" || lu == "recreation_ground" ||
+                       lu == "allotments" || lu == "forest" || lu == "orchard" || le == "park" || le == "garden" || le == "common" ||
+                       le == "playground" || le == "pitch" || nat == "grassland" || nat == "wood" || nat == "scrub"))
+          greenEdges.push_back(ringEdges);  // (and on: the branches below still read it)
         if ((nat == "beach" || le == "beach_resort") && type == "way" && closed) {  // a beach (2026-11-15)
           if ((flags & kWater) && tags.str("access") != "private" && tags.str("access") != "no") data->beaches.push_back(pts);
           continue;
@@ -1729,6 +1739,8 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         }
       }
   osm = Json();
+  data->green.assign(size_t(W) * size_t(L), 0);
+  for (const Edges& e : greenEdges) fillEdges(e, W, L, [&](int x, int z) { data->green[size_t(z) * size_t(W) + size_t(x)] = 1; });
   classifyRoads(data->roads, treeRows, cellM);
   mergeTracks(data->roads);
   tramBeds(*data);
@@ -4117,6 +4129,101 @@ struct Painter {
     }
     return out;
   }
+  // the pockets of plain ground among paving, buildings and streets (owner 2026-11-15: "random patches of grass in weird
+  // shapes"): a 4-connected region of unpaved ground allow(cell) accepts and green(cell) does not, up to 900 cells, not at
+  // the map's edge, whose border is three quarters paving, buildings or streets (urban(cell)), takes the paving most of
+  // its paved neighbours have (paving stones when none); one touching OSM's green ground (a tenth of its border) is the
+  // park or lawn reaching between the buildings and stays
+  template <class F, class G, class U>
+  int fillPockets(F allow, G green, U urban) {
+    const int W = g.width, L = g.length;
+    auto paintOf = [&](size_t i) -> int {
+      const uint16_t f = g.flags[i];
+      if ((f & 0x48) == 0x8) return f & 7;
+      auto e = g.paintEdges.find(paintEdgeKey(int(i % size_t(W)), int(i / size_t(W))));
+      return e == g.paintEdges.end() ? -1 : int(e->second.type);
+    };
+    // (a border cell of a painted area is open too: the part outside its edge shows the plain ground, and where two
+    // areas meet or leave a gap those parts make the narrow grass strips)
+    auto open = [&](size_t i) {
+      const uint16_t f = g.flags[i];
+      return !(f & (0x2000 | 0x8 | 0x20 | 0x80)) && allow(i) && !green(i);
+    };
+    if (const char* dc = std::getenv("REGS_DEBUG_OSM_CELLS")) {  // x,z;x,z;... (world): what the pockets see there
+      std::string list = dc;
+      for (size_t at = 0; at < list.size();) {
+        size_t e = list.find(';', at);
+        float wx = 0, wz = 0;
+        std::sscanf(list.substr(at, e - at).c_str(), "%f,%f", &wx, &wz);
+        const int x = int(std::floor(wx / g.cellSize + W * 0.5f)), z = int(std::floor(wz / g.cellSize + L * 0.5f));
+        if (x >= 0 && z >= 0 && x < W && z < L) {
+          const size_t i = size_t(z) * size_t(W) + size_t(x);
+          LOG_INFO("osm: cell at %.0f,%.0f: flags %04x edge %d allow %d green %d urban %d open %d", wx, wz, g.flags[i], paintOf(i) >= 0, int(allow(i)),
+                   int(green(i)), int(urban(i)), int(open(i)));
+        }
+        if (e == std::string::npos) break;
+        at = e + 1;
+      }
+    }
+    std::vector<uint8_t> seen(size_t(W) * size_t(L), 0);
+    std::vector<size_t> region, stack;
+    int filled = 0, pockets = 0;
+    for (size_t start = 0; start < seen.size(); ++start) {
+      if (seen[start] || !open(start)) continue;
+      region.clear(), stack.assign(1, start), seen[start] = 1;
+      int urbanN = 0, otherN = 0, greenN = 0, votes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+      bool edge = false;
+      while (!stack.empty()) {
+        const size_t i = stack.back();
+        stack.pop_back();
+        region.push_back(i);
+        const int x = int(i % size_t(W)), z = int(i / size_t(W));
+        static const int kD[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (auto& dd : kD) {
+          const int nx = x + dd[0], nz = z + dd[1];
+          if (nx < 0 || nz < 0 || nx >= W || nz >= L) {
+            edge = true;
+            continue;
+          }
+          const size_t j = size_t(nz) * size_t(W) + size_t(nx);
+          if (open(j)) {
+            if (!seen[j]) seen[j] = 1, stack.push_back(j);
+            continue;
+          }
+          const int t = paintOf(j);
+          if (t >= 0) ++urbanN, ++votes[t & 7];
+          else if (urban(j)) ++urbanN;
+          else ++otherN, greenN += green(j) ? 1 : 0;
+        }
+      }
+      if (edge || region.size() > 900 || urbanN * 4 < (urbanN + otherN) * 3 || greenN * 10 > urbanN + otherN) {
+        static const char* dbg = std::getenv("REGS_DEBUG_OSM_POCKETS");  // x,z,r (world): the pockets left around there
+        if (dbg && region.size() >= 15) {
+          float px = 0, pz = 0, pr = 80;
+          std::sscanf(dbg, "%f,%f,%f", &px, &pz, &pr);
+          double cx = 0, cz = 0;
+          for (size_t i : region) cx += double(i % size_t(W)), cz += double(i / size_t(W));
+          cx = (cx / double(region.size()) - W * 0.5) * g.cellSize, cz = (cz / double(region.size()) - L * 0.5) * g.cellSize;
+          if (std::hypot(cx - px, cz - pz) <= pr)
+            LOG_INFO("osm: pocket left at %.0f,%.0f: %zu cells, edge %d, urban %d other %d (green %d)", cx, cz, region.size(), int(edge), urbanN,
+                     otherN, greenN);
+        }
+        continue;
+      }
+      int best = 2;
+      for (int t = 0; t < 8; ++t)
+        if (votes[t] > votes[best]) best = t;
+      for (size_t i : region) {
+        g.paintEdges.erase(paintEdgeKey(int(i % size_t(W)), int(i / size_t(W))));
+        g.flags[i] = uint16_t((g.flags[i] & 0xFF98) | 0x8 | best);
+        const int x = int(i % size_t(W)), z = int(i / size_t(W));
+        x0 = std::min(x0, x), z0 = std::min(z0, z), x1 = std::max(x1, x), z1 = std::max(z1, z);
+      }
+      filled += int(region.size()), ++pockets;
+    }
+    if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d pockets of plain ground paved (%d cells)", pockets, filled);
+    return filled;
+  }
   // the grass slivers between the paving it laid and other paving (owner 2026-11-15): a ground cell allow(cell) accepts
   // with paving within 2 cells on two opposite sides takes the paving most of those have
   template <class F>
@@ -4138,7 +4245,7 @@ struct Painter {
       for (int x = bx0; x <= bx1; ++x) {
         const size_t i = size_t(z) * size_t(W) + size_t(x);
         const uint16_t f = src[i];
-        if ((f & (0x2000 | 0x8 | 0x20 | 0x80)) || g.paintEdges.count(paintEdgeKey(x, z)) || !allow(i)) continue;
+        if ((f & (0x2000 | 0x8 | 0x20 | 0x80)) || !allow(i)) continue;  // (border cells too: their outside part is ground)
         int votes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         bool pair = false;
         for (auto& dv : kDir) {
@@ -4151,6 +4258,7 @@ struct Painter {
         int best = 0;
         for (int t = 1; t < 8; ++t)
           if (votes[t] > votes[best]) best = t;
+        g.paintEdges.erase(paintEdgeKey(x, z));
         g.flags[i] = uint16_t((f & 0xFF98) | 0x8 | best);
         x0 = std::min(x0, x), z0 = std::min(z0, z), x1 = std::max(x1, x), z1 = std::max(z1, z);
         ++closed;
@@ -6758,7 +6866,17 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     if (!a.gridStreets) streetLamps(vm, grid, a, lamps);
     decorateYards(vm, grid, a, fu, painter);
     {
-      const int gaps = painter.closeGaps([&](size_t i) { const uint8_t u = a.used[i]; return u == 0 || u == 4 || u == 6 || u == 8; });
+      // ground, trees, decor, empty footprints, the painted areas' border cells (used 5 with an edge), street margins
+      auto groundCell = [&](size_t i) {
+        const uint8_t u = a.used[i];
+        return u == 0 || u == 4 || u == 6 || u == 8 ||
+               (u == 5 && g.paintEdges.count(paintEdgeKey(int(i % size_t(W)), int(i / size_t(W)))) != 0) ||
+               (u == 2 && !(g.flags[i] & 0x0F00));  // (a street margin not under the street: its grass shows)
+      };
+      const int gaps = painter.closeGaps(groundCell);
+      painter.fillPockets(groundCell,
+                          [&](size_t i) { return !d.green.empty() && d.green[i] != 0; },
+                          [&](size_t i) { const uint8_t u = a.used[i]; return u == 2 || u == 3 || u == 5 || u == 7; });
       if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d grass slivers by the yards' paving closed", gaps);
     }
     if (painter.x1 >= painter.x0) {  // the yards' pavement: on the timeline as a patch and the edges

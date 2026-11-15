@@ -364,6 +364,11 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   the buildings left out around a point.
   Grass slivers between paved areas close (a plain ground cell with paving within 2 cells on two opposite sides takes
   their paving), after the OSM paint and again after the yards' paving (Painter::closeGaps).
+  Pockets (owner 2026-11-15: random grass patches in weird shapes; Painter::fillPockets): a 4-connected region of plain
+  ground (painted areas' border cells and uncovered street margins included) up to 900 cells, not at the map's edge,
+  whose border is three quarters paving, buildings or streets and under a tenth OSM green (parks, gardens, lawns,
+  meadows, cemeteries, playgrounds, pitches, woods: ImportData::green), is paved with its neighbours' paving.
+  Karlsruhe Marktplatz: 947 pockets, 9200 cells. REGS_DEBUG_OSM_POCKETS / REGS_DEBUG_OSM_CELLS log why one stays.
   Procedural buildings (owner 2026-11-15: custom shaped buildings with windows, doors and roofs, big halls;
   engine/proc_buildings.*): a footprint from 300 cells (REGS_OSM_PROC_MIN) on free ground becomes a building of the
   port's own: walls raised from the outline (a relation's convex hull), facades repeating per floor and bay (halls:
