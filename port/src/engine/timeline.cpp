@@ -555,7 +555,8 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
           if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length) continue;
           size_t k = 8 + (size_t(z) * size_t(w) + size_t(x)) * 4, c = size_t(cz) * size_t(g.width) + size_t(cx);
           g.height[c] = rd(k);
-          g.flags[c] = uint16_t((g.flags[c] & ~0x203Fu) | (uint16_t(rd(k + 2)) & 0x203Fu));
+          // (0x0080: the port's sand, OSM beaches; the game never sets it)
+          g.flags[c] = uint16_t((g.flags[c] & ~0x20BFu) | (uint16_t(rd(k + 2)) & 0x20BFu));
         }
       gridEditCellsChanged(ap.grid, x0 - 1, z0 - 1, x0 + w, z0 + l, true);
       break;

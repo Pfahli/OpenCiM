@@ -344,11 +344,14 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
     advertising pillar, a phone box or a kiosk).
   - Footpaths over paving (owner: no grass beneath them): a footpath curve with 70 % of its length on painted paving is
     not drawn (CurveRoad::bridge 3); the paving shows, its lanes and walk map stay.
-  - Beaches (natural=beach, leisure=beach_resort, not private): the ground ramps from the beach's landward edge down to
-    just above the water line, the water before it is shallow and deepens over 10 cells, its cells get the most worn
-    ground variant; parasols in loose rows two cells and more from the water, a beach bar (kiosk, tables), bins and a
-    toilet along the edge, motorboats off the shore. Not yet seen in the game: the Overpass servers timed out for
-    Warnemuende (2026-11-15). The game has no deck chairs or towels.
+  - Beaches (natural=beach, leisure=beach_resort, not private): the ground ramps from just above the water line at the
+    water to the land's own height at the beach's landward edge (by the share of the way across, squared: low and flat in
+    front, the rise at the back, no cliff); the water before it is shallow and deepens over 10 cells; the strip between
+    OSM's beach outline and the water joins the beach. Its cells are sand: cell flag 0x0080 (the game never sets it; the
+    timeline patches and templates carry it, mask 0x20BF), which terrain.cpp turns into a sea-floor weight over 1 and the
+    terrain shader's port patch (shaders.cpp, terrain/maps.fragment) into the sea floor brightened to dry sand. Parasols
+    in loose rows two cells and more from the water, a beach bar (kiosk, tables), bins and a toilet along the edge,
+    motorboats off the shore. Seen at Warnemuende. The game has no deck chairs or towels.
   Patchy ground fixed (owner 2026-11-15): a footprint no single template fits on its free cells is filled with as
   many buildings of its kind as fit (fillFootprint: the own kind first, the largest first, on the footprint convex hull,
   facing the street or turned along it); what stays empty is kept from the yards (used 8), so yard paint no longer

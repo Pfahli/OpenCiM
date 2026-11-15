@@ -123,6 +123,15 @@ struct Builder {
     } else if (!covered) {  // sea-floor weight: any cell around is water
       for (int k = 0; k < 4; ++k)
         if (qok[k] && (f(qx[k], qz[k]) & 0x2000)) c.s = 1.0f;
+      // port (the OSM import's beaches, 2026-11-15): sand cells (0x0080, a bit the game never sets) show dry sand: a
+      // sea-floor weight over 1 (2 × the share of the corner's cells that are sand), which the terrain shader's port
+      // patch (shaders.cpp) turns into the sea floor brightened; the real sea floor keeps weights up to 1
+      if (!(fc & 0x28)) {
+        int sand = 0, all = 0;
+        for (int k = 0; k < 4; ++k)
+          if (qok[k]) ++all, sand += (f(qx[k], qz[k]) & 0x80) ? 1 : 0;
+        if (all && sand) c.s = std::max(c.s, 2.0f * float(sand) / float(all));
+      }
     }
     c.t = covered ? 0.0f : std::clamp(4.0f - 4.2f * c.normal.y, 0.0f, 1.0f);
     return c;

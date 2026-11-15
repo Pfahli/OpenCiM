@@ -241,6 +241,15 @@ std::u16string portShaderPatch(const std::u16string& path, std::u16string text) 
     else LOG_WARN("shader component %s: the tree wind line was not found, trees sway in division space",
                   utf16ToUtf8(path).c_str());
   }
+  if (path.ends_with(u"shaders/terrain/maps.fragment")) {  // port: the OSM import's sand (terrain.cpp, weight over 1)
+    std::u16string t = text;
+    if (insertAfterLine(t, u"    diffusemap = mix(diffusemap, seafloor, smoothstep(0.3, 0.7, seafloora));",
+                        u"    float regsSand = clamp(v_texCoord2.y - 1.0, 0.0, 1.0);\n"
+                        u"    diffusemap.rgb = mix(diffusemap.rgb, min(seafloor.rgb * vec3(1.7, 1.6, 1.3) + vec3(0.10, 0.09, 0.05), vec3(1.0)), regsSand);\n"))
+      text = t;
+    else
+      LOG_WARN("shader component %s: no anchor for the sand", utf16ToUtf8(path).c_str());
+  }
   if (path.ends_with(u"shaders/default/maps.fragment")) {
     std::u16string t = text;
     if (insertBefore(t, u"void maps_input() {", kNightMapsDecl) && insertBefore(t, u"  geometry_input();", kNightMapsCall))

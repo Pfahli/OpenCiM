@@ -36,7 +36,7 @@ void timelineRecordName(script::VM& vm, script::Object* timeline, GridObj* grid,
 // addBrushAction(type, radius, x, strength, z) (L:0x081a7590): a dab of a brush; extends the newest action when it is a
 // brush of the same type, radius and strength and nothing else was recorded since
 void timelineRecordBrush(script::VM& vm, script::Object* timeline, int type, int radius, int x, int strength, int z);
-// port: a terrain patch (templates): heights (engine units) and ground flags (0x203f) of w × l cells from (x, z)
+// port: a terrain patch (templates): heights (engine units) and ground flags (0x20bf: with the port's sand 0x0080) of w × l cells from (x, z)
 void timelineRecordPatch(script::VM& vm, script::Object* timeline, int x, int z, int w, int l,
                          const std::vector<int16_t>& heights, const std::vector<uint16_t>& flags);
 void timelineRecordWater(script::VM& vm, script::Object* timeline, int x, int z, bool on);

@@ -5969,7 +5969,7 @@ void placeLevelCrossings(VM& vm, GridObj* grid, Apply& a, const std::vector<Leve
         for (int xx = 0; xx < pw; ++xx) {
           size_t i = size_t(z0 + zz) * size_t(W) + size_t(x0 + xx);
           hs[size_t(zz) * size_t(pw) + size_t(xx)] = g.height[i];
-          fs[size_t(zz) * size_t(pw) + size_t(xx)] = uint16_t(g.flags[i] & 0x203F);
+          fs[size_t(zz) * size_t(pw) + size_t(xx)] = uint16_t(g.flags[i] & 0x20BF);
         }
       timelineRecordPatch(vm, a.timeline, x0, z0, pw, pl, hs, fs);
     }
@@ -6055,7 +6055,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     if (!d.heights.empty() || water || !d.paving.empty() || !d.paintAreas.empty()) {
       std::vector<int16_t> heights(size_t(W) * size_t(L));
       std::vector<uint16_t> flags(heights.size());
-      constexpr uint16_t kGround = 0x203F;
+      constexpr uint16_t kGround = 0x20BF;  // (0x0080: the port's sand, beaches)
       for (int z = 0; z < L; ++z)
         for (int x = 0; x < W; ++x) {
           size_t i = size_t(z) * size_t(W) + size_t(x);
@@ -6119,7 +6119,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       }
       // beaches (owner 2026-11-15: a very slow gradient into the water): the ground of a beach ramps from its landward
       // edge down to just above the water line at the water; the water before a beach is shallow, deepening slowly over
-      // 10 cells (the sea floor shows through); the beach's cells get the most worn ground variant (sandy, 7)
+      // 10 cells (the sea floor shows through); the beach's cells are sand (0x0080, terrain.cpp)
       if (!d.heights.empty() && water && !d.beaches.empty()) {
         const int N = W * L;
         auto chamfer = [&](std::vector<float>& dist) {  // two passes, 1 and √2 steps
@@ -6134,7 +6134,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
               nb(sx, 0, 1.0f), nb(0, sx, 1.0f), nb(sx, sx, 1.4142f), nb(-sx, sx, 1.4142f);
             }
         };
-        std::vector<float> toWater(size_t(N), 1e9f), toLand(size_t(N), 1e9f), toBeach(size_t(N), 1e9f);
+        std::vector<float> toWater(size_t(N), 1e9f), toLand(size_t(N), 1e9f), toBeach(size_t(N), 1e9f), toInland(size_t(N), 1e9f);
         std::vector<uint8_t> beachCell(size_t(N), 0);
         for (const auto& b : d.beaches) {
           Edges e;
@@ -6145,8 +6145,15 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           if (d.water[size_t(i)]) toWater[size_t(i)] = 0;
           else toLand[size_t(i)] = 0;
           if (beachCell[size_t(i)]) toBeach[size_t(i)] = 0;
+          else if (!d.water[size_t(i)]) toInland[size_t(i)] = 0;  // the land behind the beaches
         }
-        chamfer(toWater), chamfer(toLand), chamfer(toBeach);
+        chamfer(toWater), chamfer(toLand), chamfer(toBeach), chamfer(toInland);
+        // the strip between a beach's outline and the water (OSM draws them a little apart): beach too
+        std::vector<uint8_t> gap(size_t(N), 0);
+        for (int i = 0; i < N; ++i)
+          if (!d.water[size_t(i)] && !beachCell[size_t(i)] && toBeach[size_t(i)] <= 2.5f && toWater[size_t(i)] <= 2.5f) gap[size_t(i)] = 1;
+        for (int i = 0; i < N; ++i)
+          if (gap[size_t(i)]) beachCell[size_t(i)] = 1;
         // per beach: its depth (the farthest of its cells from the water, at most 40)
         std::vector<float> depthOf(size_t(N), 0);
         for (const auto& b : d.beaches) {
@@ -6160,6 +6167,8 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           });
           for (int i : cells) depthOf[size_t(i)] = std::max(depthOf[size_t(i)], std::max(deep, 4.0f));
         }
+        for (int i = 0; i < N; ++i)
+          if (gap[size_t(i)]) depthOf[size_t(i)] = std::max(depthOf[size_t(i)], 4.0f);
         int shaped = 0;
         for (int z = 0; z < L; ++z)
           for (int x = 0; x < W; ++x) {
@@ -6169,11 +6178,15 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
               for (int dx = -1; dx <= 0; ++dx)
                 if (x + dx >= 0 && z + dz >= 0 && d.water[size_t(z + dz) * size_t(W) + size_t(x + dx)]) wetCorner = true;
             if (beachCell[i] && !wetCorner && depthOf[i] > 0) {
-              const double t = std::clamp(double(toWater[i]) / double(depthOf[i]), 0.0, 1.0);
-              const int lo = -0x128;  // just above the water line (-0x140)
+              // from just over the water line at the water up to the land's own height at the beach's landward edge, by the
+              // share of the way across the beach there (so narrow and wide stretches both meet the land: no cliff);
+              // squared, so its lower part stays low and sandy (terrain.cpp) and the rise comes at the back
+              const double tw = toWater[i], tn = toInland[i] > 1e8f ? double(depthOf[i]) : double(toInland[i]);
+              const double t = std::clamp(tw / std::max(1e-6, tw + tn), 0.0, 1.0);
+              const int lo = -0x128;
               if (heights[i] > lo) heights[i] = int16_t(std::lround(lo + (heights[i] - lo) * t * t));
               uint16_t& fl = g.flags[i];
-              if (!(fl & 0x8)) fl = uint16_t((fl & ~0x7u) | 0x7), flags[i] = uint16_t(fl & kGround);
+              if (!(fl & 0x8)) fl = uint16_t(fl | 0x80), flags[i] = uint16_t(fl & kGround);  // sand (terrain.cpp)
               ++shaped;
             } else if (wetCorner && toBeach[i] < 12) {  // a water corner before a beach: shallow
               const int h = int(std::lround(-0x158 - toLand[i] * 0x22));
@@ -6597,7 +6610,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
           for (int x = 0; x < pw; ++x) {
             size_t i = size_t(painter.z0 + z) * size_t(W) + size_t(painter.x0 + x);
             hs[size_t(z) * size_t(pw) + size_t(x)] = g.height[i];
-            fs[size_t(z) * size_t(pw) + size_t(x)] = uint16_t(g.flags[i] & 0x203F);
+            fs[size_t(z) * size_t(pw) + size_t(x)] = uint16_t(g.flags[i] & 0x20BF);
           }
         timelineRecordPatch(vm, a.timeline, painter.x0, painter.z0, pw, pl, hs, fs);
         timelineRecordPaintEdges(vm, a.timeline, g, painter.x0, painter.z0, pw, pl);

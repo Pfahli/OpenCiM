@@ -43,7 +43,7 @@ using namespace regs::script;
 namespace {
 
 constexpr int kModeSelectArea = 0x40, kModePlaceTemplate = 0x41;
-constexpr uint32_t kGroundFlags = 0x203F;  // ground style, pavement, field, water
+constexpr uint32_t kGroundFlags = 0x20BF;  // ground style, pavement, field, water, the port's sand (0x0080)
 // a template saved without its terrain: every height holds this mark, and placing it leaves the ground as it is
 constexpr int16_t kNoTerrain = INT16_MIN;
 
