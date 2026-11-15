@@ -244,7 +244,9 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
     for (int end = 0; end < 2; ++end) {
       Vec3 q = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
       float d = len2(q - p);
-      if (d > hw * hw || d >= bestD) continue;
+      // an avenue ring's ends lie on its inner edge, its road beside them: reached from anywhere on it
+      const float reachJ = curveHalfRing(c) ? hw + curveProfile(c.kind).halfWidth : hw;
+      if (d > reachJ * reachJ || d >= bestD) continue;
       Snap s;
       for (const CurveRoad& k : g.curves) {
         if ((k.kind == 3) != (c.kind == 3)) continue;
@@ -276,7 +278,7 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
     float side, s;
     curveNearest(shape, p.x, p.z, side, s);
     float L = shape.back().s;
-    if (std::fabs(side) >= hw || s < hw + 2.0f || s > L - hw - 2.0f || side * side >= bestD) continue;
+    if (curveAcross(c, side) >= hw || s < hw + 2.0f || s > L - hw - 2.0f || side * side >= bestD) continue;
     CurveSample k = curveAt(shape, s);
     Snap sn;
     sn.ok = true, sn.p = k.p, sn.junction = 2;
@@ -382,7 +384,7 @@ int curveUnder(const GridData& g, const Vec3& p) {
     curveNearest(shape, p.x, p.z, side, s);
     // beyond an end on a road block the point is on the block (the track tool's drag starts there, not on the curve)
     if ((s <= 0.01f && (c.ends & 1)) || (s >= shape.back().s - 0.01f && (c.ends & 2))) continue;
-    float d = std::fabs(side) - curveProfile(c.kind).halfWidth;
+    float d = curveAcross(c, side) - curveProfile(c.kind).halfWidth;
     if (d < bestD) bestD = d, best = int(i);
   }
   return best;
@@ -413,7 +415,7 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
         float wx = (float(x) + 0.5f - float(g.width) * 0.5f) * cs, wz = (float(z) + 0.5f - float(g.length) * 0.5f) * cs;
         float side, s;
         curveNearest(shape, wx, wz, side, s);
-        hit = std::fabs(side) < curveProfile(c.kind).halfWidth - 0.5f;
+        hit = curveAcross(c, side) < curveProfile(c.kind).halfWidth - 0.5f;
         // a tunnel passes under what stands over its tube
         if (hit && !curveTunnelOpen(g, c, s, caps)) hit = false;
         // elevated tracks pass over what stays a cell under them (their pillars stand between)
@@ -506,7 +508,8 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
 // and makes a junction, whose lanes keep to the ring's direction.
 // large-road and avenue rings (2026-11-15): the same four arcs of that kind, every lane one way (one-way large roads
 // and avenues, sim_graph.cpp), radius from the kind's half width plus a 6-unit island
-float roundaboutMinRadius(int kind) { return kind == 0 ? 10.0f : curveProfile(kind).halfWidth + 6.0f; }
+// (an avenue ring is its outer half only, so its island is the radius itself)
+float roundaboutMinRadius(int kind) { return kind == 0 ? 10.0f : kind == 2 ? 8.0f : curveProfile(kind).halfWidth + 6.0f; }
 float roundaboutMaxRadius(int kind) { return kind == 0 ? 40.0f : 60.0f; }
 
 std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single, int kind = 0) {

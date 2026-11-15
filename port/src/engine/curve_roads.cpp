@@ -780,6 +780,26 @@ void appendBentMesh(const render::MeshData& src, int materialBase, const std::ve
   (void)first;
 }
 
+render::MeshData rightHalfOf(const render::MeshData& src) {
+  render::MeshData out = src;
+  out.indices.clear();
+  out.submeshes.clear();
+  for (const render::Submesh& sm : src.submeshes) {
+    render::Submesh o = sm;
+    o.firstIndex = uint32_t(out.indices.size());
+    o.indexCount = 0;
+    for (uint32_t k = 0; k + 2 < sm.indexCount; k += 3) {
+      float z = 0;
+      for (int j = 0; j < 3; ++j) z += src.positions[size_t(src.indices[sm.firstIndex + k + uint32_t(j)]) * 3 + 2];
+      if (z < -0.03f) continue;
+      for (int j = 0; j < 3; ++j) out.indices.push_back(src.indices[sm.firstIndex + k + uint32_t(j)]);
+      o.indexCount += 3;
+    }
+    if (o.indexCount) out.submeshes.push_back(o);
+  }
+  return out;
+}
+
 std::string stopTemplateName(const CurveRoad::Stop& st, int kind) {
   const char* road = kind == 1 ? "_large" : kind == 2 ? "_avenue" : "_small";
   if (st.kind == 1)  // trams: small roads keep design 01 (as before); large roads and avenues their design
@@ -832,6 +852,14 @@ static bool beyondBlockEnd(const CurveRoad& c, float x, float z) {
   return false;
 }
 
+// a point past an end of the curve that is not free (it meets a junction or another curve): that end's ground belongs to
+// what it meets (an avenue ring's junction lies on the island's edge: the road ending there must not claim the island)
+static bool pastJoinedEnd(const CurveRoad& c, CurveEnds caps, float x, float z) {
+  if (!caps.free0 && !(c.ends & 1) && (x - c.x0) * c.dx0 + (z - c.z0) * c.dz0 < -0.05f) return true;
+  if (!caps.free1 && !(c.ends & 2) && (x - c.x1) * c.dx1 + (z - c.z1) * c.dz1 > 0.05f) return true;
+  return false;
+}
+
 void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
   GridData& g = *grid->data;
   if (g.height.empty() || curveIsElevated(c.kind) || c.bridge == 1) return;  // elevated tracks and bridges leave the ground
@@ -854,10 +882,10 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
       // the block hides it, and the curve's first cells would otherwise show grass through the asphalt
       bool underItem = covered(x - 1, z - 1) || covered(x, z - 1) || covered(x - 1, z) || covered(x, z);
       float wx = (float(x) - float(g.width) * 0.5f) * cs, wz = (float(z) - float(g.length) * 0.5f) * cs;
-      if (beyondBlockEnd(c, wx, wz)) continue;
+      if (beyondBlockEnd(c, wx, wz) || pastJoinedEnd(c, caps, wx, wz)) continue;
       float side, s;
       curveNearest(d, wx, wz, side, s);
-      float ad = std::fabs(side);
+      float ad = curveAcross(c, side);
       if (ad > hw + 3.0f || (underItem && ad > hw)) continue;
       if (tunnel && (ad > hw + 1.5f || !curveTunnelOpen(g, c, s, caps, 3.0f))) continue;
       float target = (curveAt(d, s).p.y - 0.25f) * 256.0f / cs;  // just under the asphalt (−0.2)
@@ -914,7 +942,8 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
           float fx = k == 4 ? 0.5f : float(k & 1), fz = k == 4 ? 0.5f : float(k >> 1);
           float side, s, px = (float(x) + fx - float(g.width) * 0.5f) * cs, pz = (float(z) + fz - float(g.length) * 0.5f) * cs;
           curveNearest(d, px, pz, side, s);
-          inside = std::fabs(side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz) &&
+          inside = curveAcross(c, side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz) &&
+                   !pastJoinedEnd(c, caps, px, pz) &&
                    curveTunnelOpen(g, c, s, caps, 3.0f);  // a tunnel's tube: the ground over it stays (but behind the mouth)
         }
         if (!inside) continue;
@@ -1247,8 +1276,11 @@ void curveTrims(const std::vector<CurveJunction>& js, int curve, float& trim0, f
 }
 
 std::vector<Vec3> junctionOutline(const CurveJunction& j, int layer, float delta, int perGap) {
-  auto widthOf = [&](const CurveArm& a) {
+  // side +1: right of the arm's way out, -1: left. An avenue ring's arm (its outer half only) has nothing on the island
+  // side: its outer edge on the centre line, its kerb 4.5 beyond it (the right-hand carriageway's inner edge)
+  auto widthOf = [&](const CurveArm& a, int side = 1) {
     const CurveProfile& pf = curveProfile(a.kind);
+    if (a.ring && a.kind == 2 && side == (a.end == 0 ? -1 : 1)) return (layer ? 0.0f : -4.5f) + delta;
     return (layer ? pf.halfWidth : pf.carriageway) + delta;
   };
   std::vector<Vec3> pts;
@@ -1262,10 +1294,21 @@ std::vector<Vec3> junctionOutline(const CurveJunction& j, int layer, float delta
   for (size_t i = 0; i < n; ++i) {
     const CurveArm &A = j.arms[i], &B = j.arms[(i + 1) % n];
     Vec3 ra = rightOf(A.out), rb = rightOf(B.out);
-    const float wa = widthOf(A), wb = widthOf(B);
+    const float wa = widthOf(A, 1), wb = widthOf(B, -1);
     Vec3 Ea = atY(A.mouth + ra * wa), Eb = atY(B.mouth - rb * wb);
-    pts.push_back(atY(A.mouth - ra * wa));  // the mouth edge
+    pts.push_back(atY(A.mouth - ra * widthOf(A, -1)));  // the mouth edge
     pts.push_back(Ea);
+    // between two arms of an avenue ring on the island side: along the island's edge (through the centre, which lies on
+    // the ring's centre line), not across the island
+    auto islandSide = [&](const CurveArm& a, int side) { return a.ring && a.kind == 2 && side == (a.end == 0 ? -1 : 1); };
+    if (islandSide(A, 1) && islandSide(B, -1)) {
+      Vec3 P = c * 2.0f - (Ea + Eb) * 0.5f;
+      for (int k = 1; k <= perGap; ++k) {
+        float t = float(k) / float(perGap + 1), u = 1 - t;
+        pts.push_back(atY(Ea * (u * u) + P * (2 * u * t) + Eb * (t * t)));
+      }
+      continue;
+    }
     float gap = angleOf(B.mouth) - angleOf(A.mouth);
     while (gap <= 0.0f) gap += 2 * kPi;
     if (gap > kPi + 0.09f) {  // around the back of the centre

@@ -875,6 +875,14 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             ObjectObj* o = nullptr;
             int b = nm && nm[0] ? templateOf(nm, &o) : -1;
             if (b < 0 || !o || !o->data) return false;
+            // an avenue ring: the piece's outer half only (triangles right of its centre line)
+            if (curveHalfRing(c) && nm == pf.straight) {
+              static std::map<const render::ObjectData*, MeshData> halves;
+              auto it = halves.find(o->data.get());
+              if (it == halves.end()) it = halves.emplace(o->data.get(), rightHalfOf(slicedOf(o->data.get()))).first;
+              appendBentMesh(it->second, b, shape, s, side, across, m, cp.stretch);
+              return true;
+            }
             appendBentMesh(slicedOf(o->data.get()), b, shape, s, side, across, m, cp.stretch);
             return true;
           };

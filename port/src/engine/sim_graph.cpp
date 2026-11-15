@@ -883,6 +883,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         for (const auto& [name, p0path] : ps->paths) {
           if (!track && !keep(p0path)) continue;
           PathRecord p = p0path;
+          if (curveHalfRing(c) && ps == basePs && p.p0.z < 0 && p.p1.z < 0) continue;  // an avenue ring: its outer half only
           if (oneWay && ps == basePs && sg > 0 && p.f0.x + p.f1.x < 0) {  // against the curve: turned round
             std::swap(p.p0, p.p1);
             Vec3 f0 = p.f1 * -1.0f, f1 = p.f0 * -1.0f;
@@ -1077,7 +1078,9 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
             } else {  // a one-way large road or avenue: all its lanes one way, the rightmost first
               std::vector<float> offs;
               for (int k = ln.count - 1; k >= 0; --k) offs.push_back(-ln.offset[k]);
-              for (int k = 0; k < ln.count; ++k) offs.push_back(ln.offset[k]);
+              // an avenue ring (its outer half): only the right-hand carriageway
+              if (!(X.ring && X.kind == 2))
+                for (int k = 0; k < ln.count; ++k) offs.push_back(ln.offset[k]);
               for (float o : offs) pts.push_back(X.mouth + rx * (incoming ? o : -o));
             }
           }

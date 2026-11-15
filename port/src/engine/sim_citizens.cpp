@@ -590,7 +590,7 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
           float wz = (float(cz) + (float(qz) + 0.5f) * 0.25f - float(g.length) * 0.5f) * cs;
           float side, at;
           curveNearest(shape, wx, wz, side, at);
-          float ad = std::fabs(side);
+          float ad = curveAcross(c, side);
           if (ad > pf.halfWidth) continue;
           if (!curveTunnelOpen(g, c, at, caps)) continue;  // over a tunnel's tube: the ground as it is
           // tracks and express roads: blocked all across (no crossing)

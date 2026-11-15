@@ -213,7 +213,7 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
           float px, pz, side, s;
           centre(x, z, px, pz);
           curveNearest(d, px, pz, side, s);
-          if (std::fabs(side) <= reach) road[size_t(z) * size_t(W) + size_t(x)] = 1;
+          if (curveAcross(c, side) <= reach) road[size_t(z) * size_t(W) + size_t(x)] = 1;
         }
     }
     for (const CurveJunction& j : findCurveJunctions(g)) {

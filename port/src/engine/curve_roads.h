@@ -52,6 +52,14 @@ inline int curveJoinClass(int kind) { return kind >= 3 && kind != 8 ? kind : 0; 
 // 8: the express road's ramp (2026-11-15, road_ramp_basic: 6 wide, one lane on its centre line used both ways as in the
 // game); joins roads at junctions like a road, and an express road at an entry or exit (RampPort below)
 inline bool curveIsRamp(int kind) { return kind == 8; }
+// an avenue roundabout's ring (owner's request 2026-11-15: no inner carriageway): only the avenue's outer half, right of
+// the curve's direction (away from the island): half the middle strip, the outer carriageway's two lanes, the pavement
+inline bool curveHalfRing(const GridData::CurveRoad& c) { return c.kind == 2 && (c.ends & 0xA0) == 0xA0; }
+// how far across the road a point lies for the curve's footprint (ground, cover, walk map, minimap, picking): |side|,
+// for a half ring the side itself (the island side is off the road)
+inline float curveAcross(const GridData::CurveRoad& c, float side) {
+  return curveHalfRing(c) ? (side >= 0.0f ? side : 1e9f) : (side >= 0.0f ? side : -side);
+}
 // 7: the express road (2026-11-13), bent like the avenue; joined smoothly to express roads only, no pedestrians on it
 inline bool curveIsExpress(int kind) { return kind == 7; }
 // kinds whose ends only join smoothly (no junction pieces): tracks and express roads
@@ -228,6 +236,8 @@ void appendBentMesh(const render::MeshData& src, int materialBase, const std::ve
                     float side, float across, render::MeshData& out, float scale = 1.0f, float dy = 0.0f);
 // a mesh cut into slabs `step` wide along its local x (so bending follows the curve), attributes interpolated
 render::MeshData sliceMeshAlongX(const render::MeshData& src, float step, int axis = 0);
+// the triangles of a mesh whose centre lies at local z >= 0 (an avenue ring's outer half)
+render::MeshData rightHalfOf(const render::MeshData& src);
 // a template's mesh placed rigidly: local x along ax, z along az, y up, origin at o
 void appendPlacedMesh(const render::MeshData& src, int materialBase, const render::Vec3& o, const render::Vec3& ax,
                       const render::Vec3& az, render::MeshData& out);

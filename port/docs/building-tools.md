@@ -193,10 +193,15 @@ A ring of four one-way quarter-circle small-road curves, counter-clockwise seen 
 2 lanes, radius 10–40. Small rings take roads at the compass points (where the arcs meet), larger ones anywhere.
 
 Large-road and avenue roundabouts (2026-11-15): the roundabout tab's third and fourth buttons (the large road's and the
-avenue's curve icons) lay the same ring of that kind, all four lanes one way (one-way large roads and avenues), radius
-18–60 (avenue 21–60: half width plus a 6-unit island). An avenue ring keeps its green middle strip, so it looks like two
-carriageways round the island. Checked: a large-road ring with two large roads joined (20 turn lanes, all linked), test
-cars round it without jams; an avenue ring with an avenue joined.
+avenue's curve icons) lay the same ring of that kind, all lanes one way (one-way large roads and avenues). A large-road
+ring has a radius of 18–60 (half width plus a 6-unit island).
+An avenue ring has no inner carriageway (owner's request 2026-11-15): it is the avenue's outer half only (`curveHalfRing`:
+half the middle strip, the two outer lanes, the pavement), its centre line the island's edge, radius (the island's)
+8–60. Its footprint (ground, cover, walk map, minimap, picking, `curveAcross`), lanes and junction arms (outer lanes
+only; the outline follows the island's edge between the ring's two arms) leave the island alone, and a road ending at a
+junction no longer claims ground past its end (`pastJoinedEnd`, which kept the island's edge flat and bare).
+Checked: a large-road ring with two large roads joined (20 turn lanes, all linked) and an avenue ring with two avenues
+joined (12 turn lanes), test cars round both without jams.
 
 ### Tram tracks
 
