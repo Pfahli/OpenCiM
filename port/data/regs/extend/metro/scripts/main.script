@@ -592,6 +592,7 @@ function regsEnlargeMap($size, $old) {
 // presses itself (loading.script extension); REGS_START_RUN=1 also starts the game clock.
 $regsStart = getenv("REGS_START");
 $regsStartRun = getenv("REGS_START_RUN") != "";
+$regsStartOsm = "";  // (the start flag --osm: the place, read by regsStartOsmImport)
 event this.enter::["Logo1"]() {
   if ($regsStart != "") this.perform("timeout");
 }
@@ -625,9 +626,82 @@ event this.enter::["MainMenu"]() {
       $submenu.$selectedMap = $regsStartMapFile;
       MAIN.$main.perform("ok");
     };
+  } else if (findstr($regsWhat, "osm:") == 0) {
+    $regsStartOsm = substr($regsWhat, 4, 1000);
+    echo "start flag: OpenStreetMap import of \""+$regsStartOsm+"\"";
+    thread :: regsStartOsmImport();
   } else {
-    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file> or editor:<map file>)";
+    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file>, editor:<map file> or osm:<place>)";
   }
+}
+
+// REGS_START=osm:<place> (the start flag --osm, 2026-11-16, owner: "startup parameters for OSM, so you can skip the
+// menu"): the place found (a name searched, the first hit, or "lat,lon"), the area set with REGS_OSM_SIZE (cells,
+// default 512), REGS_OSM_SCALE (default 1) and REGS_OSM_OPTIONS (a list of terrain, water, trees, streets, trams,
+// buildings, satellite; default all), then main menu > map editor > empty map with the size and REGS_OSM_NAME (default
+// osm-import), OK: the editor imports it once the map stands (scripts/editor.script, regs/ui/osmwindow.script)
+function regsStartOsmImport() {
+  wait 0.1;
+  $ll = regsOsmLatLon($regsStartOsm);
+  if ($ll == null) {
+    regsOsmSearch($regsStartOsm, MAIN.$language);
+    // (until the search is done or failed, at most a minute; the script's || and ?: evaluate both sides)
+    $t = 0;
+    while (regsOsmSearchState() != 2 && regsOsmSearchState() != 3 && $t < 600) {
+      wait 0.1;
+      ++$t;
+    }
+    $hits = regsOsmSearchResult();
+    $none = true;
+    if ($hits != null) {
+      if (#$hits > 0) $none = false;
+    }
+    if ($none) {
+      echo "start flag: OpenStreetMap: nothing found for \""+$regsStartOsm+"\"";
+      return;
+    }
+    $ll = [$hits[0][1], $hits[0][2]];
+    echo "start flag: OpenStreetMap: \""+$hits[0][0]+"\"";
+  }
+  $size = 512;
+  if (getenv("REGS_OSM_SIZE") != "") $size = int(getenv("REGS_OSM_SIZE"));
+  if ($size < 64) $size = 64;
+  $name = "osm-import";
+  if (getenv("REGS_OSM_NAME") != "") $name = getenv("REGS_OSM_NAME");
+  if (!(defined MAIN.$regsOsmOptions)) {
+    MAIN.$regsOsmOptions = map ["terrain", true, "water", true, "trees", true, "streets", true, "trams", true,
+                                "buildings", true, "satellite", true, "scale", 0];
+  }
+  $o = getenv("REGS_OSM_OPTIONS");
+  if ($o != "") {
+    foreach (["terrain", "water", "trees", "streets", "trams", "buildings", "satellite"]) {
+      MAIN.$regsOsmOptions[current] = findstr(","+$o+",", ","+current+",") >= 0;
+    }
+  }
+  $scaleIndex = 0;
+  if (getenv("REGS_OSM_SCALE") != "") {
+    $want = float(getenv("REGS_OSM_SCALE"));
+    $i = 0;
+    foreach ([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0]) {
+      if (current <= $want + 0.01) $scaleIndex = $i;
+      ++$i;
+    }
+  }
+  MAIN.$regsOsmOptions["scale"] = $scaleIndex;
+  MAIN.$main.perform("editor");
+  wait 0.1;
+  MAIN.$main.perform("empty");
+  wait 0.3;
+  $submenu.$cellsize = $size;
+  $submenu.$cityname = $name;
+  // (the new-map dialog clears a pending import when it opens: the area is set after it)
+  $scales = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0];
+  regsOsmAreaSize($size, $size, $scales[$scaleIndex]);
+  regsOsmPlaceArea($ll[0], $ll[1]);
+  MAIN.$regsOsmPending = true;
+  $submenu.regsSelectAllDlcs();  // (the import uses the other packages' buildings too, as the dialog does)
+  echo "start flag: OpenStreetMap: a new map \""+$name+"\" of "+$size+" cells";
+  MAIN.$main.perform("ok");
 }
 event this.enter::["Game"]() {
   if (!$regsStartRun) return;

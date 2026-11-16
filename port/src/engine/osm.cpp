@@ -1096,6 +1096,13 @@ struct ImportData {
     int kind = 0;
   };
   std::vector<BarrierIn> barriers;
+  // sights (2026-11-16, owner: an invisible pavilion that draws people, at sightseeing places): museums, attractions,
+  // viewpoints, zoos, castles, ruins and the like; the point (cells) and how many visitor places (of 30) they draw
+  struct SightIn {
+    double x = 0, z = 0;
+    int weight = 1;
+  };
+  std::vector<SightIn> sights;
   std::vector<PointIn> trafficPts;                         // OSM's traffic signals (22), stop (23) and give-way (24) nodes
   std::vector<std::pair<double, double>> fastFoodPts;      // McDonald's, Burger King and KFC mapped as points (cells)
   // areas OSM maps as historic=castle (not buildings themselves): their outer ring (cells) and kind (1 palace, 2 castle)
@@ -1520,6 +1527,9 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           {"way", "landuse", '=', "allotments"}, {"way", "landuse", '~', "^(grass|meadow|village_green|cemetery|recreation_ground)$"},
           {"way", "leisure", '~', "^(park|garden|common)$"}, {"way", "natural", '=', "grassland"},
           {"way", "barrier", '~', "^(fence|wall|hedge|city_wall)$"},
+          // sights (2026-11-16): their visitors
+          {"nwr", "tourism", '~', "^(attraction|museum|gallery|viewpoint|zoo|theme_park|aquarium)$"},
+          {"nwr", "historic", '~', "^(castle|ruins|archaeological_site|city_gate|fort|manor|palace)$"},
       });
     if (flags & kBuildings)
       sels.insert(sels.end(), {{"way", "building", 0, ""}, {"relation", "building", 0, ""},
@@ -1646,6 +1656,37 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         static const Json kEmpty;
         const Json& tags = tagsP ? *tagsP : kEmpty;
         std::string type = el.str("type");
+        if (flags & kStreets) {  // a sight (whatever else it is too: read on below)
+          const std::string to = tags.str("tourism"), hi = tags.str("historic");
+          static const std::set<std::string> kTour = {"attraction", "museum", "gallery", "viewpoint", "zoo", "theme_park", "aquarium"};
+          static const std::set<std::string> kHist = {"castle", "ruins", "archaeological_site", "city_gate", "fort", "manor", "palace"};
+          if (kTour.count(to) || kHist.count(hi)) {
+            double sx = 0, sz = 0, x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
+            int n = 0;
+            auto add = [&](const Json& g) {
+              if (g.t != Json::Arr) return;
+              for (const Json& p : g.a)
+                if (p.t == Json::Obj) {
+                  const double cx = fr.cellX(lonToMx(p.num("lon"))), cz = fr.cellZ(latToMy(p.num("lat")));
+                  sx += cx, sz += cz, ++n, x0 = std::min(x0, cx), z0 = std::min(z0, cz), x1 = std::max(x1, cx), z1 = std::max(z1, cz);
+                }
+            };
+            if (type == "node") sx = fr.cellX(lonToMx(el.num("lon"))), sz = fr.cellZ(latToMy(el.num("lat"))), n = 1, x0 = x1 = sx, z0 = z1 = sz;
+            else if (const Json* g = el.get("geometry")) add(*g);
+            else if (const Json* mem = el.get("members"); mem && mem->t == Json::Arr)
+              for (const Json& m : mem->a)
+                if (const Json* g = m.get("geometry")) add(*g);
+            if (n > 0) {
+              ImportData::SightIn s;
+              s.x = type == "node" ? sx : sx / n, s.z = type == "node" ? sz : sz / n;
+              s.weight = (to == "museum" || to == "zoo" || to == "theme_park" || to == "aquarium") ? 3
+                         : (to == "attraction" || hi == "castle" || hi == "palace") ? 2 : 1;
+              const double m2 = (x1 - x0) * (z1 - z0) * cellM * cellM;  // (a big one draws more)
+              s.weight += int(std::min(4.0, m2 / 4000.0));
+              if (s.x >= 2 && s.z >= 2 && s.x < W - 2 && s.z < L - 2) data->sights.push_back(s);
+            }
+          }
+        }
         if (type == "node") {
           if ((flags & kStreets) && (tags.str("railway") == "station" || tags.str("railway") == "halt")) {
             StationIn st;
@@ -5215,6 +5256,95 @@ int placeAds(VM& vm, GridObj* grid, Apply& a) {
   return nPosters + nBoards + nColumns;
 }
 
+// people where the port's own buildings stand and at sights (2026-11-16, owner: "an invisible pavilion" that draws
+// people, "place this in POIs like sightseeing stuff and let people go to buildings based on their size"): game items
+// marked kItemPortHidden (not drawn, picked or shown, no ground work, no conflicts) whose homes, jobs and visitor places
+// the simulation counts like any building's. Inside a procedural building by its floor area: castles, palaces and
+// churches the sculpture's 30 leisure visitors per 250 m² of footprint, shops a market stand's 12 shoppers per 200 m²
+// of floor, offices an office block's jobs per 6000 m², houses an apartment house's homes per 700 m² (halls none); at a
+// sight its weight in sculptures (the one visitor object that leaves the ground uncovered), in its building when one of
+// these stands there
+void placeVisitors(VM& vm, GridObj* grid, Apply& a) {
+  GridData& g = *grid->data;
+  const ImportData& d = *a.d;
+  const int W = g.width, L = g.length;
+  const double cs = g.cellSize, m2 = (d.cellM / cs) * (d.cellM / cs);  // (square metres per square world unit)
+  int carried = 0, atSights = 0;
+  auto put = [&](const std::string& name, double cx, double cz) {  // centred at cell coordinates (cx, cz)
+    int w, l;
+    if (name.empty() || !templateSize(vm, grid, name, w, l)) return false;
+    const int x = int(std::lround(cx - w * 0.5)), z = int(std::lround(cz - l * 0.5));
+    if (x < 1 || z < 1 || x + w >= W || z + l >= L) return false;
+    const int i = gridEditAddItem(vm, grid, name, x, meanCorner(g, x, z), z, 0, kItemPortHidden, -1, false);
+    if (i < 0) return false;
+    g.items[size_t(i)].flags |= kItemPortHidden;
+    a.made.push_back(i);
+    return true;
+  };
+  const std::string sculpture = firstOf(grid, {"sculpture01"}), stand = firstOf(grid, {"marketstand01"});
+  const std::string office = firstOf(grid, {"office-building01", "officebuilding01"}), homes = firstOf(grid, {"apartment01", "blockhouse01"});
+  // the procedural buildings: their outlines in cells, the sights inside each
+  std::vector<std::vector<std::pair<double, double>>> rings;
+  for (const GridData::ProcBuilding& b : g.procBuildings) {
+    std::vector<std::pair<double, double>> r;
+    for (auto& q : b.outline) r.push_back({q.first / cs + W * 0.5, q.second / cs + L * 0.5});
+    rings.push_back(std::move(r));
+  }
+  std::vector<int> extra(rings.size(), 0);
+  for (const ImportData::SightIn& s : d.sights) {
+    int in = -1;
+    for (size_t k = 0; k < rings.size() && in < 0; ++k)
+      if (insideRing(rings[k], s.x, s.z)) in = int(k);
+    if (in >= 0) {
+      extra[size_t(in)] += s.weight;
+      continue;
+    }
+    int n = 0;  // around the point, off roads, tracks and water
+    for (int r = 0; r <= 4 && n < s.weight; ++r)
+      for (int dz = -r; dz <= r && n < s.weight; ++dz)
+        for (int dx = -r; dx <= r && n < s.weight; ++dx) {
+          if (std::max(std::abs(dx), std::abs(dz)) != r || ((dx + dz) & 1)) continue;
+          const double px = s.x + dx * 2.0, pz = s.z + dz * 2.0;
+          const int cx = int(std::floor(px)), cz = int(std::floor(pz));
+          if (cx < 1 || cz < 1 || cx >= W - 1 || cz >= L - 1) continue;
+          const uint8_t u = a.used[size_t(cz) * size_t(W) + size_t(cx)];
+          if (u == 1 || u == 2 || u == 7) continue;
+          if (put(sculpture, px, pz)) ++n, ++atSights;
+        }
+  }
+  for (size_t k = 0; k < g.procBuildings.size(); ++k) {
+    const GridData::ProcBuilding& b = g.procBuildings[k];
+    const auto& ring = rings[k];
+    const double foot = polyArea(ring) * cs * cs * m2, levels = std::max(1.0, double(b.height) / 3.2), floor = foot * levels;
+    std::string name;
+    int n = 0;
+    if (b.style >= 5) name = sculpture, n = int(std::clamp(std::lround(foot / 250.0), 1L, 10L));
+    else if (b.style == 4) name = stand, n = int(std::clamp(std::lround(floor / 200.0), 1L, 16L));
+    else if (b.style == 3) name = office, n = int(std::clamp(std::lround(floor / 6000.0), 1L, 6L));
+    else if (b.style == 1 || b.style == 2) name = homes, n = int(std::clamp(std::lround(floor / 700.0), 1L, 12L));
+    std::vector<std::pair<std::string, int>> todo;
+    if (!name.empty() && n > 0) todo.push_back({name, n});
+    if (extra[k] > 0) todo.push_back({sculpture, extra[k]});
+    if (todo.empty()) continue;
+    // spread over the cells inside the outline
+    double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
+    for (auto& q : ring) x0 = std::min(x0, q.first), z0 = std::min(z0, q.second), x1 = std::max(x1, q.first), z1 = std::max(z1, q.second);
+    std::vector<std::pair<double, double>> cells;
+    for (int z = int(z0); z <= int(z1); ++z)
+      for (int x = int(x0); x <= int(x1); ++x)
+        if (insideRing(ring, x + 0.5, z + 0.5)) cells.push_back({x + 0.5, z + 0.5});
+    if (cells.empty()) continue;
+    size_t at = 0;
+    for (auto& [nm, cnt] : todo) {
+      const size_t stride = std::max<size_t>(1, cells.size() / size_t(cnt));
+      for (int m = 0; m < cnt; ++m, at += stride)
+        if (put(nm, cells[(at + stride / 2) % cells.size()].first, cells[(at + stride / 2) % cells.size()].second)) ++carried;
+    }
+  }
+  LOG_INFO("osm: people: %d carriers in %zu procedural buildings, %d visitor places at %zu sights", carried, g.procBuildings.size(),
+           atSights, d.sights.size());
+}
+
 // a template's model height in metres at the import's scale (cellM metres a cell; 0 when its mesh cannot be read)
 double modelHeightM(VM& vm, GridObj* grid, const std::string& name, double cellM) {
   static std::map<std::string, double> units;  // (the mesh's height in world units, per template)
@@ -8111,6 +8241,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     gridEditBegin(vm, grid);
     std::vector<std::pair<double, double>> lamps;
     placePoints(vm, grid, a, lamps);
+    placeVisitors(vm, grid, a);
     Painter painter{g};
     painter.owner = &a.paintOwner;
     {  // generated places (owner 2026-11-15)
@@ -8212,6 +8343,23 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     if (!a.gridStreets) placeAds(vm, grid, a);
     placeFences(vm, grid, a);
     decorateYards(vm, grid, a, fu, painter);
+    if (std::getenv("REGS_DEBUG_OSM")) {  // what stands more than 1.5 units over the highest ground under it (2026-11-16)
+      int floating = 0;
+      for (int i : a.made) {
+        if (i < 0 || size_t(i) >= g.items.size() || g.items[size_t(i)].removed) continue;
+        const GridData::Item& it = g.items[size_t(i)];
+        int w = 1, l = 1;
+        int x = 0, z = 0;
+        gridItemRect(vm, grid, uint32_t(i), x, z, w, l);
+        if (x < 0 || z < 0 || x + w >= W || z + l >= L) continue;
+        const int hi = maxCorner(g, x, z, std::max(1, w), std::max(1, l));
+        const double over = double(it.y - hi) * g.cellSize / 256.0;
+        if (over > 1.5 && floating++ < 40)
+          LOG_INFO("osm: floating %s at world %.0f, %.0f: %.1f over the ground", g.types[it.type].c_str(), (x + w * 0.5 - W * 0.5) * g.cellSize,
+                   (z + l * 0.5 - L * 0.5) * g.cellSize, over);
+      }
+      LOG_INFO("osm: %d things floating", floating);
+    }
     {
       // ground, trees, decor, empty footprints, the painted areas' border cells (used 5 with an edge), street margins
       auto groundCell = [&](size_t i) {
@@ -8486,6 +8634,26 @@ void registerOsmNatives(VM& vm) {
     g_view.hasArea = true;
     return Value();
   }, 2, 2);
+  // regsOsmPlaceArea(lat, lon): the rectangle centred there (and the view on it), for the start flag --osm (2026-11-16)
+  implementGlobal(vm, u"regsOsmPlaceArea", [](VM& v, Object*, int, const Value* a) {
+    g_view.placed = true;
+    g_view.amx = g_view.mx = lonToMx(v.toFloat(a[1]));
+    g_view.amy = g_view.my = std::clamp(latToMy(v.toFloat(a[0])), 0.01, 0.99);
+    g_view.hasArea = true;
+    return Value();
+  }, 2, 2);
+  // regsOsmLatLon(text): [lat, lon] when the text is two numbers ("49.13,8.60" or "49.13 8.60"), else null (a place
+  // name to search)
+  implementGlobal(vm, u"regsOsmLatLon", [](VM& v, Object*, int, const Value* a) {
+    const std::string t = utf16ToUtf8(v.toStr(a[0]));
+    double lat = 0, lon = 0;
+    char sep = 0, rest = 0;
+    if (std::sscanf(t.c_str(), " %lf %c %lf %c", &lat, &sep, &lon, &rest) == 3 && (sep == ',' || sep == ';') && std::fabs(lat) <= 85 &&
+        std::fabs(lon) <= 180)
+      return floats({lat, lon});
+    if (std::sscanf(t.c_str(), " %lf %lf %c", &lat, &lon, &rest) == 2 && std::fabs(lat) <= 85 && std::fabs(lon) <= 180) return floats({lat, lon});
+    return Value::null();
+  }, 1, 1);
   // regsOsmMoveArea(dx, dy): the rectangle moved by view pixels
   implementGlobal(vm, u"regsOsmMoveArea", [](VM& v, Object*, int, const Value* a) {
     double S = worldSize(g_view.z);

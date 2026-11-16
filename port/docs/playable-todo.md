@@ -470,6 +470,18 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   usual height by kind (figure 3.8 m, bust 2.4, obelisk / stele 4.5, stone 1.5, sculpture 3, monument 5.5): the game's
   statues are 11–12 m at the import's scale. Open: passages are boxes (no arch), and only procedural buildings get
   them (row houses of game models leave the way's cells free instead).
+  Later that evening: passages arched; castles in greyed Tower of London rubble (London package), real deep windows,
+  stone slab wall walks; the near plane follows the camera's distance (engine.script's fixed 30 cut close models).
+  The map data: the whole area downloaded once and kept by the area (a changed query needs no server;
+  REGS_OSM_KEEP_CACHE keeps it for ever), servers overpass-api.de, overpass.openstreetmap.fr, overpass.kumi.systems,
+  maps.mail.ru, private.coffee. People (owner: "an invisible pavilion" that draws people, at sights and in buildings
+  by size): game items with GridData kItemPortHidden (0x80000 in Item::flags: not drawn, picked, on the minimap, no
+  ground work or conflicts; the simulation counts their places): sculpture01 (30 leisure, no cover) at OSM sights
+  (tourism museum/attraction/viewpoint/gallery/zoo/theme_park/aquarium, historic castle/ruins/...; weight 1-3 plus
+  size), inside procedural buildings by floor area (castles/palaces/churches sculptures, shops market stands, offices
+  office blocks, houses apartment houses). Not checked yet: citizens actually going there in a running game; the
+  timeline does not keep the flag (undo, redo show them). Start flags: --osm <place or lat,lon> [--osm-size n]
+  [--osm-scale f] [--osm-name name] [--osm-options list] (REGS_START=osm:..., main.script extension).
   Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
   signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
   the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at

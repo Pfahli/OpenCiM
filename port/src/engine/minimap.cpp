@@ -156,7 +156,7 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
     if (it.type >= tpl.size() || !tpl[it.type].object) continue;
     const MapTemplate& tp = tpl[it.type];
     uint32_t flags = it.flags | tp.flags;
-    if (flags & kFlagHidden) continue;
+    if (flags & (kFlagHidden | kItemPortHidden)) continue;
     ItemFootprint f = itemFootprint(tp.width, tp.length, tp.diagonals, it.orient);
     if (it.x < 0 || it.z < 0 || it.x + f.sx > W || it.z + f.sz > L) continue;  // in no bucket
     if (tp.type == kTypeTree) {

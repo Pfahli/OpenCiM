@@ -214,7 +214,7 @@ int32_t rampY(int32_t y, int sx, int sz, int orient, uint32_t flags, uint32_t di
 void levelGround(EditState& st, GridData& g, uint32_t index) {
   const GridData::Item& it = g.items[index];
   GridItemShape s = shapeOf(st, it);
-  if ((s.flags & 0x500000) || s.type == kTypeMarker) return;
+  if ((s.flags & (0x500000 | kItemPortHidden)) || s.type == kTypeMarker) return;  // (port: a carried item, kItemPortHidden, leaves the ground)
   uint32_t cc = s.flags, parentFlags = 0;
   if (it.parent && it.parent <= g.items.size()) parentFlags = shapeOf(st, g.items[it.parent - 1]).flags;
   if (it.parent && s.type >= 10 && s.type <= 12) cc = (cc | 0xC000) & parentFlags;
@@ -649,6 +649,7 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   if ((sa.flags & 0x500000) == 0x500000 && (sb.flags & kFlagOptional) && sb.type != kTypeTree) return false;
   if ((sb.flags & 0x500000) == 0x500000 && (sa.flags & kFlagOptional) && sa.type != kTypeTree) return false;
   if ((sa.flags & 0x500000) == kFlagHidden || (sb.flags & 0x500000) == kFlagHidden) return false;
+  if ((sa.flags | sb.flags) & kItemPortHidden) return false;  // (port: a carried item conflicts with nothing)
   auto tram = [](int t) { return t >= 10 && t <= 12; };
   // the layer of each: cover, block, bridge, tunnel; a tram track on a road is on its road's layer
   uint32_t la = sa.flags & 0x1c004, lb = sb.flags & 0x1c004;

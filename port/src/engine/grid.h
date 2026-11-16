@@ -143,6 +143,11 @@ inline void itemTurn(const GridData::Item& it, float& c, float& s) {
 }
 
 // port: placed off the grid: turned freely or shifted (GridData::Item::yaw, offX, offZ)
+// port: an item carried by a procedural building or standing in for a sight (2026-11-16, owner: an invisible pavilion
+// that draws people): its homes, jobs and visitors count, it is not drawn, picked or shown on the minimap. A bit of
+// Item::flags the game leaves unused, saved with them
+constexpr uint32_t kItemPortHidden = 0x80000;
+
 inline bool itemOffGrid(const GridData::Item& it) { return it.yaw != 0 || it.offX != 0 || it.offZ != 0 || it.scale != 1; }
 
 // port: the items' free turns and shifts in map.grid: u32 count (bit 31: with the shifts, bit 30: with the sizes), then
