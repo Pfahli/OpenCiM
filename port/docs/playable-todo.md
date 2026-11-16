@@ -439,6 +439,25 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   (Neues Spiel → Sandbox → the map → Start) by day, at night (REGS_DEBUG_TIME=22), in rain (REGS_TEST_WEATHER=heavy,
   REGS_TEST_GROUND=puddles) and snow (=snow, =snow, REGS_TEST_SEASON=350); the weather mod must be enabled in the
   stand-in documents' mods/mods.json.
+  2026-11-16 later (owner): procedural palaces (style 5), castles (6) and churches (7) in engine/proc_buildings.cpp.
+  Palaces: building=palace, historic=castle with castle_type palace/stately/manor, "Schloss …" names, buildings in a
+  historic=castle area, and wings touching a palace (up to three steps); rusticated ground floor, tall windows with
+  sandstone surrounds and lintels, pilasters, string course and cornice, a slate mansard (the outline inset 3.4/2.6/1.8,
+  insetPolygon) with dormers, a lantern with a copper dome over the top's widest point on big ones. Castles
+  (building=castle, defensive castle types, "Burg …"): rubble stone, few deep windows, battlements, round towers with
+  conical roofs (slate or red tiles) at up to six outer corners. Churches (building=church/cathedral/chapel/basilica or a
+  christian place of worship): type from building:architecture, else start_date, else gothic for cathedrals and by id;
+  the main axis from the outline, the tower at the wider end (apse narrower) with the portal; romanesque pyramid roof,
+  gothic octagonal spire and buttresses (twin towers on big ones), baroque onion dome, modern free-standing bell tower;
+  chapels a ridge turret; stained glass glows at night. Photo textures (CC0, Poly Haven) in data/regs/textures/proc
+  (tools/make-proc-textures.mjs, CREDITS.txt), loaded by collectProcBuildings over the drawn stand-ins; the red roof tile
+  photo also replaces the houses' drawn tiles. Small still water (ponds, basins, fountains under 250 / 900 cells) whose
+  shore lies over 2 m above the lowest land became pits down to the map's one water level: now paving with a fountain.
+  Offices: a third kind, curtain walls of reflecting glass (kProcCurtain: a painted sky and street, strong specular);
+  entrances with a canopy on two columns, some with a revolving door. Shops: striped awnings (red / green) over the shop
+  windows on two in three.
+  Not checked yet: a castle and the gothic / baroque / modern churches in a screenshot (Bruchsal: palace, wing and the
+  romanesque Hofkirche checked).
   Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
   signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
   the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at

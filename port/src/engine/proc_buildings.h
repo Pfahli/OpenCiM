@@ -45,7 +45,10 @@ enum ProcMaterial { kProcHall = 0, kProcHallDoor = 1, kProcPlaster = 2 /* 4 */, 
                     // rusticated ground floor, sandstone (surrounds, pilasters, cornices), slate, a castle's rubble stone,
                     // copper (domes)
                     kProcPalace = 32 /* 3 */, kProcRustica = 35, kProcSandstone = 36, kProcSlate = 37, kProcCastleStone = 38,
-                    kProcCopper = 39, kProcStained = 40 /* churches' stained glass, lit from inside at night */, kProcMaterialCount = 41 };
+                    kProcCopper = 39, kProcStained = 40 /* churches' stained glass, lit from inside at night */,
+                    // 2026-11-16 (owner: more variety for shops and offices): an office's curtain wall glass reflecting the sky,
+                    // shop awnings (red, green)
+                    kProcCurtain = 41, kProcAwning = 42 /* 2 */, kProcMaterialCount = 44 };
 // 7: a church (2026-11-16, owner: "build different church types"), its type in ProcBuilding::roof: 0 romanesque (rubble
 // stone, small round-headed windows, a squat square tower with a pyramid roof), 1 gothic (sandstone blocks, tall pointed
 // windows, buttresses, a steep roof, a slender tower with an octagonal spire; twin towers on a big one), 2 baroque

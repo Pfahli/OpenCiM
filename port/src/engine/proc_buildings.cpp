@@ -317,6 +317,37 @@ Tex stainedTex() {  // stained glass: lead cames around panes of deep colours
   return t;
 }
 
+Tex curtainTex() {  // curtain wall glass: the sky reflected (light at the top), clouds, the opposite street's houses below
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const float v = float(y) / 255.0f;
+      const float cloud = std::max(0.0f, noise(x / 24, y / 10, 121) * 0.7f + noise(x / 9, y / 5, 122) * 0.3f - 0.55f) * 1.8f;
+      Rgb c{0.36f + 0.30f * v + cloud * 0.35f, 0.48f + 0.28f * v + cloud * 0.33f, 0.62f + 0.24f * v + cloud * 0.28f};
+      // the houses across the street, darker, at the bottom third (their rooflines vary per 32 texels)
+      const float roof = 0.18f + 0.16f * noise(x / 32, 0, 123);
+      if (v < roof) {
+        const bool win = (x % 16) > 5 && (x % 16) < 12 && (y % 14) > 4 && (y % 14) < 11;
+        c = win ? Rgb{0.20f, 0.24f, 0.30f} : Rgb{0.30f, 0.32f, 0.36f};
+      }
+      const float sheen = 0.18f * std::max(0.0f, 1.0f - std::fabs(float(x) / 255.0f * 1.3f + v - 1.0f) * 4.0f);  // a diagonal glare
+      t.set(x, y, c.r + sheen, c.g + sheen, c.b + sheen);
+    }
+  return t;
+}
+Tex awningTex(Rgb k) {  // a shop's awning: stripes of a colour and white, a scalloped edge at the bottom
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const bool stripe = (x / 32) & 1;
+      const float n = 0.92f + 0.08f * noise(x / 3, y / 3, 131);
+      Rgb c = stripe ? Rgb{0.92f * n, 0.91f * n, 0.86f * n} : Rgb{k.r * n, k.g * n, k.b * n};
+      if (y < 24 && std::hypot(float((x % 32) - 16), float(y - 24)) > 16.0f) c = {0.0f, 0.0f, 0.0f};  // (the scallops: dark gaps)
+      t.set(x, y, c.r, c.g, c.b);
+    }
+  return t;
+}
+
 uint32_t uploadTex(const Tex& t) {
   uint32_t name = 0;
   gl::GenTextures(1, &name);
@@ -564,7 +595,20 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   uint32_t seed = hashU(uint32_t(std::lround(o[0].first * 16)) * 31u + uint32_t(std::lround(o[0].second * 16)));
   const uint32_t var = hashU(seed ^ 0xFACADEu);  // the facade variant
   const bool bigBox = shop && src.height <= 7.5f;  // a big low store: one tall floor, an entrance front, its sign
-  const bool punched = office && ((var >> 5) & 1);  // an office of panels with single windows, else ribbons and fins
+  // an office of panels with single windows, of ribbons and fins, or (2026-11-16) a curtain wall of reflecting glass
+  const int officeKind = office ? int((var >> 5) % 3) : 0;
+  const bool punched = office && officeKind == 0, curtain = office && officeKind == 2;
+  const bool revolving = office && ((var >> 14) & 1);           // the entrance's revolving door
+  const bool awnings = shop && !bigBox && ((var >> 13) % 3 != 0);  // striped awnings over the shop windows (two in three)
+  const int awningMat = kProcAwning + int((var >> 15) & 1);
+  // an upright glass prism (the revolving door), before the round shapes of the roof part are declared
+  auto prism0 = [&](int mat, float cx, float cz, float y0, float y1, float r, int sides) {
+    for (int k = 0; k < sides; ++k) {
+      const float a0 = 6.2831853f * float(k) / float(sides), a1 = 6.2831853f * float(k + 1) / float(sides), am = (a0 + a1) * 0.5f;
+      const Vec3 p0{cx + r * std::cos(a0), y0, cz + r * std::sin(a0)}, p1{cx + r * std::cos(a1), y0, cz + r * std::sin(a1)};
+      bd.quad(mat, p0, p1, {p1.x, y1, p1.z}, {p0.x, y1, p0.z}, {std::cos(am), 0, std::sin(am)}, 0, 0, 0.3f, 1);
+    }
+  };
   const int winStyle = int((var >> 6) % 4);         // houses: cross windows, tall ones, wide ones, pairs
   const bool cornice = !hall && !office && !bigBox && !palace && !castle && !church && ((var >> 8) & 1);
   int wallMat, groundMat, frameMat = (var >> 4) % 3 == 0 ? kProcFrameDark : kProcFrame;
@@ -813,6 +857,14 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
             const bool door = isDoorBay(k);
             opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.15f, bw - 0.15f, door ? 0.0f : 0.35f, 3.05f, 0.25f, kProcGlassLit0,
                     kProcFrameDark, false, door ? 1 : 1, door ? 1 : 0);
+            if (awnings) {  // a striped awning over each shop window (2026-11-16): sloping out from under the fascia, its valance
+              const Vec3 a0 = w.at(b0 + 0.12f, y0 + 3.2f, 0), a1 = w.at(b0 + bw - 0.12f, y0 + 3.2f, 0);
+              const Vec3 e0 = w.at(b0 + 0.12f, y0 + 2.6f, -1.35f), e1 = w.at(b0 + bw - 0.12f, y0 + 2.6f, -1.35f);
+              const Vec3 an = render::normalize(Vec3{w.n.x * 0.6f, 1.35f, w.n.z * 0.6f});
+              bd.quad(awningMat, a0, a1, e1, e0, an, 0, 1, bw / 2.0f, 0.15f);
+              bd.quad(awningMat, a0, a1, e1, e0, an * -1.0f, 0, 1, bw / 2.0f, 0.15f);  // (its underside)
+              bd.quad(awningMat, e0, e1, e1 - Vec3{0, 0.3f, 0}, e0 - Vec3{0, 0.3f, 0}, w.n, 0, 0.12f, bw / 2.0f, 0.0f);
+            }
           } else {
             window(1.4f, 1.0f, 2.6f, 0.2f, 1, 0, false, paneFor());
           }
@@ -822,6 +874,26 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
           if (ground) {  // the lobby: glass from floor to ceiling, its doors lit
             opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.08f, bw - 0.08f, 0.15f, std::min(3.7f, fh - 0.3f), 0.25f,
                     isDoorBay(k) ? kProcGlassLit0 : paneFor(), kProcFrameDark, false, 0, 1);
+            if (facing && isDoorBay(k)) {  // the entrance (2026-11-16): a canopy on two slim columns, on some a revolving door
+              const float cw = std::max(bw * 0.5f + 0.9f, 2.4f), cd = 2.6f, ch = std::min(3.9f, fh - 0.2f);
+              const Vec3 cc = w.at(b0 + bw * 0.5f, y0, -cd * 0.5f);
+              bd.box(kProcFrameDark, kProcTrim, cc.x, cc.z, y0 + ch, y0 + ch + 0.28f, w.dx, w.dz, cw, cd * 0.5f);
+              for (int sd = -1; sd <= 1; sd += 2) {
+                const Vec3 p = w.at(b0 + bw * 0.5f + float(sd) * (cw - 0.25f), y0, -cd + 0.25f);
+                bd.pipe(kProcTrim, p.x, p.z, y0, y0 + ch, 0.09f, 8);
+              }
+              if (revolving) {
+                const Vec3 rc = w.at(b0 + bw * 0.5f, y0, -0.55f);
+                prism0(kProcGlassLit0, rc.x, rc.z, y0, y0 + 2.5f, 1.0f, 12);
+                bd.pipe(kProcFrameDark, rc.x, rc.z, y0 + 2.5f, y0 + 2.75f, 1.05f, 12);
+              }
+            }
+          } else if (curtain) {  // the curtain wall: glass from slab to slab between thin mullions, most of it reflecting
+            const uint32_t hh = hashU(seed ^ (windowNo * 0x85ebca6bu));
+            const int pane = (hh % 100) < 72 ? int(kProcCurtain) : paneFor();
+            ++windowNo;
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, 0.04f, bw - 0.04f, 0.12f, fh - 0.12f, 0.07f, pane, kProcFrameDark, false, 0, 0,
+                    bw / 6.0f, fh / 6.0f);
           } else if (punched) {
             window(1.2f, 1.0f, 2.8f, 0.2f, 0, 0, false, paneFor());
           } else {  // ribbon windows between fins
@@ -1514,7 +1586,8 @@ void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector
         spandrelTex({0.24f, 0.25f, 0.27f}), spandrelTex({0.32f, 0.38f, 0.46f}), spandrelTex({0.42f, 0.34f, 0.24f}),
         signTex({0.70f, 0.12f, 0.10f}), signTex({0.10f, 0.25f, 0.60f}), signTex({0.08f, 0.45f, 0.20f}), signTex({0.85f, 0.62f, 0.08f}),
         plasterTex({0.95f, 0.87f, 0.64f}), plasterTex({0.93f, 0.73f, 0.67f}), plasterTex({0.93f, 0.92f, 0.88f}), rusticaTex(),
-        plainTex(0.74f, 0.50f, 0.42f, 103), slateTex(), castleStoneTex(), copperTex(), stainedTex()};
+        plainTex(0.74f, 0.50f, 0.42f, 103), slateTex(), castleStoneTex(), copperTex(), stainedTex(), curtainTex(),
+        awningTex({0.72f, 0.12f, 0.12f}), awningTex({0.12f, 0.42f, 0.22f})};
     // the photo textures (CC0, data/regs/textures/proc, tools/make-proc-textures.mjs) where they are installed
     std::map<int, const char*> photos = {{kProcPalace, "palace-plaster-1"}, {kProcPalace + 1, "palace-plaster-2"},
                                          {kProcPalace + 2, "palace-plaster-3"}, {kProcRustica, "palace-rustica"},
@@ -1533,6 +1606,11 @@ void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector
       }
       m.textures = {tex ? tex : uploadTex(texs[k])};
       for (int c = 0; c < 3; ++c) m.ambient[c] = 0.6f, m.diffuse[c] = 0.55f;
+      if (k == kProcCurtain) {  // the curtain wall: a strong sun glint over its painted reflection
+        m.flags |= render::kMatSpecular;
+        for (int c = 0; c < 3; ++c) m.specular[c] = 1.0f, m.ambient[c] = 0.75f, m.diffuse[c] = 0.45f;
+        m.shininess = 90;
+      }
       if (k >= kProcGlass && k <= kProcGlassLit2) {  // glass: a little shine
         m.flags |= render::kMatSpecular;
         for (int c = 0; c < 3; ++c) m.specular[c] = 0.5f;
