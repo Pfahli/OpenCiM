@@ -559,7 +559,7 @@ bool insetPolygon(const std::vector<std::pair<float, float>>& o, float d, std::v
 }
 
 // ---- passages (2026-11-16, owner: "if roads and footpaths go through buildings, add some tunnels through them") ----
-// A passage is a box: across its axis within ±half, along it between its ends, up to y1 (no floor: everything under it
+// A passage is a vaulted box: across its axis within ±half, along it between its ends, up to its arch (no floor: everything under it
 // goes too, the walls' skirts in the ground). Every triangle of the finished building is clipped against it and only its
 // part outside stays (whatever the style drew there: painted floors, stone, windows, buttresses, towers); then the
 // passage is lined where it runs inside the footprint: side walls on its edges, end walls where it stops inside, a
@@ -570,17 +570,50 @@ struct ClipVert {
 };
 using ClipPoly = std::vector<ClipVert>;
 
-// the planes of a passage's box, each as (a, b, c, d): inside where a·x + b·y + c·z + d < 0
-std::array<std::array<float, 4>, 5> passagePlanes(const GridData::ProcBuilding::Passage& q) {
+// a passage's cross-section (owner 2026-11-16: "square or a rounded off top"): straight sides from the floor up to the
+// springing line, an arch over them, a half circle where there is room (rise = half), else a flatter segment (at most
+// 45 % of the clear height, no less than a fifth of the half width); the points (across d, height y) from the left
+// springing over the crown to the right one
+std::vector<std::pair<float, float>> passageArch(const GridData::ProcBuilding::Passage& q) {
+  const float h = q.y1 - q.y0;
+  const float rise = std::min(q.half, std::max(q.half * 0.2f, h * 0.45f));
+  const float ys = q.y1 - rise;  // the springing line
+  const float R = (q.half * q.half + rise * rise) / (2.0f * rise), cy = q.y1 - R;
+  const float th = std::asin(std::clamp(q.half / R, 0.0f, 1.0f));
+  std::vector<std::pair<float, float>> pts;
+  const int n = 8;
+  for (int k = 0; k <= n; ++k) {
+    const float a = -th + 2.0f * th * float(k) / float(n);
+    pts.push_back({R * std::sin(a), k == 0 || k == n ? ys : cy + R * std::cos(a)});
+  }
+  pts.front().first = -q.half, pts.back().first = q.half;
+  return pts;
+}
+
+// the planes of a passage's volume, each as (a, b, c, d): inside where a·x + b·y + c·z + d < 0: its two sides, its two
+// ends (vertical), then one plane per segment of the arch (the volume is convex)
+std::vector<std::array<float, 4>> passagePlanes(const GridData::ProcBuilding::Passage& q) {
   float ax = q.x1 - q.x0, az = q.z1 - q.z0;
   const float len = std::max(1e-4f, std::hypot(ax, az));
   ax /= len, az /= len;
-  const float nx = -az, nz = ax;  // across
-  return {{{nx, 0, nz, -(nx * q.x0 + nz * q.z0) - q.half},
-           {-nx, 0, -nz, (nx * q.x0 + nz * q.z0) - q.half},
-           {ax, 0, az, -(ax * q.x1 + az * q.z1)},
-           {-ax, 0, -az, ax * q.x0 + az * q.z0},
-           {0, 1, 0, -q.y1}}};
+  const float nx = -az, nz = ax;  // across: d = nx·(x − x0) + nz·(z − z0)
+  const float d0 = nx * q.x0 + nz * q.z0;
+  std::vector<std::array<float, 4>> pl = {{nx, 0, nz, -d0 - q.half},
+                                          {-nx, 0, -nz, d0 - q.half},
+                                          {ax, 0, az, -(ax * q.x1 + az * q.z1)},
+                                          {-ax, 0, -az, ax * q.x0 + az * q.z0}};
+  const auto arch = passageArch(q);
+  for (size_t k = 0; k + 1 < arch.size(); ++k) {
+    // the segment's outward normal (up and away from the crown's centre line)
+    const float ed = arch[k + 1].first - arch[k].first, ey = arch[k + 1].second - arch[k].second;
+    float od = -ey, oy = ed;
+    const float l = std::max(1e-6f, std::hypot(od, oy));
+    od /= l, oy /= l;
+    if (oy < 0) od = -od, oy = -oy;
+    // inside: od·(d − dk) + oy·(y − yk) < 0
+    pl.push_back({od * nx, oy, od * nz, -od * d0 - od * arch[k].first - oy * arch[k].second});
+  }
+  return pl;
 }
 
 void splitPoly(const ClipPoly& in, const std::array<float, 4>& pl, ClipPoly& out, ClipPoly& inside) {
@@ -600,7 +633,7 @@ void splitPoly(const ClipPoly& in, const std::array<float, 4>& pl, ClipPoly& out
 }
 
 void cutPassages(Builder& bd, const std::vector<GridData::ProcBuilding::Passage>& ps) {
-  std::vector<std::array<std::array<float, 4>, 5>> planes;
+  std::vector<std::vector<std::array<float, 4>>> planes;
   std::vector<std::array<float, 6>> boxes;  // (min x, max x, min z, max z, max y) per passage, for a quick test
   for (const auto& q : ps) {
     planes.push_back(passagePlanes(q));
@@ -654,15 +687,11 @@ void cutPassages(Builder& bd, const std::vector<GridData::ProcBuilding::Passage>
   }
 }
 
-// the lining of a passage inside the footprint o (counter-clockwise): the footprint clipped to the passage's strip, its
-// edges on the strip's sides and ends walls facing into the passage, a ceiling over it
-void linePassage(Builder& bd, const std::vector<std::pair<float, float>>& o, const GridData::ProcBuilding::Passage& q, int wallMat,
-                 int ceilMat) {
-  const auto pl = passagePlanes(q);
-  std::vector<std::pair<float, float>> poly = o;
-  for (int k = 0; k < 4; ++k) {  // (Sutherland-Hodgman against the strip's four vertical planes)
+// a polygon (x, z) clipped to the inside (f < 0) of vertical planes (Sutherland-Hodgman)
+std::vector<std::pair<float, float>> clipXZ(std::vector<std::pair<float, float>> poly, const std::vector<std::array<float, 4>>& pls) {
+  for (const auto& p : pls) {
     std::vector<std::pair<float, float>> next;
-    auto f = [&](const std::pair<float, float>& p) { return pl[size_t(k)][0] * p.first + pl[size_t(k)][2] * p.second + pl[size_t(k)][3]; };
+    auto f = [&](const std::pair<float, float>& v) { return p[0] * v.first + p[2] * v.second + p[3]; };
     for (size_t i = 0; i < poly.size(); ++i) {
       const auto &a = poly[i], &b = poly[(i + 1) % poly.size()];
       const float fa = f(a), fb = f(b);
@@ -673,11 +702,24 @@ void linePassage(Builder& bd, const std::vector<std::pair<float, float>>& o, con
       }
     }
     poly.swap(next);
-    if (poly.size() < 3) return;
+    if (poly.size() < 3) return {};
   }
-  const float y0 = q.y0 - 0.6f, y1 = q.y1;
-  for (size_t i = 0; i < poly.size(); ++i) {  // the walls: edges on one of the planes (not those on the footprint's walls)
-    const auto &a = poly[i], &b = poly[(i + 1) % poly.size()];
+  return poly;
+}
+
+// the lining of a passage inside the footprint o (counter-clockwise): the footprint clipped to the passage's strip, its
+// edges on the strip's sides and ends walls facing into the passage (up to the springing line), the vault over it (a
+// strip of the footprint per segment of the arch, raised to the segment)
+void linePassage(Builder& bd, const std::vector<std::pair<float, float>>& o, const GridData::ProcBuilding::Passage& q, int wallMat,
+                 int ceilMat) {
+  const auto pl = passagePlanes(q);
+  const std::vector<std::array<float, 4>> strip(pl.begin(), pl.begin() + 4);
+  const std::vector<std::pair<float, float>> poly0 = clipXZ(o, strip);
+  if (poly0.size() < 3) return;
+  const auto arch = passageArch(q);
+  const float y0 = q.y0 - 0.6f, ys = arch.front().second;
+  for (size_t i = 0; i < poly0.size(); ++i) {  // the walls: edges on one of the planes (not those on the footprint's walls)
+    const auto &a = poly0[i], &b = poly0[(i + 1) % poly0.size()];
     int on = -1;
     for (int k = 0; k < 4 && on < 0; ++k) {
       auto f = [&](const std::pair<float, float>& p) { return pl[size_t(k)][0] * p.first + pl[size_t(k)][2] * p.second + pl[size_t(k)][3]; };
@@ -689,15 +731,37 @@ void linePassage(Builder& bd, const std::vector<std::pair<float, float>>& o, con
     // (a concave footprint clips to bridges along a plane over a courtyard between two wings: no wall there)
     if (!insidePoly(o, (a.first + b.first) * 0.5f - n.x * 0.05f, (a.second + b.second) * 0.5f - n.z * 0.05f)) continue;
     const float s0 = (a.first * -n.z + a.second * n.x) / 3.0f;
-    bd.quad(wallMat, {a.first, y0, a.second}, {b.first, y0, b.second}, {b.first, y1, b.second}, {a.first, y1, a.second}, n, s0, 0,
-            s0 + len / 3.0f, (y1 - y0) / 3.0f);
+    const float top = on < 2 ? ys : q.y1;  // (an end wall inside the building closes the whole arch)
+    bd.quad(wallMat, {a.first, y0, a.second}, {b.first, y0, b.second}, {b.first, top, b.second}, {a.first, top, a.second}, n, s0, 0,
+            s0 + len / 3.0f, (top - y0) / 3.0f);
   }
-  if (signedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
-  std::vector<std::array<size_t, 3>> tris;
-  if (!triangulate(poly, tris)) return;
-  for (const auto& t : tris) {
-    const Vec3 p0{poly[t[0]].first, y1, poly[t[0]].second}, p1{poly[t[1]].first, y1, poly[t[1]].second}, p2{poly[t[2]].first, y1, poly[t[2]].second};
-    bd.tri(ceilMat, p0, p1, p2, {0, -1, 0}, p0.x / 3.0f, p0.z / 3.0f, p1.x / 3.0f, p1.z / 3.0f, p2.x / 3.0f, p2.z / 3.0f);
+  float ax = q.x1 - q.x0, az = q.z1 - q.z0;
+  const float alen = std::max(1e-4f, std::hypot(ax, az));
+  ax /= alen, az /= alen;
+  const float nx = -az, nz = ax, d0 = nx * q.x0 + nz * q.z0;
+  auto across = [&](float x, float z) { return nx * x + nz * z - d0; };
+  for (size_t k = 0; k + 1 < arch.size(); ++k) {  // the vault, segment by segment
+    const float da = arch[k].first, db = arch[k + 1].first, ya = arch[k].second, yb = arch[k + 1].second;
+    if (db - da < 1e-4f) continue;
+    std::vector<std::pair<float, float>> band = clipXZ(poly0, {{-nx, 0, -nz, d0 + da}, {nx, 0, nz, -d0 - db}});  // da < d < db
+    if (band.size() < 3) continue;
+    if (signedArea(band) < 0) std::reverse(band.begin(), band.end());
+    std::vector<std::array<size_t, 3>> tris;
+    if (!triangulate(band, tris)) continue;
+    auto yAt = [&](float x, float z) { return ya + (yb - ya) * std::clamp((across(x, z) - da) / (db - da), 0.0f, 1.0f); };
+    // the segment's normal into the passage (down and toward the crown's centre line)
+    float idn = yb - ya, iyn = -(db - da);
+    const float l = std::max(1e-6f, std::hypot(idn, iyn));
+    idn /= l, iyn /= l;
+    if (iyn > 0) idn = -idn, iyn = -iyn;
+    const Vec3 nrm{idn * nx, iyn, idn * nz};
+    for (const auto& t : tris) {
+      Vec3 p[3];
+      for (int m = 0; m < 3; ++m) p[m] = {band[t[size_t(m)]].first, yAt(band[t[size_t(m)]].first, band[t[size_t(m)]].second), band[t[size_t(m)]].second};
+      auto u = [&](const Vec3& v) { return (v.x * ax + v.z * az) / 3.0f; };
+      auto w = [&](const Vec3& v) { return (across(v.x, v.z) + v.y) / 3.0f; };
+      bd.tri(ceilMat, p[0], p[1], p[2], nrm, u(p[0]), w(p[0]), u(p[1]), w(p[1]), u(p[2]), w(p[2]));
+    }
   }
 }
 
@@ -1903,7 +1967,7 @@ float tileAspect(int mat) {
   return t && t->h > 0 ? float(t->w) / float(t->h) : 1.0f;
 }
 // a rectangle of a game texture as a texture of its own (repeating, mipmapped, bottom row first); 0 when missing
-uint32_t cropGameTexture(script::VM& vm, const char* path, int x, int y, int w, int h) {
+uint32_t cropGameTexture(script::VM& vm, const char* path, int x, int y, int w, int h, bool seamless = false) {
   static std::map<std::string, std::pair<std::vector<uint8_t>, std::pair<int, int>>> decoded;  // (decoded once per file)
   auto it = decoded.find(path);
   if (it == decoded.end()) {
@@ -1922,6 +1986,19 @@ uint32_t cropGameTexture(script::VM& vm, const char* path, int x, int y, int w, 
   std::vector<uint8_t> px(size_t(w) * size_t(h) * 4);
   for (int r = 0; r < h; ++r)  // (flipped: the bottom row first, v = 0 at the bottom as the meshes take it)
     std::memcpy(&px[size_t(r) * size_t(w) * 4], &rgba[(size_t(y + h - 1 - r) * size_t(iw) + size_t(x)) * 4], size_t(w) * 4);
+  if (seamless) {  // blended toward the crop shifted by half its size near its edges (which meet seamlessly there)
+    const std::vector<uint8_t> src = px;
+    const float m = 0.22f;
+    for (int r = 0; r < h; ++r)
+      for (int c = 0; c < w; ++c) {
+        const float ex = std::min(float(c), float(w - 1 - c)) / (m * float(w)), ey = std::min(float(r), float(h - 1 - r)) / (m * float(h));
+        float a = std::clamp(std::min(ex, ey), 0.0f, 1.0f);
+        a = a * a * (3.0f - 2.0f * a);
+        const size_t i = (size_t(r) * size_t(w) + size_t(c)) * 4;
+        const size_t j = (size_t((r + h / 2) % h) * size_t(w) + size_t((c + w / 2) % w)) * 4;
+        for (int k = 0; k < 4; ++k) px[i + size_t(k)] = uint8_t(float(src[i + size_t(k)]) * a + float(src[j + size_t(k)]) * (1.0f - a) + 0.5f);
+      }
+  }
   uint32_t name = 0;
   gl::GenTextures(1, &name);
   gl::BindTexture(gl::TEXTURE_2D, name);
@@ -1967,7 +2044,12 @@ void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector
       render::GpuMaterial m;
       m.flags = render::kMatDiffuseMap;
       uint32_t tex = 0;
-      if (const GameTile* gt = gameTileFor(k)) tex = cropGameTexture(vm, gt->path, gt->x, gt->y, gt->w, gt->h);
+      // a castle's stone (owner 2026-11-16: "the texture looks very flat and unrealistic"; the cathedral's plain stone is
+      // a fine dark noise): the Tower of London's rubble masonry where the London package is installed, its edges blended
+      // so it repeats without seams
+      if (k == kProcCastleStone) tex = cropGameTexture(vm, "addons/london/props/tower-walls/TowerOfLondonWall_D.dds", 220, 600, 420, 420, true);
+      if (!tex)
+        if (const GameTile* gt = gameTileFor(k)) tex = cropGameTexture(vm, gt->path, gt->x, gt->y, gt->w, gt->h);
       m.textures = {tex ? tex : uploadTex(texs[size_t(k)])};
       for (int c = 0; c < 3; ++c) m.ambient[c] = 0.6f, m.diffuse[c] = 0.55f;
       if (k == kProcCurtain) {  // the curtain wall: a strong sun glint over its painted reflection

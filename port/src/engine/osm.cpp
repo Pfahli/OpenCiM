@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <regex>
 #include <set>
 #include <string>
 #include <thread>
@@ -1492,66 +1493,126 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     setStep(2, 0);
     char bbox[160];
     std::snprintf(bbox, sizeof bbox, "(%.7f,%.7f,%.7f,%.7f)", south, west, north, east);
-    std::string b = bbox, q = "[out:json][timeout:120];(";
+    const std::string b = bbox;
+    // what the import reads, as selectors: element type, key, how the value is tested ('\0' any, '=' equal, '~' a
+    // regular expression). They make the query, and they pick the elements out of a whole area's data (below)
+    struct Sel {
+      const char* type;
+      const char* key;
+      char op;
+      const char* value;
+    };
+    std::vector<Sel> sels;
     if (flags & kStreets)
-      q += "way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|"
-           "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$\"]" + b + ";way[\"natural\"=\"tree_row\"]" + b +
-           ";way[\"place\"=\"square\"]" + b + ";way[\"amenity\"=\"parking\"]" + b + ";way[\"area:highway\"]" + b +
-           ";way[\"railway\"~\"^(rail|light_rail)$\"]" + b + ";node[\"railway\"~\"^(station|halt)$\"]" + b +
-           ";way[\"highway\"=\"service\"]" + b + ";way[\"highway\"~\"^(footway|path|cycleway|bridleway|steps)$\"]" + b + ";way[\"railway\"=\"tram\"]" + b +
-           ";node[\"amenity\"~\"^(fountain|bench|waste_basket|bicycle_parking|telephone|post_box|toilets|clock|vending_machine|taxi|recycling|shelter)$\"]" + b +
-           ";node[\"highway\"~\"^(street_lamp|traffic_signals|stop|give_way)$\"]" + b + ";node[\"traffic_sign\"~\"city_limit|DE:310\"]" + b +
-           ";node[\"advertising\"=\"column\"]" + b + ";node[\"barrier\"=\"bollard\"]" + b + ";node[\"historic\"~\"^(memorial|monument)$\"]" + b +
-           ";node[\"tourism\"=\"artwork\"]" + b + ";node[\"shop\"=\"kiosk\"]" + b + ";nwr[\"leisure\"~\"^(playground|pitch|picnic_table|outdoor_seating)$\"]" + b +
-           ";nwr[\"amenity\"~\"^(marketplace|fountain|restaurant|cafe|bar|pub|ice_cream|fast_food|biergarten)$\"]" + b +
-           ";way[\"landuse\"=\"allotments\"]" + b +
-           ";way[\"landuse\"~\"^(grass|meadow|village_green|cemetery|recreation_ground)$\"]" + b +
-           ";way[\"leisure\"~\"^(park|garden|common)$\"]" + b + ";way[\"natural\"=\"grassland\"]" + b +
-           ";way[\"barrier\"~\"^(fence|wall|hedge|city_wall)$\"]" + b + ";";
+      sels.insert(sels.end(), {
+          {"way", "highway", '~', "^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|"
+                                  "trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$"},
+          {"way", "natural", '=', "tree_row"}, {"way", "place", '=', "square"}, {"way", "amenity", '=', "parking"},
+          {"way", "area:highway", 0, ""}, {"way", "railway", '~', "^(rail|light_rail)$"}, {"node", "railway", '~', "^(station|halt)$"},
+          {"way", "highway", '=', "service"}, {"way", "highway", '~', "^(footway|path|cycleway|bridleway|steps)$"},
+          {"way", "railway", '=', "tram"},
+          {"node", "amenity", '~', "^(fountain|bench|waste_basket|bicycle_parking|telephone|post_box|toilets|clock|vending_machine|taxi|recycling|shelter)$"},
+          {"node", "highway", '~', "^(street_lamp|traffic_signals|stop|give_way)$"}, {"node", "traffic_sign", '~', "city_limit|DE:310"},
+          {"node", "advertising", '=', "column"}, {"node", "barrier", '=', "bollard"}, {"node", "historic", '~', "^(memorial|monument)$"},
+          {"node", "tourism", '=', "artwork"}, {"node", "shop", '=', "kiosk"},
+          {"nwr", "leisure", '~', "^(playground|pitch|picnic_table|outdoor_seating)$"},
+          {"nwr", "amenity", '~', "^(marketplace|fountain|restaurant|cafe|bar|pub|ice_cream|fast_food|biergarten)$"},
+          {"way", "landuse", '=', "allotments"}, {"way", "landuse", '~', "^(grass|meadow|village_green|cemetery|recreation_ground)$"},
+          {"way", "leisure", '~', "^(park|garden|common)$"}, {"way", "natural", '=', "grassland"},
+          {"way", "barrier", '~', "^(fence|wall|hedge|city_wall)$"},
+      });
     if (flags & kBuildings)
-      q += "way[\"building\"]" + b + ";relation[\"building\"]" + b + ";way[\"landuse\"~\"^(residential|commercial|retail|"
-           "industrial)$\"]" + b + ";way[\"historic\"=\"castle\"]" + b + ";relation[\"historic\"=\"castle\"]" + b + ";";
+      sels.insert(sels.end(), {{"way", "building", 0, ""}, {"relation", "building", 0, ""},
+                               {"way", "landuse", '~', "^(residential|commercial|retail|industrial)$"}, {"way", "historic", '=', "castle"},
+                               {"relation", "historic", '=', "castle"}});
     if (flags & kWater)
-      q += "way[\"natural\"~\"^(water|coastline)$\"]" + b + ";relation[\"natural\"=\"water\"]" + b +
-           ";way[\"landuse\"~\"^(reservoir|basin)$\"]" + b + ";way[\"waterway\"~\"^(river|canal|riverbank|dock)$\"]" + b +
-           ";relation[\"waterway\"=\"riverbank\"]" + b + ";way[\"natural\"=\"beach\"]" + b + ";way[\"leisure\"=\"beach_resort\"]" + b + ";";
+      sels.insert(sels.end(), {{"way", "natural", '~', "^(water|coastline)$"}, {"relation", "natural", '=', "water"},
+                               {"way", "landuse", '~', "^(reservoir|basin)$"}, {"way", "waterway", '~', "^(river|canal|riverbank|dock)$"},
+                               {"relation", "waterway", '=', "riverbank"}, {"way", "natural", '=', "beach"}, {"way", "leisure", '=', "beach_resort"}});
     if (flags & kTrees)
-      q += "way[\"natural\"~\"^(wood|scrub)$\"]" + b + ";relation[\"natural\"=\"wood\"]" + b +
-           ";way[\"landuse\"~\"^(forest|orchard)$\"]" + b + ";relation[\"landuse\"=\"forest\"]" + b +
-           ";way[\"leisure\"~\"^(park|garden)$\"]" + b + ";relation[\"leisure\"=\"park\"]" + b + ";node[\"natural\"=\"tree\"]" +
-           b + ";";
+      sels.insert(sels.end(), {{"way", "natural", '~', "^(wood|scrub)$"}, {"relation", "natural", '=', "wood"},
+                               {"way", "landuse", '~', "^(forest|orchard)$"}, {"relation", "landuse", '=', "forest"},
+                               {"way", "leisure", '~', "^(park|garden)$"}, {"relation", "leisure", '=', "park"}, {"node", "natural", '=', "tree"}});
+    std::string q = "[out:json][timeout:120];(";
+    for (const Sel& s : sels)
+      q += std::string(s.type) + "[\"" + s.key + "\"" + (s.op ? std::string(1, s.op) + "\"" + s.value + "\"" : std::string()) + "]" + b + ";";
     q += ");out geom;";
-    std::string body = "data=" + urlEncode(q);
+    // (2026-11-16, owner: an alternative to the often busy Overpass servers, and a cache for development) the whole
+    // area at once: every tagged node, every way, the multipolygons and building relations, kept by the area alone, so
+    // a changed query (a new kind of thing read) needs no server; the import takes from it what the selectors pick.
+    // Kept a week (REGS_OSM_KEEP_CACHE: for ever); the selected query's own answer (the old cache) is read too, and
+    // asked of the servers when the whole area cannot be had
+    const std::string full = "[out:json][timeout:180];(node" + b + "(if:count_tags()>0);way" + b + ";relation[\"type\"=\"multipolygon\"]" + b +
+                             ";relation[\"building\"]" + b + ";);out geom;";
+    auto cacheFile = [&](const std::string& text) {
+      uint64_t h = 1469598103934665603ull;
+      for (unsigned char ch : text) h = (h ^ ch) * 1099511628211ull;
+      char name[40];
+      std::snprintf(name, sizeof name, "%016llx.json", (unsigned long long)h);
+      return cacheRoot() / "overpass" / name;
+    };
+    static const bool keep = std::getenv("REGS_OSM_KEEP_CACHE") != nullptr;
+    auto fromCache = [&](const std::filesystem::path& p, std::vector<uint8_t>& out) {
+      std::error_code ec;
+      if (!std::filesystem::exists(p, ec)) return false;
+      if (!keep && std::filesystem::file_time_type::clock::now() - std::filesystem::last_write_time(p, ec) > std::chrono::hours(24 * 7)) return false;
+      return readFile(p, out);
+    };
     std::vector<uint8_t> answer;
     std::string err;
     int status = 0;
-    // answers are kept for a week by the query (the same area imported again, or another map size of it, needs no
-    // server); the public servers are often busy, so two rounds over three of them
-    uint64_t h = 1469598103934665603ull;
-    for (unsigned char ch : q) h = (h ^ ch) * 1099511628211ull;
-    char name[32];
-    std::snprintf(name, sizeof name, "%016llx.json", (unsigned long long)h);
-    std::filesystem::path cached = cacheRoot() / "overpass" / name;
-    std::error_code ec;
-    bool fresh = std::filesystem::exists(cached, ec) &&
-                 std::filesystem::file_time_type::clock::now() - std::filesystem::last_write_time(cached, ec) < std::chrono::hours(24 * 7);
-    if (fresh && readFile(cached, answer)) status = 200;
+    bool whole = false;  // the answer is the whole area's (to be picked from)
+    if (fromCache(cacheFile(full), answer)) status = 200, whole = true;
+    else if (fromCache(cacheFile(q), answer)) status = 200;
+    // the public servers are often busy: two rounds over five of them, the whole area first, then the selected query
+    static const char* kServers[] = {"https://overpass-api.de/api/interpreter", "https://overpass.openstreetmap.fr/api/interpreter",
+                                     "https://overpass.kumi.systems/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+                                     "https://overpass.private.coffee/api/interpreter"};
     for (int round = 0; round < 2 && status != 200 && !g_import.cancel; ++round) {
       if (round) std::this_thread::sleep_for(std::chrono::seconds(5));
-      for (const char* server : {"https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-                                 "https://overpass.private.coffee/api/interpreter"}) {
-        status = platformHttpRequest(server, &body, answer, &err);
-        if (status == 200 || g_import.cancel) break;
-        LOG_WARN("osm: overpass %s: status %d %s", server, status, err.c_str());
+      for (int kind = 0; kind < 2 && status != 200 && !g_import.cancel; ++kind) {
+        const std::string& text = kind == 0 ? full : q;
+        const std::string body = "data=" + urlEncode(text);
+        for (const char* server : kServers) {
+          status = platformHttpRequest(server, &body, answer, &err);
+          // (an answer cut off by the server's limits is still 200, with a "remark" about the runtime error)
+          if (status == 200 && answer.size() < 4096 && std::string(answer.begin(), answer.end()).find("runtime error") != std::string::npos) status = 413;
+          if (status == 200 || g_import.cancel) break;
+          LOG_WARN("osm: overpass %s (%s): status %d %s", server, kind == 0 ? "whole area" : "selected", status, err.c_str());
+        }
+        if (status == 200) writeFile(cacheFile(text), answer), whole = kind == 0;
       }
-      if (status == 200) writeFile(cached, answer);
     }
     if (g_import.cancel) return;
     if (status != 200) return fail(status == 0 ? "connection" : "server " + std::to_string(status));
     setStep(2, 0.6f);
     if (!parseJson(answer, osm)) return fail("data");
+    if (whole)
+      if (Json* els = const_cast<Json*>(osm.get("elements")); els && els->t == Json::Arr) {  // what the selectors pick
+        std::vector<std::regex> res;
+        for (const Sel& s : sels) res.emplace_back(s.op == '~' ? s.value : "", std::regex::ECMAScript | std::regex::optimize);
+        const size_t before = els->a.size();
+        std::vector<Json> kept;
+        kept.reserve(before / 2);
+        for (Json& el : els->a) {
+          const Json* tg = el.get("tags");
+          if (!tg) continue;
+          const std::string type = el.str("type");
+          bool pick = false;
+          for (size_t i = 0; i < sels.size() && !pick; ++i) {
+            const Sel& s = sels[i];
+            if (std::strcmp(s.type, "nwr") != 0 && type != s.type) continue;
+            const Json* v = tg->get(s.key);
+            if (!v || v->t != Json::Str) continue;
+            pick = s.op == 0 || (s.op == '=' ? v->s == s.value : std::regex_search(v->s, res[i]));
+          }
+          if (pick) kept.push_back(std::move(el));
+        }
+        els->a.swap(kept);
+        LOG_INFO("osm: the whole area's %zu elements, %zu of them read", before, els->a.size());
+      }
     haveOsm = true;
-    LOG_INFO("osm: %zu bytes of map data", answer.size());
+    LOG_INFO("osm: %zu bytes of map data%s", answer.size(), whole ? " (the whole area)" : "");
   }
   setStep(4, 0);
   auto P = [&](const Json& g) {  // a geometry array → cell coordinates
