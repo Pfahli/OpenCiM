@@ -8,7 +8,9 @@
 //@base
 
 $regsAutosaveSlots = 5;
-$regsAutosaveSeconds = MAIN.$settings.$regsEditorAutosaveSeconds : 300.0;   // tests set it shorter
+// every 5 minutes; a setting of its own ($regsEditorAutosaveSeconds) no shorter than a minute (owner's request
+// 2026-11-16: saves every few seconds got in the way); test runs set REGS_AUTOSAVE_SECONDS
+$regsAutosaveSeconds = regsEnvNumber("REGS_AUTOSAVE_SECONDS", max(60.0, float(MAIN.$settings.$regsEditorAutosaveSeconds : 300.0)));
 
 function regsTwo($n) {
   if ($n < 10) return "0"+$n;
@@ -85,6 +87,8 @@ $regsAutosaveThread = thread :: {
     wait $regsAutosaveSeconds;
     while (regsToolBusy(MAIN.$player)) wait 5.0;
     if (MAIN.$settings.$regsEditorAutosave : true) {
+      MAIN.$ui.regsShowSaveIcon(2.4);   // the blinking disk in the top right corner, drawn before the save starts
+      skip_frame;
       MAIN.$regsQuietStatus = true;
       regsAsyncWrites(true);
       regsAutosave();

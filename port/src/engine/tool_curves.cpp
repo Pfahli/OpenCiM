@@ -1432,6 +1432,15 @@ void registerCurveTool(VM& vm) {
     if (argc > 0) v.vfs().asyncWrites = v.truthy(a[0]);
     return Value::boolean(v.vfs().asyncWrites);
   }, 0, 1);
+  // regsEnvNumber(name, default): an environment variable as a number, or the default when it is not set (test runs)
+  implementGlobal(vm, u"regsEnvNumber", [](VM& v, Object*, int argc, const Value* a) {
+    Value fallback = argc > 1 ? v.resolve(a[1]) : Value::real(0);
+    std::string name;
+    for (char16_t ch : v.resolve(a[0]).str()) name += char(ch);
+    const char* s = std::getenv(name.c_str());
+    if (!s || !*s) return fallback;
+    return Value::real(float(std::atof(s)));
+  }, 1, 2);
   // regsToolBusy(player): a tool is in the middle of a drag or a curved road (resetTool would cancel it): the autosave waits
   implementGlobal(vm, u"regsToolBusy", [](VM& v, Object*, int argc, const Value* a) {
     bool busy = g_state.step > 0;  // a curved road being drawn (resetTool loses its next click)
