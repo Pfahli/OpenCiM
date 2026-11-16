@@ -17,6 +17,7 @@
 #include "engine/grid.h"
 #include "render/mesh.h"
 #include "render/renderer3d.h"
+#include "script/vm.h"
 
 namespace regs::engine {
 
@@ -39,12 +40,26 @@ bool procBuildingFromBytes(const std::vector<uint8_t>& raw, GridData::ProcBuildi
 enum ProcMaterial { kProcHall = 0, kProcHallDoor = 1, kProcPlaster = 2 /* 4 */, kProcBrick = 6 /* 3 */, kProcDoor = 9, kProcRoofFlat = 10,
                     kProcRoofTiles = 11, kProcRoofMetal = 12, kProcTrim = 13, kProcFrame = 14, kProcFrameDark = 15, kProcGlass = 16,
                     kProcGlassLit0 = 17, kProcGlassLit1 = 18, kProcGlassLit2 = 19, kProcSolar = 20, kProcGrille = 21,
-                    kProcPanel = 22 /* 3 */, kProcSpandrel = 25 /* 3 */, kProcSign = 28 /* 4 */, kProcMaterialCount = 32 };
+                    kProcPanel = 22 /* 3 */, kProcSpandrel = 25 /* 3 */, kProcSign = 28 /* 4 */,
+                    // 2026-11-16 (owner: custom shaped models for palaces and castles): a palace's plaster in 3 tints, its
+                    // rusticated ground floor, sandstone (surrounds, pilasters, cornices), slate, a castle's rubble stone,
+                    // copper (domes)
+                    kProcPalace = 32 /* 3 */, kProcRustica = 35, kProcSandstone = 36, kProcSlate = 37, kProcCastleStone = 38,
+                    kProcCopper = 39, kProcStained = 40 /* churches' stained glass, lit from inside at night */, kProcMaterialCount = 41 };
+// 7: a church (2026-11-16, owner: "build different church types"), its type in ProcBuilding::roof: 0 romanesque (rubble
+// stone, small round-headed windows, a squat square tower with a pyramid roof), 1 gothic (sandstone blocks, tall pointed
+// windows, buttresses, a steep roof, a slender tower with an octagonal spire; twin towers on a big one), 2 baroque
+// (plaster, tall round-headed windows, a tower with an onion dome), 3 modern (concrete, slit windows, a low roof, a
+// free-standing bell tower); a chapel (a small one) gets a ridge turret instead of a tower. The tower stands at the end of
+// the main axis away from the apse (the narrower end), the portal under it.
 // GridData::ProcBuilding::style: 0 hall (industry), 1 plaster, 2 brick, 3 office, 4 shop (shop windows and signs on the
-// ground floor; a low one is a big box store); the facade variant (tint, windows, cornices, base) from the outline's hash
+// ground floor; a low one is a big box store), 5 palace (a Schloss: rusticated ground floor, tall windows in sandstone
+// surrounds with lintels, pilasters, cornices, a mansard roof of slate with dormers, a lantern with a copper dome on a
+// big one), 6 castle (a Burg: rubble stone, few small deep windows, battlements, round towers with conical roofs at the
+// outer corners); the facade variant (tint, windows, cornices, base) from the outline's hash
 // a building's mesh in world space (appended): walls, doors, roof and its details
 void buildProcBuildingMesh(const GridData::ProcBuilding& b, render::MeshData& out);
 // the map's procedural buildings as draw items (one mesh, rebuilt when GridObj::procVersion moves)
-void collectProcBuildings(Display& d, GridObj* grid, std::vector<render::DrawItem>& items);
+void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector<render::DrawItem>& items);
 
 }  // namespace regs::engine

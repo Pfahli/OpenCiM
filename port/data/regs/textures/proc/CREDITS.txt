@@ -1,0 +1,10 @@
+Photo textures of OpenCiM's procedural palaces and castles (engine/proc_buildings.cpp), made with
+tools/make-proc-textures.mjs from textures of Poly Haven (https://polyhaven.com), licensed CC0 1.0 (public domain,
+https://creativecommons.org/publicdomain/zero/1.0/; no attribution required, given here anyway). Downloaded 2026-11-16.
+
+palace-plaster-1/2/3.dds  "Beige Wall 001"      https://polyhaven.com/a/beige_wall_001       (tinted yellow, pink, white)
+palace-rustica.dds        "Red Sandstone Wall"  https://polyhaven.com/a/red_sandstone_wall
+palace-sandstone.dds      "Red Sandstone Wall"  https://polyhaven.com/a/red_sandstone_wall   (blurred, tinted red)
+slate.dds                 "Grey Roof Tiles 02"  https://polyhaven.com/a/grey_roof_tiles_02
+castle-stone.dds          "Castle Wall Slates"  https://polyhaven.com/a/castle_wall_slates
+roof-tiles-red.dds        "Clay Roof Tiles 02"  https://polyhaven.com/a/clay_roof_tiles_02

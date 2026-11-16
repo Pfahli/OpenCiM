@@ -11,6 +11,10 @@
 #include "engine/display.h"
 #include "engine/night_lights.h"
 #include "render/gl.h"
+#include "render/image.h"
+#include "render/renderer2d.h"
+#include "vfs/vfs.h"
+#include <map>
 
 namespace regs::engine {
 
@@ -249,6 +253,70 @@ Tex grilleTex() {  // an air conditioner's top: a round fan behind a grille
   return t;
 }
 
+// (palaces and castles, 2026-11-16: drawn stand-ins; the photo textures of data/regs/textures/proc replace them)
+Tex rusticaTex() {  // the rusticated ground floor: sandstone blocks with deep horizontal joints
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const int row = y / 32, off = (row & 1) ? 48 : 0;
+      const bool joint = (y % 32) < 4 || ((x + off) % 96) < 2;
+      const float n = 0.88f + 0.12f * noise((x + off) / 96, row, 91) - 0.04f * noise(x / 4, y / 4, 92);
+      t.set(x, y, joint ? 0.55f : 0.86f * n, joint ? 0.48f : 0.76f * n, joint ? 0.42f : 0.66f * n);
+    }
+  return t;
+}
+Tex slateTex() {  // slate: rows of small grey-blue slates
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const int row = y / 16, off = (row & 1) ? 12 : 0;
+      const float shade = 0.75f + 0.25f * float(y % 16) / 16.0f, n = 0.85f + 0.15f * noise((x + off) / 24, row, 93);
+      const bool gap = ((x + off) % 24) < 1;
+      const float k = gap ? 0.5f : shade * n;
+      t.set(x, y, 0.27f * k, 0.30f * k, 0.35f * k);
+    }
+  return t;
+}
+Tex castleStoneTex() {  // rubble masonry: irregular courses of grey-brown stones in mortar
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const int course = y / 20;
+      const int len = 24 + int(noise(course, 0, 95) * 30), off = int(noise(course, 1, 96) * 40);
+      const int stone = (x + off) / len;
+      const bool mortar = (y % 20) < 3 || ((x + off) % len) < 3;
+      const float n = 0.75f + 0.25f * noise(stone, course, 97) - 0.05f * noise(x / 3, y / 3, 98);
+      const float warm = noise(stone, course, 99) * 0.08f;
+      if (mortar) t.set(x, y, 0.62f, 0.60f, 0.55f);
+      else t.set(x, y, (0.55f + warm) * n, (0.52f + warm * 0.6f) * n, 0.47f * n);
+    }
+  return t;
+}
+Tex copperTex() {  // copper's green patina, streaked
+  Tex t;
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const float n = 0.85f + 0.15f * noise(x / 2, y / 16, 101) - 0.08f * noise(x / 32, y / 64, 102);
+      t.set(x, y, 0.36f * n, 0.60f * n, 0.52f * n);
+    }
+  return t;
+}
+
+Tex stainedTex() {  // stained glass: lead cames around panes of deep colours
+  Tex t;
+  static const Rgb kCol[6] = {{0.62f, 0.10f, 0.10f}, {0.12f, 0.20f, 0.58f}, {0.80f, 0.62f, 0.12f},
+                              {0.14f, 0.45f, 0.22f}, {0.45f, 0.15f, 0.50f}, {0.70f, 0.70f, 0.78f}};
+  for (int y = 0; y < 256; ++y)
+    for (int x = 0; x < 256; ++x) {
+      const bool came = (x % 32) < 3 || (y % 40) < 3 || ((x + y) % 64) < 2;
+      const Rgb c = kCol[int(noise(x / 32, y / 40, 111) * 5.99f)];
+      const float n = 0.8f + 0.2f * noise(x / 4, y / 4, 112);
+      if (came) t.set(x, y, 0.08f, 0.08f, 0.08f);
+      else t.set(x, y, c.r * n, c.g * n, c.b * n);
+    }
+  return t;
+}
+
 uint32_t uploadTex(const Tex& t) {
   uint32_t name = 0;
   gl::GenTextures(1, &name);
@@ -406,6 +474,43 @@ void opening(Builder& bd, const WallFrame& w, int wallMat, float uScale, float v
   }
 }
 
+// the outline moved d inward (each edge shifted, the corners where the shifted edges meet; a mansard roof's upper edge);
+// false when that does not give a clean smaller outline (a wing narrower than 2d, a corner spike)
+bool insetPolygon(const std::vector<std::pair<float, float>>& o, float d, std::vector<std::pair<float, float>>& in) {
+  const size_t n = o.size();
+  if (n < 3) return false;
+  std::vector<std::array<float, 4>> L(n);  // a point on the shifted edge, its direction
+  for (size_t i = 0; i < n; ++i) {
+    const auto [ax, az] = o[i];
+    const auto [bx, bz] = o[(i + 1) % n];
+    const float len = std::hypot(bx - ax, bz - az);
+    if (len < 1e-3f) return false;
+    const float dx = (bx - ax) / len, dz = (bz - az) / len;
+    float nx = dz, nz = -dx;  // one side; inward where a point just off the middle lies inside
+    if (!insidePoly(o, (ax + bx) * 0.5f + nx * 0.2f, (az + bz) * 0.5f + nz * 0.2f)) nx = -nx, nz = -nz;
+    L[i] = {ax + nx * d, az + nz * d, dx, dz};
+  }
+  in.assign(n, {0.0f, 0.0f});
+  for (size_t i = 0; i < n; ++i) {
+    const auto& p = L[(i + n - 1) % n];
+    const auto& q = L[i];
+    const float cr = p[2] * q[3] - p[3] * q[2];
+    if (std::fabs(cr) < 1e-4f) {
+      in[i] = {q[0], q[1]};
+    } else {
+      const float t = ((q[0] - p[0]) * q[3] - (q[1] - p[1]) * q[2]) / cr;
+      in[i] = {p[0] + p[2] * t, p[1] + p[3] * t};
+    }
+    if (!insidePoly(o, in[i].first, in[i].second) || std::hypot(in[i].first - o[i].first, in[i].second - o[i].second) > d * 3.5f) return false;
+  }
+  for (size_t i = 0; i < n; ++i) {  // every edge keeps its direction (none turned round)
+    const size_t j = (i + 1) % n;
+    const float ex = in[j].first - in[i].first, ez = in[j].second - in[i].second;
+    if (ex * (o[j].first - o[i].first) + ez * (o[j].second - o[i].second) <= 0) return false;
+  }
+  return std::fabs(signedArea(in)) > 0.05 * std::fabs(signedArea(o));
+}
+
 }  // namespace
 
 void writeProcBuildingSection(const GridData& g, std::vector<uint8_t>& out) {
@@ -453,32 +558,85 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   if (signedArea(o) < 0) std::reverse(o.begin(), o.end());
   Builder bd;
   const int type = src.style;  // 0 hall, 1 plaster, 2 brick, 3 office, 4 shop
-  const bool hall = type == 0, brick = type == 2, office = type == 3, shop = type == 4;
+  const bool hall = type == 0, brick = type == 2, office = type == 3, shop = type == 4, palace = type == 5, castle = type == 6;
+  const bool church = type == 7;
+  const int chType = church ? std::min<int>(src.roof, 3) : 0;  // 0 romanesque, 1 gothic, 2 baroque, 3 modern
   uint32_t seed = hashU(uint32_t(std::lround(o[0].first * 16)) * 31u + uint32_t(std::lround(o[0].second * 16)));
   const uint32_t var = hashU(seed ^ 0xFACADEu);  // the facade variant
   const bool bigBox = shop && src.height <= 7.5f;  // a big low store: one tall floor, an entrance front, its sign
   const bool punched = office && ((var >> 5) & 1);  // an office of panels with single windows, else ribbons and fins
   const int winStyle = int((var >> 6) % 4);         // houses: cross windows, tall ones, wide ones, pairs
-  const bool cornice = !hall && !office && !bigBox && ((var >> 8) & 1);
+  const bool cornice = !hall && !office && !bigBox && !palace && !castle && !church && ((var >> 8) & 1);
   int wallMat, groundMat, frameMat = (var >> 4) % 3 == 0 ? kProcFrameDark : kProcFrame;
   const int signMat = kProcSign + int((var >> 9) % 4);
-  if (hall) wallMat = groundMat = kProcHall;
+  if (church && chType == 0) wallMat = groundMat = frameMat = kProcCastleStone;
+  else if (church && chType == 1) wallMat = groundMat = kProcRustica, frameMat = kProcSandstone;
+  else if (church && chType == 2) wallMat = groundMat = kProcPalace + int(var % 3), frameMat = kProcSandstone;
+  else if (church) wallMat = groundMat = kProcPanel + int((var >> 2) % 3), frameMat = kProcFrameDark;
+  else if (palace) wallMat = kProcPalace + int(var % 3), groundMat = kProcRustica, frameMat = kProcSandstone;
+  else if (castle) wallMat = groundMat = frameMat = kProcCastleStone;
+  else if (hall) wallMat = groundMat = kProcHall;
   else if (office) wallMat = groundMat = punched ? kProcPanel + int((var >> 2) % 3) : kProcSpandrel + int(var % 3), frameMat = kProcFrameDark;
   else if (shop) wallMat = groundMat = ((var >> 5) & 1) || bigBox ? kProcPanel + int((var >> 2) % 3) : kProcPlaster + int(var % 4), frameMat = kProcFrameDark;
   else if (brick) wallMat = groundMat = kProcBrick + int(var % 3);
   else wallMat = kProcPlaster + int(var % 4), groundMat = ((var >> 3) & 1) ? kProcTrim : wallMat;
   // (the skirt reaches 12 down: on a slope the walls go into the ground, no floating wing)
   const float y = src.y, top = src.y + src.height, skirt = src.y - 12.0f;
-  const float bay = hall ? 6.0f : 3.6f;
-  const float uScale = hall ? 6.0f : office ? 3.2f : 3.6f, vScale = hall ? 6.0f : office ? 3.6f : 3.2f;
+  const float bay = hall ? 6.0f : palace ? 3.4f : castle ? 4.5f : church ? (chType == 3 ? 3.0f : chType == 2 ? 4.6f : 4.2f) : 3.6f;
+  const float uScale = hall ? 6.0f : office ? 3.2f : castle ? 3.0f : 3.6f, vScale = hall ? 6.0f : office ? 3.6f : castle ? 3.0f : 3.2f;
   const float fl = std::hypot(src.frontX, src.frontZ);
   const float fx = fl > 1e-6f ? src.frontX / fl : 0, fz = fl > 1e-6f ? src.frontZ / fl : 0;
+  // a church's main axis (the outline's principal direction, its points taken along the edges), its extent (s along it,
+  // t across, centre line ctc, half width chw) and the end the tower and portal stand at (the wider one: the apse end is
+  // the narrower; when alike, the one toward the street)
+  float cax = 1, caz = 0, cs0 = 0, cs1 = 0, ctc = 0, chw = 0;
+  int towerEnd = 1;
+  if (church) {
+    double mx = 0, mz = 0, ws = 0;
+    for (size_t i = 0; i < o.size(); ++i) {
+      const auto [ax, az] = o[i];
+      const auto [bx, bz] = o[(i + 1) % o.size()];
+      const double l = std::hypot(bx - ax, bz - az);
+      mx += (ax + bx) * 0.5 * l, mz += (az + bz) * 0.5 * l, ws += l;
+    }
+    mx /= std::max(ws, 1e-6), mz /= std::max(ws, 1e-6);
+    double cxx = 0, czz = 0, cxz = 0;
+    for (size_t i = 0; i < o.size(); ++i) {
+      const auto [ax, az] = o[i];
+      const auto [bx, bz] = o[(i + 1) % o.size()];
+      const double l = std::hypot(bx - ax, bz - az);
+      for (double q : {0.0, 0.5, 1.0}) {
+        const double px = ax + (bx - ax) * q - mx, pz = az + (bz - az) * q - mz;
+        cxx += px * px * l, czz += pz * pz * l, cxz += px * pz * l;
+      }
+    }
+    const double ang = 0.5 * std::atan2(2 * cxz, cxx - czz);
+    cax = float(std::cos(ang)), caz = float(std::sin(ang));
+    float t0 = 1e30f, t1 = -1e30f;
+    cs0 = 1e30f, cs1 = -1e30f;
+    for (auto& q : o) {
+      const float s = q.first * cax + q.second * caz, t = -q.first * caz + q.second * cax;
+      cs0 = std::min(cs0, s), cs1 = std::max(cs1, s), t0 = std::min(t0, t), t1 = std::max(t1, t);
+    }
+    ctc = (t0 + t1) * 0.5f, chw = (t1 - t0) * 0.5f;
+    float w0 = 0, w1 = 0;
+    const float span = cs1 - cs0;
+    for (size_t i = 0; i < o.size(); ++i)  // the width near each end (points along the edges)
+      for (float q : {0.0f, 0.5f}) {
+        const float px = o[i].first + (o[(i + 1) % o.size()].first - o[i].first) * q, pz = o[i].second + (o[(i + 1) % o.size()].second - o[i].second) * q;
+        const float s = px * cax + pz * caz, t = std::fabs(-px * caz + pz * cax - ctc);
+        if (s < cs0 + span * 0.2f) w0 = std::max(w0, t);
+        if (s > cs1 - span * 0.2f) w1 = std::max(w1, t);
+      }
+    towerEnd = w1 > w0 * 1.1f ? 1 : w0 > w1 * 1.1f ? -1 : (fx * cax + fz * caz >= 0 ? 1 : -1);
+  }
   // the floors: halls and big stores one; offices and shops a tall ground floor (4.2) and floors of 3.6 / 3.2; houses 3.2
   std::vector<std::pair<float, float>> floors;  // bottom, height
-  if (hall || bigBox) {
+  if (hall || bigBox || church) {
     floors.push_back({y, src.height});
   } else {
-    const float first = office || shop ? 4.2f : 3.2f, rest = office ? 3.6f : 3.2f;
+    // (a palace: a tall ground floor of 4.6 and state floors of 4.2; a castle 4.0 each)
+    const float first = palace ? 4.6f : castle ? 4.0f : office || shop ? 4.2f : 3.2f, rest = palace ? 4.2f : castle ? 4.0f : office ? 3.6f : 3.2f;
     for (float y0 = y; floors.size() < 60;) {
       const float hgt = floors.empty() ? first : rest;
       if (y0 + hgt > top + 0.3f) break;
@@ -502,6 +660,33 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
     bd.quad(edgeMat, w.at(s0, yy, 0), w.at(s0, yy, -out), w.at(s0, yy + hgt, -out), w.at(s0, yy + hgt, 0), al * -1.0f, 0, 0, 0.1f, 0.1f);
     bd.quad(edgeMat, w.at(s1, yy, 0), w.at(s1, yy, -out), w.at(s1, yy + hgt, -out), w.at(s1, yy + hgt, 0), al, 0, 0, 0.1f, 0.1f);
   };
+  // a church window's or portal's head over [a, b] at yb: a round arch or a pointed one (two arcs), its glass (or the
+  // door's tympanum) over a frame a little larger, flat on the wall
+  auto archHead = [&](const WallFrame& w, float a, float b, float yb, bool pointed, int fillMat) {
+    const float cx = (a + b) * 0.5f, hw = (b - a) * 0.5f, hgt = pointed ? hw * 1.7f : hw;
+    for (int pass = 0; pass < 2; ++pass) {
+      const float grow = pass == 0 ? 0.13f : 0.0f, t = pass == 0 ? -0.015f : -0.03f;
+      const int mat = pass == 0 ? frameMat : fillMat;
+      std::vector<std::pair<float, float>> pts;  // (along, up) from the base's centre
+      const int segs = 10;
+      for (int k = 0; k <= segs; ++k) {
+        const float q = float(k) / float(segs);
+        if (pointed) {  // an equilateral arch: each half an arc of radius 2·hw centred on the other side's springing point
+          const float hh = hw + grow, R = 2.0f * hh;
+          const float th = (q < 0.5f ? q * 2.0f : (1.0f - q) * 2.0f) * 1.0471976f;  // 0 at the springing … 60° at the apex
+          const float xr = -hh + R * std::cos(th);
+          pts.push_back({q < 0.5f ? xr : -xr, R * std::sin(th)});
+        } else {
+          const float ang = 3.14159265f * q;
+          pts.push_back({(hw + grow) * std::cos(ang), (hgt + grow) * std::sin(ang)});
+        }
+      }
+      const Vec3 c0 = w.at(cx, yb, t);
+      for (size_t k = 0; k + 1 < pts.size(); ++k)
+        bd.tri(mat, c0, w.at(cx + pts[k].first, yb + pts[k].second, t), w.at(cx + pts[k + 1].first, yb + pts[k + 1].second, t), w.n, 0.5f, 0,
+               0.5f + pts[k].first / 3.0f, pts[k].second / 3.0f, 0.5f + pts[k + 1].first / 3.0f, pts[k + 1].second / 3.0f);
+    }
+  };
   // ---- the walls: per floor and bay an opening in a recess, doors on the walls facing the street ----
   for (size_t i = 0; i < o.size(); ++i) {
     auto [ax, az] = o[i];
@@ -517,7 +702,8 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
     if (top - floorsTop > 0.01f)
       bd.quad(wallMat, w.at(0, floorsTop, 0), w.at(len, floorsTop, 0), w.at(len, top, 0), w.at(0, top, 0), w.n, 0, (floorsTop - y) / vScale,
               len / uScale, (top - y) / vScale);
-    const bool facing = fl > 1e-6f ? (w.n.x * fx + w.n.z * fz) > 0.5f : len > 12.0f;
+    const bool facing = church ? (w.n.x * cax + w.n.z * caz) * float(towerEnd) > 0.7f  // (a church: its front at the tower end)
+                               : fl > 1e-6f ? (w.n.x * fx + w.n.z * fz) > 0.5f : len > 12.0f;
     for (size_t f = 0; f < floors.size(); ++f) {
       const float y0 = floors[f].first, fh = floors[f].second;
       const bool ground = f == 0;
@@ -525,7 +711,7 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
       const float bayT = hall ? 6.0f : bigBox ? 3.0f : office ? (punched ? 2.0f : 1.6f) : (shop && ground) ? 3.0f : bay;
       const int bays = std::max(1, int(std::round(len / bayT)));
       const float bw = len / float(bays);
-      const int doors = facing && ground ? std::max(1, bays / (office ? 7 : shop ? 3 : 4)) : 0;
+      const int doors = facing && ground ? (palace || castle || church ? 1 : std::max(1, bays / (office ? 7 : shop ? 3 : 4))) : 0;
       auto isDoorBay = [&](int k) {
         for (int dd = 0; dd < doors; ++dd)
           if (k == int((float(dd) + 0.5f) * float(bays) / float(doors))) return true;
@@ -545,6 +731,57 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
         };
         if (bw < 1.2f) {  // too narrow for an opening
           plain();
+          continue;
+        }
+        if (church) {  // the portal under the tower; windows by the type (round-headed, pointed, slits)
+          if (facing && isDoorBay(k) && bw >= 3.0f) {
+            const float dw = chType == 3 ? 3.0f : 2.4f, dh = std::min(chType == 0 ? 3.4f : 4.0f, fh - 3.0f), s0 = (bw - dw) * 0.5f;
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0.0f, dh, chType == 3 ? 0.3f : 0.6f, chType == 3 ? kProcGlassLit0 : kProcDoor,
+                    frameMat, false, chType == 3 ? 2 : 0, 0);
+            if (chType != 3) archHead(w, b0 + s0, b0 + s0 + dw, y0 + dh, chType == 1, frameMat);
+            continue;
+          }
+          const float ww = chType == 0 ? 1.1f : chType == 1 ? 1.5f : chType == 2 ? 1.7f : 0.45f;
+          float o0 = chType == 0 ? fh * 0.5f : chType == 3 ? 0.8f : 2.4f;
+          float o1 = chType == 0 ? o0 + 2.6f : chType == 1 ? fh - ww * 0.85f - 1.4f : chType == 2 ? fh - ww * 0.5f - 1.6f : fh - 0.6f;
+          o1 = std::min(o1, fh - 0.5f);
+          if (o1 - o0 < 1.2f) {
+            plain();
+            continue;
+          }
+          window(ww, o0, o1, chType == 0 ? 0.5f : 0.3f, chType == 1 ? 1 : 0, chType == 1 ? 2 : chType == 3 ? 0 : 1, false, kProcStained);
+          if (chType != 3 && ww <= bw - 0.3f) archHead(w, b0 + (bw - ww) * 0.5f, b0 + (bw + ww) * 0.5f, y0 + o1, chType == 1, kProcStained);
+          continue;
+        }
+        if (palace) {  // a portal in the middle of the front, tall windows in sandstone surrounds with lintels above
+          if (ground && isDoorBay(k) && bw >= 2.8f) {
+            const float dw = 2.1f, dh = std::min(3.7f, fh - 0.5f), s0 = (bw - dw) * 0.5f;
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0.0f, dh, 0.4f, kProcDoor, kProcSandstone, false, 0, 0);
+            band(w, len, b0 + s0 - 0.35f, b0 + s0 + dw + 0.35f, y0 + dh, 0.45f, 0.22f, kProcSandstone, kProcSandstone);
+            bd.quad(kProcSandstone, w.at(b0 + s0 - 0.4f, y0 + 0.18f, -0.9f), w.at(b0 + s0 + dw + 0.4f, y0 + 0.18f, -0.9f),
+                    w.at(b0 + s0 + dw + 0.4f, y0 + 0.18f, 0.3f), w.at(b0 + s0 - 0.4f, y0 + 0.18f, 0.3f), {0, 1, 0}, 0, 0, 1, 0.3f);
+            continue;
+          }
+          const float ww = 1.3f, o0 = ground ? 1.0f : 0.75f, o1 = std::min(ground ? 3.3f : 3.6f, fh - 0.4f);
+          window(ww, o0, o1, 0.32f, 1, 2, true, paneFor());
+          if (!ground && ww <= bw - 0.3f && o1 <= fh - 0.1f) {
+            const float s0 = b0 + (bw - ww) * 0.5f;
+            band(w, len, s0 - 0.2f, s0 + ww + 0.2f, y0 + o1 + 0.06f, 0.24f, 0.14f, kProcSandstone, kProcSandstone);
+          }
+          continue;
+        }
+        if (castle) {  // a gate on the front, few small windows deep in the thick wall
+          if (ground && isDoorBay(k) && bw >= 2.4f) {
+            const float dw = 1.9f, s0 = (bw - dw) * 0.5f;
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0.0f, std::min(3.1f, fh - 0.4f), 0.7f, kProcDoor, kProcCastleStone,
+                    false, 0, 0);
+            continue;
+          }
+          if (hashU(seed ^ uint32_t(i * 977u + f * 131u + uint32_t(k) * 7919u)) % 100 < (ground ? 65u : 35u)) {
+            plain();
+            continue;
+          }
+          window(0.7f, 1.3f, 2.6f, 0.55f, 0, 1, false, paneFor());
           continue;
         }
         if (hall) {
@@ -627,6 +864,37 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
       }
       if (cornice && f + 1 < floors.size()) band(w, len, -0.15f, len + 0.15f, y0 + fh - 0.12f, 0.22f, 0.15f, kProcFrame, kProcFrame);
     }
+    // a gothic church's buttresses between its bays (not on the front)
+    if (church && chType == 1 && len > 7.0f && !facing) {
+      const int nb = std::max(1, int(std::round(len / bay)));
+      for (int k = 0; k <= nb; ++k) {
+        const float s = std::clamp(float(k) * len / float(nb), 0.3f, len - 0.3f);
+        const Vec3 c = w.at(s, y, -0.45f);
+        bd.box(wallMat, frameMat, c.x, c.z, skirt, y + src.height * 0.78f, w.dx, w.dz, 0.28f, 0.45f);
+        const Vec3 c2 = w.at(s, y, -0.25f);
+        bd.box(wallMat, frameMat, c2.x, c2.z, y + src.height * 0.78f, y + src.height * 0.9f, w.dx, w.dz, 0.22f, 0.25f);
+      }
+    }
+    // a palace's string course over the rusticated ground floor, pilasters between every second bay above it (quoins at
+    // the corners) and its main cornice under the roof
+    if (palace && floors.size() >= 2) {
+      const float yg = floors[0].first + floors[0].second;
+      band(w, len, -0.25f, len + 0.25f, yg - 0.08f, 0.38f, 0.22f, kProcSandstone, kProcSandstone);
+      auto pilaster = [&](float s, float hw) {
+        const float y0 = yg + 0.3f, y1 = top - 0.75f, out = 0.14f;
+        if (y1 - y0 < 1.0f) return;
+        bd.quad(kProcSandstone, w.at(s - hw, y0, -out), w.at(s + hw, y0, -out), w.at(s + hw, y1, -out), w.at(s - hw, y1, -out), w.n, 0, y0 / 3.0f,
+                hw, y1 / 3.0f);
+        const Vec3 al{w.dx, 0, w.dz};
+        bd.quad(kProcSandstone, w.at(s - hw, y0, 0), w.at(s - hw, y0, -out), w.at(s - hw, y1, -out), w.at(s - hw, y1, 0), al * -1.0f, 0, 0, 0.1f, 1);
+        bd.quad(kProcSandstone, w.at(s + hw, y0, 0), w.at(s + hw, y0, -out), w.at(s + hw, y1, -out), w.at(s + hw, y1, 0), al, 0, 0, 0.1f, 1);
+      };
+      const int nb = std::max(1, int(std::round(len / bay)));
+      const float bw2 = len / float(nb);
+      for (int k = 0; k <= nb; k += 2) pilaster(std::clamp(float(k) * bw2, 0.45f, len - 0.45f), k == 0 || k == nb ? 0.45f : 0.3f);
+      if (nb % 2) pilaster(len - 0.45f, 0.45f);
+      band(w, len, -0.45f, len + 0.45f, top - 0.75f, 0.75f, 0.45f, kProcSandstone, kProcSandstone);
+    }
     // the shop's fascia over its windows (its sign), the big store's sign high on its front
     if (shop && facing && !bigBox) band(w, len, 0.1f, len - 0.1f, y + 3.3f, 0.75f, 0.18f, signMat, kProcTrim);
     if (bigBox && facing && len > 8) band(w, len, len * 0.25f, len * 0.75f, top - 1.7f, 1.1f, 0.15f, signMat, kProcTrim);
@@ -660,7 +928,352 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
     return float(seed & 0xFFFF) / 65535.0f;
   };
   std::vector<std::array<size_t, 3>> tris;
-  if (src.roof == 1 && o.size() == 4) {  // gabled: the ridge along the long sides, roof windows, chimneys
+  // round shapes: an upright prism (towers, a lantern's drum), a cone (tower roofs), a dome (a lantern's cupola)
+  auto prism = [&](int mat, float cx, float cz, float y0, float y1, float r, int sides, float tile) {
+    for (int k = 0; k < sides; ++k) {
+      const float a0 = 6.2831853f * float(k) / float(sides), a1 = 6.2831853f * float(k + 1) / float(sides), am = (a0 + a1) * 0.5f;
+      const Vec3 p0{cx + r * std::cos(a0), y0, cz + r * std::sin(a0)}, p1{cx + r * std::cos(a1), y0, cz + r * std::sin(a1)};
+      const float arc = 6.2831853f * r / float(sides);
+      bd.quad(mat, p0, p1, {p1.x, y1, p1.z}, {p0.x, y1, p0.z}, {std::cos(am), 0, std::sin(am)}, float(k) * arc / tile, y0 / tile,
+              float(k + 1) * arc / tile, y1 / tile);
+    }
+  };
+  auto cone = [&](int mat, float cx, float cz, float y0, float r, float h, int sides) {
+    const Vec3 apex{cx, y0 + h, cz};
+    const float slant = std::hypot(r, h);
+    for (int k = 0; k < sides; ++k) {
+      const float a0 = 6.2831853f * float(k) / float(sides), a1 = 6.2831853f * float(k + 1) / float(sides), am = (a0 + a1) * 0.5f;
+      const Vec3 p0{cx + r * std::cos(a0), y0, cz + r * std::sin(a0)}, p1{cx + r * std::cos(a1), y0, cz + r * std::sin(a1)};
+      const Vec3 n = render::normalize(Vec3{std::cos(am) * h, r, std::sin(am) * h});
+      const float arc = 6.2831853f * r / float(sides);
+      bd.tri(mat, p0, p1, apex, n, 0, 0, arc / 2.5f, 0, arc / 5.0f, slant / 2.5f);
+    }
+  };
+  auto dome = [&](int mat, float cx, float cz, float y0, float r, int sides) {
+    static const float kPhi[5] = {0.0f, 0.42f, 0.82f, 1.18f, 1.5708f};
+    for (int ring = 0; ring < 4; ++ring) {
+      const float r0 = r * std::cos(kPhi[ring]), r1 = r * std::cos(kPhi[ring + 1]);
+      const float h0 = y0 + 1.15f * r * std::sin(kPhi[ring]), h1 = y0 + 1.15f * r * std::sin(kPhi[ring + 1]);
+      const float pm = (kPhi[ring] + kPhi[ring + 1]) * 0.5f;
+      for (int k = 0; k < sides; ++k) {
+        const float a0 = 6.2831853f * float(k) / float(sides), a1 = 6.2831853f * float(k + 1) / float(sides), am = (a0 + a1) * 0.5f;
+        const Vec3 n = render::normalize(Vec3{std::cos(am) * std::cos(pm), std::sin(pm), std::sin(am) * std::cos(pm)});
+        const Vec3 q0{cx + r0 * std::cos(a0), h0, cz + r0 * std::sin(a0)}, q1{cx + r0 * std::cos(a1), h0, cz + r0 * std::sin(a1)};
+        const Vec3 q2{cx + r1 * std::cos(a1), h1, cz + r1 * std::sin(a1)}, q3{cx + r1 * std::cos(a0), h1, cz + r1 * std::sin(a0)};
+        if (ring == 3) bd.tri(mat, q0, q1, q2, n, 0, 0, 0.3f, 0, 0.15f, 0.3f);
+        else bd.quad(mat, q0, q1, q2, q3, n, 0, float(ring) * 0.3f, 0.3f, float(ring + 1) * 0.3f);
+      }
+    }
+  };
+  // a cone of `sides` turned by a0 (a square tower's pyramid: 4 sides, its corners on the diagonals)
+  auto coneRot = [&](int mat, float cx, float cz, float y0, float r, float h, int sides, float a0r) {
+    const Vec3 apex{cx, y0 + h, cz};
+    const float slant = std::hypot(r, h);
+    for (int k = 0; k < sides; ++k) {
+      const float a0 = a0r + 6.2831853f * float(k) / float(sides), a1 = a0r + 6.2831853f * float(k + 1) / float(sides), am = (a0 + a1) * 0.5f;
+      const Vec3 p0{cx + r * std::cos(a0), y0, cz + r * std::sin(a0)}, p1{cx + r * std::cos(a1), y0, cz + r * std::sin(a1)};
+      const float inr = r * std::cos(3.14159265f / float(sides));
+      const Vec3 n = render::normalize(Vec3{std::cos(am) * h, inr, std::sin(am) * h});
+      const float edge = std::hypot(p1.x - p0.x, p1.z - p0.z);
+      bd.tri(mat, p0, p1, apex, n, 0, 0, edge / 2.5f, 0, edge / 5.0f, slant / 2.5f);
+    }
+  };
+  // a solid of revolution from a profile (radius, height over y0), bottom to top (an onion dome)
+  auto lathe = [&](int mat, float cx, float cz, float y0, const std::vector<std::pair<float, float>>& prof, int sides) {
+    for (size_t i = 0; i + 1 < prof.size(); ++i) {
+      const float r0 = prof[i].first, r1 = prof[i + 1].first, h0 = y0 + prof[i].second, h1 = y0 + prof[i + 1].second;
+      const float dr = r1 - r0, dh = h1 - h0, dl = std::max(1e-4f, std::hypot(dr, dh));
+      for (int k = 0; k < sides; ++k) {
+        const float a0 = 6.2831853f * float(k) / float(sides), a1 = 6.2831853f * float(k + 1) / float(sides), am = (a0 + a1) * 0.5f;
+        const Vec3 n = render::normalize(Vec3{std::cos(am) * dh / dl, -dr / dl, std::sin(am) * dh / dl});
+        const Vec3 q0{cx + r0 * std::cos(a0), h0, cz + r0 * std::sin(a0)}, q1{cx + r0 * std::cos(a1), h0, cz + r0 * std::sin(a1)};
+        const Vec3 q2{cx + r1 * std::cos(a1), h1, cz + r1 * std::sin(a1)}, q3{cx + r1 * std::cos(a0), h1, cz + r1 * std::sin(a0)};
+        if (r1 < 1e-3f) bd.tri(mat, q0, q1, q2, n.y < 0 ? n * -1.0f : n, 0, 0, 0.3f, 0, 0.15f, 0.3f);
+        else bd.quad(mat, q0, q1, q2, q3, n, 0, prof[i].second / 2.0f, 0.4f, prof[i + 1].second / 2.0f);
+      }
+    }
+  };
+  // a flat roof over the outline at height yy (the castle's walk, a palace roof's top)
+  auto flatRoof = [&](const std::vector<std::pair<float, float>>& poly, float yy, int mat, float tile) {
+    std::vector<std::array<size_t, 3>> tt;
+    if (!triangulate(poly, tt)) return false;
+    auto ru = [&](size_t k) { return (poly[k].first * ux + poly[k].second * uz) / tile; };
+    auto rv = [&](size_t k) { return (poly[k].first * vx + poly[k].second * vz) / tile; };
+    for (auto& t : tt)
+      bd.tri(mat, {poly[t[0]].first, yy, poly[t[0]].second}, {poly[t[1]].first, yy, poly[t[1]].second}, {poly[t[2]].first, yy, poly[t[2]].second},
+             {0, 1, 0}, ru(t[0]), rv(t[0]), ru(t[1]), rv(t[1]), ru(t[2]), rv(t[2]));
+    return true;
+  };
+  // per edge of the outline: its ends, length, direction and outward normal
+  struct Edge {
+    float ax, az, bx, bz, len, dx, dz, nx, nz;
+  };
+  std::vector<Edge> edges;
+  for (size_t i = 0; i < o.size(); ++i) {
+    Edge e{o[i].first, o[i].second, o[(i + 1) % o.size()].first, o[(i + 1) % o.size()].second, 0, 0, 0, 0, 0};
+    e.len = std::hypot(e.bx - e.ax, e.bz - e.az);
+    if (e.len > 1e-4f) e.dx = (e.bx - e.ax) / e.len, e.dz = (e.bz - e.az) / e.len;
+    e.nx = e.dz, e.nz = -e.dx;
+    if (insidePoly(o, (e.ax + e.bx) * 0.5f + e.nx * 0.2f, (e.az + e.bz) * 0.5f + e.nz * 0.2f)) e.nx = -e.nx, e.nz = -e.nz;
+    edges.push_back(e);
+  }
+  if (palace) {
+    // the mansard: a steep slate slope from the cornice up to the outline moved d inward, dormers along it, a low top;
+    // a big palace gets a lantern with a copper dome over its widest point. A wing too narrow for it: a flat roof
+    // behind a stone balustrade
+    std::vector<std::pair<float, float>> in;
+    float d = 0;
+    for (float tryD : {3.4f, 2.6f, 1.8f})
+      if (insetPolygon(o, tryD, in)) {
+        d = tryD;
+        break;
+      }
+    if (d > 0) {
+      const float rise = d * 1.45f, yt = top + rise, slope = std::hypot(d, rise);
+      for (size_t i = 0; i < o.size(); ++i) {
+        const Edge& e = edges[i];
+        if (e.len < 0.05f) continue;
+        const size_t j = (i + 1) % o.size();
+        const Vec3 A{e.ax, top, e.az}, B{e.bx, top, e.bz}, Bi{in[j].first, yt, in[j].second}, Ai{in[i].first, yt, in[i].second};
+        const Vec3 nn = render::normalize(Vec3{e.nx * rise, d, e.nz * rise});
+        bd.quad(kProcSlate, A, B, Bi, Ai, nn, 0, 0, e.len / 2.5f, slope / 2.5f);
+        // dormers: a framed window standing on the slope every two bays, its cheeks and a little slate roof
+        const int count = int(e.len / (2.0f * bay));
+        for (int k = 0; k < count; ++k) {
+          const float s = (float(k) + 0.5f) * e.len / float(count);
+          const float hw = 0.7f, hgt = 1.7f, t = 0.25f;  // half width, height, share of the slope up
+          const float fx = e.ax + e.dx * s - e.nx * d * t, fz = e.az + e.dz * s - e.nz * d * t, fy = top + rise * t;
+          const float back = hgt * d / rise;
+          const Vec3 al{e.dx, 0, e.dz}, inw{-e.nx, 0, -e.nz}, outw{e.nx, 0, e.nz};
+          const Vec3 F0l = Vec3{fx, fy, fz} - al * hw, F0r = Vec3{fx, fy, fz} + al * hw;
+          const Vec3 F1l = F0l + Vec3{0, hgt, 0}, F1r = F0r + Vec3{0, hgt, 0};
+          const Vec3 Kl = F1l + inw * (back + 0.1f), Kr = F1r + inw * (back + 0.1f);
+          bd.quad(kProcSandstone, F0l, F0r, F1r, F1l, outw, 0, 0, 0.5f, 0.6f);
+          const Vec3 pl = F0l + al * 0.22f + Vec3{0, 0.25f, 0} + outw * 0.02f, pr = F0r - al * 0.22f + Vec3{0, 0.25f, 0} + outw * 0.02f;
+          bd.quad(paneFor(), pl, pr, pr + Vec3{0, hgt - 0.5f, 0}, pl + Vec3{0, hgt - 0.5f, 0}, outw, 0, 0, 1, 1);
+          bd.tri(kProcSlate, F0l, F1l, Kl, al * -1.0f, 0, 0, 0, 0.6f, 0.5f, 0.6f);
+          bd.tri(kProcSlate, F0r, F1r, Kr, al, 0, 0, 0, 0.6f, 0.5f, 0.6f);
+          const Vec3 Rl = F1l + outw * 0.15f + Vec3{0, 0.35f, 0} - al * 0.08f, Rr = F1r + outw * 0.15f + Vec3{0, 0.35f, 0} + al * 0.08f;
+          const Vec3 rn = render::normalize(Vec3{e.nx * 0.35f, back + 0.25f, e.nz * 0.35f});
+          bd.quad(kProcSlate, Rl, Rr, Kr, Kl, rn, 0, 0, 0.6f, 0.6f);
+          bd.quad(kProcSandstone, F1l - al * 0.08f, F1r + al * 0.08f, Rr, Rl, outw, 0, 0, 0.5f, 0.1f);
+        }
+      }
+      flatRoof(in, yt, kProcSlate, 2.5f);
+      // the lantern: over the widest point of the top (the farthest from its edges), on a big palace
+      float bx = 0, bz = 0, bd2 = 0;
+      float iminX = 1e30f, iminZ = 1e30f, imaxX = -1e30f, imaxZ = -1e30f;
+      for (auto& q : in) iminX = std::min(iminX, q.first), iminZ = std::min(iminZ, q.second), imaxX = std::max(imaxX, q.first), imaxZ = std::max(imaxZ, q.second);
+      for (int gz = 0; gz <= 16; ++gz)
+        for (int gx = 0; gx <= 16; ++gx) {
+          const float px = iminX + (imaxX - iminX) * float(gx) / 16.0f, pz = iminZ + (imaxZ - iminZ) * float(gz) / 16.0f;
+          if (!insidePoly(in, px, pz)) continue;
+          float dm = 1e30f;
+          for (size_t q = 0; q < in.size(); ++q) {
+            const auto [ax2, az2] = in[q];
+            const auto [bx2, bz2] = in[(q + 1) % in.size()];
+            const float ex = bx2 - ax2, ez = bz2 - az2, l2 = ex * ex + ez * ez;
+            const float tt = l2 > 0 ? std::clamp(((px - ax2) * ex + (pz - az2) * ez) / l2, 0.0f, 1.0f) : 0.0f;
+            dm = std::min(dm, std::hypot(px - ax2 - tt * ex, pz - az2 - tt * ez));
+          }
+          if (dm > bd2) bd2 = dm, bx = px, bz = pz;
+        }
+      if (signedArea(o) > 900.0 && bd2 > 2.2f) {
+        const float r = std::min(3.0f, bd2 * 0.75f);
+        prism(wallMat, bx, bz, yt, yt + 2.8f, r, 12, 3.2f);
+        for (int k = 0; k < 12; k += 2) {  // its windows
+          const float am = 6.2831853f * (float(k) + 0.5f) / 12.0f;
+          const Vec3 c{bx + (r + 0.02f) * std::cos(am), yt + 0.7f, bz + (r + 0.02f) * std::sin(am)}, tn{-std::sin(am), 0, std::cos(am)};
+          bd.quad(paneFor(), c - tn * 0.3f, c + tn * 0.3f, c + tn * 0.3f + Vec3{0, 1.5f, 0}, c - tn * 0.3f + Vec3{0, 1.5f, 0},
+                  {std::cos(am), 0, std::sin(am)}, 0, 0, 1, 1);
+        }
+        prism(kProcSandstone, bx, bz, yt + 2.8f, yt + 3.1f, r + 0.2f, 12, 3.0f);
+        dome(kProcCopper, bx, bz, yt + 3.1f, r, 12);
+        prism(kProcSandstone, bx, bz, yt + 3.1f + 1.15f * r, yt + 3.1f + 1.15f * r + 1.0f, 0.45f, 8, 2.0f);
+        cone(kProcCopper, bx, bz, yt + 3.1f + 1.15f * r + 1.0f, 0.55f, 1.4f, 8);
+      }
+    } else {  // flat behind a balustrade of sandstone
+      flatRoof(o, top + 0.02f, kProcRoofFlat, 8.0f);
+      for (const Edge& e : edges) {
+        if (e.len < 0.05f) continue;
+        const Vec3 n{e.nx, 0, e.nz};
+        bd.quad(kProcSandstone, {e.ax, top, e.az}, {e.bx, top, e.bz}, {e.bx, top + 1.0f, e.bz}, {e.ax, top + 1.0f, e.az}, n, 0, 0, e.len / 3, 0.3f);
+        bd.quad(kProcSandstone, {e.ax, top + 1.0f, e.az}, {e.bx, top + 1.0f, e.bz}, {e.bx - e.nx * 0.35f, top + 1.0f, e.bz - e.nz * 0.35f},
+                {e.ax - e.nx * 0.35f, top + 1.0f, e.az - e.nz * 0.35f}, {0, 1, 0}, 0, 0, e.len / 3, 0.1f);
+        bd.quad(kProcSandstone, {e.bx - e.nx * 0.35f, top, e.bz - e.nz * 0.35f}, {e.ax - e.nx * 0.35f, top, e.az - e.nz * 0.35f},
+                {e.ax - e.nx * 0.35f, top + 1.0f, e.az - e.nz * 0.35f}, {e.bx - e.nx * 0.35f, top + 1.0f, e.bz - e.nz * 0.35f}, n * -1.0f, 0, 0,
+                e.len / 3, 0.3f);
+      }
+    }
+  } else if (castle) {
+    // the wall walk behind battlements (merlons every 1.6 along the parapet), round towers with conical roofs at the
+    // outer corners (the sharpest first, up to six; roofs of slate or red tiles by the variant)
+    flatRoof(o, top + 0.02f, kProcRoofFlat, 8.0f);
+    const float ph = 0.9f, mh = 0.9f, th = 0.6f;
+    for (const Edge& e : edges) {
+      if (e.len < 0.05f) continue;
+      const Vec3 n{e.nx, 0, e.nz};
+      const float ix = -e.nx * th, iz = -e.nz * th;
+      bd.quad(kProcCastleStone, {e.ax, top, e.az}, {e.bx, top, e.bz}, {e.bx, top + ph, e.bz}, {e.ax, top + ph, e.az}, n, 0, top / 3.0f, e.len / 3.0f,
+              (top + ph) / 3.0f);
+      bd.quad(kProcCastleStone, {e.ax, top + ph, e.az}, {e.bx, top + ph, e.bz}, {e.bx + ix, top + ph, e.bz + iz}, {e.ax + ix, top + ph, e.az + iz},
+              {0, 1, 0}, 0, 0, e.len / 3.0f, 0.2f);
+      bd.quad(kProcCastleStone, {e.bx + ix, top, e.bz + iz}, {e.ax + ix, top, e.az + iz}, {e.ax + ix, top + ph, e.az + iz},
+              {e.bx + ix, top + ph, e.bz + iz}, n * -1.0f, 0, 0, e.len / 3.0f, 0.3f);
+      for (float s = 0.45f; s + 0.45f <= e.len; s += 1.6f) {
+        const float cx = e.ax + e.dx * (s + 0.45f) - e.nx * th * 0.5f, cz = e.az + e.dz * (s + 0.45f) - e.nz * th * 0.5f;
+        bd.box(kProcCastleStone, kProcCastleStone, cx, cz, top + ph, top + ph + mh, e.dx, e.dz, 0.45f, th * 0.5f);
+      }
+    }
+    struct Corner {
+      size_t i;
+      float turn;
+    };
+    std::vector<Corner> corners;
+    for (size_t i = 0; i < o.size(); ++i) {
+      const Edge& e0 = edges[(i + o.size() - 1) % o.size()];
+      const Edge& e1 = edges[i];
+      if (e0.len < 4.0f || e1.len < 4.0f) continue;
+      const float cr = e0.dx * e1.dz - e0.dz * e1.dx, dt = e0.dx * e1.dx + e0.dz * e1.dz;
+      // convex: the corner's outward bisector points out of the outline
+      const float bxo = e0.nx + e1.nx, bzo = e0.nz + e1.nz;
+      if (insidePoly(o, o[i].first + bxo * 0.6f, o[i].second + bzo * 0.6f)) continue;
+      const float turn = std::atan2(std::fabs(cr), dt);
+      if (turn >= 0.7f) corners.push_back({i, turn});
+    }
+    std::sort(corners.begin(), corners.end(), [](const Corner& a2, const Corner& b2) { return a2.turn > b2.turn; });
+    if (corners.size() > 6) corners.resize(6);
+    const int towerRoof = ((var >> 10) & 1) ? kProcRoofTiles : kProcSlate;
+    for (const Corner& c : corners) {
+      const Edge& e0 = edges[(c.i + o.size() - 1) % o.size()];
+      const Edge& e1 = edges[c.i];
+      const float r = std::clamp(std::min(e0.len, e1.len) * 0.16f, 2.0f, 3.6f);
+      const float cx = o[c.i].first, cz = o[c.i].second, tt = top + ph + 3.2f;
+      prism(kProcCastleStone, cx, cz, skirt, tt, r, 14, 3.0f);
+      const float bl = std::hypot(e0.nx + e1.nx, e0.nz + e1.nz);
+      const float ox = bl > 1e-3f ? (e0.nx + e1.nx) / bl : e1.nx, oz = bl > 1e-3f ? (e0.nz + e1.nz) / bl : e1.nz;
+      for (float wy : {y + 3.0f, (y + tt) * 0.5f + 1.0f, tt - 2.4f}) {  // arrow slits facing out
+        if (wy < y + 1.5f || wy + 1.1f > tt - 0.3f) continue;
+        const Vec3 cc{cx + ox * (r + 0.03f), wy, cz + oz * (r + 0.03f)}, tn{-oz, 0, ox};
+        bd.quad(kProcGlass, cc - tn * 0.13f, cc + tn * 0.13f, cc + tn * 0.13f + Vec3{0, 1.1f, 0}, cc - tn * 0.13f + Vec3{0, 1.1f, 0}, {ox, 0, oz}, 0, 0, 0.2f,
+                1);
+      }
+      prism(kProcCastleStone, cx, cz, tt, tt + 0.35f, r + 0.25f, 14, 3.0f);  // the eaves' corbel ring
+      bd.pipe(kProcCastleStone, cx, cz, tt + 0.34f, tt + 0.35f, r + 0.25f, 14);
+      cone(towerRoof, cx, cz, tt + 0.35f, r + 0.45f, (r + 0.45f) * 2.3f, 14);
+    }
+  } else if (church) {
+    // the roof along the main axis: each outline edge slopes up to the centre line (its points at the height their
+    // distance from it gives: a lower chancel gets a lower ridge); an edge across the axis is a gable wall instead
+    const float pitch = chType == 0 ? 0.95f : chType == 1 ? 1.65f : chType == 2 ? 1.15f : 0.3f;
+    const int roofMat = chType == 3 ? kProcRoofMetal : ((var >> 11) & 1) ? kProcRoofTiles : kProcSlate;
+    const float px = -caz, pz = cax;  // across the axis
+    auto tOf = [&](float x, float z) { return x * px + z * pz - ctc; };
+    for (const Edge& e : edges) {
+      if (e.len < 0.05f) continue;
+      const float ta = tOf(e.ax, e.az), tb = tOf(e.bx, e.bz);
+      const Vec3 A{e.ax, top, e.az}, B{e.bx, top, e.bz};
+      const Vec3 Ai{e.ax - px * ta, top + pitch * std::fabs(ta), e.az - pz * ta}, Bi{e.bx - px * tb, top + pitch * std::fabs(tb), e.bz - pz * tb};
+      if (std::fabs(e.dx * cax + e.dz * caz) < 0.5f) {  // across the axis: the gable wall up to the ridge
+        const float vt = (top - y) / vScale;
+        if (std::fabs(ta) > 0.05f) bd.tri(wallMat, A, Ai, B, {e.nx, 0, e.nz}, 0, vt, 0, vt + std::fabs(ta) * pitch / vScale, e.len / uScale, vt);
+        if (std::fabs(tb) > 0.05f) bd.tri(wallMat, B, Ai, Bi, {e.nx, 0, e.nz}, e.len / uScale, vt, 0, vt + std::fabs(ta) * pitch / vScale,
+                                          e.len / uScale, vt + std::fabs(tb) * pitch / vScale);
+        continue;
+      }
+      Vec3 nn = render::normalize(cross3(B - A, Ai - A));
+      if (nn.y < 0) nn = nn * -1.0f;
+      const float sl = std::hypot(std::max(std::fabs(ta), std::fabs(tb)), pitch * std::max(std::fabs(ta), std::fabs(tb)));
+      bd.quad(roofMat, A, B, Bi, Ai, nn, 0, 0, e.len / 2.5f, sl / 2.5f);
+    }
+    // the tower(s): a square tower at the front end on the axis (twin towers on a big romanesque or gothic church), a
+    // free-standing bell tower beside a modern one, a ridge turret on a chapel
+    const float area = float(signedArea(o));
+    const bool chapel = area < 170.0f;
+    const float endS = towerEnd > 0 ? cs1 : cs0, aAng = std::atan2(caz, cax);
+    auto towerBody = [&](float tx, float tz, float hs, float y0, float y1) {
+      const Vec3 u{cax, 0, caz}, v{px, 0, pz};
+      Vec3 c[4];
+      for (int k = 0; k < 4; ++k) {
+        const float sa = (k == 1 || k == 2) ? hs : -hs, sb = k >= 2 ? hs : -hs;
+        c[k] = Vec3{tx, 0, tz} + u * sa + v * sb;
+      }
+      for (int k = 0; k < 4; ++k) {
+        const Vec3 a = c[k], b = c[(k + 1) % 4];
+        const Vec3 n = render::normalize(Vec3{(a.x + b.x) * 0.5f - tx, 0, (a.z + b.z) * 0.5f - tz});
+        const float side = 2.0f * hs;
+        bd.quad(wallMat, {a.x, y0, a.z}, {b.x, y0, b.z}, {b.x, y1, b.z}, {a.x, y1, a.z}, n, 0, (y0 - y) / vScale, side / uScale, (y1 - y) / vScale);
+        const Vec3 al = render::normalize(b - a), mid{(a.x + b.x) * 0.5f, 0, (a.z + b.z) * 0.5f};
+        // the belfry's sound openings near the top, a clock under them
+        for (int p = -1; p <= 1; p += 2) {
+          const Vec3 q = mid + al * (float(p) * hs * 0.38f) + n * 0.03f;
+          const float yo = y1 - 3.6f, hw2 = std::min(0.5f, hs * 0.18f);
+          if (chType == 3) continue;
+          bd.quad(kProcFrameDark, q - al * hw2 + Vec3{0, yo, 0}, q + al * hw2 + Vec3{0, yo, 0}, q + al * hw2 + Vec3{0, yo + 2.2f, 0},
+                  q - al * hw2 + Vec3{0, yo + 2.2f, 0}, n, 0, 0, 0.3f, 1);
+          if (chType != 1) archHead(WallFrame{q.x - al.x * hw2, q.z - al.z * hw2, al.x, al.z, n}, 0, 2 * hw2, yo + 2.2f, false, kProcFrameDark);
+        }
+        if (chType != 3 && y1 - y0 > 12.0f) {  // the clock: a light dial, two hands
+          const float cr = std::min(1.1f, hs * 0.45f), cy = y1 - 5.4f;
+          const Vec3 cc = mid + n * 0.05f;
+          for (int s2 = 0; s2 < 16; ++s2) {
+            const float a0 = 6.2831853f * float(s2) / 16.0f, a1 = 6.2831853f * float(s2 + 1) / 16.0f;
+            bd.tri(kProcFrame, cc + Vec3{0, cy, 0}, cc + al * (cr * std::cos(a0)) + Vec3{0, cy + cr * std::sin(a0), 0},
+                   cc + al * (cr * std::cos(a1)) + Vec3{0, cy + cr * std::sin(a1), 0}, n, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f);
+          }
+          const Vec3 h0 = cc + n * 0.02f + Vec3{0, cy, 0};
+          bd.quad(kProcFrameDark, h0 - al * 0.04f, h0 + al * 0.04f, h0 + al * 0.04f + Vec3{0, cr * 0.85f, 0}, h0 - al * 0.04f + Vec3{0, cr * 0.85f, 0}, n, 0, 0,
+                  0.1f, 1);
+          bd.quad(kProcFrameDark, h0 - Vec3{0, 0.04f, 0}, h0 + al * (cr * 0.6f) - Vec3{0, 0.04f, 0}, h0 + al * (cr * 0.6f) + Vec3{0, 0.04f, 0},
+                  h0 + Vec3{0, 0.04f, 0}, n, 0, 0, 1, 0.1f);
+        }
+      }
+      const Vec3 u2{cax, 0, caz}, v2{px, 0, pz};
+      bd.quad(roofMat, Vec3{tx, y1, tz} - u2 * hs - v2 * hs, Vec3{tx, y1, tz} + u2 * hs - v2 * hs, Vec3{tx, y1, tz} + u2 * hs + v2 * hs,
+              Vec3{tx, y1, tz} - u2 * hs + v2 * hs, {0, 1, 0}, 0, 0, 1, 1);
+    };
+    auto towerTop = [&](float tx, float tz, float hs, float y1) {
+      const int spireMat = ((var >> 12) % 3 == 0) ? kProcCopper : kProcSlate;
+      if (chType == 0) {  // a pyramid roof
+        coneRot(kProcSlate, tx, tz, y1, hs * 1.414f, hs * 2.2f, 4, aAng + 0.785398f);
+      } else if (chType == 1) {  // an octagonal spire with a little finial
+        coneRot(spireMat, tx, tz, y1, hs * 1.08f, hs * 5.5f, 8, aAng + 0.3927f);
+        prism(kProcFrame, tx, tz, y1 + hs * 5.5f - 0.2f, y1 + hs * 5.5f + 1.2f, 0.08f, 4, 1.0f);
+      } else if (chType == 2) {  // the onion dome over a lantern
+        const float r = hs * 0.95f;
+        prism(wallMat, tx, tz, y1, y1 + 0.6f, r * 0.8f, 8, 3.0f);
+        lathe(kProcCopper, tx, tz, y1 + 0.6f,
+              {{r * 0.80f, 0.0f}, {r * 1.10f, r * 0.45f}, {r * 1.05f, r * 0.9f}, {r * 0.62f, r * 1.35f}, {r * 0.22f, r * 1.75f}, {r * 0.16f, r * 1.95f}}, 12);
+        prism(kProcCopper, tx, tz, y1 + 0.6f + r * 1.95f, y1 + 0.6f + r * 2.6f, r * 0.22f, 8, 1.0f);
+        lathe(kProcCopper, tx, tz, y1 + 0.6f + r * 2.6f, {{r * 0.30f, 0.0f}, {r * 0.32f, r * 0.25f}, {r * 0.12f, r * 0.6f}, {0.0f, r * 1.3f}}, 10);
+      } else {  // modern: a flat top and a slim cross
+        bd.box(kProcFrame, kProcFrame, tx, tz, y1, y1 + 3.2f, cax, caz, 0.12f, 0.12f);
+        bd.box(kProcFrame, kProcFrame, tx, tz, y1 + 2.0f, y1 + 2.25f, cax, caz, 0.12f, 0.9f);
+      }
+    };
+    if (chapel) {  // a ridge turret near the front
+      const float s = endS - float(towerEnd) * std::min(2.5f, (cs1 - cs0) * 0.25f);
+      const float tx = cax * s + px * ctc, tz = caz * s + pz * ctc, ridge = top + pitch * chw;
+      prism(kProcFrameDark, tx, tz, ridge - 0.5f, ridge + 1.8f, 0.55f, 8, 1.0f);
+      coneRot(kProcSlate, tx, tz, ridge + 1.8f, 0.75f, 2.6f, 8, 0.0f);
+    } else if (chType == 3) {  // a free-standing bell tower beside the front
+      const float hs = std::clamp(chw * 0.35f, 1.8f, 3.0f), s = endS - float(towerEnd) * hs, t = ctc + chw + hs * 1.6f;
+      const float tx = cax * s + px * t, tz = caz * s + pz * t;
+      towerBody(tx, tz, hs, skirt, y + src.height * 2.6f);
+      towerTop(tx, tz, hs, y + src.height * 2.6f);
+    } else {
+      const bool twin = chType != 2 && area > 900.0f && chw > 7.0f;
+      const float hs = twin ? std::clamp(chw * 0.32f, 2.2f, 4.0f) : std::clamp(chw * (chType == 0 ? 0.62f : 0.5f), 2.2f, 4.5f);
+      const float s = endS - float(towerEnd) * (hs - 0.4f);
+      const float body = y + src.height * (chType == 0 ? 2.1f : chType == 1 ? 2.6f : 2.3f);
+      for (int k = 0; k < (twin ? 2 : 1); ++k) {
+        const float t = twin ? ctc + (k ? 1.0f : -1.0f) * (chw - hs) : ctc;
+        const float tx = cax * s + px * t, tz = caz * s + pz * t;
+        towerBody(tx, tz, hs, skirt, body);
+        towerTop(tx, tz, hs, body);
+      }
+    }
+  } else if (src.roof == 1 && o.size() == 4) {  // gabled: the ridge along the long sides, roof windows, chimneys
     const float l01 = std::hypot(o[1].first - o[0].first, o[1].second - o[0].second);
     const float l12 = std::hypot(o[2].first - o[1].first, o[2].second - o[1].second);
     const int s = l01 >= l12 ? 0 : 1;
@@ -879,7 +1492,7 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   }
 }
 
-void collectProcBuildings(Display& d, GridObj* grid, std::vector<render::DrawItem>& items) {
+void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector<render::DrawItem>& items) {
   struct State {
     std::vector<render::GpuMaterial> materials;
     render::GpuMesh mesh;
@@ -899,11 +1512,26 @@ void collectProcBuildings(Display& d, GridObj* grid, std::vector<render::DrawIte
         plainTex(0.20f, 0.21f, 0.22f, 23), glass, glass, glass, glass, solarTex(), grilleTex(),
         panelTex({0.80f, 0.80f, 0.78f}), panelTex({0.30f, 0.31f, 0.33f}), panelTex({0.74f, 0.66f, 0.54f}),
         spandrelTex({0.24f, 0.25f, 0.27f}), spandrelTex({0.32f, 0.38f, 0.46f}), spandrelTex({0.42f, 0.34f, 0.24f}),
-        signTex({0.70f, 0.12f, 0.10f}), signTex({0.10f, 0.25f, 0.60f}), signTex({0.08f, 0.45f, 0.20f}), signTex({0.85f, 0.62f, 0.08f})};
+        signTex({0.70f, 0.12f, 0.10f}), signTex({0.10f, 0.25f, 0.60f}), signTex({0.08f, 0.45f, 0.20f}), signTex({0.85f, 0.62f, 0.08f}),
+        plasterTex({0.95f, 0.87f, 0.64f}), plasterTex({0.93f, 0.73f, 0.67f}), plasterTex({0.93f, 0.92f, 0.88f}), rusticaTex(),
+        plainTex(0.74f, 0.50f, 0.42f, 103), slateTex(), castleStoneTex(), copperTex(), stainedTex()};
+    // the photo textures (CC0, data/regs/textures/proc, tools/make-proc-textures.mjs) where they are installed
+    std::map<int, const char*> photos = {{kProcPalace, "palace-plaster-1"}, {kProcPalace + 1, "palace-plaster-2"},
+                                         {kProcPalace + 2, "palace-plaster-3"}, {kProcRustica, "palace-rustica"},
+                                         {kProcSandstone, "palace-sandstone"}, {kProcSlate, "slate"},
+                                         {kProcCastleStone, "castle-stone"}, {kProcRoofTiles, "roof-tiles-red"}};
     for (int k = 0; k < kProcMaterialCount; ++k) {
       render::GpuMaterial m;
       m.flags = render::kMatDiffuseMap;
-      m.textures = {uploadTex(texs[k])};
+      uint32_t tex = 0;
+      if (auto ph = photos.find(k); ph != photos.end()) {
+        std::vector<uint8_t> file;
+        render::Image img;
+        if (vm.vfs().read(std::string("regs/textures/proc/") + ph->second + ".dds", file) && render::parseDds(file, img, nullptr))
+          tex = d.r2d().createTexture(img);
+        if (!tex) LOG_WARN("proc buildings: the photo texture %s is missing (drawn one used)", ph->second);
+      }
+      m.textures = {tex ? tex : uploadTex(texs[k])};
       for (int c = 0; c < 3; ++c) m.ambient[c] = 0.6f, m.diffuse[c] = 0.55f;
       if (k >= kProcGlass && k <= kProcGlassLit2) {  // glass: a little shine
         m.flags |= render::kMatSpecular;
@@ -921,6 +1549,11 @@ void collectProcBuildings(Display& d, GridObj* grid, std::vector<render::DrawIte
     const float e = smooth01(kOn[k], kOn[k] + 0.2f, night) * (k == 2 ? 0.40f : 0.52f);  // (× 2.5 at night: the scene's emission scale)
     render::GpuMaterial& m = st.materials[size_t(kProcGlassLit0 + k)];
     m.emission[0] = 1.0f * e, m.emission[1] = 0.78f * e, m.emission[2] = 0.45f * e;
+  }
+  {  // churches' stained glass: a soft glow from inside at night
+    const float e = smooth01(0.15f, 0.40f, night) * 0.45f;
+    render::GpuMaterial& m = st.materials[size_t(kProcStained)];
+    m.emission[0] = 1.0f * e, m.emission[1] = 0.85f * e, m.emission[2] = 0.6f * e;
   }
   for (int k = 0; k < 4; ++k) {  // the shop signs lit too
     const float e = smooth01(0.12f, 0.32f, night) * 0.35f;

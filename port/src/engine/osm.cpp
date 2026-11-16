@@ -585,6 +585,8 @@ struct RoadIn {
   std::vector<std::pair<double, double>> pts;
 };
 
+bool insideRing(const std::vector<std::pair<double, double>>& p, double x, double z);  // (below)
+double polyArea(const std::vector<std::pair<double, double>>& p);                        // (below)
 double segDist(double px, double pz, std::pair<double, double> a, std::pair<double, double> b) {
   double dx = b.first - a.first, dz = b.second - a.second, l2 = dx * dx + dz * dz;
   double t = l2 > 0 ? std::clamp(((px - a.first) * dx + (pz - a.second) * dz) / l2, 0.0, 1.0) : 0;
@@ -967,7 +969,49 @@ struct BuildingIn {
   bool terraced = false;  // wall to wall with a neighbour (or building=terrace): the game's city houses in a row
   int row = -1;           // the row of buildings wall to wall it belongs to (two or more), -1 none
   bool fastFood = false;  // a McDonald's, Burger King or KFC (or such a point inside it): the game's fast food restaurant
+  int castle = 0;         // 1 a palace (Schloss), 2 a castle (Burg): the port's own building of that style (2026-11-16)
+  int church = -1;        // a church: 0 romanesque, 1 gothic, 2 baroque, 3 modern (proc_buildings.h style 7); -1 none
 };
+// a church's type (owner 2026-11-16: "build different church types"): building=church / cathedral / chapel / basilica
+// (or a building that is a christian place of worship); the style from building:architecture, else from start_date
+// (before 1250 romanesque, to 1550 gothic, to 1800 baroque, 1800-1930 the 19th century's neo-gothic, after modern), else
+// gothic for a cathedral and by the element's id among gothic (most), baroque and romanesque; -1 not a church
+template <class T>
+int churchKind(const T& tags, uint64_t id) {
+  const std::string bu = tags.str("building");
+  const bool worship = tags.str("amenity") == "place_of_worship" && (tags.str("religion") == "christian" || tags.str("religion").empty());
+  if (bu != "church" && bu != "cathedral" && bu != "chapel" && bu != "basilica" && !(worship && !bu.empty())) return -1;
+  std::string arch = tags.str("building:architecture");
+  for (char& c : arch) c = char(std::tolower(static_cast<unsigned char>(c)));
+  if (arch.find("romanesque") != std::string::npos) return 0;
+  if (arch.find("gothic") != std::string::npos) return 1;
+  if (arch.find("baroque") != std::string::npos || arch.find("rococo") != std::string::npos || arch.find("renaissance") != std::string::npos) return 2;
+  if (arch.find("modern") != std::string::npos || arch.find("brutal") != std::string::npos || arch.find("contemporary") != std::string::npos ||
+      arch.find("functional") != std::string::npos || arch.find("postmodern") != std::string::npos)
+    return 3;
+  const std::string sd = tags.str("start_date");
+  if (sd.size() >= 4 && std::isdigit(static_cast<unsigned char>(sd[0]))) {
+    const int yr = std::atoi(sd.c_str());
+    if (yr > 0) return yr < 1250 ? 0 : yr < 1550 ? 1 : yr < 1800 ? 2 : yr < 1930 ? 1 : 3;
+  }
+  if (bu == "cathedral" || bu == "basilica") return 1;
+  const uint32_t h = uint32_t((id * 0x9E3779B97F4A7C15ull) >> 40) % 10;
+  return h < 5 ? 1 : h < 8 ? 2 : 0;
+}
+// a palace (1) or castle (2) by OSM's tags: building=palace / castle, historic=castle with its castle_type (palace,
+// stately, manor, schloss: a palace; defensive, fortress, castle, burg and the rest: a castle), or a building named
+// "Schloss …" / "Burg …"; 0 none
+template <class T>
+int castleKind(const T& tags) {
+  const std::string bu = tags.str("building"), hi = tags.str("historic"), ct = tags.str("castle_type"), nm = tags.str("name");
+  const bool palaceType = ct == "palace" || ct == "stately" || ct == "manor" || ct == "schloss" || ct == "palace;stately";
+  if (bu == "palace") return 1;
+  if (bu == "castle") return palaceType ? 1 : 2;
+  if (hi == "castle") return palaceType ? 1 : 2;
+  if (!bu.empty() && (nm.rfind("Schloss ", 0) == 0 || nm.rfind("Residenzschloss", 0) == 0)) return 1;
+  if (!bu.empty() && nm.rfind("Burg ", 0) == 0) return 2;
+  return 0;
+}
 // a McDonald's, Burger King or KFC by OSM's brand, its wikidata or name (owner 2026-11-15: the fast food restaurant where
 // they stand on their own)
 template <class T>
@@ -1050,6 +1094,8 @@ struct ImportData {
   std::vector<BarrierIn> barriers;
   std::vector<PointIn> trafficPts;                         // OSM's traffic signals (22), stop (23) and give-way (24) nodes
   std::vector<std::pair<double, double>> fastFoodPts;      // McDonald's, Burger King and KFC mapped as points (cells)
+  // areas OSM maps as historic=castle (not buildings themselves): their outer ring (cells) and kind (1 palace, 2 castle)
+  std::vector<std::pair<std::vector<std::pair<double, double>>, int>> castleAreas;
   std::vector<int16_t> heights;  // per corner, engine units (empty: terrain unchanged)
   std::vector<uint8_t> water;    // per cell
   // the shoreline (owner 2026-11-15: the Saalbach's edges looked jagged): per corner (x, z) the signed distance in cells
@@ -1461,7 +1507,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
            ";way[\"barrier\"~\"^(fence|wall|hedge|city_wall)$\"]" + b + ";";
     if (flags & kBuildings)
       q += "way[\"building\"]" + b + ";relation[\"building\"]" + b + ";way[\"landuse\"~\"^(residential|commercial|retail|"
-           "industrial)$\"]" + b + ";";
+           "industrial)$\"]" + b + ";way[\"historic\"=\"castle\"]" + b + ";relation[\"historic\"=\"castle\"]" + b + ";";
     if (flags & kWater)
       q += "way[\"natural\"~\"^(water|coastline)$\"]" + b + ";relation[\"natural\"=\"water\"]" + b +
            ";way[\"landuse\"~\"^(reservoir|basin)$\"]" + b + ";way[\"waterway\"~\"^(river|canal|riverbank|dock)$\"]" + b +
@@ -1514,6 +1560,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     return pts;
   };
   Edges waterEdges, coast, landuseRes, landuseCom, landuseInd;
+  std::vector<std::pair<std::vector<std::pair<double, double>>, Edges>> ponds;  // small still water: ring, edges
   std::vector<std::vector<std::pair<double, double>>> treeRows;
   struct TreeArea {
     Edges edges;
@@ -1810,14 +1857,23 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           data->roads.push_back(std::move(r));
           continue;
         }
+        if ((flags & kBuildings) && tags.str("building").empty() && tags.str("historic") == "castle" && closed) {
+          // a palace's or castle's grounds (2026-11-16): the buildings inside take its kind
+          const PaintRing& outer = rings.empty() ? pts : rings[0];
+          if (outer.size() >= 3) data->castleAreas.push_back({outer, castleKind(tags)});
+          continue;
+        }
         if (!tags.str("building").empty() && (flags & kBuildings)) {
           BuildingIn bi;
           bi.category = buildingCategory(tags, bi.levels);
+          if (bi.category.empty() && castleKind(tags)) bi.category = "government", bi.levels = int(tags.num("building:levels", 0));
           if (bi.category.empty()) continue;
           bi.id = uint64_t(el.num("id"));
           bi.polygon = type == "way";
           bi.terraced = tags.str("building") == "terrace";
           bi.fastFood = isBigFastFood(tags);
+          bi.castle = castleKind(tags);
+          bi.church = bi.castle ? -1 : churchKind(tags, bi.id);
           if (bi.polygon && pts.size() > 1 && pts.front() == pts.back()) pts.pop_back();
           bi.pts = std::move(pts);
           data->buildings.push_back(std::move(bi));
@@ -1844,7 +1900,12 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         if (nat == "coastline") {
           for (size_t i = 0; i + 1 < pts.size(); ++i) coast.push_back({pts[i], pts[i + 1]});
         } else if (nat == "water" || lu == "reservoir" || lu == "basin" || ww == "riverbank" || ww == "dock") {
-          if (closed) waterEdges.insert(waterEdges.end(), ringEdges.begin(), ringEdges.end());
+          // small still water (a pond, a garden's basin, a fountain's pool): decided once the heights are known (below)
+          const std::string wt = tags.str("water");
+          const bool smallPond = type == "way" && nat == "water" && ww.empty() &&
+                             (wt == "pond" || wt == "basin" || wt == "fountain" || wt == "reflecting_pool" || polyArea(pts) < 250.0) && polyArea(pts) < 900.0;
+          if (closed && smallPond) ponds.push_back({pts, ringEdges});
+          else if (closed) waterEdges.insert(waterEdges.end(), ringEdges.begin(), ringEdges.end());
         } else if ((ww == "river" || ww == "canal") && tags.str("tunnel").empty() && tags.str("covered") != "yes" &&
                    tags.num("layer", 0) >= 0) {
           // (culverts and covered stretches run under the town: no open water there; owner 2026-11-14, the Saalbach
@@ -1867,6 +1928,46 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
   classifyRoads(data->roads, treeRows, cellM);
   mergeTracks(data->roads);
   tramBeds(*data);
+  // small still water (owner 2026-11-16: the Schlossgarten's basins were dry pits with rock walls): the map has one water
+  // level, the lowest land's less 5 m; a pond whose shore lies more than 2 m over the lowest land would be a pit down to
+  // it. Those become ornamental basins instead: paving stones and a fountain in the middle
+  if (flags & kWater) {
+    double base = 0;
+    if (haveElev) {
+      std::vector<double> all(elev);
+      std::nth_element(all.begin(), all.begin() + std::ptrdiff_t(all.size() / 50), all.end());
+      base = all[all.size() / 50];
+    }
+    int dry = 0;
+    for (auto& [ring, edges] : ponds) {
+      std::vector<double> shore;
+      for (auto& q : ring) {
+        const int x = std::clamp(int(q.first), 0, W - 1), z = std::clamp(int(q.second), 0, L - 1);
+        if (haveElev) shore.push_back(elev[size_t(z) * size_t(W) + size_t(x)]);
+      }
+      double med = base;
+      if (!shore.empty()) {
+        std::nth_element(shore.begin(), shore.begin() + std::ptrdiff_t(shore.size() / 2), shore.end());
+        med = shore[shore.size() / 2];
+      }
+      if (haveElev && med > base + 2.0) {
+        data->paintAreas.push_back({{ring}, 2});
+        while (data->paintWhy.size() < data->paintAreas.size()) data->paintWhy.push_back("basin");
+        double cx = 0, cz = 0;
+        for (auto& q : ring) cx += q.first, cz += q.second;
+        PointIn pt;
+        pt.x = cx / double(ring.size()), pt.z = cz / double(ring.size()), pt.kind = 0;
+        if (pt.x >= 1 && pt.z >= 1 && pt.x < W - 1 && pt.z < L - 1) data->points.push_back(pt);
+        AreaIn ar{ring, 0};  // (a square: the fountain there is the large one)
+        ar.name = "basin";
+        data->areas.push_back(ar);
+        ++dry;
+      } else {
+        waterEdges.insert(waterEdges.end(), edges.begin(), edges.end());
+      }
+    }
+    if (!ponds.empty()) LOG_INFO("osm: %zu small ponds, %d of them high over the water level: ornamental basins", ponds.size(), dry);
+  }
   // water: lakes and river areas, river lines, the sea behind the coastline
   std::vector<uint8_t>& water = data->water;
   if (flags & kWater) {
@@ -2135,6 +2236,50 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       }
     }
   }
+  // palaces and castles (owner 2026-11-16: custom shaped models for them): a building inside an area OSM maps as
+  // historic=castle takes the area's kind (its own tags win); they never join rows of city houses
+  {
+    int castles = 0;
+    for (BuildingIn& b : data->buildings) {
+      if (!b.castle && b.church < 0 && !b.pts.empty()) {  // (a church in a palace's grounds stays a church)
+        double cx = 0, cz = 0;
+        for (auto& q : b.pts) cx += q.first, cz += q.second;
+        cx /= double(b.pts.size()), cz /= double(b.pts.size());
+        for (const auto& [ring, kind] : data->castleAreas)
+          if (insideRing(ring, cx, cz)) {
+            b.castle = kind;
+            break;
+          }
+      }
+      castles += b.castle ? 1 : 0;
+    }
+    // a palace's wings (OSM maps them as plain buildings beside the corps de logis): a building touching a palace
+    // building (closer than 1.2 cells) takes its kind, over up to three steps (a wing's own wing)
+    for (int step = 0; step < 3 && castles; ++step) {
+      int grown = 0;
+      std::vector<int> next(data->buildings.size(), 0);
+      for (size_t i = 0; i < data->buildings.size(); ++i) {
+        const BuildingIn& b = data->buildings[i];
+        if (b.castle || b.church >= 0 || !b.polygon || b.pts.size() < 3) continue;
+        for (const BuildingIn& p : data->buildings) {
+          if (p.castle != 1 || !p.polygon || p.pts.size() < 3) continue;
+          bool near = false;
+          for (size_t k = 0; k < b.pts.size() && !near; ++k)
+            for (size_t m = 0; m < p.pts.size() && !near; ++m)
+              near = segDist(b.pts[k].first, b.pts[k].second, p.pts[m], p.pts[(m + 1) % p.pts.size()]) < 1.2;
+          if (near) {
+            next[i] = 1;
+            break;
+          }
+        }
+      }
+      for (size_t i = 0; i < next.size(); ++i)
+        if (next[i]) data->buildings[i].castle = 1, ++grown, ++castles;
+      if (!grown) break;
+    }
+    if (castles || !data->castleAreas.empty())
+      LOG_INFO("osm: %zu castle areas, %d palace and castle buildings", data->castleAreas.size(), castles);
+  }
   // buildings wall to wall (owner 2026-11-08: city houses in a row there): two corners of one on the other's outline
   {
     const double tol = 0.5 / cellM;
@@ -2154,7 +2299,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
     };
     for (size_t i = 0; i < data->buildings.size(); ++i) {
       BuildingIn& b = data->buildings[i];
-      if (!b.polygon || b.category == "industry" || b.category == "farm" || b.category == "government" || b.category == "railway")
+      if (!b.polygon || b.castle || b.category == "industry" || b.category == "farm" || b.category == "government" || b.category == "railway")
         continue;
       std::set<size_t> near;
       for (auto& q : b.pts) {
@@ -2169,7 +2314,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       }
       for (size_t j : near) {
         const BuildingIn& o = data->buildings[j];
-        if (!o.polygon) continue;
+        if (!o.polygon || o.castle || o.church >= 0) continue;
         int touching = 0;
         for (auto& q : b.pts) {
           for (size_t k = 0; k < o.pts.size(); ++k)
@@ -6518,11 +6663,13 @@ int fillFootprint(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Va
 bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
   GridData& g = *grid->data;
   const int W = g.width, L = g.length;
-  if (b.terraced || b.pts.size() < 3) return false;
-  static const double kMin = [] {
+  const bool special = b.castle || b.church >= 0;  // (palaces, castles, churches: their own styles at any size)
+  if ((b.terraced && !special) || b.pts.size() < 3) return false;
+  static const double kMinDefault = [] {
     const char* e = std::getenv("REGS_OSM_PROC_MIN");
     return e ? std::atof(e) : 300.0;
   }();
+  const double kMin = special ? 20.0 : kMinDefault;
   Ring ring;
   if (b.polygon) {
     ring = b.pts;
@@ -6599,7 +6746,7 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
       for (int dz = 0; dz <= 1; ++dz)
         for (int dx = 0; dx <= 1; ++dx) hi = std::max(hi, int(g.height[size_t(z + dz) * size_t(W) + size_t(x + dx)]));
     }
-  if (cells.empty() || busy * 100 > int(cells.size() + busy) * 15) return false;
+  if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 40 : 15)) return false;  // (a palace may have a path through its yard)
   GridData::ProcBuilding pb;
   // halls only for industry, farms and railways (owner 2026-11-15: no warehouses in the town centre); offices for
   // workplaces, shops (shop windows and signs below, a big low store from 700 cells and at most two levels) for
@@ -6616,7 +6763,20 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
   }
   const bool bigStore = shopB && cat == "commercial" && area >= 700 && b.levels <= 2;
   pb.style = hall ? 0 : officeB ? 3 : shopB ? 4 : (hash32(b.id) & 1) ? 1 : 2;
-  if (hall) pb.height = float(b.levels > 0 ? std::max(6.0, b.levels * 4.5) : (area > 1500 ? 10.0 : 8.0));
+  if (b.castle == 1) {  // a palace: a ground floor of 4.6, state floors of 4.2 (three levels unless OSM says), the cornice's 0.9
+    pb.style = 5;
+    const int lv = b.levels > 0 ? std::clamp(b.levels, 1, 5) : (area > 250 ? 3 : 2);
+    pb.height = 4.6f + 4.2f * float(lv - 1) + 0.9f;
+  } else if (b.castle == 2) {  // a castle: floors of 4.0 (three unless OSM says)
+    pb.style = 6;
+    pb.height = 4.0f * float(b.levels > 0 ? std::clamp(b.levels, 1, 6) : 3);
+  } else if (b.church >= 0) {  // a church: the nave's eaves by the type and size (a chapel low, a big gothic one high)
+    pb.style = 7;
+    pb.roof = uint8_t(b.church);
+    const double m2 = area * g.cellSize * g.cellSize;
+    static const float kEaves[4] = {10.0f, 14.0f, 12.0f, 9.0f};
+    pb.height = m2 < 170 ? 6.0f : kEaves[b.church] * (m2 > 1500 ? 1.45f : m2 > 700 ? 1.15f : 1.0f);
+  } else if (hall) pb.height = float(b.levels > 0 ? std::max(6.0, b.levels * 4.5) : (area > 1500 ? 10.0 : 8.0));
   else if (bigStore) pb.height = 7.0f;
   else if (officeB) pb.height = float(4.2 + (std::max(b.levels > 0 ? b.levels : 5, 2) - 1) * 3.6);
   else if (shopB) pb.height = float(4.2 + (std::max(b.levels > 0 ? b.levels : 4, 2) - 1) * 3.2);
@@ -6636,7 +6796,7 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     pb.frontX = float(st->x - cx), pb.frontZ = float(st->z - cz);
   if (std::getenv("REGS_DEBUG_OSM"))
     LOG_INFO("osm: procedural %s at world %.0f, %.0f: %.0f cells, %zu corners, height %.1f, roof %d",
-             hall ? "hall" : pb.style == 1 ? "plaster" : pb.style == 2 ? "brick" : pb.style == 3 ? "office" : bigStore ? "store" : "shop",
+             pb.style == 7 ? "church" : pb.style == 5 ? "palace" : pb.style == 6 ? "castle" : hall ? "hall" : pb.style == 1 ? "plaster" : pb.style == 2 ? "brick" : pb.style == 3 ? "office" : bigStore ? "store" : "shop",
              (cx - W * 0.5) * cs, (cz - L * 0.5) * cs, area, ring.size(), pb.height, pb.roof);
   for (size_t i : cells) a.used[i] = 3;
   g.procBuildings.push_back(pb);
@@ -7738,7 +7898,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         AreaIn c = ar;
         if (marketAreas.count(&ar)) c.kind = 2;
         decorateSquare(vm, grid, a, c, fu), ++squares;
-        if (!marketAreas.count(&ar) && ar.kind == 0) filled += fillSquare(vm, grid, a, ar, fu, hash32(uint64_t(std::llround(ar.pts[0].first * 64)) * 31ull + uint64_t(std::llround(ar.pts[0].second * 64))));
+        if (!marketAreas.count(&ar) && ar.kind == 0 && ar.name != "basin") filled += fillSquare(vm, grid, a, ar, fu, hash32(uint64_t(std::llround(ar.pts[0].first * 64)) * 31ull + uint64_t(std::llround(ar.pts[0].second * 64))));
       }
     int beaches = 0;
     for (const auto& b : d.beaches)
