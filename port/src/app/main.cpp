@@ -62,7 +62,8 @@ int usage() {
                "  --osm-scale <f>     metres scale of the area (1 1.5 2 3 4 5 6 8 10 15; default 1)\n"
                "  --osm-name <name>   the map's file name (default osm-import)\n"
                "  --osm-options <list> what to import, of terrain,water,trees,streets,trams,buildings,satellite\n"
-               "                (default all)\n");
+               "                (default all)\n"
+               "  --osm-save    save the imported map under its name (userdata maps) when the import is done\n");
   return 2;
 }
 
@@ -105,6 +106,7 @@ int main(int argc, char** argv) {
     else if (a == "--osm-scale" && i + 1 < argc) setStartEnv("REGS_OSM_SCALE", argv[++i]);
     else if (a == "--osm-name" && i + 1 < argc) setStartEnv("REGS_OSM_NAME", argv[++i]);
     else if (a == "--osm-options" && i + 1 < argc) setStartEnv("REGS_OSM_OPTIONS", argv[++i]);
+    else if (a == "--osm-save") setStartEnv("REGS_OSM_SAVE", "1");
     else if (a == "--at" && i + 1 < argc) {
       std::string v = argv[++i];
       size_t c1 = v.find(':'), c2 = v.find(':', c1 + 1);

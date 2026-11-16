@@ -668,6 +668,12 @@ function regsStartOsmImport() {
   if ($size < 64) $size = 64;
   $name = "osm-import";
   if (getenv("REGS_OSM_NAME") != "") $name = getenv("REGS_OSM_NAME");
+  // (a name already taken: a number after it - the empty map would open the saved one and the import build on it)
+  if (file_exists("userdata/maps/"+$name+".grid")) {
+    $n = 2;
+    while (file_exists("userdata/maps/"+$name+"-"+$n+".grid")) ++$n;
+    $name = $name+"-"+$n;
+  }
   if (!(defined MAIN.$regsOsmOptions)) {
     MAIN.$regsOsmOptions = map ["terrain", true, "water", true, "trees", true, "streets", true, "trams", true,
                                 "buildings", true, "satellite", true, "scale", 0];

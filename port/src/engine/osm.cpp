@@ -5260,7 +5260,8 @@ int placeAds(VM& vm, GridObj* grid, Apply& a) {
 // people, "place this in POIs like sightseeing stuff and let people go to buildings based on their size"): game items
 // marked kItemPortHidden (not drawn, picked or shown, no ground work, no conflicts) whose homes, jobs and visitor places
 // the simulation counts like any building's. Inside a procedural building by its floor area: castles, palaces and
-// churches the sculpture's 30 leisure visitors per 250 m² of footprint, shops a market stand's 12 shoppers per 200 m²
+// churches the sculpture's 30 leisure visitors per 900 m² of footprint (at most 5; per 250 m² they held 57 % of the
+// leisure places on the Bruchsal palace map), shops a market stand's 12 shoppers per 200 m²
 // of floor, offices an office block's jobs per 6000 m², houses an apartment house's homes per 700 m² (halls none); at a
 // sight its weight in sculptures (the one visitor object that leaves the ground uncovered), in its building when one of
 // these stands there
@@ -5281,7 +5282,7 @@ void placeVisitors(VM& vm, GridObj* grid, Apply& a) {
     a.made.push_back(i);
     return true;
   };
-  const std::string sculpture = firstOf(grid, {"sculpture01"}), stand = firstOf(grid, {"marketstand01"});
+  const std::string sculpture = firstOf(grid, {"sculpture-01"}), stand = firstOf(grid, {"marketstand01"});
   const std::string office = firstOf(grid, {"office-building01", "officebuilding01"}), homes = firstOf(grid, {"apartment01", "blockhouse01"});
   // the procedural buildings: their outlines in cells, the sights inside each
   std::vector<std::vector<std::pair<double, double>>> rings;
@@ -5318,13 +5319,13 @@ void placeVisitors(VM& vm, GridObj* grid, Apply& a) {
     const double foot = polyArea(ring) * cs * cs * m2, levels = std::max(1.0, double(b.height) / 3.2), floor = foot * levels;
     std::string name;
     int n = 0;
-    if (b.style >= 5) name = sculpture, n = int(std::clamp(std::lround(foot / 250.0), 1L, 10L));
+    if (b.style >= 5) name = sculpture, n = int(std::clamp(std::lround(foot / 900.0), 1L, 5L));
     else if (b.style == 4) name = stand, n = int(std::clamp(std::lround(floor / 200.0), 1L, 16L));
     else if (b.style == 3) name = office, n = int(std::clamp(std::lround(floor / 6000.0), 1L, 6L));
     else if (b.style == 1 || b.style == 2) name = homes, n = int(std::clamp(std::lround(floor / 700.0), 1L, 12L));
     std::vector<std::pair<std::string, int>> todo;
     if (!name.empty() && n > 0) todo.push_back({name, n});
-    if (extra[k] > 0) todo.push_back({sculpture, extra[k]});
+    if (extra[k] > 0) todo.push_back({sculpture, std::min(extra[k], 3)});  // (a sight inside: at most three more)
     if (todo.empty()) continue;
     // spread over the cells inside the outline
     double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;

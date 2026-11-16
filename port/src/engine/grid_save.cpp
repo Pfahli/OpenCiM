@@ -84,7 +84,7 @@ void writeNetwork(const GridData& g, std::vector<uint8_t>& out) {
     put16(out, uint16_t(it.y));
     put16(out, uint16_t(it.z));
     put32(out, it.parent && it.parent <= refs.size() ? refs[it.parent - 1] : 0);
-    put32(out, (it.flags & 0x72500000u) | (it.variation & 0xFFu));
+    put32(out, (it.flags & (0x72500000u | kItemPortHidden)) | (it.variation & 0xFFu));  // (port: and the carried items' bit)
   }
   endChunk(out, items);
   size_t names = beginChunk(out, 0x07020310);

@@ -479,9 +479,12 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   ground work or conflicts; the simulation counts their places): sculpture01 (30 leisure, no cover) at OSM sights
   (tourism museum/attraction/viewpoint/gallery/zoo/theme_park/aquarium, historic castle/ruins/...; weight 1-3 plus
   size), inside procedural buildings by floor area (castles/palaces/churches sculptures, shops market stands, offices
-  office blocks, houses apartment houses). Not checked yet: citizens actually going there in a running game; the
-  timeline does not keep the flag (undo, redo show them). Start flags: --osm <place or lat,lon> [--osm-size n]
-  [--osm-scale f] [--osm-name name] [--osm-options list] (REGS_START=osm:..., main.script extension).
+  office blocks, houses apartment houses; sculptures one per 900 m² of footprint, at most 5, a sight inside at most 3 more).
+  Checked in a sandbox game (REGS_DEBUG_VISITS logs the pools and trips every 30 grid-seconds): on the Bruchsal palace
+  map 18 sculptures hold 29 % of the leisure places and about 14 % of the visiting citizens head there; 240 live in
+  carried homes. The grid file keeps the bit (it dropped it at first). The timeline does not (undo, redo show them).
+  Start flags: --osm <place or lat,lon> [--osm-size n] [--osm-scale f] [--osm-name name] [--osm-options list]
+  [--osm-save] (REGS_START=osm:..., main.script extension; a taken name gets -2, -3: the empty map would open it).
   Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
   signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
   the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at
