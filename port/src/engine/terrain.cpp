@@ -1045,6 +1045,20 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (kept <= 0.05f) return;
         CurvePieces cp = curvePieces(c, kept);
         std::vector<CurveSample> shape = curveShape(c);
+        // a footpath's end at a junction (trimmed) lower than the junction's node rises to the node's height at the
+        // mouth, easing back over 3 units: the junction's fill never goes under its node (curve_roads.cpp,
+        // buildFootpathJunction), and a step between the two cast a dark line across the path (2026-11-16)
+        if (c.kind == 3 && (t0 > 0 || t1 > 0) && shape.size() >= 2) {
+          const float L = shape.back().s, B = 3.0f;
+          const float lift0 = t0 > 0 ? std::max(0.0f, c.y0 - curveAt(shape, t0).p.y) : 0.0f;
+          const float lift1 = t1 > 0 ? std::max(0.0f, c.y1 - curveAt(shape, L - t1).p.y) : 0.0f;
+          auto fade = [&](float d) {
+            const float x = std::clamp(d / B, 0.0f, 1.0f);
+            return 1.0f - x * x * (3.0f - 2.0f * x);
+          };
+          if (lift0 > 0 || lift1 > 0)
+            for (CurveSample& k : shape) k.p.y += std::max(lift0 * fade(k.s - t0), lift1 * fade(L - t1 - k.s));
+        }
         // first / last: another piece at that end (a bridge's abutment, a tunnel's portal), turned round (side −1) when
         // its −x side faces the curve's end
         struct EndPiece {
