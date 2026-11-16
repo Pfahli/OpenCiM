@@ -48,7 +48,13 @@ enum ProcMaterial { kProcHall = 0, kProcHallDoor = 1, kProcPlaster = 2 /* 4 */, 
                     kProcCopper = 39, kProcStained = 40 /* churches' stained glass, lit from inside at night */,
                     // 2026-11-16 (owner: more variety for shops and offices): an office's curtain wall glass reflecting the sky,
                     // shop awnings (red, green)
-                    kProcCurtain = 41, kProcAwning = 42 /* 2 */, kProcMaterialCount = 44 };
+                    kProcCurtain = 41, kProcAwning = 42 /* 2 */,
+                    // 2026-11-16 (owner: the new buildings did not match the game's look): painted facade tiles cut from the game's own
+                    // building textures at run time (one bay of one floor each; nothing of the game in the port), and decals
+                    kProcGPalaceUp = 44, kProcGPalaceGround, kProcGHouse1Up, kProcGHouse1Ground, kProcGHouse2Up, kProcGHouse2Ground,
+                    kProcGBlue, kProcGOrange, kProcGPink, kProcGGreen, kProcGShopGround, kProcGOfficeUp, kProcGOfficeRibbon,
+                    kProcGBrickWin, kProcGGothicWin, kProcGLancets, kProcGRose, kProcGGothicDoor, kProcGBaroqueBay, kProcGRoundWin,
+                    kProcGRedTiles, kProcMaterialCount };
 // 7: a church (2026-11-16, owner: "build different church types"), its type in ProcBuilding::roof: 0 romanesque (rubble
 // stone, small round-headed windows, a squat square tower with a pyramid roof), 1 gothic (sandstone blocks, tall pointed
 // windows, buttresses, a steep roof, a slender tower with an octagonal spire; twin towers on a big one), 2 baroque

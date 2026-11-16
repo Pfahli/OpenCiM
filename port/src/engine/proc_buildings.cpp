@@ -505,6 +505,8 @@ void opening(Builder& bd, const WallFrame& w, int wallMat, float uScale, float v
   }
 }
 
+float tileAspect(int mat);  // (below: a game tile's width / height)
+
 // the outline moved d inward (each edge shifted, the corners where the shifted edges meet; a mansard roof's upper edge);
 // false when that does not give a clean smaller outline (a wing narrower than 2d, a corner spike)
 bool insetPolygon(const std::vector<std::pair<float, float>>& o, float d, std::vector<std::pair<float, float>>& in) {
@@ -624,6 +626,25 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   else if (shop) wallMat = groundMat = ((var >> 5) & 1) || bigBox ? kProcPanel + int((var >> 2) % 3) : kProcPlaster + int(var % 4), frameMat = kProcFrameDark;
   else if (brick) wallMat = groundMat = kProcBrick + int(var % 3);
   else wallMat = kProcPlaster + int(var % 4), groundMat = ((var >> 3) & 1) ? kProcTrim : wallMat;
+  // painted facades in the game's manner (owner 2026-11-16: the look did not match): a tile of one bay of one floor from
+  // the game's own textures repeated along each floor (windows painted, as on the game's buildings); the ground floor its
+  // own tile (shop fronts, the palace's rustication). Halls, big stores and curtain walls keep their built facades
+  int tUp = -1, tGround = -1;
+  {
+    static const int kHouse[6] = {kProcGHouse1Up, kProcGHouse2Up, kProcGBlue, kProcGOrange, kProcGPink, kProcGGreen};
+    const int hv = int((var >> 16) % 6);
+    if (palace) tUp = kProcGPalaceUp, tGround = kProcGPalaceGround;
+    else if (shop && !bigBox) tUp = kHouse[hv], tGround = kProcGShopGround;
+    else if (office && !curtain) tUp = tGround = punched ? kProcGOfficeUp : kProcGOfficeRibbon;
+    else if (brick) tUp = tGround = kProcGBrickWin;
+    else if (type == 1) tUp = kHouse[hv], tGround = hv == 0 ? kProcGHouse1Ground : hv == 1 ? kProcGHouse2Ground : kHouse[hv];
+    if (tUp >= 0 && !palace && !brick) wallMat = groundMat = kProcTrim;
+  }
+  const bool paintedFloors = tUp >= 0;
+  auto decal = [&](const WallFrame& w, int mat, float cx, float yb, float wd, float hd) {  // a painted window or door, flat
+    bd.quad(mat, w.at(cx - wd * 0.5f, yb, -0.04f), w.at(cx + wd * 0.5f, yb, -0.04f), w.at(cx + wd * 0.5f, yb + hd, -0.04f),
+            w.at(cx - wd * 0.5f, yb + hd, -0.04f), w.n, 0, 0, 1, 1);
+  };
   // (the skirt reaches 12 down: on a slope the walls go into the ground, no floating wing)
   const float y = src.y, top = src.y + src.height, skirt = src.y - 12.0f;
   const float bay = hall ? 6.0f : palace ? 3.4f : castle ? 4.5f : church ? (chType == 3 ? 3.0f : chType == 2 ? 4.6f : 4.2f) : 3.6f;
@@ -748,6 +769,68 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
               len / uScale, (top - y) / vScale);
     const bool facing = church ? (w.n.x * cax + w.n.z * caz) * float(towerEnd) > 0.7f  // (a church: its front at the tower end)
                                : fl > 1e-6f ? (w.n.x * fx + w.n.z * fz) > 0.5f : len > 12.0f;
+    if (paintedFloors) {  // the painted floors (bays as wide as the tile's proportions make them at the floor's height)
+      for (size_t f = 0; f < floors.size(); ++f) {
+        const float y0 = floors[f].first, fh = floors[f].second;
+        const int tm = f == 0 && tGround >= 0 ? tGround : tUp;
+        const int nb = std::max(1, int(std::round(len / (fh * tileAspect(tm)))));
+        bd.quad(tm, w.at(0, y0, 0), w.at(len, y0, 0), w.at(len, y0 + fh, 0), w.at(0, y0 + fh, 0), w.n, 0, 0, float(nb), 1);
+      }
+      if (palace && floors.size() >= 2) {  // the string course over the ground floor and the main cornice
+        const float yg = floors[0].first + floors[0].second;
+        band(w, len, -0.2f, len + 0.2f, yg - 0.06f, 0.3f, 0.18f, kProcTrim, kProcTrim);
+        band(w, len, -0.4f, len + 0.4f, top - 0.6f, 0.6f, 0.4f, kProcTrim, kProcTrim);
+      }
+      continue;
+    }
+    if (church || castle) {  // stone (a baroque church: its painted nave bay over the whole height), painted windows on it
+      if (church && chType == 2) {
+        const int nb = std::max(1, int(std::round(len / ((top - y) * tileAspect(kProcGBaroqueBay)))));
+        bd.quad(kProcGBaroqueBay, w.at(0, y, 0), w.at(len, y, 0), w.at(len, top, 0), w.at(0, top, 0), w.n, 0, 0, float(nb), 1);
+      } else {
+        bd.quad(wallMat, w.at(0, y, 0), w.at(len, y, 0), w.at(len, top, 0), w.at(0, top, 0), w.n, 0, 0, len / 6.0f, (top - y) / 6.0f);
+      }
+      const float bayD = castle ? 5.0f : chType == 1 ? 4.6f : 4.2f;
+      const int nb = std::max(1, int(std::round(len / bayD)));
+      const float bw = len / float(nb);
+      const int doorBay = facing && len > 4.0f ? nb / 2 : -1;
+      for (int k = 0; k < nb; ++k) {
+        const float cx = (float(k) + 0.5f) * bw;
+        if (k == doorBay) {
+          const float dw = std::min(castle ? 2.2f : 2.6f, bw * 0.8f);
+          decal(w, kProcGGothicDoor, cx, y, dw, dw / tileAspect(kProcGGothicDoor));
+          continue;
+        }
+        if (castle) {  // a few small windows on the upper floors
+          for (size_t f = 1; f < floors.size(); ++f)
+            if (hashU(seed ^ uint32_t(i * 977u + f * 131u + uint32_t(k) * 7919u)) % 100 < 45) {
+              const float hd = std::min(2.2f, floors[f].second - 1.2f);
+              decal(w, kProcGLancets, cx, floors[f].first + 0.9f, hd * tileAspect(kProcGLancets), hd);
+            }
+          continue;
+        }
+        if (chType == 2) continue;  // (the baroque bay has its windows painted)
+        const int dm = chType == 1 ? kProcGGothicWin : chType == 0 ? kProcGRoundWin : kProcGLancets;
+        const float H = top - y;
+        float hd = chType == 1 ? std::clamp(H * 0.6f, 3.0f, 9.0f) : chType == 0 ? std::clamp(H * 0.25f, 1.4f, 2.8f) : std::clamp(H * 0.7f, 2.5f, 7.0f);
+        float wd = hd * tileAspect(dm);
+        if (wd > bw * 0.75f) hd *= bw * 0.75f / wd, wd = bw * 0.75f;
+        decal(w, dm, cx, y + (H - hd) * (chType == 0 ? 0.62f : 0.42f), wd, hd);
+      }
+      if (church && chType == 1 && facing && len > 6.0f && top - y > 9.0f) {  // a rose window over the portal
+        const float dd = std::min(len * 0.4f, (top - y) * 0.32f);
+        decal(w, kProcGRose, len * 0.5f, y + (top - y) * 0.55f, dd, dd);
+      }
+      if (church && chType == 1 && len > 7.0f && !facing)  // buttresses between the bays
+        for (int k = 0; k <= nb; ++k) {
+          const float s = std::clamp(float(k) * bw, 0.3f, len - 0.3f);
+          const Vec3 c = w.at(s, y, -0.45f);
+          bd.box(wallMat, wallMat, c.x, c.z, skirt, y + src.height * 0.78f, w.dx, w.dz, 0.28f, 0.45f);
+          const Vec3 c2 = w.at(s, y, -0.25f);
+          bd.box(wallMat, wallMat, c2.x, c2.z, y + src.height * 0.78f, y + src.height * 0.9f, w.dx, w.dz, 0.22f, 0.25f);
+        }
+      continue;
+    }
     for (size_t f = 0; f < floors.size(); ++f) {
       const float y0 = floors[f].first, fh = floors[f].second;
       const bool ground = f == 0;
@@ -1564,6 +1647,114 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   }
 }
 
+namespace {
+
+// ---- the game's own textures (owner 2026-11-16: the new buildings did not match the game's look) ----
+// Painted facade tiles, roofs and stone cut at run time out of the installed game's building textures (read through the
+// VFS like every other game file; nothing of the game goes into the port). Rectangles in pixels of each texture's top
+// level, top-down as the files hold them; chosen by eye from the textures (a bay of one floor: a window with its wall).
+struct GameTile {
+  int mat;
+  const char* path;
+  int x, y, w, h;
+};
+constexpr const char* kGov = "metro/objects/buildings/government-offices/govermentoffices.dds";
+constexpr const char* kCath = "metro/objects/buildings/cathedral/cathedral.dds";
+constexpr const char* kChurch = "metro/objects/buildings/church/church.dds";
+constexpr const char* kCity1 = "metro/objects/buildings/cityhouse01/cityhouse01.dds";
+constexpr const char* kCity2 = "metro/objects/buildings/cityhouse02/cityhouse02.dds";
+constexpr const char* kTown = "metro/objects/buildings/small-townbuildings/small_town_bldg.dds";
+constexpr const char* kOffice = "metro/objects/buildings/officebuilding01/officebuilding01.dds";
+constexpr const char* kWare = "metro/objects/buildings/small-warehouses/s_warehouses.dds";
+const GameTile kGameTiles[] = {
+    // the materials the geometry already uses (roofs, metal, stone, trim)
+    {kProcRoofTiles, kCity2, 385, 255, 127, 130},  // brown-red roof tiles
+    {kProcRoofFlat, kCity1, 392, 150, 112, 200},   // a flat grey roof
+    {kProcRoofMetal, kWare, 717, 0, 153, 186},     // corrugated metal
+    {kProcHall, kWare, 717, 0, 153, 186},
+    {kProcHallDoor, kWare, 928, 198, 51, 77},      // a roller door
+    {kProcSlate, kCity1, 392, 10, 112, 100},       // grey shingles
+    {kProcCopper, kCath, 6, 6, 256, 256},          // green copper slates
+    {kProcCastleStone, kCath, 640, 640, 256, 256}, // the cathedral's plain stone
+    {kProcRustica, kCath, 640, 640, 256, 256},
+    {kProcBrick, kWare, 717, 205, 205, 243},       // brick
+    {kProcBrick + 1, kWare, 717, 205, 205, 243},
+    {kProcBrick + 2, kWare, 717, 205, 205, 243},
+    {kProcTrim, kChurch, 717, 307, 61, 123},       // plain plaster (cornices, parapets, trim)
+    {kProcSandstone, kChurch, 717, 307, 61, 123},
+    {kProcPalace, kChurch, 717, 307, 61, 123},
+    {kProcPalace + 1, kChurch, 717, 307, 61, 123},
+    {kProcPalace + 2, kChurch, 717, 307, 61, 123},
+    // the painted facade tiles: a bay of one floor each
+    {kProcGPalaceUp, kGov, 176, 748, 76, 80},
+    {kProcGPalaceGround, kGov, 361, 552, 54, 90},
+    {kProcGHouse1Up, kCity1, 65, 66, 43, 60},
+    {kProcGHouse1Ground, kCity1, 62, 195, 63, 125},
+    {kProcGHouse2Up, kCity2, 85, 64, 45, 60},
+    {kProcGHouse2Ground, kCity2, 10, 250, 60, 72},
+    {kProcGBlue, kTown, 461, 270, 45, 72},
+    {kProcGOrange, kTown, 768, 262, 45, 73},
+    {kProcGPink, kTown, 326, 749, 54, 77},
+    {kProcGGreen, kTown, 64, 595, 38, 64},
+    {kProcGShopGround, kTown, 704, 646, 211, 64},  // (two bays)
+    {kProcGOfficeUp, kOffice, 474, 13, 204, 121},
+    {kProcGOfficeRibbon, kOffice, 320, 300, 160, 90},
+    {kProcGBrickWin, kWare, 538, 72, 140, 68},
+    // decals and whole-wall tiles of churches and castles
+    {kProcGGothicWin, kCath, 438, 32, 118, 186},
+    {kProcGLancets, kCath, 282, 599, 64, 79},
+    {kProcGRose, kCath, 582, 339, 160, 160},
+    {kProcGGothicDoor, kCath, 957, 288, 67, 119},
+    {kProcGBaroqueBay, kChurch, 317, 287, 210, 220},
+    {kProcGRoundWin, kChurch, 380, 326, 85, 68},
+    {kProcGRedTiles, kChurch, 620, 22, 400, 168},
+};
+const GameTile* gameTileFor(int mat) {
+  for (const GameTile& t : kGameTiles)
+    if (t.mat == mat) return &t;
+  return nullptr;
+}
+// the aspect (width / height) of a tile's rectangle (its bay's proportions), 1 when it has none
+float tileAspect(int mat) {
+  const GameTile* t = gameTileFor(mat);
+  return t && t->h > 0 ? float(t->w) / float(t->h) : 1.0f;
+}
+// a rectangle of a game texture as a texture of its own (repeating, mipmapped, bottom row first); 0 when missing
+uint32_t cropGameTexture(script::VM& vm, const char* path, int x, int y, int w, int h) {
+  static std::map<std::string, std::pair<std::vector<uint8_t>, std::pair<int, int>>> decoded;  // (decoded once per file)
+  auto it = decoded.find(path);
+  if (it == decoded.end()) {
+    std::vector<uint8_t> file, rgba;
+    render::Image img;
+    int iw = 0, ih = 0;
+    if (!vm.vfs().read(path, file) || !render::parseDds(file, img, nullptr) || !render::decodeRgba(img, 0, rgba, iw, ih)) {
+      LOG_WARN("proc buildings: the game texture %s is missing (drawn one used)", path);
+      rgba.clear();
+    }
+    it = decoded.emplace(path, std::make_pair(std::move(rgba), std::make_pair(iw, ih))).first;
+  }
+  const auto& [rgba, size] = it->second;
+  const int iw = size.first, ih = size.second;
+  if (rgba.empty() || x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > iw || y + h > ih) return 0;
+  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4);
+  for (int r = 0; r < h; ++r)  // (flipped: the bottom row first, v = 0 at the bottom as the meshes take it)
+    std::memcpy(&px[size_t(r) * size_t(w) * 4], &rgba[(size_t(y + h - 1 - r) * size_t(iw) + size_t(x)) * 4], size_t(w) * 4);
+  uint32_t name = 0;
+  gl::GenTextures(1, &name);
+  gl::BindTexture(gl::TEXTURE_2D, name);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT);
+  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT);
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+  gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::RGBA, gl::UNSIGNED_BYTE, px.data());
+  gl::GenerateMipmap(gl::TEXTURE_2D);
+  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+  return name;
+}
+
+}  // namespace
+
 void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector<render::DrawItem>& items) {
   struct State {
     std::vector<render::GpuMaterial> materials;
@@ -1576,7 +1767,7 @@ void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector
   if (g.procBuildings.empty()) return;
   if (st.materials.empty()) {  // the textures, drawn once (in ProcMaterial order)
     const Tex glass = glassTex();
-    const Tex texs[kProcMaterialCount] = {
+    std::vector<Tex> texs = {
         hallWallTex(), rollerDoorTex(),
         plasterTex({0.86f, 0.80f, 0.68f}), plasterTex({0.86f, 0.71f, 0.46f}), plasterTex({0.74f, 0.77f, 0.80f}), plasterTex({0.86f, 0.66f, 0.58f}),
         brickTex({0.58f, 0.27f, 0.20f}), brickTex({0.38f, 0.23f, 0.17f}), brickTex({0.78f, 0.65f, 0.44f}),
@@ -1588,23 +1779,13 @@ void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector
         plasterTex({0.95f, 0.87f, 0.64f}), plasterTex({0.93f, 0.73f, 0.67f}), plasterTex({0.93f, 0.92f, 0.88f}), rusticaTex(),
         plainTex(0.74f, 0.50f, 0.42f, 103), slateTex(), castleStoneTex(), copperTex(), stainedTex(), curtainTex(),
         awningTex({0.72f, 0.12f, 0.12f}), awningTex({0.12f, 0.42f, 0.22f})};
-    // the photo textures (CC0, data/regs/textures/proc, tools/make-proc-textures.mjs) where they are installed
-    std::map<int, const char*> photos = {{kProcPalace, "palace-plaster-1"}, {kProcPalace + 1, "palace-plaster-2"},
-                                         {kProcPalace + 2, "palace-plaster-3"}, {kProcRustica, "palace-rustica"},
-                                         {kProcSandstone, "palace-sandstone"}, {kProcSlate, "slate"},
-                                         {kProcCastleStone, "castle-stone"}, {kProcRoofTiles, "roof-tiles-red"}};
+    while (texs.size() < size_t(kProcMaterialCount)) texs.push_back(plainTex(0.55f, 0.52f, 0.48f, 140 + uint32_t(texs.size())));
     for (int k = 0; k < kProcMaterialCount; ++k) {
       render::GpuMaterial m;
       m.flags = render::kMatDiffuseMap;
       uint32_t tex = 0;
-      if (auto ph = photos.find(k); ph != photos.end()) {
-        std::vector<uint8_t> file;
-        render::Image img;
-        if (vm.vfs().read(std::string("regs/textures/proc/") + ph->second + ".dds", file) && render::parseDds(file, img, nullptr))
-          tex = d.r2d().createTexture(img);
-        if (!tex) LOG_WARN("proc buildings: the photo texture %s is missing (drawn one used)", ph->second);
-      }
-      m.textures = {tex ? tex : uploadTex(texs[k])};
+      if (const GameTile* gt = gameTileFor(k)) tex = cropGameTexture(vm, gt->path, gt->x, gt->y, gt->w, gt->h);
+      m.textures = {tex ? tex : uploadTex(texs[size_t(k)])};
       for (int c = 0; c < 3; ++c) m.ambient[c] = 0.6f, m.diffuse[c] = 0.55f;
       if (k == kProcCurtain) {  // the curtain wall: a strong sun glint over its painted reflection
         m.flags |= render::kMatSpecular;
