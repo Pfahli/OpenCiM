@@ -112,6 +112,15 @@ uint8_t buildingSeed(int x, int y, int z);
 bool isLampTemplate(const std::string& objectPath);
 std::vector<render::Vec3> findLampHeads(const render::MeshData& mesh);
 
+// Round lights other parts of the port add for the coming frame (the working traffic lights, engine/traffic_lights.h):
+// a pool of `radius` metres around pos (y: the ground it lights), `gain` at full night, warm 0 neutral … 1 the market
+// lamps' tint. Taken into the vehicles' light map while the lights are on; the adder clears the list each frame.
+struct ExtraNightLight {
+  render::Vec3 pos;
+  float radius = 3.0f, gain = 0.5f, warm = 0.0f;
+};
+std::vector<ExtraNightLight>& extraNightLights();
+
 // Per frame, for a scene with the game sky: the night uniforms of the view (window and lamp light, the lamp map of the
 // first grid), the lamp-head and vehicle-light glows (added to the particle list) and the vehicles' beams on the road
 // (one additive mesh added to the draw list). No-op by day and without the cycle.

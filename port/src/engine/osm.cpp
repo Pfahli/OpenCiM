@@ -4709,6 +4709,9 @@ int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
   const std::string giveWay = pickEnv("REGS_OSM_SIGN_GIVEWAY", {"traffic-sign01"});
   const std::string stopSign = pickEnv("REGS_OSM_SIGN_STOP", {"traffic-sign08", "traffic-sign01"});
   const std::string direction = pickEnv("REGS_OSM_SIGN_DIRECTION", {"junctionsign"});
+  // (sign09's panel is the texture's blue one-way panel with the white arrow, found by its UVs 2026-11-16)
+  const std::string oneWay = pickEnv("REGS_OSM_SIGN_ONEWAY", {"traffic-sign09"});
+  int nOneWay = 0;
   auto cellOf = [&](const render::Vec3& p, double& x, double& z) { x = p.x / cs + W * 0.5, z = p.z / cs + L * 0.5; };
   auto ok = [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6 && u != 7; };
   if (const char* t = std::getenv("REGS_OSM_SIGNTEST")) {
@@ -4759,13 +4762,25 @@ int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
     for (const PointIn& pt : d.trafficPts)
       if (pt.kind == 22 && std::hypot(pt.x - jx, pt.z - jz) <= j.radius / cs + 3.0) signals = true;
     for (const CurveArm& arm : j.arms) {
-      if (arm.flow == 2) continue;  // (one-way away from the junction: nobody comes in there)
+      if (arm.flow == 2) {
+        // one-way away from the junction (owner 2026-11-16: Einbahnstraßenschilder): the one-way sign (sign09, the blue
+        // panel with the white arrow) at the street's start, on the right of the traffic turning in, facing the junction
+        if (!oneWay.empty() && arm.kind <= 2) {
+          const float kerb2 = curveProfile(arm.kind).carriageway, hw2 = curveProfile(arm.kind).halfWidth;
+          const render::Vec3 rightOut{-arm.out.z, 0, arm.out.x};
+          double ox, oz;
+          cellOf(arm.mouth + arm.out * 1.2f + rightOut * std::min(kerb2 + 0.7f, hw2 - 0.3f), ox, oz);
+          if (placeAt(vm, grid, a, oneWay, ox, oz, -arm.out.x, -arm.out.z, ok, 6) >= 0) ++nOneWay;
+        }
+        continue;  // (nobody comes in there: no light, no give-way sign)
+      }
       const float hw = curveProfile(arm.kind).halfWidth, kerb = curveProfile(arm.kind).carriageway;
       const render::Vec3 right{arm.out.z, 0, -arm.out.x};
       double px, pz, mx, mz;
-      // right at the junction's corner (owner 2026-11-16: not set back along the street): where the arm meets the
-      // junction, on the pavement just behind the kerb
-      cellOf(arm.mouth - arm.out * 0.3f + right * std::min(kerb + 0.7f, hw - 0.3f), px, pz);
+      // as in Germany and most of Europe (owner 2026-11-16: learn it): on the near side, at the stop line before the
+      // pedestrian crossing (the zebra lies inside the junction, 0.17–2.88 units in from the mouth), on the right-hand
+      // pavement just behind the kerb, where the junction's rounded corner begins
+      cellOf(arm.mouth + arm.out * 0.8f + right * std::min(kerb + 0.7f, hw - 0.3f), px, pz);
       cellOf(arm.mouth + arm.out * 3.0f, mx, mz);
       int osmSign = 0;
       for (const PointIn& pt : d.trafficPts)
@@ -4790,8 +4805,8 @@ int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
       }
     }
   }
-  LOG_INFO("osm: %d traffic lights, %d signs, %d direction signs at %zu junctions (%zu OSM traffic nodes)", nLights, nSigns, nDir,
-           js.size(), d.trafficPts.size());
+  LOG_INFO("osm: %d traffic lights, %d signs, %d direction signs, %d one-way signs at %zu junctions (%zu OSM traffic nodes)", nLights,
+           nSigns, nDir, nOneWay, js.size(), d.trafficPts.size());
   return nLights + nSigns + nDir;
 }
 
@@ -5607,13 +5622,32 @@ int buildTerrace(VM& vm, GridObj* grid, Apply& a, const PointIn& pt, uint32_t h)
       s0 = sAt;
       break;
     }
-  if (s0 < 0) return 0;
   double depth = 0;
-  for (double sAt = s0; sAt < dist + 2; sAt += 0.5) {
+  for (double sAt = s0; s0 >= 0 && sAt < dist + 2; sAt += 0.5) {
     if (!freeAt(pt.x + nx * sAt, pt.z + nz * sAt)) break;
     depth = sAt - s0 + 0.5;
   }
-  if (depth < 2.0) return 0;
+  if (s0 < 0 || depth < 2.0) {
+    // no ground between the house and the street (the town centre: houses at the pavement; owner 2026-11-16 "chairs
+    // in front of restaurants"): the tables on the pavement, on the restaurant's side behind the kerb, along the street
+    const double pw = st->hw - st->cw;
+    if (pw < 0.6) return 0;
+    const double across = st->cw + std::min(pw * 0.55, pw - 0.45);
+    const double qx = st->x - nx * across, qz = st->z - nz * across;
+    const int sets = pt.sub == 4 ? 2 : 2 + int(h % 3);
+    const double gap = 2.2;
+    auto onPavement = [](uint8_t u) { return u == 0 || u == 2 || u == 5 || u == 8; };
+    int made = 0;
+    for (int k = 0, done = 0; k < 7 && done < sets; ++k) {
+      const int off = (k + 1) / 2 * (k % 2 ? 1 : -1);
+      if (placeAt(vm, grid, a, firstOf(grid, {"markettableset"}), qx + tx * off * gap, qz + tz * off * gap, -nx, -nz, onPavement, 6) >= 0)
+        ++made, ++done;
+    }
+    if (made && pt.sub == 1 &&
+        placeAt(vm, grid, a, firstOf(grid, {"marketumbrella"}), qx + tx * 0.5 * gap, qz + tz * 0.5 * gap, -nx, -nz, onPavement, 6) >= 0)
+      ++made;
+    return made;
+  }
   const double qx = pt.x + nx * (s0 + 1.0), qz = pt.z + nz * (s0 + 1.0);
   const int sets = pt.sub == 4 ? 2 : pt.sub == 2 ? 2 + int(h % 4) : 2 + int(h % 3);
   const double gap = pt.sub == 1 ? 3.2 : 2.4;

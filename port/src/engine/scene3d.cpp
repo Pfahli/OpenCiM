@@ -552,8 +552,9 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   {
     float t = std::tan(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
     { auto ts_ = std::chrono::steady_clock::now(); collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles); gPhaseSeconds[4] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+    // (working traffic lights, by day too: engine/traffic_lights.h; before the night lights, which take their pools)
+    addTrafficLights(d, vm, grids, v, particles);
     { auto ts_ = std::chrono::steady_clock::now(); addNightLights(d, vm, grids, sky, v, particles, items); gPhaseSeconds[5] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
-    addTrafficLights(d, vm, grids, v, particles);  // (working traffic lights, by day too: engine/traffic_lights.h)
     if (!particles.sprites.empty()) v.particles = &particles;
   }
   // environment flags: light count << 12 outside shadow passes (FUN_10051120)

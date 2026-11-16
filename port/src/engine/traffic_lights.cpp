@@ -7,7 +7,9 @@
 #include <map>
 #include <string>
 
+#include "core/log.h"
 #include "engine/display.h"
+#include "vfs/vfs.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
 #include "engine/night_lights.h"
@@ -70,13 +72,101 @@ constexpr float kWaveSpeed = 12.0f;  // units per second
 // model's +x; placed by eye in the game)
 const Vec3 kLamp[3] = {{0.43f, 4.19f, -0.16f}, {0.43f, 3.82f, -0.16f}, {0.43f, 3.45f, -0.16f}};
 
+// the lamps of a traffic-light model from its texture (owner 2026-11-16: "check the textures where it's red, green
+// and yellow and make that light up"): on the faces of the head that look along the model's +x (the lenses), the
+// texels that are clearly red, amber or green, each colour's centre (their 3D points by the triangle's barycentric
+// coordinates) and size (from their spread). Falls back to kLamp when a colour is not found.
+struct Lenses {
+  Vec3 at[3];
+  float radius[3] = {0.14f, 0.14f, 0.14f};
+  bool found = false;
+};
+int lensColour(const uint8_t* p) {  // 0 red, 1 amber, 2 green, -1 none
+  const int r = p[0], g = p[1], b = p[2];
+  if (r > 130 && g < r * 0.5f && b < r * 0.5f) return 0;
+  if (r > 140 && g >= r * 0.55f && g < r * 0.95f && b < r * 0.45f) return 1;
+  if (g > 100 && g > r * 1.3f && b < g * 1.1f) return 2;
+  return -1;
+}
+const Lenses& lensesOf(script::VM& vm, const ObjectData& od) {
+  static std::map<const ObjectData*, Lenses> cache;
+  if (auto it = cache.find(&od); it != cache.end()) return it->second;
+  Lenses L;
+  for (int m = 0; m < 3; ++m) L.at[m] = kLamp[m];
+  double sum[3][3] = {}, sq[3] = {}, n[3] = {};
+  const MeshData& mesh = od.mesh;
+  const size_t nv = mesh.vertexCount();
+  for (const Submesh& sm : mesh.submeshes) {
+    if (sm.material < 0 || size_t(sm.material) >= od.materials.size()) continue;
+    const MaterialDef& mat = od.materials[size_t(sm.material)];
+    if (mat.textures.empty() || nv == 0 || mesh.uv0.size() < nv * 2 || mesh.normals.size() < nv * 3) continue;
+    std::vector<uint8_t> file, rgba;
+    Image img;
+    int w = 0, h = 0;
+    if (!vm.vfs().read(mat.textures[0], file) || !parseDds(file, img, nullptr)) continue;
+    int level = 0;
+    while (level + 1 < img.mipCount && std::max(img.width >> level, img.height >> level) > 1024) ++level;
+    if (!decodeRgba(img, level, rgba, w, h)) continue;
+    for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size(); k += 3) {
+      const uint32_t t[3] = {mesh.indices[k], mesh.indices[k + 1], mesh.indices[k + 2]};
+      if (t[0] >= nv || t[1] >= nv || t[2] >= nv) continue;
+      float nx = 0, py = 0;
+      for (uint32_t q : t) nx += mesh.normals[q * 3], py += mesh.positions[q * 3 + 1];
+      if (nx / 3 < 0.6f || py / 3 < 2.5f) continue;  // (the head's lens side)
+      float u[3], v[3];
+      const float ub = std::floor(std::min({mesh.uv0[t[0] * 2], mesh.uv0[t[1] * 2], mesh.uv0[t[2] * 2]}));
+      const float vb = std::floor(std::min({mesh.uv0[t[0] * 2 + 1], mesh.uv0[t[1] * 2 + 1], mesh.uv0[t[2] * 2 + 1]}));
+      for (int j = 0; j < 3; ++j) u[j] = (mesh.uv0[t[j] * 2] - ub) * float(w), v[j] = (mesh.uv0[t[j] * 2 + 1] - vb) * float(h);
+      const float area = (u[1] - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (v[1] - v[0]);
+      if (std::fabs(area) < 1e-6f) continue;
+      const int x0 = std::max(0, int(std::floor(std::min({u[0], u[1], u[2]})))), x1 = std::min(w - 1, int(std::ceil(std::max({u[0], u[1], u[2]}))));
+      const int y0 = std::max(0, int(std::floor(std::min({v[0], v[1], v[2]})))), y1 = std::min(h - 1, int(std::ceil(std::max({v[0], v[1], v[2]}))));
+      for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+          const float qx = float(x) + 0.5f, qy = float(y) + 0.5f;
+          const float b1 = ((qx - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (qy - v[0])) / area;
+          const float b2 = ((u[1] - u[0]) * (qy - v[0]) - (qx - u[0]) * (v[1] - v[0])) / area;
+          if (b1 < 0 || b2 < 0 || 1 - b1 - b2 < 0) continue;
+          const int c = lensColour(&rgba[(size_t(y) * size_t(w) + size_t(x)) * 4]);
+          if (c < 0) continue;
+          const float b0 = 1 - b1 - b2;
+          double p[3];
+          for (int a = 0; a < 3; ++a)
+            p[a] = b0 * mesh.positions[t[0] * 3 + a] + b1 * mesh.positions[t[1] * 3 + a] + b2 * mesh.positions[t[2] * 3 + a];
+          for (int a = 0; a < 3; ++a) sum[c][a] += p[a];
+          sq[c] += p[1] * p[1] + p[2] * p[2];
+          n[c] += 1;
+        }
+    }
+  }
+  int got = 0;
+  for (int c = 0; c < 3; ++c) {
+    if (n[c] < 4) continue;
+    const double cx = sum[c][0] / n[c], cy = sum[c][1] / n[c], cz = sum[c][2] / n[c];
+    L.at[c] = Vec3{float(cx) + 0.03f, float(cy), float(cz)};  // (a hair in front of the lens)
+    const double var = sq[c] / n[c] - (cy * cy + cz * cz);
+    L.radius[c] = std::clamp(float(std::sqrt(std::max(0.0, 2.0 * var))), 0.08f, 0.3f);
+    ++got;
+  }
+  L.found = got == 3;
+  if (!L.found)
+    for (int m = 0; m < 3; ++m) L.at[m] = kLamp[m], L.radius[m] = 0.14f;
+  LOG_INFO("traffic lights: %s: lamps %s (red %.2f %.2f %.2f r %.2f, amber %.2f %.2f %.2f, green %.2f %.2f %.2f; %.0f/%.0f/%.0f texels)",
+           od.name.c_str(), L.found ? "from the texture" : "by default", L.at[0].x, L.at[0].y, L.at[0].z, L.radius[0], L.at[1].x,
+           L.at[1].y, L.at[1].z, L.at[2].x, L.at[2].y, L.at[2].z, n[0], n[1], n[2]);
+  return cache.emplace(&od, L).first->second;
+}
+
 struct Light {
   Vec3 lamp[3];
+  float radius[3] = {0.14f, 0.14f, 0.14f};
   Vec3 face;         // where the lenses look (flat, unit)
+  Vec3 base;         // the pole's foot
   float offset = 0;  // seconds into the cycle at time 0
 };
 struct Cache {
   uint64_t generation = ~0ull, itemsVersion = ~0ull;
+  bool incomplete = false;  // a light's model not loaded yet (grid templates load on first use): again next frame
   std::vector<Light> lights;
 };
 std::map<const GridObj*, Cache>& caches() {
@@ -84,8 +174,9 @@ std::map<const GridObj*, Cache>& caches() {
   return m;
 }
 
-void collect(GridObj* grid, Cache& c) {
+void collect(script::VM& vm, GridObj* grid, Cache& c) {
   c.lights.clear();
+  c.incomplete = false;
   const GridData& g = *grid->data;
   const TerrainCache& tc = *grid->terrain;
   std::vector<uint8_t> isLight(tc.templates.size(), 0);
@@ -96,6 +187,7 @@ void collect(GridObj* grid, Cache& c) {
   struct Raw {
     Vec3 pos, face;
     Mat4 world;
+    const ObjectData* od = nullptr;
   };
   std::vector<Raw> raw;
   for (uint32_t i = 0; i < g.items.size(); ++i) {
@@ -106,6 +198,7 @@ void collect(GridObj* grid, Cache& c) {
     const int div = itemDivision(g, tc, i);
     if (div < 0) continue;
     Raw r;
+    r.od = tc.templates[size_t(ti)].object->data.get();
     r.world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
     r.pos = transformPoint(r.world, Vec3{0, 0, 0});
     const Vec3 f = transformPoint(r.world, Vec3{1, 0, 0});  // (the lenses look along the model's +x)
@@ -147,35 +240,44 @@ void collect(GridObj* grid, Cache& c) {
     const Vec3 f = normalize(raw[k].face);
     const bool along = std::fabs(f.x * ax.x + f.z * ax.z) > 0.7071f;
     Light l;
-    for (int m = 0; m < 3; ++m) l.lamp[m] = transformPoint(raw[k].world, kLamp[m]);
+    static const Lenses kDefault = [] {
+      Lenses d;
+      for (int m = 0; m < 3; ++m) d.at[m] = kLamp[m];
+      return d;
+    }();
+    const Lenses& lens = raw[k].od ? lensesOf(vm, *raw[k].od) : kDefault;
+    for (int m = 0; m < 3; ++m) l.lamp[m] = transformPoint(raw[k].world, lens.at[m]), l.radius[m] = lens.radius[m];
     l.face = f;
+    l.base = raw[k].pos;
     // the wave: the junction's place along its axis (the first light's position stands for it)
     const Raw& first = raw[firstLight[size_t(junction[k])]];
     const float wave = (first.pos.x * ax.x + first.pos.z * ax.z) / kWaveSpeed;
     l.offset = std::fmod(-wave + (along ? 0.0f : kCycle * 0.5f), kCycle);
     if (l.offset < 0) l.offset += kCycle;
     c.lights.push_back(l);
+    if (!raw[k].od) c.incomplete = true;
   }
 }
 
 }  // namespace
 
-void addTrafficLights(Display& d, script::VM&, const std::vector<GridObj*>& grids, const SceneView& v, ParticleDrawList& particles) {
+void addTrafficLights(Display& d, script::VM& vm, const std::vector<GridObj*>& grids, const SceneView& v, ParticleDrawList& particles) {
+  std::vector<ExtraNightLight>& pools = extraNightLights();
+  pools.clear();
   GridObj* grid = nullptr;
   for (GridObj* g : grids)
     if (g->data && g->terrain && !g->data->items.empty()) grid = g;
   if (!grid || grid->terrain->viewMode == 0x180) return;  // (the underground view: none)
   Cache& c = caches()[grid];
-  if (c.generation != grid->generation || c.itemsVersion != grid->itemsVersion) {
+  if (c.generation != grid->generation || c.itemsVersion != grid->itemsVersion || c.incomplete) {
     c.generation = grid->generation;
     c.itemsVersion = grid->itemsVersion;
-    collect(grid, c);
+    collect(vm, grid, c);
   }
   if (c.lights.empty()) return;
   static const auto start = std::chrono::steady_clock::now();
   const float now = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
   const float night = vehicleNight01();
-  const float size = 0.28f + 0.25f * night;  // (by day a bright lamp the size of the lens, at night a halo)
   const Mat4 vp = v.proj * v.view;
   auto inView = [&](const Vec3& p) {
     const float cw = vp.at(3, 0) * p.x + vp.at(3, 1) * p.y + vp.at(3, 2) * p.z + vp.at(3, 3);
@@ -193,19 +295,29 @@ void addTrafficLights(Display& d, script::VM&, const std::vector<GridObj*>& grid
                  -(vw.at(0, 1) * vw.at(0, 3) + vw.at(1, 1) * vw.at(1, 3) + vw.at(2, 1) * vw.at(2, 3)),
                  -(vw.at(0, 2) * vw.at(0, 3) + vw.at(1, 2) * vw.at(1, 3) + vw.at(2, 2) * vw.at(2, 3))};
   for (const Light& l : c.lights) {
-    if (!inView(l.lamp[1])) continue;
-    if ((eye.x - l.lamp[1].x) * l.face.x + (eye.z - l.lamp[1].z) * l.face.z < 0) continue;
     const float t = std::fmod(now + l.offset, kCycle);
     bool on[3] = {false, false, false};
     if (t < kGreen) on[2] = true;
     else if (t < kGreen + kYellow) on[1] = true;
     else if (t < kCycle - kRedYellow) on[0] = true;
     else on[0] = on[1] = true;
+    // at night an unseen light: a small pool on the street in front of the signal (the light map has no colour of its
+    // own: neutral for green, warm for red and amber; owner 2026-11-16)
+    if (night > 0.08f && std::hypot(l.base.x - eye.x, l.base.z - eye.z) < 420.0f) {
+      ExtraNightLight e;
+      e.pos = l.base + l.face * 1.6f;
+      e.radius = 3.2f;
+      e.gain = 0.32f;
+      e.warm = on[2] ? 0.0f : 1.0f;
+      pools.push_back(e);
+    }
+    if (!inView(l.lamp[1])) continue;
+    if ((eye.x - l.lamp[1].x) * l.face.x + (eye.z - l.lamp[1].z) * l.face.z < 0) continue;
     for (int m = 0; m < 3; ++m)
       if (on[m]) {
         ParticleSprite s;
         s.pos = l.lamp[m];
-        s.size = size;
+        s.size = l.radius[m] * (1.6f + 1.6f * night);  // (by day the lens lit, at night with a halo)
         s.argb = kColour[m];
         s.batch = batch;
         particles.sprites.push_back(s);
