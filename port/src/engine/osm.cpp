@@ -6801,7 +6801,8 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
       for (int dz = 0; dz <= 1; ++dz)
         for (int dx = 0; dx <= 1; ++dx) hi = std::max(hi, int(g.height[size_t(z + dz) * size_t(W) + size_t(x + dx)]));
     }
-  if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 10 : 15)) return false;
+  // (special ones: up to 30 % over roads or paths: footpaths run through a castle's gates and a palace's passages)
+  if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 30 : 15)) return false;
   GridData::ProcBuilding pb;
   // halls only for industry, farms and railways (owner 2026-11-15: no warehouses in the town centre); offices for
   // workplaces, shops (shop windows and signs below, a big low store from 700 cells and at most two levels) for
@@ -7836,7 +7837,10 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       int special = 0;
       for (size_t i = 0; i < d.buildings.size(); ++i) {
         const BuildingIn& b = d.buildings[i];
-        if ((b.castle || b.church >= 0) && placeProcBuilding(vm, grid, a, b)) a.inRow[i] = 1, ++special;
+        if (!b.castle && b.church < 0) continue;
+        if (placeProcBuilding(vm, grid, a, b)) ++special;
+        // (one that does not fit is left out rather than become an ordinary house: a town house stood in Cochem's castle)
+        a.inRow[i] = 1;
       }
       if (special) LOG_INFO("osm: %d palaces, castles and churches placed first", special);
       a.yardSeeds.clear();
