@@ -1491,10 +1491,32 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   } else if (castle) {
     // the wall walk behind battlements (merlons every 1.6 along the parapet), round towers with conical roofs at the
     // outer corners (the sharpest first, up to six; roofs of slate or red tiles by the variant)
-    flatRoof(o, top + 0.02f, kProcRoofFlat, 8.0f);
+    // (the wall walk in plain grey stone: the game's flat roof tile showed its seams as stripes, owner 2026-11-16)
+    flatRoof(o, top + 0.02f, kProcRustica, 6.0f);
     // (owner 2026-11-16: "the walls should be more filigree on top"; were a parapet 0.9 high and 0.6 thick with merlons
-    // 0.9 wide every 1.6): a thin parapet standing 0.18 out on a row of small corbels, slender merlons with caps
-    const float ph = 0.7f, mh = 0.75f, th = 0.3f, out = 0.18f, step = 0.75f, mw = 0.3f;
+    // 0.9 wide every 1.6; then "the stones on the merlons are too high": each face took the whole stone tile): a thin
+    // parapet standing out on a row of small corbels, low slender merlons with thin caps, all in the walls' stone at the
+    // walls' scale
+    const float ph = 0.5f, mh = 0.5f, th = 0.22f, out = 0.14f, step = 0.55f, mw = 0.2f;
+    // a box like Builder::box, its faces textured at the walls' scale (6 units a tile, from world positions)
+    auto stoneBox = [&](float cx, float cz, float y0, float y1, float ux, float uz, float hl, float hw) {
+      const float vx = -uz, vz = ux, T = 6.0f;
+      Vec3 p[4];
+      for (int i = 0; i < 4; ++i) {
+        const float sa = (i == 1 || i == 2) ? hl : -hl, sb = i >= 2 ? hw : -hw;
+        p[i] = {cx + ux * sa + vx * sb, y0, cz + uz * sa + vz * sb};
+      }
+      for (int i = 0; i < 4; ++i) {
+        const Vec3 a = p[i], b = p[(i + 1) % 4];
+        const float fx = b.x - a.x, fz = b.z - a.z, fl = std::max(1e-5f, std::hypot(fx, fz));
+        const float ua = (a.x * fx + a.z * fz) / fl / T, ub = (b.x * fx + b.z * fz) / fl / T;
+        const Vec3 mid{(a.x + b.x) * 0.5f - cx, 0, (a.z + b.z) * 0.5f - cz};
+        bd.quad(kProcCastleStone, a, b, {b.x, y1, b.z}, {a.x, y1, a.z}, render::normalize(mid), ua, y0 / T, ub, y1 / T);
+      }
+      const Vec3 t0{p[0].x, y1, p[0].z}, t1{p[1].x, y1, p[1].z}, t2{p[2].x, y1, p[2].z}, t3{p[3].x, y1, p[3].z};
+      bd.tri(kProcRustica, t0, t1, t2, {0, 1, 0}, t0.x / T, t0.z / T, t1.x / T, t1.z / T, t2.x / T, t2.z / T);  // (grey coping)
+      bd.tri(kProcRustica, t0, t2, t3, {0, 1, 0}, t0.x / T, t0.z / T, t2.x / T, t2.z / T, t3.x / T, t3.z / T);
+    };
     for (const Edge& e : edges) {
       if (e.len < 0.05f) continue;
       const Vec3 n{e.nx, 0, e.nz};
@@ -1502,24 +1524,24 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
       const float ox = e.nx * out, oz = e.nz * out, ix = -e.nx * (th - out), iz = -e.nz * (th - out);
       const float y0 = top - 0.3f;
       bd.quad(kProcCastleStone, {e.ax + ox, y0, e.az + oz}, {e.bx + ox, y0, e.bz + oz}, {e.bx + ox, top + ph, e.bz + oz}, {e.ax + ox, top + ph, e.az + oz}, n,
-              0, y0 / 3.0f, e.len / 3.0f, (top + ph) / 3.0f);
-      bd.quad(kProcCastleStone, {e.ax + ox, top + ph, e.az + oz}, {e.bx + ox, top + ph, e.bz + oz}, {e.bx + ix, top + ph, e.bz + iz},
-              {e.ax + ix, top + ph, e.az + iz}, {0, 1, 0}, 0, 0, e.len / 3.0f, 0.1f);
+              0, y0 / 6.0f, e.len / 6.0f, (top + ph) / 6.0f);
+      bd.quad(kProcRustica, {e.ax + ox, top + ph, e.az + oz}, {e.bx + ox, top + ph, e.bz + oz}, {e.bx + ix, top + ph, e.bz + iz},
+              {e.ax + ix, top + ph, e.az + iz}, {0, 1, 0}, 0, 0, e.len / 6.0f, th / 6.0f);
       bd.quad(kProcCastleStone, {e.bx + ix, top, e.bz + iz}, {e.ax + ix, top, e.az + iz}, {e.ax + ix, top + ph, e.az + iz},
-              {e.bx + ix, top + ph, e.bz + iz}, n * -1.0f, 0, 0, e.len / 3.0f, 0.25f);
-      bd.quad(kProcCastleStone, {e.ax, y0, e.az}, {e.bx, y0, e.bz}, {e.bx + ox, y0, e.bz + oz}, {e.ax + ox, y0, e.az + oz}, {0, -1, 0}, 0, 0, e.len / 3.0f,
-              0.06f);
+              {e.bx + ix, top + ph, e.bz + iz}, n * -1.0f, 0, top / 6.0f, e.len / 6.0f, (top + ph) / 6.0f);
+      bd.quad(kProcCastleStone, {e.ax, y0, e.az}, {e.bx, y0, e.bz}, {e.bx + ox, y0, e.bz + oz}, {e.ax + ox, y0, e.az + oz}, {0, -1, 0}, 0, 0, e.len / 6.0f,
+              out / 6.0f);
       const int k = std::max(1, int(std::floor((e.len - 0.3f) / step)));
       const float st = (e.len - 0.3f) / float(k);  // (whole steps along the edge: a merlon at both ends)
       for (int m = 0; m <= k; ++m) {
         const float s = std::clamp(0.15f + float(m) * st, mw, e.len - mw);
         // a corbel under the parapet
         const float kx = e.ax + e.dx * s + e.nx * out * 0.5f, kz = e.az + e.dz * s + e.nz * out * 0.5f;
-        bd.box(kProcCastleStone, kProcCastleStone, kx, kz, y0 - 0.45f, y0, e.dx, e.dz, 0.09f, out * 0.5f);
+        stoneBox(kx, kz, y0 - 0.32f, y0, e.dx, e.dz, 0.06f, out * 0.5f);
         if (m % 2) continue;  // (a merlon on every other corbel, the embrasures between)
         const float cx = e.ax + e.dx * s + e.nx * (out - th * 0.5f), cz = e.az + e.dz * s + e.nz * (out - th * 0.5f);
-        bd.box(kProcCastleStone, kProcCastleStone, cx, cz, top + ph, top + ph + mh, e.dx, e.dz, mw, th * 0.5f);
-        bd.box(kProcCastleStone, kProcCastleStone, cx, cz, top + ph + mh, top + ph + mh + 0.07f, e.dx, e.dz, mw + 0.04f, th * 0.5f + 0.04f);
+        stoneBox(cx, cz, top + ph, top + ph + mh, e.dx, e.dz, mw, th * 0.5f);
+        stoneBox(cx, cz, top + ph + mh, top + ph + mh + 0.04f, e.dx, e.dz, mw + 0.025f, th * 0.5f + 0.025f);
       }
     }
     struct Corner {
@@ -1546,7 +1568,7 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
       const Edge& e1 = edges[c.i];
       const float r = std::clamp(std::min(e0.len, e1.len) * 0.16f, 2.0f, 3.6f);
       const float cx = o[c.i].first, cz = o[c.i].second, tt = top + ph + 3.2f;
-      prism(kProcCastleStone, cx, cz, skirt, tt, r, 14, 3.0f);
+      prism(kProcCastleStone, cx, cz, skirt, tt, r, 14, 6.0f);
       const float bl = std::hypot(e0.nx + e1.nx, e0.nz + e1.nz);
       const float ox = bl > 1e-3f ? (e0.nx + e1.nx) / bl : e1.nx, oz = bl > 1e-3f ? (e0.nz + e1.nz) / bl : e1.nz;
       for (float wy : {y + 3.0f, (y + tt) * 0.5f + 1.0f, tt - 2.4f}) {  // arrow slits facing out
