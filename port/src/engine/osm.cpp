@@ -6024,7 +6024,7 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, Painter& 
       uint32_t h = hash32((uint64_t(x) << 32) | uint32_t(z) | 0x5a5a0000ull);
       bool byHouse = at(x - 1, z) == 3 || at(x + 1, z) == 3 || at(x, z - 1) == 3 || at(x, z + 1) == 3;
       if (pavedHere.count(size_t(z) * size_t(W) + size_t(x))) {
-        if (!fromTpl && (h >> 7) % 100 < 5 && !pool.empty() && clear(x, z, 1, {6})) {  // bicycle stands and bins on the pavement
+        if (!fromTpl && !open && (h >> 7) % 100 < 5 && !pool.empty() && clear(x, z, 1, {6})) {  // bicycle stands and bins on the pavement
           static const char* kPaved[] = {"bicycle-holder-01", "bicycle-holder-02", "litterbin-01", "litterbin-02"};
           int dir = int((h >> 17) & 3);
           static const double kDir2[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
@@ -6040,7 +6040,9 @@ void decorateYards(VM& vm, GridObj* grid, Apply& a, const Furnish& fu, Painter& 
         continue;
       } else if (h % 100 < 7 && clear(x, z, 2, {3, 4})) {
         plantAt(vm, grid, a, fu.pick(fu.trees, h >> 5), x, z, h);
-      } else if ((h >> 7) % 100 < 6 && !pool.empty() && clear(x, z, 1, {6})) {
+      } else if (!open && (h >> 7) % 100 < 6 && !pool.empty() && clear(x, z, 1, {6})) {
+        // (garden things only in yards closed by houses: on open land behind the houses they stood about at random,
+        // owner 2026-11-16; there only trees and bushes)
         int dir = int((h >> 17) & 3);
         static const double kDir[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
         if (placeAt(vm, grid, a, pool[(h >> 9) % pool.size()], x + 0.5, z + 0.5, kDir[dir][0], kDir[dir][1],
