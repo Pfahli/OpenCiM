@@ -219,7 +219,14 @@ function regsAutosave() {
   $keepUnsaved = $unsavedProgress;
   $regsAutosaving = true;
   echo "autosave: slot "+string($slot)+" of "+string($keep);
+  // quietly (no status box, ui.script extension) and with the files written on a background thread
+  MAIN.$ui.regsShowSaveIcon(2.4);   // the blinking disk in the top right corner, drawn before the save starts
+  skip_frame;
+  MAIN.$regsQuietStatus = true;
+  regsAsyncWrites(true);
   saveGameData("Autosave/Autosave "+string($slot));
+  regsAsyncWrites(false);
+  MAIN.$regsQuietStatus = false;
   $regsAutosaving = false;
   MAIN.$saveGameName = $keepName;
   MAIN.$gridFileName = $keepGrid;

@@ -38,7 +38,10 @@ modes (the editor's roads, terrain and paint tools come later):
 - [x] Bulldoze (`GRIDMODE_REMOVE_OBJECTS`), with the demolition cost of buildings (construction.md §13).
 - [x] Terraforming and paint tools (`engine/tool_terrain.cpp`): shift, level, soften, pavement, fields, ruin, grow
   trees, toggle water (the original's basin flood fill); port QoL: round brushes (setting `regsRoundBrushes`, on).
-  Still open: the variation (0x15) and rename (0x14) tools.
+  Pavement paint with exact edges (2026-11-14): the round brush and its eraser cut the cells on the brush circle,
+  painted areas (paint_edges.h, for the OSM import) cut along their outline; see building-tools.md.
+  Rename (0x14, the toolbar's T: the hovered item, the game's dialog, timeline names) and variation (0x15, the
+  original's debug menu) work on the hovered item; rename takes the road segment up to the junctions (right button: one piece).
 - [x] Undo: the editor's undo button (timeline `removeLastAction` + base grid replay); every tool records on
   `gsGridPlayer.timeline`. The brushes' drag copy (`addUndoItem`) is put back on cancel.
 - [x] Live map updates after an edit (`engine/grid_edit.h`, used by the city timeline): items added and removed in
@@ -112,9 +115,8 @@ modes (the editor's roads, terrain and paint tools come later):
   turn of the mesh). That also puts the waiters of underground and elevated metro stations on their platforms (they
   stood at street level), reached by the stations' stairs. Cim2 not re-measured since (was 1.7 %). Left from before:
   the sunken park's stairs prop (no walk map, blocks its cell), a hotel enclosed by bushes.
-- [ ] Metro trains at the turn of a line (end stations) stop with their front at the platform instead of their
-  middle (`docs/simulation/transport.md` §4.4, port note); all other halts are centred since the leg after a turn
-  pulls its half length too.
+- [x] Metro trains at the turn of a line (end stations) stop with their middle at the platform (2026-11-15: straight on
+  along their own track before turning; `docs/simulation/transport.md` §4.4, port note).
 - [ ] Deviations to revisit: water cells are never walkable (the original treats them as open ground); boats keep
   running across a save (the original removes them).
 - [x] Saves keep the live simulation, including boats, aircraft, animals and the rest of each pedestrian's walk (the
@@ -301,13 +303,13 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   allows, findCurveJunctions on the moved curves). The piece's own levelling (it sets and locks its 4 × 4 cells'
   corners at its pavement height) is undone around the turned piece. Where no piece fits (larger roads, tram streets,
   flatter than 30°, junctions on both sides) the rails are let into the road: the track's stretch under the roads is a
-  curve with bridge = 2, drawn as the street tram strip at the road's height (terrain.cpp), its lanes those of the
+  curve with bridge = 3 (2 is a tunnel), drawn as the street tram strip at the road's height (terrain.cpp), its lanes those of the
   double track. Tested in Münzesheim (a piece) and Unteröwisheim (rails in the road between two junctions); REGS_DEBUG_OSM
   logs each crossing, REGS_DEBUG_TOPDOWN=x,z,h,d,y looks at it from d units south.
   Trams on their own bed (owner 2026-11-15, osm.cpp tramBeds): the tram ways are merged into double tracks (both
   directions' tracks closer than 6 m, mergeTracks with the tram kind) and cut where they run along a street (within its
   half width and half a cell: street trams as before); the stretches off the streets (10 cells and longer) become curves
-  of kind 8 (curve_roads.h curveIsTramBed): drawn as the railway's double track (ballast, sleepers, bumper), their lanes
+  of kind 9 (curve_roads.h curveIsTramBed; 8 is the ramp): drawn as the railway's double track (ballast, sleepers, bumper), their lanes
   the tram piece's (tram_small_basic, tram_small_deadend at a free end), so the player's trams can run on them; in the
   roads' join class, so a bed meets its street at a junction (the street gets the junction point; a bed's end within 9
   cells of a street is joined to it too), where the trams run on between the bed and the street's tracks. Tested at
@@ -376,7 +378,7 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   steps), doors on the walls facing the nearest street, a flat roof with a parapet and air conditioning boxes (halls:
   metal roof with skylight strips) or a tiled gabled roof on a four-cornered house up to 15 cells wide. The textures
   are drawn by the port (no game files). Stored as GridData::ProcBuilding in map.grid section 0x07F30000 and as the
-  timeline action 0x070810D0 (undo, the day switch; a replay skips a building the map has). Karlsruhe Marktplatz: 10
+  timeline action 0x070810E0 (undo, the day switch; a replay skips a building the map has). Karlsruhe Marktplatz: 10
   (the town hall in plaster, three halls), Bruchsal 6. Since 2026-11-15 (owner: more interesting roofs, windows and doors
   with depth that light up by night): windows and doors sit in recesses (reveals, mullions, sills, a step, a lamp and a
   lit fanlight by a front door, roller doors with a lamp on halls); two thirds of the panes light up warm at dusk in three
@@ -432,7 +434,8 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   Open: tram stops on beds
   (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
   off a bed (a merged track's kept stretch overlaps the bed instead of a switch).
-- [ ] Open: ramps and map-edge road pieces (bridges and tunnels: done 2026-11-08); the rename (0x14) and variation (0x15) tools;
+- [ ] Open: express interchanges (bridges and tunnels: done 2026-11-08) (rename of curved roads: done 2026-11-14) (curves:
+  tunnels, abutments, map-edge ends, express ramps with entries and exits: done 2026-11-15);
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
 
 ## 9. Release (OpenRCT2 style: requires the original game)

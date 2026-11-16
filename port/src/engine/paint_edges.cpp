@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <array>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -241,22 +242,135 @@ std::vector<PaintAreaCell> paintArea(GridData& g, const std::vector<PaintRing>& 
   return cells;
 }
 
-void paintCircle(GridData& g, int brushType, double cx, double cz, double R) {
+namespace {
+int g_brushShape = kBrushCircle;
+}
+int brushShape() { return g_brushShape; }
+void setBrushShape(int shape) { g_brushShape = std::clamp(shape, 0, 3); }
+
+BrushShape BrushShape::sweptFrom(double ax, double az) const {
+  BrushShape at = *this;
+  at.cx = ax, at.cz = az;
+  PaintRing pts = outline(), more = at.outline();
+  pts.insert(pts.end(), more.begin(), more.end());
+  // the convex hull (Andrew's monotone chain), counter-clockwise
+  std::sort(pts.begin(), pts.end());
+  pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+  auto cross = [](const std::pair<double, double>& o, const std::pair<double, double>& a, const std::pair<double, double>& b) {
+    return (a.first - o.first) * (b.second - o.second) - (a.second - o.second) * (b.first - o.first);
+  };
+  PaintRing hull(2 * pts.size());
+  size_t k = 0;
+  for (size_t i = 0; i < pts.size(); ++i) {
+    while (k >= 2 && cross(hull[k - 2], hull[k - 1], pts[i]) <= 1e-12) --k;
+    hull[k++] = pts[i];
+  }
+  for (size_t i = pts.size() - 1, t = k + 1; i-- > 0;) {
+    while (k >= t && cross(hull[k - 2], hull[k - 1], pts[i]) <= 1e-12) --k;
+    hull[k++] = pts[i];
+  }
+  hull.resize(k > 1 ? k - 1 : k);
+  BrushShape s;
+  s.kind = kBrushSweep;
+  s.cx = (ax + cx) * 0.5, s.cz = (az + cz) * 0.5;
+  s.R = R + 0.5 * std::sqrt((cx - ax) * (cx - ax) + (cz - az) * (cz - az));
+  s.poly = std::move(hull);
+  return s;
+}
+
+void BrushShape::bounds(double& x0, double& z0, double& x1, double& z1) const {
+  if (kind != kBrushSweep) {
+    x0 = cx - R, z0 = cz - R, x1 = cx + R, z1 = cz + R;
+    return;
+  }
+  x0 = z0 = 1e30, x1 = z1 = -1e30;
+  for (const auto& [px, pz] : poly) x0 = std::min(x0, px), x1 = std::max(x1, px), z0 = std::min(z0, pz), z1 = std::max(z1, pz);
+}
+
+bool BrushShape::polyContains(double px, double pz) const {
+  if (poly.size() < 3) return false;
+  // convex, either way round: the point on the same side of every side as the outline turns
+  double area = 0;
+  for (size_t i = 0; i < poly.size(); ++i) {
+    const auto& a = poly[i];
+    const auto& b = poly[(i + 1) % poly.size()];
+    area += a.first * b.second - b.first * a.second;
+  }
+  const double sign = area >= 0 ? 1.0 : -1.0;
+  for (size_t i = 0; i < poly.size(); ++i) {
+    const auto& a = poly[i];
+    const auto& b = poly[(i + 1) % poly.size()];
+    if (sign * ((b.first - a.first) * (pz - a.second) - (b.second - a.second) * (px - a.first)) < -1e-9) return false;
+  }
+  return true;
+}
+
+bool BrushShape::polyTouches(int x, int z) const {
+  if (poly.size() < 3) return false;
+  double x0, z0, x1, z1;
+  bounds(x0, z0, x1, z1);
+  if (x1 <= x || x0 >= x + 1 || z1 <= z || z0 >= z + 1) return false;
+  for (int k = 0; k < 4; ++k)  // a cell corner inside
+    if (polyContains(x + (k & 1), z + (k >> 1))) return true;
+  for (const auto& [px, pz] : poly)  // a corner of the outline inside the cell
+    if (px > x && px < x + 1 && pz > z && pz < z + 1) return true;
+  for (size_t i = 0; i < poly.size(); ++i) {  // a side crossing the cell
+    const auto& a = poly[i];
+    const auto& b = poly[(i + 1) % poly.size()];
+    double t0, t1;
+    if (clipToCell(Seg{a.first, a.second, b.first, b.second}, x, z, t0, t1)) return true;
+  }
+  return false;
+}
+
+PaintRing BrushShape::outline() const {
+  PaintRing r;
+  if (kind == kBrushSweep) {
+    r = poly;
+  } else if (kind == kBrushSquare) {
+    r = {{cx - R, cz - R}, {cx + R, cz - R}, {cx + R, cz + R}, {cx - R, cz + R}};
+  } else if (kind == kBrushDiamond) {
+    r = {{cx, cz - R}, {cx + R, cz}, {cx, cz + R}, {cx - R, cz}};
+  } else {
+    for (int k = 0; k < 64; ++k) {
+      double a = k * 6.283185307179586 / 64;
+      r.push_back({cx + R * std::cos(a), cz + R * std::sin(a)});
+    }
+  }
+  return r;
+}
+
+void paintShape(GridData& g, int brushType, const BrushShape& shape) {
+  const double cx = shape.cx, cz = shape.cz, R = shape.R;
   if (R <= 0 || brushType < 1 || brushType > 9) return;
   const bool erase = brushType == 9;
   const int t = brushType - 1;
-  int x0 = std::max(0, int(std::floor(cx - R))), x1 = std::min(g.width - 1, int(std::floor(cx + R)));
-  int z0 = std::max(0, int(std::floor(cz - R))), z1 = std::min(g.length - 1, int(std::floor(cz + R)));
-  auto inCircle = [&](double px, double pz) { return (px - cx) * (px - cx) + (pz - cz) * (pz - cz) <= R * R; };
+  double bx0, bz0, bx1, bz1;
+  shape.bounds(bx0, bz0, bx1, bz1);
+  int x0 = std::max(0, int(std::floor(bx0))), x1 = std::min(g.width - 1, int(std::floor(bx1)));
+  int z0 = std::max(0, int(std::floor(bz0))), z1 = std::min(g.length - 1, int(std::floor(bz1)));
+  auto inCircle = [&](double px, double pz) { return shape.contains(px, pz); };
+  // the square's, the diamond's and a sweep's sides as cut lines, inward (the paint) or outward (the eraser)
+  std::vector<std::array<double, 6>> sides;  // the side from (0, 1), its inward normal (2, 3), to (4, 5)
+  if (shape.kind != kBrushCircle) {
+    PaintRing o = shape.outline();
+    for (size_t i = 0; i < o.size(); ++i) {
+      auto a = o[i], b = o[(i + 1) % o.size()];
+      double nx = -(b.second - a.second), nz = b.first - a.first, len = std::sqrt(nx * nx + nz * nz);
+      if (len < 1e-9) continue;
+      nx /= len, nz /= len;
+      if (nx * (cx - a.first) + nz * (cz - a.second) < 0) nx = -nx, nz = -nz;
+      sides.push_back({a.first, a.second, nx, nz, b.first, b.second});
+    }
+  }
   for (int z = z0; z <= z1; ++z)
     for (int x = x0; x <= x1; ++x) {
-      double nx = std::clamp(cx, double(x), double(x + 1)) - cx, nz = std::clamp(cz, double(z), double(z + 1)) - cz;
-      if (nx * nx + nz * nz >= R * R) continue;  // the circle misses the cell
-      double fx = std::max(std::fabs(x - cx), std::fabs(x + 1 - cx)), fz = std::max(std::fabs(z - cz), std::fabs(z + 1 - cz));
+      if (!shape.touches(x, z)) continue;  // the brush misses the cell
       uint16_t& f = g.flags[size_t(z) * size_t(g.width) + size_t(x)];
       const uint32_t key = paintEdgeKey(x, z);
       auto it = g.paintEdges.find(key);
-      if (fx * fx + fz * fz <= R * R) {  // wholly inside: painted or bare, without an edge
+      // wholly inside (all four corners: the shapes are convex): painted or bare, without an edge
+      if (shape.contains(x, z) && shape.contains(x + 1, z) && shape.contains(x, z + 1) && shape.contains(x + 1, z + 1)) {
         if (it != g.paintEdges.end()) g.paintEdges.erase(it);
         f = erase ? uint16_t(f & 0xFFF0) : uint16_t((f & 0xFF98) | 0x8 | t);
         continue;
@@ -290,12 +404,26 @@ void paintCircle(GridData& g, int brushType, double cx, double cz, double R) {
       // candidates: the old edge's lines, the circle's tangents where it crosses the cell (inward for paint)
       std::vector<Cand> cands;
       if (old && old->type == type)
-        for (int k = 0; k < old->lines; ++k) addCand(cands, {{old->l[k][0], old->l[k][1], old->l[k][2]}, 1.0});
-      double a0 = std::atan2(z + 0.5 - cz, x + 0.5 - cx), spread = std::min(0.6, 0.6 / R);
-      for (double a : {a0, a0 - spread, a0 + spread}) {
-        double px = cx + R * std::cos(a), pz = cz + R * std::sin(a), ux = -std::cos(a), uz = -std::sin(a);
-        if (erase) ux = -ux, uz = -uz;
-        addCand(cands, {{float(ux), float(uz), float(ux * (x - px) + uz * (z - pz))}, a == a0 ? 0.9 : 0.8});
+        for (int k = 0; k < old->lines; ++k) addCand(cands, {{old->l[k][0], old->l[k][1], old->l[k][2]}, 5.0});  // first in line
+      if (shape.kind == kBrushCircle) {
+        double a0 = std::atan2(z + 0.5 - cz, x + 0.5 - cx), spread = std::min(0.6, 0.6 / R);
+        for (double a : {a0, a0 - spread, a0 + spread}) {
+          double px = cx + R * std::cos(a), pz = cz + R * std::sin(a), ux = -std::cos(a), uz = -std::sin(a);
+          if (erase) ux = -ux, uz = -uz;
+          addCand(cands, {{float(ux), float(uz), float(ux * (x - px) + uz * (z - pz))}, a == a0 ? 0.9 : 0.8});
+        }
+      } else {  // the sides crossing the cell first (by the length inside it), then the nearer ones
+        for (const auto& s : sides) {
+          double ux = erase ? -s[2] : s[2], uz = erase ? -s[3] : s[3], t0, t1, weight;
+          Seg sg{s[0], s[1], s[4], s[5]};
+          if (clipToCell(sg, x, z, t0, t1)) {
+            weight = 2.0 + (t1 - t0) * std::sqrt((s[4] - s[0]) * (s[4] - s[0]) + (s[5] - s[1]) * (s[5] - s[1]));
+          } else {
+            double d = std::fabs(s[2] * (x + 0.5 - s[0]) + s[3] * (z + 0.5 - s[1]));
+            weight = 0.9 - std::min(0.5, d * 0.01);
+          }
+          addCand(cands, {{float(ux), float(uz), float(ux * (x - s[0]) + uz * (z - s[1]))}, weight});
+        }
       }
       if (erase && own >= 0) f = uint16_t(f & 0xFFF0);  // the cell keeps its paint only inside the new edge
       // paint over another paint's edge: a cell holds one edge, so the other paint takes the rest of the cell when it

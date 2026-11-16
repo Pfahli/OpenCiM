@@ -1,6 +1,9 @@
 #include "vfs/vfs.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <cstdio>
 #include <cwctype>
 #include <functional>
@@ -228,6 +231,8 @@ bool Vfs::writableDiskPath(const std::string& path, fs::path& out) const {
   return true;
 }
 
+static std::atomic<int> g_pendingWrites{0};  // background writes not out yet (asyncWrites)
+
 bool Vfs::write(const std::string& path, const std::vector<uint8_t>& data) {
   if (path.rfind("memory/", 0) == 0) {
     Record r;
@@ -246,11 +251,28 @@ bool Vfs::write(const std::string& path, const std::vector<uint8_t>& data) {
   r.kind = Kind::Loose;
   r.disk = disk;
   records_[path] = r;
+  if (asyncWrites) {
+    ++g_pendingWrites;
+    std::thread([disk, copy = data]() {
+      if (FILE* f = _wfopen(disk.wstring().c_str(), L"wb+")) {
+        if (std::fwrite(copy.data(), 1, copy.size(), f) != copy.size()) LOG_WARN("vfs: background write of %s failed", disk.string().c_str());
+        std::fclose(f);
+      } else {
+        LOG_WARN("vfs: background write: cannot open %s", disk.string().c_str());
+      }
+      --g_pendingWrites;
+    }).detach();
+    return true;
+  }
   FILE* f = _wfopen(disk.wstring().c_str(), L"wb+");
   if (!f) return false;  // the engine silently loses the data here
   bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size();
   std::fclose(f);
   return ok;
+}
+
+void Vfs::waitForWrites() {
+  for (int i = 0; i < 1000 && g_pendingWrites.load() > 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
 std::vector<std::string> Vfs::listFiles(const std::string& dir, const std::string& ext) const {

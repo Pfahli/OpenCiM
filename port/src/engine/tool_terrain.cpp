@@ -20,6 +20,7 @@
 #include "engine/grid_edit.h"
 #include "engine/settings.h"
 #include "engine/gui.h"
+#include "engine/input.h"
 #include "engine/timeline.h"
 #include "engine/tools.h"
 
@@ -113,8 +114,26 @@ void highlightCell(GridObj* grid, int x, int z) {
 struct Round {
   float fx = -1e9f, fz = -1e9f;  // the centre last worked or highlighted (corner coordinates)
   float sx = 0, sz = 0;          // the press point of a shift / ruin drag
+  // port: Shift + drag with the pavement brush: a straight strip from the press point (lx, lz), painted on release;
+  // the cells its preview highlights
+  bool line = false;
+  float lx = 0, lz = 0;
+  int hx0 = 0, hz0 = 0, hx1 = -1, hz1 = -1;
 };
 std::unordered_map<const Object*, Round> g_round;
+
+// the strip of half width R from a to b (a rectangle, flat ends) as a paint outline
+PaintRing stripRing(float ax, float az, float bx, float bz, float R) {
+  float dx = bx - ax, dz = bz - az, len = std::sqrt(dx * dx + dz * dz);
+  if (len < 1e-3f) dx = 1, dz = 0, len = 1;
+  float nx = -dz / len * R, nz = dx / len * R;
+  return {{ax + nx, az + nz}, {bx + nx, bz + nz}, {bx - nx, bz - nz}, {ax - nx, az - nz}};
+}
+
+void unselectStrip(VM& vm, GridObj* grid, Round& rs) {
+  if (rs.hx1 >= rs.hx0) gridUnselectArea(vm, grid, rs.hx0, rs.hz0, rs.hx1 - rs.hx0 + 1, rs.hz1 - rs.hz0 + 1);
+  rs.hx0 = rs.hz0 = 0, rs.hx1 = rs.hz1 = -1;
+}
 
 bool roundBrushes(VM& vm) { return settingNumber(vm, u"regsRoundBrushes", 1) != 0; }
 
@@ -134,8 +153,28 @@ void unselectRound(VM& vm, GridObj* grid, const Round& rs, float R) {
   gridUnselectArea(vm, grid, x0, z0, n, n);
 }
 
-void recordRound(VM& vm, Object* tl, int type, int r, float fx, float fz, int strength) {
-  timelineRecordBrush(vm, tl, type | 0x40, r, int(std::lrint(fx * 8.0f)), strength, int(std::lrint(fz * 8.0f)));
+// the brush shape goes in the radius byte's top two bits (timeline.cpp applyBrush)
+void recordRound(VM& vm, Object* tl, int type, int r, float fx, float fz, int strength, int shape = kBrushCircle) {
+  if (shape == kBrushLine) shape = kBrushCircle;
+  timelineRecordBrush(vm, tl, type | 0x40, (r & 0x3F) | (shape << 6), int(std::lrint(fx * 8.0f)), strength, int(std::lrint(fz * 8.0f)));
+}
+
+// the preview: every cell the brush shape touches, the rim ones drawn clipped to it (buildHighlightOverlay: the circle,
+// or the square's and the diamond's outline)
+void highlightShape(GridObj* grid, const BrushShape& sh) {
+  GridData& g = *grid->data;
+  for (int cz = std::max(0, int(std::floor(sh.cz - sh.R))); cz <= std::min(g.length - 1, int(std::floor(sh.cz + sh.R))); ++cz)
+    for (int cx = std::max(0, int(std::floor(sh.cx - sh.R))); cx <= std::min(g.width - 1, int(std::floor(sh.cx + sh.R))); ++cx)
+      if (sh.touches(cx, cz)) highlightCell(grid, cx, cz);
+  ++grid->highlightVersion;
+  grid->highlightPoly.clear();
+  if (sh.kind == kBrushCircle) {
+    grid->highlightCircle[0] = float(sh.cx), grid->highlightCircle[1] = float(sh.cz), grid->highlightCircle[2] = float(sh.R);
+  } else {
+    grid->highlightCircle[2] = 0;
+    for (const auto& [px, pz] : sh.outline()) grid->highlightPoly.insert(grid->highlightPoly.end(), {float(px), float(pz)});
+  }
+  grid->highlightCircleVersion = grid->highlightVersion;
 }
 
 void moveBrushRound(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
@@ -143,23 +182,74 @@ void moveBrushRound(VM& vm, ControlObj* player, GridObj* grid, float x, float y)
   Round& rs = g_round[player];
   float fx, fz;
   if (!pickCentre(vm, player, grid, x, y, fx, fz)) return;
+  fx = std::round(fx * 8.0f) / 8.0f, fz = std::round(fz * 8.0f) / 8.0f;  // as the timeline keeps it (replays paint the same)
   // a new dab once the cursor moved a quarter cell (the original: a new cell)
   if (std::fabs(fx - rs.fx) < 0.25f && std::fabs(fz - rs.fz) < 0.25f && t.cellX != -1) return;
   const int mode = editMode(vm, player), r = brushRadius(vm, player), toolMode = intField(vm, player, u"toolMode", 0);
   const float R = float(r) + 0.5f;
   gridEditBegin(vm, grid);
   unselectRound(vm, grid, rs, R);
+  // port: the line shape (or Shift held at the press) of the pavement and field brushes: a straight strip as wide as
+  // the brush from the press point to the cursor, highlighted while dragging and painted on release (finishBrush), the
+  // pavement with exact edges at any angle, fields in the cells whose centre is inside
+  const int shape = brushShape();
+  const bool paints = mode == kGridModeSetPavement || mode == kGridModeSetField;
+  if (paints && t.inProgress && (rs.line || (t.cellX == -1 && ((inputModifiers() & 0x100) || shape == kBrushLine)))) {
+    if (!rs.line) rs.line = true, rs.lx = fx, rs.lz = fz;
+    unselectStrip(vm, grid, rs);
+    rs.hx0 = rs.hz0 = 1 << 30;
+    const GridData& g = *grid->data;
+    for (const PaintAreaCell& c : paintAreaCells(g.width, g.length, {stripRing(rs.lx, rs.lz, fx, fz, R)})) {
+      highlightCell(grid, c.x, c.z);
+      rs.hx0 = std::min(rs.hx0, c.x), rs.hz0 = std::min(rs.hz0, c.z), rs.hx1 = std::max(rs.hx1, c.x), rs.hz1 = std::max(rs.hz1, c.z);
+    }
+    ++grid->highlightVersion;
+    grid->highlightPoly.clear();  // the preview clipped to the strip
+    for (const auto& [px, pz] : stripRing(rs.lx, rs.lz, fx, fz, R)) grid->highlightPoly.insert(grid->highlightPoly.end(), {float(px), float(pz)});
+    grid->highlightCircleVersion = grid->highlightVersion;
+    gridEditEnd(vm, grid);
+    rs.fx = fx, rs.fz = fz;
+    t.cellX = int(std::floor(fx)), t.cellZ = int(std::floor(fz));
+    return;
+  }
   int type = 0, strength = 0;
   if (mode == kGridModeSetPavement) type = t.inProgress ? (toolMode & 7) + 1 : t.right ? 9 : 0;
   else if (mode == kGridModeSetField) type = t.inProgress ? (toolMode & 7) + 10 : t.right ? 0x12 : 0;
   else if (mode == kGridModeLevelTerrain && t.inProgress) type = 0x13, strength = t.cellY;
   else if (mode == kGridModeSoftenTerrain && t.inProgress) type = 0x15;
-  if (type) {
-    gridRoundBrush(grid, type, R, fx, fz, strength, false);
-    if (Object* tl = playerTimeline(vm, player)) recordRound(vm, tl, type, r, fx, fz, strength);
+  const int dab = shape == kBrushLine ? kBrushCircle : shape;  // a line's single dabs (and the height brushes): circles
+  const bool continuing = t.cellX != -1 && rs.fx > -1e8f;  // a later dab of the same stroke
+  if (type >= 1 && type <= 9) {
+    // the pavement paints: the brush's sweep from the stroke's last dab to the cursor (the hull of the shape at both
+    // points: straight sides at any angle), recorded as the point pair (strength 2, timeline.cpp applyBrush); the
+    // first dab of a stroke on its own
+    Object* tl = playerTimeline(vm, player);
+    if (continuing) {
+      const float from[2] = {rs.fx, rs.fz};
+      gridRoundBrush(grid, type, R, fx, fz, 0, false, dab, from);
+      if (tl) recordRound(vm, tl, type, r, rs.fx, rs.fz, 2, dab), recordRound(vm, tl, type, r, fx, fz, 2, dab);
+    } else {
+      gridRoundBrush(grid, type, R, fx, fz, 0, false, dab);
+      if (tl) recordRound(vm, tl, type, r, fx, fz, 2, dab), recordRound(vm, tl, type, r, fx, fz, 2, dab);  // a pair: one action a stroke
+    }
+  } else if (type) {
+    // the dabs between the last one of this stroke and the cursor, every quarter cell (a fast mouse jumps further: a
+    // round brush would scallop, a square one leave steps)
+    Object* tl = playerTimeline(vm, player);
+    float px = fx, pz = fz;
+    int steps = 1;
+    if (continuing) {
+      float dx = fx - rs.fx, dz = fz - rs.fz;
+      steps = std::clamp(int(std::ceil(std::sqrt(dx * dx + dz * dz) / 0.25f)), 1, 400);
+      px = rs.fx, pz = rs.fz;
+    }
+    for (int k = 1; k <= steps; ++k) {
+      float qx = steps == 1 ? fx : px + (fx - px) * float(k) / float(steps), qz = steps == 1 ? fz : pz + (fz - pz) * float(k) / float(steps);
+      gridRoundBrush(grid, type, R, qx, qz, strength, false, dab);
+      if (tl) recordRound(vm, tl, type, r, qx, qz, strength, dab);
+    }
   }
-  for (auto [cx, cz] : gridRoundBrushCells(grid, R, fx, fz)) highlightCell(grid, cx, cz);
-  ++grid->highlightVersion;
+  highlightShape(grid, BrushShape{dab, fx, fz, R});  // every brush shows its own shape
   gridEditEnd(vm, grid);
   rs.fx = fx, rs.fz = fz;
   t.cellX = int(std::floor(fx)), t.cellZ = int(std::floor(fz));
@@ -179,7 +269,7 @@ void moveDragRound(VM& vm, ControlObj* player, GridObj* grid, float y) {
   gridEditBegin(vm, grid);
   auto& undo = g_undo[player];
   if (!undo.empty()) restoreCells(grid, undo.back());
-  gridRoundBrush(grid, mode == kGridModeShiftTerrain ? 0x14 : 0x16, float(r) + 0.5f, rs.sx, rs.sz, t.cellY, false);
+  gridRoundBrush(grid, mode == kGridModeShiftTerrain ? 0x14 : 0x16, float(r) + 0.5f, rs.sx, rs.sz, t.cellY, false, brushShape());
   gridEditEnd(vm, grid);
   t.cellX = int(std::floor(rs.sx)), t.cellZ = int(std::floor(rs.sz));
 }
@@ -377,7 +467,7 @@ bool finishDrag(VM& vm, ControlObj* player, GridObj* grid) {
     Round& rs = g_round[player];
     if (t.cellY != 0)
       if (Object* tl = playerTimeline(vm, player))
-        recordRound(vm, tl, mode == kGridModeShiftTerrain ? 0x14 : 0x16, r, rs.sx, rs.sz, t.cellY);
+        recordRound(vm, tl, mode == kGridModeShiftTerrain ? 0x14 : 0x16, r, rs.sx, rs.sz, t.cellY, brushShape());
     gridEditBegin(vm, grid);
     unselectRound(vm, grid, rs, float(r) + 0.5f);
     gridEditEnd(vm, grid);
@@ -409,11 +499,53 @@ void cancelDrag(VM& vm, ControlObj* player, GridObj* grid) {
 // finishTool cases 3, 4, 0xf, 0x10 (L:0x0819a3e0.c:123-133): only the highlight goes
 bool finishBrush(VM& vm, ControlObj* player, GridObj* grid) {
   if (!grid) return true;
+  if (Object* tl = playerTimeline(vm, player)) timelineCloseBrush(tl);  // the stroke is one undo step
   ToolState& t = toolState(player);
   int r = brushRadius(vm, player);
   gridEditBegin(vm, grid);
   if (roundBrushes(vm)) {
     Round& rs = g_round[player];
+    if (rs.line) {  // the strip of the pavement or field brush (line shape, Shift): painted now, flags and edges recorded
+      rs.line = false;
+      unselectStrip(vm, grid, rs);
+      GridData& g = *grid->data;
+      int x0 = 1 << 30, z0 = 1 << 30, x1 = -1, z1 = -1;
+      const int type = intField(vm, player, u"toolMode", 0) & 7;
+      const float R = float(r) + 0.5f, dx = rs.fx - rs.lx, dz = rs.fz - rs.lz;
+      const bool dab = dx * dx + dz * dz < 0.0625f;  // a click without a drag: one round dab
+      PaintRing ring = dab ? BrushShape{kBrushCircle, rs.fx, rs.fz, R}.outline() : stripRing(rs.lx, rs.lz, rs.fx, rs.fz, R);
+      if (editMode(vm, player) == kGridModeSetPavement) {
+        paintArea(g, {ring}, type, x0, z0, x1, z1);
+      } else {  // fields: the cells whose centre is inside, whole (no cut field cells)
+        BrushShape area;  // the strip (or the dab) as an outline: a cell is field when its centre is inside
+        area.kind = kBrushSweep, area.poly = ring;
+        for (const PaintAreaCell& c : paintAreaCells(g.width, g.length, {ring})) {
+          bool in = area.contains(c.x + 0.5, c.z + 0.5);
+          uint16_t& f = g.flags[size_t(c.z) * size_t(g.width) + size_t(c.x)];
+          if (!in || (f & 0x2000)) continue;
+          f = uint16_t((f & 0xFFF0) | 0x20 | type);
+          dropPaintEdge(g, c.x, c.z);
+          x0 = std::min(x0, c.x), z0 = std::min(z0, c.z), x1 = std::max(x1, c.x), z1 = std::max(z1, c.z);
+        }
+      }
+      if (x1 >= x0) {
+        gridEditCellsChanged(grid, x0 - 1, z0 - 1, x1 + 1, z1 + 1, false);
+        if (Object* tl = playerTimeline(vm, player)) {
+          const int w = x1 - x0 + 1, l = z1 - z0 + 1;
+          std::vector<int16_t> heights;
+          std::vector<uint16_t> flags;
+          for (int z = z0; z <= z1; ++z)
+            for (int x = x0; x <= x1; ++x) {
+              heights.push_back(g.height[size_t(z) * size_t(g.width) + size_t(x)]);
+              flags.push_back(g.flags[size_t(z) * size_t(g.width) + size_t(x)]);
+            }
+          timelineBeginGroup(vm, tl, editMode(vm, player) == kGridModeSetPavement ? "%!13" : "%!15");
+          timelineRecordPatch(vm, tl, x0, z0, w, l, heights, flags);
+          timelineRecordPaintEdges(vm, tl, g, x0, z0, w, l);
+          timelineEndGroup(vm, tl);
+        }
+      }
+    }
     unselectRound(vm, grid, rs, float(r) + 0.5f);
     rs.fx = rs.fz = -1e9f;
   } else {
@@ -470,13 +602,31 @@ bool finishWater(VM& vm, ControlObj* player, GridObj* grid) {
 
 void noCancel(VM&, ControlObj*, GridObj*) {}
 
+// the brushes' cancel: a Shift strip not released yet is dropped (finishTool follows and would paint it)
+void cancelBrush(VM& vm, ControlObj* player, GridObj* grid) {
+  Round& rs = g_round[player];
+  if (!rs.line) return;
+  rs.line = false;
+  if (grid && grid->data) {
+    gridEditBegin(vm, grid);
+    unselectStrip(vm, grid, rs);
+    gridEditEnd(vm, grid);
+  }
+}
+
 }  // namespace
 
-void registerTerrainTools(VM&) {
+void registerTerrainTools(VM& vm) {
+  // regsBrushShape([shape]): the brushes' shape (engine/paint_edges.h: 0 circle, 1 square, 2 diamond, 3 line), set by
+  // the editor's shape buttons beside the sizes; returns the shape
+  implementGlobal(vm, u"regsBrushShape", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc > 0) setBrushShape(v.toInt(a[0]));
+    return Value::integer(brushShape());
+  }, 0, 1);
   ToolMode brush;  // level, soften, pavement, field
   brush.move = moveBrush;
   brush.finish = finishBrush;
-  brush.cancel = noCancel;
+  brush.cancel = cancelBrush;
   for (int m : {kGridModeLevelTerrain, kGridModeSoftenTerrain, kGridModeSetPavement, kGridModeSetField}) registerToolMode(m, brush);
   ToolMode drag;  // shift, ruin
   drag.move = moveDrag;

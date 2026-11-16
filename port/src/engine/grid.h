@@ -65,10 +65,14 @@ struct GridData {
     // 1: a bridge (2026-11-13, the OSM import's bridge=yes ways): the deck at the curve's own heights over the ground or
     // water, which stay as they are (no levelling, no cover), drawn with the kind's bridge span and pillars; saved in
     // the second byte of the kind in section 0x07F00000 and the timeline bytes
-    // 2 on a track (2026-11-15, the OSM import's level crossings without the crossing piece): its rails let into the road
-    // it crosses, drawn as the street tram strip at the road's height (no bed); like a bridge it leaves the ground alone
-    // (3 on a footpath: no longer set, 2026-11-15; footpaths draw with transparent grass, terrain.cpp)
+    // 2: a tunnel (main, the curve tool's tunnels)
+    // 3 on a track (2026-11-15, the OSM import's level crossings without the crossing piece; 2 until main's tunnels): its
+    // rails let into the road it crosses, drawn as the street tram strip at the road's height (no bed); like a bridge it
+    // leaves the ground alone
     uint8_t bridge = 0;
+    // the street name (2026-11-14: the map editor's rename tool over curves; findNames offers it for stop names), UTF-8,
+    // empty when unnamed; saved after the stops (format 3)
+    std::string name;
   };
   std::vector<CurveRoad> curves;
   // the stop items that anchor curve stops (and the stop tool's preview of one): not drawn, no walk map of their own
@@ -188,6 +192,13 @@ class GridObj : public script::Object {
   // drawn as an overlay with positiveMaterial / negativeMaterial; the version changes with every change
   std::set<uint32_t> highlightCells, highlightItems;
   uint64_t highlightVersion = 0;
+  // port: the round brush's circle (corner coordinates x, z and radius): while highlightCircleVersion equals
+  // highlightVersion, highlighted cells on its rim are drawn clipped to it (the paint and its eraser cut there too)
+  float highlightCircle[3] = {0, 0, 0};
+  uint64_t highlightCircleVersion = ~uint64_t(0);
+  // the same for a convex outline instead of the circle (x, z pairs in corner coordinates; the pavement brush's Shift
+  // strip): used while not empty and highlightCircleVersion equals highlightVersion
+  std::vector<float> highlightPoly;
   // gsGrid::mountObject: preview item → its mounted copy while a tool commits (children follow their parent's copy)
   std::map<uint32_t, uint32_t> mountedCopies;
   // gsGrid.viewMode (+0x1fc, GRID_VIEW_*; docs/renderer/underground.md): 0xfe (GRID_VIEW_DEFAULT) from the constructor,

@@ -194,6 +194,17 @@ struct Builder {
 
 }  // namespace
 
+bool curveEndOffMap(const GridData& g, const CurveRoad& c, int end) {
+  const float hx = float(g.width) * g.cellSize * 0.5f, hz = float(g.length) * g.cellSize * 0.5f;
+  const float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  const float ox = end ? c.dx1 : -c.dx0, oz = end ? c.dz1 : -c.dz0;  // outward along the end
+  if (hx <= 0 || hz <= 0) return false;
+  if (std::fabs(x) >= hx - 0.5f && ox * x > 0 && std::fabs(ox) > 0.95f) return true;
+  return std::fabs(z) >= hz - 0.5f && oz * z > 0 && std::fabs(oz) > 0.95f;
+}
+
+bool curveKindLeavesMap(int kind) { return kind == 0 || kind == 1 || kind == 2 || kind == 6 || kind == 7; }
+
 CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c) {
   auto joined = [&](float x, float z) {
     for (const CurveRoad& k : g.curves) {
@@ -205,8 +216,11 @@ CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c) {
   };
   CurveEnds e;
   // an end on a grass tram track keeps its turning circle too (cars turn there; the tracks run on through it)
-  e.free0 = (!(c.ends & 1) && !joined(c.x0, c.z0)) || (c.ends & 8);
-  e.free1 = (!(c.ends & 2) && !joined(c.x1, c.z1)) || (c.ends & 16);
+  // an end on the map's edge leads off the map (its lanes the traffic's way in and out, sim_graph.cpp)
+  e.free0 = ((!(c.ends & 1) && !joined(c.x0, c.z0)) || (c.ends & 8)) && !curveEndOffMap(g, c, 0);
+  e.free1 = ((!(c.ends & 2) && !joined(c.x1, c.z1)) || (c.ends & 16)) && !curveEndOffMap(g, c, 1);
+  // a ramp's end on an express road's entry or exit
+  if (curveIsRamp(c.kind)) e.free0 = e.free0 && !curveEndOnRampPort(g, c, 0), e.free1 = e.free1 && !curveEndOnRampPort(g, c, 1);
   return e;
 }
 
@@ -234,6 +248,75 @@ const char* curveBridgePiece(int kind) {
     case 2: return "bridge_ravenue_gap";
     case 6: return "bridge_tdouble_gap";
     case 7: return "bridge_rexpress_gap";
+    case 8: return "ramp_elevated_basic";  // the elevated ramp
+    default: return "";
+  }
+}
+const char* curveBridgeEnd(int kind) {
+  switch (kind) {
+    case 0: return "bridge_rsmall_end";
+    case 1: return "bridge_rlarge_end";
+    case 2: return "bridge_ravenue_end";
+    case 6: return "bridge_tdouble_end";
+    case 7: return "bridge_rexpress_end";
+    default: return "";
+  }
+}
+const char* curveTunnelPiece(int kind) {
+  switch (kind) {
+    case 0: return "tunnel_rsmall_gap";
+    case 1: return "tunnel_rlarge_gap";
+    case 2: return "tunnel_ravenue_gap";
+    case 6: return "tunnel_tdouble_gap";
+    case 7: return "tunnel_rexpress_gap";
+    default: return "";
+  }
+}
+const char* curveTunnelEnd(int kind) {
+  switch (kind) {
+    case 0: return "tunnel_rsmall_end";
+    case 1: return "tunnel_rlarge_end";
+    case 2: return "tunnel_ravenue_end";
+    case 6: return "tunnel_tdouble_end";
+    case 7: return "tunnel_rexpress_end";
+    default: return "";
+  }
+}
+bool curveTunnelOpen(const GridData& g, const CurveRoad& c, float s, CurveEnds caps, float margin) {
+  if (c.bridge != 2) return true;
+  if (caps.free0) s -= curveProfile(c.kind).capReach;  // a capped shape's arc lengths start at the cap's tip
+  const float L = curveLength(c), portal = curveProfile(c.kind).piece * curvePieces(c).stretch + margin;
+  return (s <= portal && !curveEndContinues(g, c, 0)) || (s >= L - portal && !curveEndContinues(g, c, 1));
+}
+const char* expressTransitionPiece(int kind) {
+  return kind == 1 ? "road_express_large_basic" : kind == 2 ? "road_express_avenue_basic" : "";
+}
+int curveExpressTransition(const GridData& g, const CurveRoad& c, int end) {
+  if (!curveIsExpress(c.kind)) return -1;
+  const float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  const float dx = end ? c.dx1 : c.dx0, dz = end ? c.dz1 : c.dz0;
+  for (const CurveRoad& k : g.curves) {
+    if (k.kind != 1 && k.kind != 2) continue;
+    for (int ke = 0; ke < 2; ++ke) {
+      float kx = ke ? k.x1 : k.x0, kz = ke ? k.z1 : k.z0, kdx = ke ? k.dx1 : k.dx0, kdz = ke ? k.dz1 : k.dz0;
+      if (std::fabs(kx - x) < 0.2f && std::fabs(kz - z) < 0.2f && std::fabs(kdx * dx + kdz * dz) > 0.985f) return k.kind;
+    }
+  }
+  return -1;
+}
+bool curveEndContinues(const GridData& g, const CurveRoad& c, int end) {
+  float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  for (const CurveRoad& k : g.curves) {
+    if (sameCurve(k, c) || k.bridge != c.bridge) continue;
+    if ((std::fabs(k.x0 - x) < 0.2f && std::fabs(k.z0 - z) < 0.2f) || (std::fabs(k.x1 - x) < 0.2f && std::fabs(k.z1 - z) < 0.2f))
+      return true;
+  }
+  return false;
+}
+const char* curveTramDeadend(int kind) {
+  switch (kind) {
+    case 1: return "tram_large_deadend";
+    case 2: return "tram_avenue_deadend";
     default: return "";
   }
 }
@@ -243,8 +326,92 @@ const char* curveBridgePillar(int kind) {
     case 1: return "bridge_rlarge_pillar";
     case 2: return "bridge_ravenue_pillar";
     case 7: return "bridge_rexpress_pillar";
+    case 8: return "ramp_elevated_pillar";
     default: return "";
   }
+}
+
+// ---- express ramps ----
+const char* rampPortPiece(bool enter) { return enter ? "road_express_enter" : "road_express_exit"; }
+
+void rampPortBend(const RampPort& rp, float& side, float& across) {
+  // the entry piece's road runs 3 to -z of its origin (lanes -16..+10), the exit piece's 3 to +z; an entry on the right
+  // side as it is, an exit on the right turned round (its slip lane then leaves the right side's traffic)
+  side = rp.enter ? float(rp.side) : float(-rp.side);
+  across = rp.enter ? 3.0f : -3.0f;
+}
+
+std::vector<RampPort> expressRampPorts(const GridData& g, int ei) {
+  std::vector<RampPort> out;
+  if (ei < 0 || size_t(ei) >= g.curves.size() || !curveIsExpress(g.curves[size_t(ei)].kind)) return out;
+  const CurveRoad& e = g.curves[size_t(ei)];
+  const CurveProfile& pf = curveProfile(e.kind);
+  CurvePieces cp = curvePieces(e);
+  std::vector<CurveSample> shape = curveShape(e);
+  for (int i = 0; i < cp.count; ++i) {
+    const float sc = (float(i) + 0.5f) * pf.piece * cp.stretch;
+    for (int side : {1, -1})
+      for (bool enter : {true, false}) {
+        RampPort rp;
+        rp.express = ei, rp.piece = i, rp.side = side, rp.enter = enter, rp.sCentre = sc;
+        float sg, across;
+        rampPortBend(rp, sg, across);
+        // the slip lane's end in the template: (-6, +15) on the entry piece, (-6, -15) on the exit piece, at 45 degrees
+        const float lx = -6.0f, lz = enter ? 15.0f : -15.0f;
+        CurveSample k = curveAt(shape, sc + sg * lx * cp.stretch);
+        Vec3 dir = render::normalize(Vec3{k.dir.x, 0, k.dir.z}), right = k.right;
+        rp.p = k.p + right * (sg * (lz + across));
+        // the way into the ramp: an entry's ramp comes in forward and inward (the template's (0.71, -0.71)), so out of
+        // the junction it runs back and outward; an exit's leaves forward and outward ((-0.71, -0.71) in its template)
+        Vec3 travel = enter ? dir * (sg * 0.7071f) + right * (sg * -0.7071f) : dir * (sg * -0.7071f) + right * (sg * -0.7071f);
+        rp.out = render::normalize(enter ? travel * -1.0f : travel);
+        out.push_back(rp);
+      }
+  }
+  return out;
+}
+
+std::vector<RampPort> usedRampPorts(const GridData& g) {
+  std::vector<RampPort> used;
+  bool anyRamp = false, anyExpress = false;
+  for (const CurveRoad& c : g.curves) anyRamp = anyRamp || curveIsRamp(c.kind), anyExpress = anyExpress || curveIsExpress(c.kind);
+  if (!anyRamp || !anyExpress) return used;
+  for (size_t ei = 0; ei < g.curves.size(); ++ei) {
+    if (!curveIsExpress(g.curves[ei].kind)) continue;
+    std::vector<RampPort> ports = expressRampPorts(g, int(ei));
+    for (size_t ri = 0; ri < g.curves.size(); ++ri) {
+      const CurveRoad& r = g.curves[ri];
+      if (!curveIsRamp(r.kind)) continue;
+      for (int end = 0; end < 2; ++end) {
+        float x = end ? r.x1 : r.x0, z = end ? r.z1 : r.z0;
+        for (const RampPort& p : ports)
+          if (std::fabs(p.p.x - x) < 0.3f && std::fabs(p.p.z - z) < 0.3f) {
+            RampPort u = p;
+            u.ramp = int(ri), u.rampEnd = end;
+            used.push_back(u);
+            break;
+          }
+      }
+    }
+  }
+  return used;
+}
+
+bool curveEndOnRampPort(const GridData& g, const CurveRoad& c, int end) {
+  if (!curveIsRamp(c.kind)) return false;
+  float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+  for (size_t ei = 0; ei < g.curves.size(); ++ei) {
+    const CurveRoad& e = g.curves[ei];
+    if (!curveIsExpress(e.kind)) continue;
+    // near the express curve at all (its ports lie 18 out)
+    std::vector<CurveSample> shape = curveShape(e);
+    float side, s;
+    curveNearest(shape, x, z, side, s);
+    if (std::fabs(std::fabs(side) - 18.0f) > 2.0f) continue;
+    for (const RampPort& p : expressRampPorts(g, int(ei)))
+      if (std::fabs(p.p.x - x) < 0.3f && std::fabs(p.p.z - z) < 0.3f) return true;
+  }
+  return false;
 }
 
 const CurveProfile& curveProfile(int kind) {
@@ -261,7 +428,9 @@ const CurveProfile& curveProfile(int kind) {
       {9, 24, 12.0f, 3.0f, 3.0f, 9.0f, 20.0f, "track_double_basic", "track_double_deadend", "", 4.5f, ""},
       // the express road: 30 wide like the avenue (three lanes each way at 5, 9, 13 around a 6-wide median), no pavement
       {7, 24, 24.0f, 15.0f, 15.0f, 9.0f, 30.0f, "road_express_basic", "road_express_deadend", "", 12.0f, ""},
-      // the tram bed: drawn as the double track (its mesh and dead end), its lanes the tram piece's (pf.tram; the
+      // the express road's ramp: 6 wide, pieces of 12, its dead end 9 long (centred 4.5 beyond the end)
+      {3, 0, 12.0f, 3.0f, 3.0f, 7.5f, 12.0f, "road_ramp_basic", "road_ramp_deadend", "", 4.5f, ""},
+      // 9, the tram bed: drawn as the double track (its mesh and dead end), its lanes the tram piece's (pf.tram; the
       // tram dead end's at a free end, sim_graph.cpp)
       {0xa, 24, 12.0f, 3.0f, 3.0f, 9.0f, 5.0f, "track_double_basic", "track_double_deadend", "tram_small_basic", 4.5f, ""},
   };
@@ -353,7 +522,8 @@ bool junctionTramEnd(const CurveJunction& j, const CurveArm& a, bool incoming, V
     return true;
   }
   if ((a.flow == 1) != incoming) return false;
-  p = a.single ? a.mouth : a.mouth + r * (incoming ? -1.5f : 1.5f);
+  const float off = a.kind == 0 ? 1.5f : curveTramOffset(a.kind);
+  p = a.single ? a.mouth : a.mouth + r * (incoming ? -off : off);
   return true;
 }
 
@@ -361,7 +531,8 @@ const CurveLanes& curveLanes(int kind) {
   static const CurveLanes k[kCurveKinds] = {
       {1, {1.5f, 0}, 0x300}, {2, {1.5f, 4.5f}, 0x500}, {2, {6.0f, 9.0f}, 0x500}, {0, {0, 0}, 0},
       {0, {0, 0}, 0},         {0, {0, 0}, 0},           {0, {0, 0}, 0}, {0, {0, 0}, 0},
-      {0, {0, 0}, 0}};  // tracks and tram beds: their pieces' paths only
+      {1, {0, 0}, 0x700},  // tracks and express roads: their pieces' paths only; ramps: one lane on the centre line
+      {0, {0, 0}, 0}};     // tram beds: their pieces' paths only
   return k[std::clamp(kind, 0, kCurveKinds - 1)];
 }
 
@@ -613,16 +784,49 @@ void appendBentMesh(const render::MeshData& src, int materialBase, const std::ve
   (void)first;
 }
 
-std::string stopTemplateName(const CurveRoad::Stop& st) {
-  return st.kind == 1 ? "stop_tram01_small" : "stop_bus0" + std::to_string(std::clamp(int(st.design), 1, 3)) + "_small";
+render::MeshData rightHalfOf(const render::MeshData& src) {
+  render::MeshData out = src;
+  out.indices.clear();
+  out.submeshes.clear();
+  for (const render::Submesh& sm : src.submeshes) {
+    render::Submesh o = sm;
+    o.firstIndex = uint32_t(out.indices.size());
+    o.indexCount = 0;
+    for (uint32_t k = 0; k + 2 < sm.indexCount; k += 3) {
+      float z = 0;
+      for (int j = 0; j < 3; ++j) z += src.positions[size_t(src.indices[sm.firstIndex + k + uint32_t(j)]) * 3 + 2];
+      if (z < -0.03f) continue;
+      for (int j = 0; j < 3; ++j) out.indices.push_back(src.indices[sm.firstIndex + k + uint32_t(j)]);
+      o.indexCount += 3;
+    }
+    if (o.indexCount) out.submeshes.push_back(o);
+  }
+  return out;
+}
+
+std::string stopTemplateName(const CurveRoad::Stop& st, int kind) {
+  const char* road = kind == 1 ? "_large" : kind == 2 ? "_avenue" : "_small";
+  if (st.kind == 1)  // trams: small roads keep design 01 (as before); large roads and avenues their design
+    return kind == 0 ? "stop_tram01_small" : "stop_tram0" + std::to_string(std::clamp(int(st.design), 1, 3)) + road;
+  return "stop_bus0" + std::to_string(std::clamp(int(st.design), 1, 3)) + road;
+}
+
+float curveStopOffset(int kind, int stopKind) {
+  if (kind == 2 && stopKind == 1) return 4.5f;  // an avenue's tram stop: in the middle strip
+  return curveProfile(kind).carriageway;
 }
 
 void stopAnchor(const GridData& g, const CurveRoad& c, const CurveRoad::Stop& st, int& x, int& z, int& orient) {
   std::vector<CurveSample> d = curveShape(c);
   CurveSample k = curveAt(d, st.s);
-  Vec3 p = k.p + k.right * (float(st.side) * 4.5f);  // the pavement's middle
+  // the pavement's middle (small road 4.5, large road 9, avenue 12.75 out; an avenue's tram stop on its platform, 3.75
+  // out in the middle strip); the stop items' footprints along x and across: small 4 × 2, large 8 × 4, avenue 8 × 3
+  const CurveProfile& pf = curveProfile(c.kind);
+  const float out = c.kind == 2 && st.kind == 1 ? 3.75f : (pf.carriageway + pf.halfWidth) * 0.5f;
+  Vec3 p = k.p + k.right * (float(st.side) * out);
   orient = std::fabs(k.dir.x) >= std::fabs(k.dir.z) ? 0 : 1;
-  int sx = orient ? 2 : 4, sz = orient ? 4 : 2;
+  const int along = c.kind == 1 || c.kind == 2 ? 8 : 4, across = c.kind == 1 ? 4 : c.kind == 2 ? 3 : 2;
+  int sx = orient ? across : along, sz = orient ? along : across;
   const float cs = g.cellSize;
   x = int(std::lround(p.x / cs + float(g.width) * 0.5f - float(sx) * 0.5f));
   z = int(std::lround(p.z / cs + float(g.length) * 0.5f - float(sz) * 0.5f));
@@ -634,7 +838,7 @@ void refreshCurveAnchors(GridData& g) {
     for (const CurveRoad::Stop& st : c.stops) {
       int x, z, o;
       stopAnchor(g, c, st, x, z, o);
-      std::string name = stopTemplateName(st);
+      std::string name = stopTemplateName(st, c.kind);
       for (size_t i = 0; i < g.items.size(); ++i) {
         const GridData::Item& it = g.items[i];
         if (it.removed || it.x != x || it.z != z || it.type >= g.types.size() || g.types[it.type] != name) continue;
@@ -652,10 +856,20 @@ static bool beyondBlockEnd(const CurveRoad& c, float x, float z) {
   return false;
 }
 
+// a point past an end of the curve that is not free (it meets a junction or another curve): that end's ground belongs to
+// what it meets (an avenue ring's junction lies on the island's edge: the road ending there must not claim the island)
+static bool pastJoinedEnd(const CurveRoad& c, CurveEnds caps, float x, float z) {
+  if (!caps.free0 && !(c.ends & 1) && (x - c.x0) * c.dx0 + (z - c.z0) * c.dz0 < -0.05f) return true;
+  if (!caps.free1 && !(c.ends & 2) && (x - c.x1) * c.dx1 + (z - c.z1) * c.dz1 > 0.05f) return true;
+  return false;
+}
+
 void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
   GridData& g = *grid->data;
-  if (g.height.empty() || curveIsElevated(c.kind) || c.bridge) return;  // elevated tracks and bridges leave the ground
-  std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
+  if (g.height.empty() || curveIsElevated(c.kind) || c.bridge == 1 || c.bridge == 3) return;  // elevated tracks, bridges and rails let into a road leave the ground
+  const bool tunnel = c.bridge == 2;  // tunnels: only their portals cut the ground (no rim: the walls hold it)
+  const CurveEnds caps = curveFreeEnds(g, c);
+  std::vector<CurveSample> d = curveShape(c, caps);
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
   const float cs = g.cellSize, hw = curveProfile(c.kind).halfWidth;
@@ -672,12 +886,19 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c) {
       // the block hides it, and the curve's first cells would otherwise show grass through the asphalt
       bool underItem = covered(x - 1, z - 1) || covered(x, z - 1) || covered(x - 1, z) || covered(x, z);
       float wx = (float(x) - float(g.width) * 0.5f) * cs, wz = (float(z) - float(g.length) * 0.5f) * cs;
-      if (beyondBlockEnd(c, wx, wz)) continue;
+      if (beyondBlockEnd(c, wx, wz) || pastJoinedEnd(c, caps, wx, wz)) continue;
       float side, s;
       curveNearest(d, wx, wz, side, s);
-      float ad = std::fabs(side);
+      float ad = curveAcross(c, side);
       if (ad > hw + 3.0f || (underItem && ad > hw)) continue;
+      if (tunnel && (ad > hw + 1.5f || !curveTunnelOpen(g, c, s, caps, 3.0f))) continue;
       float target = (curveAt(d, s).p.y - 0.25f) * 256.0f / cs;  // just under the asphalt (−0.2)
+      // a tunnel: a cell behind its mouth and beside the road the ground comes down to the portal's top (6 over the road),
+      // so the portal's frame stands clear in front of the hill; only lowered
+      if (tunnel && (ad > hw || !curveTunnelOpen(g, c, s, caps))) {
+        target = (curveAt(d, s).p.y + 5.8f) * 256.0f / cs;
+        if (target >= float(g.height[ci])) continue;
+      }
       if (underItem && target >= float(g.height[ci])) continue;
       float w = ad <= hw + 0.3f ? 1.0f : 1.0f - smoother((ad - hw - 0.3f) / 2.7f);
       float h = float(g.height[ci]) + (target - float(g.height[ci])) * w;
@@ -711,12 +932,13 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
     return float(lowest) * cs / 256.0f < roadY - 1.0f;
   };
   for (const CurveRoad& c : g.curves) {
-    if (curveIsElevated(c.kind) || c.bridge) continue;  // no ground cover under elevated tracks and bridges
+    if (curveIsElevated(c.kind) || c.bridge == 1 || c.bridge == 3) continue;  // no ground cover under elevated tracks, bridges, rails in a road
     int cx0, cz0, cx1, cz1;
     curveCells(g, c, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
     if (cx0 > cx1 || cz0 > cz1) continue;
-    std::vector<CurveSample> d = curveShape(c, curveFreeEnds(g, c));
+    const CurveEnds caps = curveFreeEnds(g, c);
+    std::vector<CurveSample> d = curveShape(c, caps);
     for (int z = cz0; z <= cz1; ++z)
       for (int x = cx0; x <= cx1; ++x) {
         bool inside = true;
@@ -724,7 +946,9 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
           float fx = k == 4 ? 0.5f : float(k & 1), fz = k == 4 ? 0.5f : float(k >> 1);
           float side, s, px = (float(x) + fx - float(g.width) * 0.5f) * cs, pz = (float(z) + fz - float(g.length) * 0.5f) * cs;
           curveNearest(d, px, pz, side, s);
-          inside = std::fabs(side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz);
+          inside = curveAcross(c, side) <= curveProfile(c.kind).halfWidth - 0.2f && !beyondBlockEnd(c, px, pz) &&
+                   !pastJoinedEnd(c, caps, px, pz) &&
+                   curveTunnelOpen(g, c, s, caps, 3.0f);  // a tunnel's tube: the ground over it stays (but behind the mouth)
         }
         if (!inside) continue;
         {
@@ -783,7 +1007,8 @@ void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1) {
 }
 
 // one curve: 13 floats (the 13th the end flags), i32 kind, u32 stop count, per stop f32 s, i8 side, u8 kind, u8 design,
-// u8 0 (format 2: the count's bit 31 set; format 1 had no stop count). The kind's second byte: the bridge flag.
+// u8 0, then u16 length + the name's UTF-8 bytes (format 3: the count's bits 31 and 30 set; format 2 (bit 31) had no
+// name, format 1 no stop count). The kind's second byte: the bridge flag.
 static void writeCurve(const CurveRoad& c, std::vector<uint8_t>& out) {
   auto put = [&](const void* p, size_t n) { out.insert(out.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
   float f[13] = {c.x0, c.y0, c.z0, c.dx0, c.dz0, c.x1, c.y1, c.z1, c.dx1, c.dz1, c.a, c.b, float(c.ends)};
@@ -794,10 +1019,12 @@ static void writeCurve(const CurveRoad& c, std::vector<uint8_t>& out) {
     uint8_t b[4] = {uint8_t(st.side), st.kind, st.design, 0};
     put(&st.s, 4), put(b, 4);
   }
+  uint16_t len = uint16_t(std::min<size_t>(c.name.size(), 0xFFFF));
+  put(&len, 2), put(c.name.data(), len);
 }
 
 // reads one curve at p; false when it does not fit before stop
-static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, bool v2, CurveRoad& c) {
+static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, bool v2, bool v3, CurveRoad& c) {
   if (p + 56 > stop) return false;
   float f[13];
   int32_t kind;
@@ -822,12 +1049,20 @@ static bool readCurve(const std::vector<uint8_t>& d, size_t& p, size_t stop, boo
     st.design = d[p + 6];
     c.stops.push_back(st);
   }
+  if (v3 && p + 2 <= stop) {
+    uint16_t len;
+    std::memcpy(&len, d.data() + p, 2);
+    p += 2;
+    if (p + len > stop) return false;
+    c.name.assign((const char*)d.data() + p, len);
+    p += len;
+  }
   return true;
 }
 
 void writeCurveSection(const GridData& g, std::vector<uint8_t>& out) {
   std::vector<uint8_t> body;
-  uint32_t count = uint32_t(g.curves.size()) | 0x80000000u;
+  uint32_t count = uint32_t(g.curves.size()) | 0xC0000000u;
   body.insert(body.end(), (const uint8_t*)&count, (const uint8_t*)&count + 4);
   for (const CurveRoad& c : g.curves) writeCurve(c, body);
   uint32_t tag = kCurveSectionTag, size = uint32_t(body.size());
@@ -841,11 +1076,11 @@ void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, 
   if (stop > d.size() || body + 4 > stop) return;
   uint32_t count;
   std::memcpy(&count, d.data() + body, 4);
-  bool v2 = (count & 0x80000000u) != 0;
-  count &= 0x7fffffffu;
+  bool v2 = (count & 0x80000000u) != 0, v3 = v2 && (count & 0x40000000u) != 0;
+  count &= 0x3fffffffu;
   size_t p = body + 4;
   CurveRoad c;
-  for (uint32_t i = 0; i < count && readCurve(d, p, stop, v2, c); ++i) g.curves.push_back(c);
+  for (uint32_t i = 0; i < count && readCurve(d, p, stop, v2, v3, c); ++i) g.curves.push_back(c);
   refreshCurveAnchors(g);
 }
 
@@ -917,7 +1152,7 @@ bool curveFromActionBytes(const std::vector<uint8_t>& raw, CurveRoad& c, bool& a
   if (raw.size() < 1 + 60) return false;
   add = raw[0] != 0;
   size_t p = 1;
-  return readCurve(raw, p, raw.size(), true, c);
+  return readCurve(raw, p, raw.size(), true, true, c);  // older records end before the name
 }
 
 // ---- junctions ----
@@ -1062,8 +1297,11 @@ void curveTrims(const std::vector<CurveJunction>& js, int curve, float& trim0, f
 }
 
 std::vector<Vec3> junctionOutline(const CurveJunction& j, int layer, float delta, int perGap) {
-  auto widthOf = [&](const CurveArm& a) {
+  // side +1: right of the arm's way out, -1: left. An avenue ring's arm (its outer half only) has nothing on the island
+  // side: its outer edge on the centre line, its kerb 4.5 beyond it (the right-hand carriageway's inner edge)
+  auto widthOf = [&](const CurveArm& a, int side = 1) {
     const CurveProfile& pf = curveProfile(a.kind);
+    if (a.ring && a.kind == 2 && side == (a.end == 0 ? -1 : 1)) return (layer ? 0.0f : -4.5f) + delta;
     return (layer ? pf.halfWidth : pf.carriageway) + delta;
   };
   std::vector<Vec3> pts;
@@ -1077,10 +1315,21 @@ std::vector<Vec3> junctionOutline(const CurveJunction& j, int layer, float delta
   for (size_t i = 0; i < n; ++i) {
     const CurveArm &A = j.arms[i], &B = j.arms[(i + 1) % n];
     Vec3 ra = rightOf(A.out), rb = rightOf(B.out);
-    const float wa = widthOf(A), wb = widthOf(B);
+    const float wa = widthOf(A, 1), wb = widthOf(B, -1);
     Vec3 Ea = atY(A.mouth + ra * wa), Eb = atY(B.mouth - rb * wb);
-    pts.push_back(atY(A.mouth - ra * wa));  // the mouth edge
+    pts.push_back(atY(A.mouth - ra * widthOf(A, -1)));  // the mouth edge
     pts.push_back(Ea);
+    // between two arms of an avenue ring on the island side: along the island's edge (through the centre, which lies on
+    // the ring's centre line), not across the island
+    auto islandSide = [&](const CurveArm& a, int side) { return a.ring && a.kind == 2 && side == (a.end == 0 ? -1 : 1); };
+    if (islandSide(A, 1) && islandSide(B, -1)) {
+      Vec3 P = c * 2.0f - (Ea + Eb) * 0.5f;
+      for (int k = 1; k <= perGap; ++k) {
+        float t = float(k) / float(perGap + 1), u = 1 - t;
+        pts.push_back(atY(Ea * (u * u) + P * (2 * u * t) + Eb * (t * t)));
+      }
+      continue;
+    }
     float gap = angleOf(B.mouth) - angleOf(A.mouth);
     while (gap <= 0.0f) gap += 2 * kPi;
     if (gap > kPi + 0.09f) {  // around the back of the centre
@@ -1342,7 +1591,7 @@ void buildJunctionMesh(const CurveJunction& j, int matFill, const PlanarUV& uv, 
   };
   // zebra crossings: bars across each arm just inside its mouth, cycling through the atlas' bar variants
   for (const CurveArm& A : j.arms) {
-    if (A.ring || curveIsTramBed(A.kind)) continue;  // no crossing over a roundabout's ring or a tram bed
+    if (A.ring || curveIsRamp(A.kind) || curveIsTramBed(A.kind)) continue;  // no crossing over a ring, a ramp or a tram bed
     Vec3 in = A.out * -1.0f, r = rightOf(A.out), m0 = at(A.mouth);
     int bars = std::max(1, int((2.0f * curveProfile(A.kind).carriageway - 0.32f) / 0.93f));
     float first = -(float(bars) * 0.93f - 0.32f) * 0.5f;

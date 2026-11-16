@@ -17,6 +17,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/curve_roads.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/grid_render.h"
@@ -480,12 +481,15 @@ int stopPreview(VM& vm, GridObj* grid, int cx, int cz, int toolMode, int toolTyp
     Info n = infoOf(vm, grid, o);
     if (!n.ok) continue;
     bool bus = n.type() >= 2 && n.type() <= 6, tram = n.type() >= 10 && n.type() <= 12;
-    if (!((bus && toolMode == 0) || (tram && toolMode == 1))) continue;
+    // port (owner's request 2026-11-15): a tram stop on a straight railway block (the double track), for trams on
+    // railway tracks; it is made as a small-road tram stop, its platform beside the track bed
+    const bool rail = n.type() == 9 && toolMode == 1 && (n.conn == 0x44000000u || n.conn == 0x11000000u);
+    if (!((bus && toolMode == 0) || (tram && toolMode == 1) || rail)) continue;
     Info root = n.parent >= 0 ? infoOf(vm, grid, uint32_t(n.parent)) : n;
     if ((root.ok ? root.flags : n.flags) & 0xe000) continue;  // stops, bridges, tunnels
     auto [rx, rz] = roadXZ(n);
     int shift = n.type() == 5 || n.type() == 0xb ? 8 : n.type() == 6 || n.type() == 0xc ? 16 : 0;
-    uint32_t c = n.conn;
+    uint32_t c = rail ? n.conn >> 24 : n.conn;
     auto is = [&](uint32_t pattern) { return c == pattern || c == pattern << 8 || c == pattern << 16; };
     road = int(o);
     if (is(0x44)) mask |= (cz <= rz + 1 ? 0x01u : 0x10u) << shift;              // east-west: north or south side
@@ -503,7 +507,10 @@ int stopPreview(VM& vm, GridObj* grid, int cx, int cz, int toolMode, int toolTyp
       if (s.ok && (s.flags & kFlagStop) && !(s.conn & mask)) name = o < g.names.size() ? g.names[o] : std::string();
     }
     auto [rx, rz] = roadXZ(r);
-    stop = createRoadItem(vm, grid, rx, r.y, rz, mask, 0, r.type(), toolType, r.flags | kFlagStop);
+    if (r.type() == 9)  // on a railway block: a small-road tram stop (type 10) of the tool's design
+      stop = createRoadItem(vm, grid, rx, r.y, rz, mask, 0, 10, toolType, kFlagStop);
+    else
+      stop = createRoadItem(vm, grid, rx, r.y, rz, mask, 0, r.type(), toolType, r.flags | kFlagStop);
     if (stop >= 0) {
       if (!name.empty() && g.names[size_t(stop)].empty()) g.names[size_t(stop)] = name;
       addItemFlags(grid, uint32_t(stop), kFlagJoin);
@@ -940,6 +947,142 @@ void moveRemove(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   vm.fireEvent(player, u"onHoverDemolish", {Value::boolean((t.buttons & 1) != 0)});
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// GRIDMODE_RENAME (0x14) / GRIDMODE_SET_VARIATION (0x15) (mouseMove L:0x0819f2a0.c:1426-1483, finishTool
+// L:0x0819a3e0.c:684-805): the hovered item (its root when it is a part) is the replaced set, highlighted; the hover
+// event (18 onHoverRename / 19 onHoverVariation) carries its controller. A click fires onTryApplyTool at once; the
+// game's hover script renames through the controllers' names (its dialog) and calls applyTool. finishTool records the
+// names (a group "%2" for several) or sets the variation toolMode (0..4; only where the template has that texture
+// variation, 0 always) and records it (a group "%!26" for several).
+// Rename takes the whole road segment around a hovered road (roadSegment) unless the right button is held.
+
+// port: the road segment around a road piece (after selectRoadSegment L:0x0818f2f0): the pieces of the same kind (alley,
+// road, tram track, track) that touch it along a side where both connect towards each other, followed piece by piece;
+// junctions (three or more ways) end the segment (a hovered junction is its own segment). Diagonal joins are not
+// followed.
+std::vector<uint32_t> roadSegment(VM& vm, GridObj* grid, uint32_t start) {
+  std::vector<uint32_t> out{start};
+  Info s = infoOf(vm, grid, start);
+  auto road = [](const Info& n) { return n.ok && n.type() >= 1 && n.type() <= 0xf && !(n.flags & 0x2000); };
+  auto ways = [](const Info& n) {
+    uint32_t b = (n.conn | n.conn >> 8 | n.conn >> 16 | n.conn >> 24) & 0xFF;
+    return b;
+  };
+  auto junction = [&](const Info& n) {
+    uint32_t b = ways(n);
+    int count = 0;
+    for (uint32_t d = 1; d < 0x100; d <<= 1) count += (b & d) != 0;
+    return count >= 3;
+  };
+  if (!road(s) || junction(s)) return out;
+  auto kind = [](int t) { return t == 1 ? 0 : t >= 10 && t <= 12 ? 1 : t >= 13 ? 2 : 3; };
+  std::set<uint32_t> seen{start};
+  std::vector<Info> todo{s};
+  while (!todo.empty() && out.size() < 512) {
+    Info c = todo.back();
+    todo.pop_back();
+    for (uint32_t o : gridGetObjects(vm, grid, c.x - 5, c.z - 5, c.sx + 10, c.sz + 10)) {
+      if (seen.count(o)) continue;
+      Info n = infoOf(vm, grid, o);
+      if (!road(n) || kind(n.type()) != kind(s.type())) continue;
+      // the side they share: c's direction bit towards n and n's back
+      uint32_t d = 0, back = 0;
+      bool overlapX = n.x < c.x + c.sx && c.x < n.x + n.sx, overlapZ = n.z < c.z + c.sz && c.z < n.z + n.sz;
+      if (overlapZ && n.x == c.x + c.sx) d = 4, back = 0x40;
+      else if (overlapZ && n.x + n.sx == c.x) d = 0x40, back = 4;
+      else if (overlapX && n.z == c.z + c.sz) d = 0x10, back = 1;
+      else if (overlapX && n.z + n.sz == c.z) d = 1, back = 0x10;
+      if (!d || !(ways(c) & d) || !(ways(n) & back)) continue;
+      seen.insert(o);
+      if (junction(n)) continue;
+      out.push_back(o);
+      todo.push_back(n);
+    }
+  }
+  return out;
+}
+
+void moveModify(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
+  ToolState& t = toolState(player);
+  ToolPick p = toolPick(vm, player, mx, my, false);
+  if (!p.hit) return;
+  int& last = g_lastHover.try_emplace(player, -1).first->second;
+  int item = p.item;
+  const GridData& g = *grid->data;
+  if (item >= 0)
+    while ((g.items[size_t(item)].flags & kItemAutoChild) && g.items[size_t(item)].parent)
+      item = int(g.items[size_t(item)].parent) - 1;
+  static std::unordered_map<const Object*, bool> lastRight;  // the right button switches between segment and piece
+  bool& wasRight = lastRight.try_emplace(player, false).first->second;
+  if (item == last && wasRight == t.right && !t.replaced.empty() == (item >= 0)) return;
+  wasRight = t.right;
+  gridEditBegin(vm, grid);
+  for (uint32_t r : t.replaced) gridSetSelected(vm, grid, r, false, false);
+  t.replaced.clear();
+  if (item >= 0) {
+    // rename: the whole road segment unless the right button is held (the original's +0x259)
+    std::vector<uint32_t> sel = editMode(vm, player) == kGridModeRename && !t.right ? roadSegment(vm, grid, uint32_t(item))
+                                                                                  : std::vector<uint32_t>{uint32_t(item)};
+    for (uint32_t i : sel) {
+      t.replaced.insert(i);
+      gridSetSelected(vm, grid, i, true, false);
+    }
+  }
+  gridEditEnd(vm, grid);
+  t.cellX = p.cellX, t.cellZ = p.cellZ;
+  last = item;
+  Object* c = item >= 0 ? gridItemController(vm, grid, uint32_t(item)) : nullptr;
+  Value arg = c ? Value::heap(VT::Object, c) : Value::null();
+  vm.fireEvent(player, editMode(vm, player) == kGridModeSetVariation ? u"onHoverVariation" : u"onHoverRename", {arg});
+}
+
+bool finishModify(VM& vm, ControlObj* player, GridObj* grid) {
+  ToolState& t = toolState(player);
+  if (!grid || !grid->data) return true;
+  GridData& g = *grid->data;
+  Object* tl = playerTimeline(vm, player);
+  const bool variation = editMode(vm, player) == kGridModeSetVariation;
+  const int v = intField(vm, player, u"toolMode", 0);
+  std::vector<uint32_t> items(t.replaced.begin(), t.replaced.end());
+  if (tl && items.size() > 1) timelineBeginGroup(vm, tl, variation ? "%!26" : "%2");
+  gridEditBegin(vm, grid);
+  for (uint32_t i : items) {
+    if (i >= g.items.size() || g.items[i].removed) continue;
+    if (variation) {
+      bool has = v == 0;
+      if (!has && g.items[i].type < g.types.size())
+        if (auto tp = grid->templates.find(g.types[g.items[i].type]); tp != grid->templates.end() && tp->second) {
+          auto f = tp->second->fieldValues.find(u"<variation" + utf8ToUtf16(std::to_string(v)) + u">");
+          has = f != tp->second->fieldValues.end() && !f->second.isNone() && !f->second.isNull();
+        }
+      if (has) {
+        g.items[i].variation = uint32_t(v);
+        gridEditItemChanged(grid, i);
+        if (tl) timelineRecordVariation(vm, tl, grid, i, uint32_t(v));
+      }
+    } else if (tl) {
+      timelineRecordName(vm, tl, grid, i, i < g.names.size() ? g.names[i] : std::string());
+    }
+    gridSetSelected(vm, grid, i, false, false);
+  }
+  gridEditEnd(vm, grid);
+  if (tl && items.size() > 1) timelineEndGroup(vm, tl);
+  t.replaced.clear();
+  g_lastHover[player] = -1;
+  return true;
+}
+
+void cancelModify(VM& vm, ControlObj* player, GridObj* grid) {
+  ToolState& t = toolState(player);
+  if (grid && grid->data) {
+    gridEditBegin(vm, grid);
+    for (uint32_t r : t.replaced) gridSetSelected(vm, grid, r, false, false);
+    gridEditEnd(vm, grid);
+  }
+  t.replaced.clear();
+  g_lastHover[player] = -1;
+}
+
 // the direction bit of an item's own end (+0x44 orientation, +0x54 diagonals), for the slope correction
 uint32_t endBit(const Info& n) {
   static const uint32_t straight[4] = {0x40, 0x10, 4, 1}, diagonal[4] = {0x20, 8, 2, 0x80};
@@ -1293,6 +1436,19 @@ void registerNatives(VM& vm) {
       if (!own.empty()) offer(own, d - 1.0f);
       if (!display.empty()) offer(display, d);
     }
+    // port: named curves, scored as a road piece (r 15) from their nearest point
+    for (const GridData::CurveRoad& c : g.curves) {
+      if (c.name.empty()) continue;
+      std::vector<CurveSample> shape = curveShape(c);
+      float side, s;
+      curveNearest(shape, px, pz, side, s);
+      CurveSample q = curveAt(shape, s);
+      const float r = 15.0f;
+      float d = ((q.p.x - px) * (q.p.x - px) + (q.p.y - py) * (q.p.y - py) + (q.p.z - pz) * (q.p.z - pz)) / (r * r);
+      if (d >= 4.0f) continue;
+      if (station) d += 4.0f;
+      offer(c.name, d - 1.0f);
+    }
     std::multimap<float, std::string> order;
     for (auto& [name, score] : best) order.emplace(score, name);
     for (auto& [score, name] : order) out->items.push_back(Value::string(utf8ToUtf16(name)));
@@ -1318,6 +1474,12 @@ void registerObjectTools(VM& vm) {
   remove.finish = finishRemove;
   remove.cancel = cancelRemove;
   registerToolMode(kGridModeRemoveObjects, remove);
+  ToolMode modify;  // rename (0x14), variation (0x15)
+  modify.move = moveModify;
+  modify.finish = finishModify;
+  modify.cancel = cancelModify;
+  registerToolMode(kGridModeRename, modify);
+  registerToolMode(kGridModeSetVariation, modify);
   registerNatives(vm);
   // port: regsPlaceToolTurn(player): [the place tool's turn in degrees (0 ≤ a < 360: toolMode's steps and the free
   // turn), the free turn in degrees, turnable (0/1: a preview there that may turn freely), snapped to a neighbour (0/1)] for the editor's cursor line (Shift + mouse wheel, toolWheel)
@@ -1338,6 +1500,13 @@ void registerObjectTools(VM& vm) {
     arr->items = {Value::real(float(total)), Value::real(float(fine)), Value::integer(turnable ? 1 : 0), Value::integer(snapped ? 1 : 0)};
     return Value::heap(VT::Array, arr.get());
   }, 1, 1);
+}
+
+// the connections of a placed item (its template's, turned with it): a stop's side (sim.cpp stopPlatforms)
+uint32_t gridItemConnections(VM& vm, GridObj* grid, uint32_t item) {
+  if (!grid || !grid->data || item >= grid->data->items.size()) return 0;
+  Info n = infoOf(vm, grid, item);
+  return n.ok ? n.conn : 0;
 }
 
 }  // namespace regs::engine

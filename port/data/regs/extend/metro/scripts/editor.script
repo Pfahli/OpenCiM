@@ -8,7 +8,9 @@
 //@base
 
 $regsAutosaveSlots = 5;
-$regsAutosaveSeconds = MAIN.$settings.$regsEditorAutosaveSeconds : 300.0;   // tests set it shorter
+// every 5 minutes; a setting of its own ($regsEditorAutosaveSeconds) no shorter than a minute (owner's request
+// 2026-11-16: saves every few seconds got in the way); test runs set REGS_AUTOSAVE_SECONDS
+$regsAutosaveSeconds = regsEnvNumber("REGS_AUTOSAVE_SECONDS", max(60.0, float(MAIN.$settings.$regsEditorAutosaveSeconds : 300.0)));
 
 function regsTwo($n) {
   if ($n < 10) return "0"+$n;
@@ -74,15 +76,26 @@ function regsAutosave() {
   $s.exportVariablesTo($out+".scenario", "locationSetup", "currentDate", "cellSize", "cityDescriptionShort", "regsPackages",
                        "regsSelectedPackages", "regsAutosaveStamp", "regsAutosaveLabel");
   delete $s;
-  MAIN.$ui.showStatusMessage($rs.$regs_autosave_status);
+  // no message box (owner's request 2026-11-15: the popup every few minutes got in the way); the log has the line
   delete $rs;
 }
 
+// the files go out on a background thread, and the save waits while a tool is in the middle of a drag (the
+// save cancels it) - checked again every 5 seconds
 $regsAutosaveThread = thread :: {
   loop {
     wait $regsAutosaveSeconds;
-    // not while the OpenStreetMap import builds the new map
-    if ((MAIN.$settings.$regsEditorAutosave : true) && !(MAIN.$regsOsmBusy : false)) regsAutosave();
+    while (regsToolBusy(MAIN.$player)) wait 5.0;
+    // (not while the OpenStreetMap import builds the new map)
+    if ((MAIN.$settings.$regsEditorAutosave : true) && !(MAIN.$regsOsmBusy : false)) {
+      MAIN.$ui.regsShowSaveIcon(2.4);   // the blinking disk in the top right corner, drawn before the save starts
+      skip_frame;
+      MAIN.$regsQuietStatus = true;
+      regsAsyncWrites(true);
+      regsAutosave();
+      regsAsyncWrites(false);
+      MAIN.$regsQuietStatus = false;
+    }
   }
 };
 
@@ -390,7 +403,7 @@ function regsCurveToolFor($k, $way, $shape) {
   regsCurveToolKind($k);
   $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
   regsCurveToolMode($shape);
-  regsCurveToolOneWay($k == 0 ? $way : 0);
+  regsCurveToolOneWay($k <= 2 ? $way : 0);
   regsCurveToolBridge(false);
   regsCursorInfoStart();
 }
@@ -402,20 +415,34 @@ function regsCurveBridgeFor($k) {
   regsCurveToolBridge(true);
 }
 
+// a curved tunnel of road kind k: the curve tool in curve mode, laying tunnels (the tube under the ground, a portal at
+// each open end; the ground over the tube at least as high as the portal: 6 over the road)
+function regsCurveTunnelFor($k) {
+  regsCurveToolFor($k, 0, 1);
+  regsCurveToolBridge(2);
+}
+
+// the one-way tab's lane buttons: 1 / 2 a small road with one / two lanes, 3 a large road, 4 an avenue (all lanes one way)
+function regsOneWayFor($n, $shape) {
+  if ($n <= 2) regsCurveToolFor(0, $n, $shape);
+  else regsCurveToolFor($n - 2, 2, $shape);
+}
+
 function regsOneWayLanesSet($n) {
   $regsOneWayLanes = $n;
-  regsCurveToolFor(0, $n, $regsOneWayShape);
+  regsOneWayFor($n, $regsOneWayShape);
 }
 
 function regsOneWayShapeSet($m) {
   $regsOneWayShape = $m;
-  regsCurveToolFor(0, $regsOneWayLanes, $m);
+  regsOneWayFor($regsOneWayLanes, $m);
 }
 
+// 1 / 2: a small-road ring with one / two lanes; 3 a large-road ring, 4 an avenue ring (all their lanes)
 function regsRoundaboutTool($n) {
   $regsRoundLanes = $n;
   $regsCurveUi = "round";
-  regsCurveToolKind(0);
+  regsCurveToolKind($n <= 2 ? 0 : $n - 2);
   $toolbar.selectTool(REGS_GRIDMODE_CURVE_ROAD);
   regsCurveToolMode($n == 1 ? 4 : 5);
   regsCursorInfoStart();
@@ -435,11 +462,20 @@ for ($regsI = 0; $regsI < 5; ++$regsI) {
   }
   if ($regsCurveKinds[$regsI] <= 2 || $regsCurveKinds[$regsI] == 7)  // roads: a curved bridge, with the game's bridge icon of the tab
     regsTabButton($regsTab, null, "/metro/ui/toolbar/" + $regsCurveTabs[$regsI] + "-bridge", macro($regsCurveKinds[$regsI]) :: regsCurveBridgeFor($0), $regsRs.$regs_curve_bridge_hint);
+  if ($regsCurveKinds[$regsI] <= 2 || $regsCurveKinds[$regsI] == 7)  // and a curved tunnel, with the tab's tunnel icon
+    regsTabButton($regsTab, null, "/metro/ui/toolbar/" + $regsCurveTabs[$regsI] + "-tunnel", macro($regsCurveKinds[$regsI]) :: regsCurveTunnelFor($0), $regsRs.$regs_curve_tunnel_hint);
 }
+// the express tab's ramps (kind 8): on the ground and elevated, drawn as curves (start, bend point, end); an end near an
+// express road takes its entry or exit
+$regsTab = $trafficMenu.$tabs["express"];
+regsTabButton($regsTab, null, "/metro/ui/toolbar/express-ramp", macro :: regsCurveToolFor(8, 0, 1), $regsRs.$regs_curve_ramp_hint);
+regsTabButton($regsTab, null, "/metro/ui/toolbar/express-eramp", macro :: regsCurveBridgeFor(8), $regsRs.$regs_curve_eramp_hint);
 // the road types One-way and Roundabout in the menu's top row
 $regsTab = regsAddRoadType("oneway", $regsRs.$regs_type_oneway_hint);
 regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/oneway-1", macro :: regsOneWayLanesSet(1), $regsRs.$regs_oneway1_hint);
 regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/oneway-2", macro :: regsOneWayLanesSet(2), $regsRs.$regs_oneway2_hint);
+regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/curve-large", macro :: regsOneWayLanesSet(3), $regsRs.$regs_oneway_large_hint);
+regsTabButton($regsTab, "regsOneWayLanes", "/regs/ui/toolbar/curve-avenue", macro :: regsOneWayLanesSet(4), $regsRs.$regs_oneway_avenue_hint);
 $regsShapeIcons = ["/regs/ui/toolbar/straight-free", "/regs/ui/toolbar/curve-small", "/regs/ui/toolbar/curve-free"];
 for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
   // the shapes on the tab's second row
@@ -451,6 +487,8 @@ for ($regsJ = 0; $regsJ < 3; ++$regsJ) {
 $regsTab = regsAddRoadType("roundabout", $regsRs.$regs_round_tooltip);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout-1", macro :: regsRoundaboutTool(1), $regsRs.$regs_round_one);
 regsTabButton($regsTab, null, "/regs/ui/toolbar/roundabout", macro :: regsRoundaboutTool(2), $regsRs.$regs_round_two);
+regsTabButton($regsTab, null, "/regs/ui/toolbar/curve-large", macro :: regsRoundaboutTool(3), $regsRs.$regs_round_large);
+regsTabButton($regsTab, null, "/regs/ui/toolbar/curve-avenue", macro :: regsRoundaboutTool(4), $regsRs.$regs_round_avenue);
 // tracks on curves (owner's request 2026-11-08): the build menu's metro tab gets the shapes for ground and elevated
 // metro tracks, the traffic menu's track tab those for the railway (curve kinds 4, 5, 6)
 $regsTrackTabs = [$buildMenu.$tabs["metro"], $buildMenu.$tabs["metro"], $trafficMenu.$tabs["track"]];

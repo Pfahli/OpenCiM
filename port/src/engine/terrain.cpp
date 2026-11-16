@@ -1004,9 +1004,11 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       auto needCurve = [&](const CurveRoad& c) {
         const CurveProfile& pf = curveProfile(c.kind);
         need(pf.straight), need(pf.deadend), need(pf.pillar);
-        if (c.ends & 4) need(pf.tram);
-        if (c.bridge) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind));
-        for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st).c_str());
+        if (curveIsExpress(c.kind)) need(rampPortPiece(true)), need(rampPortPiece(false)), need(expressTransitionPiece(1)), need(expressTransitionPiece(2));
+        if (c.ends & 4) need(pf.tram), need(curveTramDeadend(c.kind));
+        if (c.bridge == 1) need(curveBridgePiece(c.kind)), need(curveBridgePillar(c.kind)), need(curveBridgeEnd(c.kind));
+        if (c.bridge == 2) need(curveTunnelPiece(c.kind)), need(curveTunnelEnd(c.kind));
+        for (const CurveRoad::Stop& st : c.stops) need(stopTemplateName(st, c.kind).c_str());
       };
       need("road_small_basic"), need("tram_small_basic"), need(curveProfile(3).straight);
       for (const CurveRoad& c : g.curves) needCurve(c);
@@ -1043,16 +1045,72 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (kept <= 0.05f) return;
         CurvePieces cp = curvePieces(c, kept);
         std::vector<CurveSample> shape = curveShape(c);
-        auto pieces = [&](const char* name) {
-          ObjectObj* o = nullptr;
-          int b = name[0] ? templateOf(name, &o) : -1;
-          if (b < 0 || !o || !o->data) return;
-          const MeshData& sm = slicedOf(o->data.get());
-          for (int i = 0; i < cp.count; ++i)
-            appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * pf.piece * cp.stretch, 1.0f, 0.0f, m, cp.stretch);
+        // first / last: another piece at that end (a bridge's abutment, a tunnel's portal), turned round (side −1) when
+        // its −x side faces the curve's end
+        struct EndPiece {
+          const char* name = nullptr;
+          float side = 1.0f;
+        };
+        // an express curve's pieces with a ramp on them: the game's entry or exit piece instead (RampPort)
+        std::vector<RampPort> ramps;
+        if (curveIsExpress(c.kind) && !straight)
+          for (const RampPort& rp : usedRampPorts(g))
+            if (sameCurve(g.curves[size_t(rp.express)], c)) ramps.push_back(rp);
+        auto pieces = [&](const char* name, EndPiece first = {}, EndPiece last = {}) {
+          auto bend = [&](const char* nm, float s, float side, float across = 0.0f) {
+            ObjectObj* o = nullptr;
+            int b = nm && nm[0] ? templateOf(nm, &o) : -1;
+            if (b < 0 || !o || !o->data) return false;
+            // an avenue ring: the piece's outer half only (triangles right of its centre line)
+            if (curveHalfRing(c) && nm == pf.straight) {
+              static std::map<const render::ObjectData*, MeshData> halves;
+              auto it = halves.find(o->data.get());
+              if (it == halves.end()) it = halves.emplace(o->data.get(), rightHalfOf(slicedOf(o->data.get()))).first;
+              appendBentMesh(it->second, b, shape, s, side, across, m, cp.stretch);
+              return true;
+            }
+            appendBentMesh(slicedOf(o->data.get()), b, shape, s, side, across, m, cp.stretch);
+            return true;
+          };
+          for (int i = 0; i < cp.count; ++i) {
+            float s = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
+            bool done = false;
+            for (const RampPort& rp : ramps)
+              if (!done && rp.piece == i && name == pf.straight) {
+                float side, across;
+                rampPortBend(rp, side, across);
+                done = bend(rampPortPiece(rp.enter), s, side, across);
+              }
+            if (done) continue;
+            if (i == 0 && first.name && bend(first.name, s, first.side)) continue;
+            if (i == cp.count - 1 && i > 0 && last.name && bend(last.name, s, last.side)) continue;
+            bend(name, s, 1.0f);
+          }
         };
         const size_t before = m.positions.size();
-        pieces(straight ? straight : pf.straight);
+        {
+          // a bridge's ends on land (not on another bridge curve) take the kind's end span: the abutment on its −x side
+          // (bridge_*_end, as the game's bridge tool puts at a bridge's ends)
+          EndPiece first, last;
+          if (straight && c.bridge == 1) {
+            const char* abut = curveBridgeEnd(c.kind);
+            if (!curveEndContinues(g, c, 0)) first = {abut, 1.0f};
+            if (!curveEndContinues(g, c, 1)) last = {abut, -1.0f};
+          }
+          // an express road's end on a large road or avenue: the game's transition piece (its express side, +x, inward)
+          if (!straight && curveIsExpress(c.kind)) {
+            int t0k = curveExpressTransition(g, c, 0), t1k = curveExpressTransition(g, c, 1);
+            if (t0k >= 0) first = {expressTransitionPiece(t0k), 1.0f};
+            if (t1k >= 0) last = {expressTransitionPiece(t1k), -1.0f};
+          }
+          // a tunnel's portals: the mouth (-x) toward the tube
+          if (straight && c.bridge == 2) {
+            const char* portal = curveTunnelEnd(c.kind);
+            if (!curveEndContinues(g, c, 0)) first = {portal, -1.0f};
+            if (!curveEndContinues(g, c, 1)) last = {portal, 1.0f};
+          }
+          pieces(straight ? straight : pf.straight, first, last);
+        }
         static const bool debugBridge = std::getenv("REGS_DEBUG_CURVES") != nullptr;
         if (debugBridge && straight) {  // the span's drawn extent and the live ground under the curve's middle
           float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
@@ -1078,7 +1136,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           }
         }
         if ((c.ends & 4) && !curveIsTramBed(c.kind)) pieces(pf.tram);  // (a tram bed's tram piece: its lanes only)
-        if (straight && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
+        if (straight && c.bridge == 1 && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
                                                          // its foot 8 cells under the deck as the span's own parts
           ObjectObj* po = nullptr;
           int pb = templateOf(curveBridgePillar(c.kind), &po);
@@ -1089,7 +1147,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
               float s = t0 + kept * float(i) / float(count + 1);
               CurveSample k = curveAt(shape, s);
               Vec3 ax = render::normalize(Vec3{k.dir.x, 0, k.dir.z});
-              appendPlacedMesh(po->data->mesh, pb, k.p + Vec3{0, -24.0f, 0}, ax, k.right, m);
+              appendPlacedMesh(po->data->mesh, pb, k.p + Vec3{0, curveIsRamp(c.kind) ? -3.0f : -24.0f, 0}, ax, k.right, m);
             }
         }
         if (pf.pillar[0]) {  // elevated tracks: the straight piece's pillar parts (metroe_basic onPlace: a half on each
@@ -1105,22 +1163,37 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             }
         }
         CurveEnds caps = curveFreeEnds(g, c);
-        ObjectObj* dob = nullptr;
-        int db = templateOf(pf.deadend, &dob);
-        if (db < 0 || !dob || !dob->data) return;
-        auto cf = dob->fieldValues.find(u"connections");
-        uint32_t conn = cf == dob->fieldValues.end() || cf->second.isNone() ? 0x40u << pf.shift : uint32_t(vm.toInt(cf->second));
-        bool openPlusX = ((conn >> pf.shift) & 0x40) != 0;
-        for (int end = 0; end < 2; ++end) {
-          if (!(end ? caps.free1 : caps.free0)) continue;
-          Vec3 o, ax, az;
-          curveCapFrame(c, end, openPlusX, o, ax, az);
-          appendPlacedMesh(dob->data->mesh, db, o, ax, az, m);
-        }
+        // the dead-end piece at a free end; with tracks the street tram dead-end piece too (the tracks' end, as the game
+        // lays it: no lanes, trams turn round only at a stop on the same track), its open edge on the road piece's
+        auto openEdge = [](const render::MeshData& mesh, bool plusX) {
+          float lo = 1e9f, hi = -1e9f;
+          for (size_t k = 0; k + 2 < mesh.positions.size(); k += 3) lo = std::min(lo, mesh.positions[k]), hi = std::max(hi, mesh.positions[k]);
+          return plusX ? hi : lo;
+        };
+        float roadEdge = 0;
+        auto deadEnd = [&](const char* name, bool road) {
+          ObjectObj* dob = nullptr;
+          int db = name[0] ? templateOf(name, &dob) : -1;
+          if (db < 0 || !dob || !dob->data) return;
+          auto cf = dob->fieldValues.find(u"connections");
+          uint32_t conn = cf == dob->fieldValues.end() || cf->second.isNone() ? 0x40u << pf.shift : uint32_t(vm.toInt(cf->second));
+          bool openPlusX = ((conn >> pf.shift) & 0x40) != 0;
+          float edge = openEdge(dob->data->mesh, openPlusX), shift = road ? 0.0f : roadEdge - edge;
+          if (road) roadEdge = edge;
+          for (int end = 0; end < 2; ++end) {
+            if (!(end ? caps.free1 : caps.free0)) continue;
+            Vec3 o, ax, az;
+            curveCapFrame(c, end, openPlusX, o, ax, az);
+            appendPlacedMesh(dob->data->mesh, db, o + ax * shift, ax, az, m);
+          }
+        };
+        deadEnd(pf.deadend, true);
+        if (c.ends & 4) deadEnd(curveTramDeadend(c.kind), false);
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
-        if (c.bridge == 2 && curveIsTrack(c.kind)) {  // a level crossing's rails let into the road (OSM import): the
-                                                      // street tram strip just over the asphalt, no bed
+        if (c.bridge == 3 && curveIsTrack(c.kind)) {  // a level crossing's rails let into the road (OSM import; 2 until
+                                                      // main's tunnels took it): the street tram strip just over the
+                                                      // asphalt, no bed
           ObjectObj* o = nullptr;
           int b = templateOf("tram_small_basic", &o);
           const float kept = curveLength(c) - t0 - t1;
@@ -1133,7 +1206,11 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
                            cp.stretch, -0.18f);
           return;
         }
-        if (c.bridge && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
+        if (c.bridge == 2 && curveTunnelPiece(c.kind)[0]) {  // a tunnel: the tube bent along it, portals at its open ends
+          bentRoad(c, m, t0, t1, curveTunnelPiece(c.kind));
+          return;
+        }
+        if (c.bridge == 1 && curveBridgePiece(c.kind)[0]) {  // a bridge: the kind's bridge span bent along it
           // shorter than 3/4 of a span piece (after the junctions' trims): the plain road (a span squeezed that much
           // shows its girders instead of a deck)
           const float kept = curveLength(c) - t0 - t1, piece = curveProfile(c.kind).piece;
@@ -1147,20 +1224,26 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             return;
           }
         }
+        // the stops: their templates' meshes (the shelter) bent along the curve at the kerb (3 out on small roads, 6 on
+        // large roads, 10.5 on avenues, an avenue's tram stop 4.5 in its middle strip: curveStopOffset)
+        auto stops = [&]() {
+          if (c.stops.empty()) return;
+          std::vector<CurveSample> shape = curveShape(c);
+          for (const CurveRoad::Stop& st : c.stops) {
+            ObjectObj* o = nullptr;
+            int sb = templateOf(stopTemplateName(st, c.kind), &o);
+            if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), curveStopOffset(c.kind, st.kind), m);
+          }
+        };
         if (c.kind != 0) {
           bentRoad(c, m, t0, t1);
+          stops();
           return;
         }
         bool meet0 = false, meet1 = false;
         if (!noCaps) curveOneWayMeets(g, c, t0, t1, meet0, meet1);
         buildCurveMesh(c, noCaps ? CurveEnds{} : curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1, meet0, meet1);
-        if (c.stops.empty()) return;
-        std::vector<CurveSample> shape = curveShape(c);
-        for (const CurveRoad::Stop& st : c.stops) {
-          ObjectObj* o = nullptr;
-          int sb = templateOf(stopTemplateName(st), &o);
-          if (sb >= 0 && o && o->data) appendBentMesh(o->data->mesh, sb, shape, st.s, float(st.side), 3.0f, m);
-        }
+        stops();
       };
       MeshData all, paths;  // paths: the footpaths (their own transparent-grass material)
       std::vector<CurveJunction> junctions = findCurveJunctions(g);

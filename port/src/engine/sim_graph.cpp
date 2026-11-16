@@ -539,6 +539,124 @@ void finishLaneNode(LaneNode& n) {
 
 namespace {
 
+// port: trams on railway tracks (owner's request 2026-11-15). A railway lane (GRID_PATH_TRAIN) gets a twin of the tram
+// class on the same curve (no START / END / PARK: trams do not enter or leave the map there; a station's platform
+// tracks keep STOP), so tram lines route over railway tracks; the two lie on each other, so linkCrossings makes them
+// crossings and trams and trains wait for each other there.
+void addRailTwin(LaneGraph& G, int ni, std::vector<int>& list, std::vector<int>& scratch) {
+  if ((G.nodes[size_t(ni)].flags & kPathClassMask) != kPathTrain || (G.nodes[size_t(ni)].flags & kPathDeleted)) return;
+  const LaneNode& o = G.nodes[size_t(ni)];
+  LaneNode t;
+  // a train station's platform track (STOP, ALTERNATIVE_STOP: station-track, terminal-track) keeps its marks: trams
+  // halt there as at a tram stop (the station is a tram stop too, registerStop)
+  t.flags = (o.flags & ~(kPathClassMask | kPathStart | kPathEnd | kPathExternal | kPathPark | kPathConnectTo | kPathConnectFrom)) |
+            kPathTram;
+  t.item = o.item;
+  t.p0 = o.p0, t.p1 = o.p1, t.f0 = o.f0, t.f1 = o.f1;
+  t.railTwin = true;
+  // and the other way on the same track, as tram tracks have both ways on each track: trams turn round at a stop there
+  // (reverseConsist) and reach a stop on either track; the two cross each other, so only one tram holds the piece
+  LaneNode r = t;
+  r.p0 = t.p1, r.p1 = t.p0, r.f0 = t.f1 * -1.0f, r.f1 = t.f0 * -1.0f;
+  for (LaneNode* n : {&t, &r}) {
+    finishLaneNode(*n);
+    // the way against the railway's own direction: slow (an eighth of the speed), so routes keep to the right-hand track
+    // and its turning loops and run against it only for a short turn at a stop (head-on meetings with trains lock both
+    // until the jam relief)
+    if (n == &r) n->speedLimit *= 0.125f;
+    int ti = int(G.nodes.size());
+    G.nodes.push_back(*n);
+    insertNode(G, ti, scratch);
+    list.push_back(ti);
+  }
+}
+
+// port: connectors where a tram track ends at a railway track: from a street tram lane's end with no successor to a
+// rail twin starting within 14 units ahead (going on the same way), and from a rail twin's end to a street tram lane
+// that starts there without a predecessor. Ends that meet (within 0.1) link by themselves (insertNode).
+void linkTramsToRail(LaneGraph& G) {
+  removeNodeList(G, G.railLinks);
+  G.railLinks.clear();
+  std::vector<int> found, scratch;
+  std::vector<LaneNode> made;
+  const float cs = G.cellSize;
+  for (size_t i = 0; i < G.nodes.size(); ++i) {
+    const LaneNode& T = G.nodes[i];
+    if ((T.flags & kPathClassMask) != kPathTram || (T.flags & kPathDeleted)) continue;
+    if (!T.railTwin && !T.next.empty()) continue;  // a street tram lane: only its dead ends
+    G.query(int(T.p1.x / cs) + G.width / 2 - 5, int(T.p1.z / cs) + G.length / 2 - 5, 10, 10, 0, found);
+    int best = -1;
+    float bestD = 14.0f;
+    for (int si : found) {
+      const LaneNode& S = G.nodes[size_t(si)];
+      if ((S.flags & kPathClassMask) != kPathTram || (S.flags & kPathDeleted) || S.railTwin == T.railTwin) continue;
+      if (!S.railTwin && S.inDegree > 0) continue;  // a street tram lane: only where it starts without a predecessor
+      Vec3 d = S.p0 - T.p1;
+      float len = std::sqrt(dot(d, d));
+      if (len < 0.1f || len >= bestD) continue;
+      if (dot(T.f1, d * (1.0f / len)) < 0.5f || dot(T.f1, S.f0) < 0.7f) continue;
+      best = si, bestD = len;
+    }
+    if (best < 0) continue;
+    LaneNode c;
+    c.flags = kPathTram;
+    c.item = -1;
+    c.p0 = T.p1, c.p1 = G.nodes[size_t(best)].p0, c.f0 = T.f1, c.f1 = G.nodes[size_t(best)].f0;
+    finishLaneNode(c);
+    made.push_back(c);
+  }
+  // a railway track's dead end: a tram turning loop onto the other track (from a tram lane ending there with no way on to
+  // one of the other track starting within 9 units back the other way), so trams turn at the end of a line as on a loop
+  int loops = 0;
+  for (size_t i = 0; i < G.nodes.size(); ++i) {
+    const LaneNode& T = G.nodes[i];
+    if (!T.railTwin || (T.flags & kPathDeleted) || !T.next.empty()) continue;
+    G.query(int(T.p1.x / cs) + G.width / 2 - 4, int(T.p1.z / cs) + G.length / 2 - 4, 8, 8, 0, found);
+    int best = -1;
+    float bestD = 81.0f;
+    for (int si : found) {
+      const LaneNode& S = G.nodes[size_t(si)];
+      if (!S.railTwin || (S.flags & kPathDeleted) || S.inDegree > 0 || dot(T.f1, S.f0) > -0.7f) continue;
+      Vec3 d = S.p0 - T.p1;
+      float d2 = dot(d, d);
+      if (d2 < 4.0f || d2 >= bestD) continue;  // not the same track's other way (it lies on it)
+      best = si, bestD = d2;
+    }
+    if (best < 0) continue;
+    LaneNode c;
+    c.flags = kPathTram;
+    c.item = -1;
+    c.p0 = T.p1, c.p1 = G.nodes[size_t(best)].p0, c.f0 = T.f1, c.f1 = G.nodes[size_t(best)].f0;
+    finishLaneNode(c);
+    made.push_back(c);
+    ++loops;
+  }
+  for (LaneNode& c : made) {
+    int ci = int(G.nodes.size());
+    G.nodes.push_back(c);
+    insertNode(G, ci, scratch);
+    G.railLinks.push_back(ci);
+  }
+  if (loops) LOG_INFO("lane graph: %d tram turning loops at railway dead ends", loops);
+  if (std::getenv("REGS_DEBUG_SIM")) {  // the rail twins and how many of them cross the railway lane under them
+    int twins = 0, crossing = 0;
+    for (const LaneNode& n : G.nodes)
+      if (n.railTwin && !(n.flags & kPathDeleted)) {
+        ++twins;
+        for (int c : n.crossings)
+          if ((G.nodes[size_t(c)].flags & kPathClassMask) == kPathTrain) {
+            ++crossing;
+            break;
+          }
+      }
+    LOG_INFO("lane graph: %d tram lanes on railway tracks, %d of them crossing their railway lane", twins, crossing);
+  }
+  if (!made.empty()) {
+    linkCrossings(G, G.nodes.size() - made.size());
+    LOG_INFO("lane graph: %zu tram connectors between tram tracks and railway tracks", made.size());
+  }
+}
+
 // gsGridObject::addPaths: one node per path of a placed item, inserted and linked (§2.1-2.3)
 void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vector<int>& scratch) {
   const GridData::Item& it = g.items[i];
@@ -572,6 +690,9 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
     list.push_back(ni);
   }
   std::reverse(list.begin(), list.end());  // prepended: descending path names
+  // port: trams on railway tracks (owner's request 2026-11-15, as Karlsruhe's tram-trains): a tram lane on every railway
+  // lane, after the item's own lanes so the save's lane numbers stay
+  for (size_t k = 0, n0 = list.size(); k < n0; ++k) addRailTwin(G, list[k], list, scratch);
 }
 
 }  // namespace
@@ -645,6 +766,7 @@ void buildLaneGraph(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, cons
   for (const auto& n : G.nodes) links += n.next.size();
   LOG_INFO("lane graph: %zu nodes (%d generated water lanes), %zu links", G.nodes.size(), G.latticeCount, links);
   LOG_INFO("lane graph: %zu crossing pairs", linkCrossings(G));
+  linkTramsToRail(G);
 }
 
 void addItemNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, const std::vector<uint32_t>& items) {
@@ -654,6 +776,7 @@ void addItemNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G, const 
   for (uint32_t i : items)
     if (i < g.items.size() && G.itemNodes[i].empty()) addPaths(g, G, i, templateOf(vm, grid, g, g.items[i].type), scratch);
   linkCrossings(G, first);
+  linkTramsToRail(G);
 }
 
 void removeItemNodes(LaneGraph& G, uint32_t item) {
@@ -730,20 +853,70 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     const float kept = curveLength(c) - t0 - t1;
     CurvePieces cp = curvePieces(c, kept);
     std::vector<CurveSample> shape = curveShape(c);
-    auto lay = [&](PathSetObj* ps) {
-      if (!ps) return;
+    // an express curve's pieces with a ramp on them: the entry or exit piece's paths (bent as it is drawn, terrain.cpp)
+    std::vector<RampPort> ramps;
+    if (curveIsExpress(c.kind))
+      for (const RampPort& rp : usedRampPorts(g))
+        if (sameCurve(g.curves[size_t(rp.express)], c)) ramps.push_back(rp);
+    // one-way large roads and avenues (ends bit 5, 2026-11-15): every lane runs from the start to the end (the piece's
+    // paths against the curve turned round); where an end meets a two-way road (curveOneWayMeets) the left-hand lanes
+    // split from / merge into the right-hand ones on the piece next to it
+    const bool oneWay = (c.ends & 0x20) && (c.kind == 1 || c.kind == 2);
+    bool meet0 = false, meet1 = false;
+    if (oneWay) curveOneWayMeets(g, c, t0, t1, meet0, meet1);
+    auto lay = [&](PathSetObj* basePs) {
+      if (!basePs) return;
       for (int i = 0; i < cp.count && kept > 0.05f; ++i) {
         float s0 = t0 + (float(i) + 0.5f) * pf.piece * cp.stretch;
-        for (const auto& [name, p] : ps->paths) {
-          if (!track && !keep(p)) continue;
-          CurveSample a = curveAt(shape, s0 + p.p0.x * cp.stretch), b = curveAt(shape, s0 + p.p1.x * cp.stretch);
+        PathSetObj* ps = basePs;
+        float sg = 1.0f, across = 0.0f;
+        for (const RampPort& rp : ramps)
+          if (rp.piece == i && basePs == pathsOf(templateObject(pf.straight)))
+            if (PathSetObj* rps = pathsOf(templateObject(rampPortPiece(rp.enter)))) ps = rps, rampPortBend(rp, sg, across);
+        // an end on a large road or avenue: the transition piece's paths (terrain.cpp draws it there)
+        if (curveIsExpress(c.kind) && basePs == pathsOf(templateObject(pf.straight)))
+          for (int end = 0; end < 2; ++end) {
+            int tk = curveExpressTransition(g, c, end);
+            if (tk < 0 || i != (end ? cp.count - 1 : 0) || (end && i == 0)) continue;
+            if (PathSetObj* tps = pathsOf(templateObject(expressTransitionPiece(tk)))) ps = tps, sg = end ? -1.0f : 1.0f, across = 0.0f;
+          }
+        for (const auto& [name, p0path] : ps->paths) {
+          if (!track && !keep(p0path)) continue;
+          PathRecord p = p0path;
+          if (curveHalfRing(c) && ps == basePs && p.p0.z < 0 && p.p1.z < 0) continue;  // an avenue ring: its outer half only
+          if (oneWay && ps == basePs && sg > 0 && p.f0.x + p.f1.x < 0) {  // against the curve: turned round
+            std::swap(p.p0, p.p1);
+            Vec3 f0 = p.f1 * -1.0f, f1 = p.f0 * -1.0f;
+            p.f0 = f0, p.f1 = f1;
+          }
+          if (oneWay && ps == basePs) {
+            const float half = pf.piece * 0.5f - 0.01f;
+            if (meet0 && i == 0 && p.p0.x <= -half && p.p0.z < 0) p.p0.z = -p.p0.z;                    // split from the right
+            if (meet1 && i == cp.count - 1 && p.p1.x >= half && p.p1.z < 0) p.p1.z = -p.p1.z;          // merge into it
+          }
+          CurveSample a = curveAt(shape, s0 + sg * p.p0.x * cp.stretch), b = curveAt(shape, s0 + sg * p.p1.x * cp.stretch);
           LaneNode n;
           n.flags = p.flags & ~kPathStop;
+          // a bus stop (large roads, avenues) on this piece: the kerb lane on its side gets STOP where the stop is
+          if (!c.stops.empty() && (p.flags & kPathClassMask & ~0x600u) == kPathRoad && !(p.flags & kPathPark)) {
+            const float outer = curveLanes(c.kind).offset[1], sa = s0 + p.p0.x * cp.stretch, sb = s0 + p.p1.x * cp.stretch;
+            for (const CurveRoad::Stop& st : c.stops)
+              if (st.kind == 0 && std::fabs(std::fabs(p.p0.z) - outer) < 0.5f && (p.p0.z > 0) == (st.side > 0) &&
+                  st.s >= std::min(sa, sb) && st.s < std::max(sa, sb))
+                n.flags |= kPathStop;
+          }
+          // a tram stop: the tram lane on its side (large roads: the kerb lane's track; avenues: the middle strip's)
+          if (!c.stops.empty() && (p.flags & kPathClassMask) == kPathTram) {
+            const float sa = s0 + p.p0.x * cp.stretch, sb = s0 + p.p1.x * cp.stretch;
+            for (const CurveRoad::Stop& st : c.stops)
+              if (st.kind == 1 && (p.p0.z > 0) == (st.side > 0) && st.s >= std::min(sa, sb) && st.s < std::max(sa, sb))
+                n.flags |= kPathStop;
+          }
           n.item = -1;
-          n.p0 = a.p + a.right * p.p0.z + Vec3{0, p.p0.y, 0};
-          n.p1 = b.p + b.right * p.p1.z + Vec3{0, p.p1.y, 0};
-          n.f0 = render::normalize(a.dir * p.f0.x + a.right * p.f0.z);
-          n.f1 = render::normalize(b.dir * p.f1.x + b.right * p.f1.z);
+          n.p0 = a.p + a.right * (sg * (p.p0.z + across)) + Vec3{0, p.p0.y, 0};
+          n.p1 = b.p + b.right * (sg * (p.p1.z + across)) + Vec3{0, p.p1.y, 0};
+          n.f0 = render::normalize(a.dir * (sg * p.f0.x) + a.right * (sg * p.f0.z));
+          n.f1 = render::normalize(b.dir * (sg * p.f1.x) + b.right * (sg * p.f1.z));
           add(n);
         }
       }
@@ -777,6 +950,12 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     }
   };
   std::vector<CurveJunction> junctions = findCurveJunctions(g);
+  if (std::getenv("REGS_DEBUG_CURVES"))
+    for (size_t ci = 0; ci < g.curves.size(); ++ci) {
+      const CurveRoad& c = g.curves[ci];
+      LOG_INFO("curve %zu: kind %d ends %02x from %.1f,%.1f dir %.2f,%.2f to %.1f,%.1f dir %.2f,%.2f", ci, c.kind, c.ends, c.x0, c.z0,
+               c.dx0, c.dz0, c.x1, c.z1, c.dx1, c.dz1);
+    }
   for (size_t ci = 0; ci < g.curves.size(); ++ci) {
     const CurveRoad& c = g.curves[ci];
     float trim0, trim1;
@@ -895,9 +1074,19 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
           if (X.flow == 0) {
             for (int k = ln.count - 1; k >= 0; --k) pts.push_back(X.mouth + rx * (incoming ? -ln.offset[k] : ln.offset[k]));
           } else if ((X.flow == 1) == incoming) {
-            if (X.single) pts.push_back(X.mouth);
-            else if (incoming) pts = {X.mouth - rx * 1.5f, X.mouth + rx * 1.5f};
-            else pts = {X.mouth + rx * 1.5f, X.mouth - rx * 1.5f};
+            if (X.single) {
+              pts.push_back(X.mouth);
+            } else if (X.kind == 0) {
+              if (incoming) pts = {X.mouth - rx * 1.5f, X.mouth + rx * 1.5f};
+              else pts = {X.mouth + rx * 1.5f, X.mouth - rx * 1.5f};
+            } else {  // a one-way large road or avenue: all its lanes one way, the rightmost first
+              std::vector<float> offs;
+              for (int k = ln.count - 1; k >= 0; --k) offs.push_back(-ln.offset[k]);
+              // an avenue ring (its outer half): only the right-hand carriageway
+              if (!(X.ring && X.kind == 2))
+                for (int k = 0; k < ln.count; ++k) offs.push_back(ln.offset[k]);
+              for (float o : offs) pts.push_back(X.mouth + rx * (incoming ? o : -o));
+            }
           }
           return pts;
         };
@@ -925,7 +1114,42 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         }
       }
   }
+  // trams on railway tracks: a tram twin on every railway lane of the curves (addRailTwin)
+  {
+    std::vector<int> twins;
+    for (size_t i = first, n0 = G.nodes.size(); i < n0; ++i) addRailTwin(G, int(i), twins, scratch);
+    G.curveNodes.insert(G.curveNodes.end(), twins.begin(), twins.end());
+  }
+  // map-edge ends (curveEndOffMap): the lanes starting on the map's border are the traffic's way in (START), those
+  // ending there its way out (END), both EXTERNAL as on the game's map-edge pieces (vehicles fade out there)
+  {
+    const float hx = float(g.width) * g.cellSize * 0.5f, hz = float(g.length) * g.cellSize * 0.5f;
+    auto onBorder = [&](const Vec3& p) { return std::fabs(p.x) >= hx - 0.6f || std::fabs(p.z) >= hz - 0.6f; };
+    bool any = false;
+    for (const CurveRoad& c : g.curves)
+      if (curveEndOffMap(g, c, 0) || curveEndOffMap(g, c, 1)) any = true;
+    int starts = 0, ends = 0;
+    if (any)
+      for (size_t i = first; i < G.nodes.size(); ++i) {
+        LaneNode& n = G.nodes[i];
+        if (onBorder(n.p0) && !onBorder(n.p1)) n.flags |= kPathStart | kPathExternal, ++starts;
+        if (onBorder(n.p1) && !onBorder(n.p0)) n.flags |= kPathEnd | kPathExternal, ++ends;
+      }
+    if (any) LOG_INFO("curved roads: map edge: %d lanes in, %d out", starts, ends);
+  }
   linkCrossings(G, first);
+  linkTramsToRail(G);
+  if (std::getenv("REGS_DEBUG_CURVES"))  // express ramps: the lanes meeting at each port and their links
+    for (const RampPort& rp : usedRampPorts(g)) {
+      int in = 0, out = 0, linked = 0;
+      for (size_t i = first; i < G.nodes.size(); ++i) {
+        const LaneNode& n = G.nodes[i];
+        if (dist2(n.p1, rp.p + Vec3{0, -0.2f, 0}) < 0.05f) ++in, linked += n.next.empty() ? 0 : 1;
+        if (dist2(n.p0, rp.p + Vec3{0, -0.2f, 0}) < 0.05f) ++out, linked += n.inDegree > 0 ? 1 : 0;
+      }
+      LOG_INFO("curved roads: ramp %s on express %d piece %d side %d: %d lanes end there, %d start, %d linked",
+               rp.enter ? "entry" : "exit", rp.express, rp.piece, rp.side, in, out, linked);
+    }
   if (junctionFirst < G.nodes.size()) {  // every turn should continue both ways
     size_t joined = 0, total = G.nodes.size() - junctionFirst;
     for (size_t i = junctionFirst; i < G.nodes.size(); ++i)

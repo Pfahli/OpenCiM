@@ -92,6 +92,9 @@ struct ToolState {
   bool snapped = false;
   int snapOrient = 0;
   float snapYaw = 0, snapOffX = 0, snapOffZ = 0, snapAngle = 0;
+  // port: objects getReplacedObjects returns after the replaced items' controllers (the rename tool's stand-in for
+  // curves; kept alive by the tool that sets them)
+  std::vector<script::Object*> extraReplaced;
 };
 
 // port: Shift + mouse wheel over the player (the control under the mouse; notches, positive away from the user; modifiers: the desktop's 0x100 Shift, 0x200 Ctrl)

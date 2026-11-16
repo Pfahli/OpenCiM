@@ -54,6 +54,7 @@ The tool refuses a road that the junction would use up (an arm shorter than the 
 | metro, elevated | 6 | – | 20 | bent `metro_elevated_basic`, pillars under every joint; ground left as it is |
 | railway (double track) | 6 | – | 20 | bent `track_double_basic`; track tab of the traffic menu |
 | express road | 30 | 3 (±5, ±9, ±13) | 30 | bent `road_express_basic`, median, no pavement; express tab; joins only express roads, smoothly (no junctions), no pedestrians; bridges with `bridge_rexpress_gap` |
+| ramp | 6 | 1 on the centre line, used both ways (as the game's) | 12 | bent `road_ramp_basic`; express tab; joins roads at junctions and express roads at their entries and exits (below); elevated: `ramp_elevated_basic`; no pedestrians |
 
 ### Bridges (curves)
 
@@ -73,6 +74,58 @@ A curve can be a bridge (`CurveRoad::bridge = 1`). It is meant for the OSM impor
   `REGS_TEST_CURVE_BRIDGE=1`.
 - Checked (2026-11-13): small-road, large-road and avenue bridges (spans, parapets, pillar posts) over the S-curve; the
   OSM import's Saalbach bridge in Bruchsal.
+- Abutments (2026-11-15): a bridge's ends that do not continue on another bridge curve (on land: a road, a junction, a
+  free end) take the kind's end span instead of the gap span (`bridge_rsmall_end`, `_rlarge_end`, `_ravenue_end`,
+  `_tdouble_end`, `_rexpress_end`): its abutment wall on the land side (the template's local −x), as the game's
+  bridge tool puts it (`curveBridgeEnd`). Checked on a large-road bridge.
+
+### Tunnels (curves)
+
+A curve can be a tunnel (`CurveRoad::bridge = 2`, 2026-11-15): the kind's tunnel tube bent along it (`tunnel_rsmall_gap`,
+`_rlarge_gap`, `_ravenue_gap`, `_tdouble_gap`, `_rexpress_gap`) and its portal (`tunnel_*_end`: the mouth with its
+frame 6 high on the template's −x side, wing walls falling to the open road) on the first and last piece where the
+tunnel does not continue on another tunnel curve.
+- The road runs at the curve's own heights (y0 to y1), like a bridge's deck. Only the portals cut the ground: under
+  their pieces it is levelled to the road and covered; a cell behind each mouth (and beside the road there) it comes
+  down to the portal's top, so the frame stands clear in front of the hill. Over the tube the ground stays as it is: no
+  cover, no walk map, items over it are not in the way (`curveTunnelOpen`).
+- Editor: the small-road, large-road, avenue and express tabs get a tunnel button (the tab's tunnel icon): the curve
+  tool in curve mode laying tunnels (`regsCurveToolBridge(2)`). The ground over the tube must stand at least 6 over
+  the road (the portal's height), or the preview is red. Test switches `REGS_TEST_CURVE_BRIDGE=2`, `REGS_TEST_HILL`.
+- Lanes are the kind's as on any curve.
+- Checked (2026-11-15): a large-road tunnel through a test hill (both portals, the frames clear, the hill whole over the
+  tube).
+
+### Map edge
+
+A curve end on the map's border leaving it straight out (within 0.5 units of the edge, within 18° of the outward
+direction; `curveEndOffMap`) leads off the map, as the game's map-edge pieces (`road_*_porta/b`, `road_small_port`,
+`track_double_port`, which are plain road with EXTERNAL lanes) do: no dead end there, and the lanes starting on the
+border are the traffic's way in (START), those ending there its way out (END), both EXTERNAL. Roads, express roads and
+the railway (`curveKindLeavesMap`). The curve tool snaps an end within the road's half width + 6 of the border onto it.
+Checked (2026-11-15): a large road to the east edge; in a game the traffic sources take its two lanes in and out, and a
+route runs in from the edge, round the far dead end and out (`REGS_DEBUG_SIM=1` logs "traffic sources").
+
+### Express ramps
+
+Ramps (curve kind 8) join an express curve where the game's entry and exit pieces would be (`RampPort`, 2026-11-15).
+Every express piece has four ports: on each side an entry (half a block before the piece's centre, in the traffic's
+direction on that side) and an exit (half a block after it), 18 out from the centre line, the ramp meeting the road at
+45°. A ramp end on a port turns that express piece into `road_express_enter` or `road_express_exit`, bent along the
+curve (`rampPortBend`: the entry piece's road lies 3 to −z of its origin, the exit's 3 to +z; on the left side, and for
+exits on the right, turned round); its slip lane joins or leaves the outer lane of that side, and the ramp's lane
+links into it. One ramp per express piece.
+- Editor: the express tab ends with a ramp and an elevated ramp button (the game's icons), the curve tool in curve mode.
+  A ramp end snaps to the nearest free port the ramp reaches going on (an entry from behind, an exit from ahead).
+- Ramps join roads (small, large, avenue) at junction points like a road (no zebra crossing over a ramp arm).
+- Checked (2026-11-15): an entry and an exit on a straight express road (lanes linked, "curved roads: ramp entry/exit"
+  with `REGS_DEBUG_CURVES=1`); test cars (`REGS_TEST_CURVE_CARS`) drove down the ramp and merged into the outer lane.
+- The elevated ramp stands on `ramp_elevated_pillar` columns every 24 units (checked from a low camera, 2026-11-15).
+- Express road to large road or avenue (2026-11-15): an express curve's end met smoothly by a large-road or avenue
+  curve's end takes the game's transition piece (`road_express_large_basic` / `road_express_avenue_basic`, the express
+  side inward) in place of its last piece, lanes included (`curveExpressTransition`); the curve tool lets the two
+  kinds' free ends snap to each other. Checked: an avenue drawn on into an express road; test cars drove through.
+- Not checked: ramps on curved express pieces and on express bridges.
 
 ### Tracks
 
@@ -91,15 +144,64 @@ menu's track tab with the same three for the railway.
   off the stations' ends, the curve between their dead ends): the line's route runs over the curve and its train
   shuttles between the platforms (`REGS_TEST_LINE=2`).
 
+### Trams on railway tracks
+
+Trams run on the railway's tracks too (owner's request 2026-11-15, like Karlsruhe's tram-trains), on the grid's double
+track and on railway curves alike (engine/sim_graph.cpp `addRailTwin`, `linkTramsToRail`):
+- Every railway lane gets tram lanes on the same curve, both ways (as tram tracks have both ways on each track; the way
+  against the railway's own direction at an eighth of the speed, so routes keep right and use it only to turn at a
+  stop). Not START / END / PARK: trams do not enter the map there; a station's platform tracks keep STOP. They come
+  after the item's own lanes, so saved lane numbers stay. Nothing is drawn.
+- At a railway track's dead end a tram turning loop joins the end of one track to the other track, so a line turns at
+  the end of the railway as on a loop.
+- Where a tram track ends at a railway track (a street or grass tram track's dead end within 14 units, heading the same
+  way) a tram connector joins them both ways; ends that meet exactly join by themselves.
+- The tram lane and the railway lane under it cross each other, so a tram and a train never hold the same piece: each
+  waits for the other (`REGS_DEBUG_SIM=1` counts the waits in the traffic summary).
+- Checked (2026-11-15): two small roads with tram tracks joined by a railway curve, a tram line from a stop on one road
+  over the railway to a stop on the other (`REGS_TEST_LINE=1`); with a test train on the same railway
+  (`REGS_TEST_CURVE_TRAINS=1`) both kept running, waited for each other and never got stuck. Vienna's save loads as
+  before (all vehicles placed).
+- Tram stops on railway (2026-11-15): the tram stop tool takes straight grid railway blocks (a small-road tram stop of
+  the chosen design beside the track bed; engine/tool_objects.cpp `stopPreview`, conflicts in grid_edit.cpp) and
+  railway curves (curve stops, `curveTakesStop`). The stop's platform is the railway's tram lane on its side, running
+  with the platform on its right; the other way on the same track is its second platform, where trams turn round
+  (sim.cpp `stopPlatforms`; legs take either, `segmentBetween`).
+- Train stations are tram stops (2026-11-15): every `station-track` and `terminal-track` item registers as a tram
+  stop (its bubble, catchment, line tool), its platform the tram lane of its STOP track (`simIsTrainStation`).
+  Vienna and Berlin have 23 each.
+- Checked (2026-11-15): two tram stops on a grid railway (one each side) and two on a railway curve, a tram line
+  between them (turning at the railway's end); in Vienna a loop between a terminal and a through station, about 13
+  game minutes, passengers boarding, no jams, the city's own lines as before. `REGS_TEST_LINE_ITEMS=a,b` builds a test
+  loop over those items, `REGS_DEBUG_LEGS=1` logs each stop's platforms and legs.
+- Background passenger trains do not stop for tram passengers; trams and trains still wait for each other.
+
 ### One-way streets
 
 Small roads, 1 lane (on the centre line, no divider) or 2 lanes, arrows on every lane every 25 units. Where a one-way
 end meets a two-way road its lanes merge into / split from the right-hand lane. Cars and trams never run against it.
 
+One-way large roads and avenues (2026-11-15): the one-way tab's third and fourth lane buttons (the large road's and the
+avenue's curve icons) draw them; all four lanes run in the drawing direction (the piece's paths against the curve turned
+round, sim_graph.cpp `bentNodes`). Where an end meets a two-way road the left-hand lanes split from / merge into the
+right-hand ones on the piece next to it; at junctions all their lanes go one way. The road looks as the two-way one
+(no arrows yet). Checked: a one-way large road merging into a two-way one, test cars only in its direction.
+
 ### Roundabouts
 
 A ring of four one-way quarter-circle small-road curves, counter-clockwise seen from above (right-hand traffic), 1 or
 2 lanes, radius 10–40. Small rings take roads at the compass points (where the arcs meet), larger ones anywhere.
+
+Large-road and avenue roundabouts (2026-11-15): the roundabout tab's third and fourth buttons (the large road's and the
+avenue's curve icons) lay the same ring of that kind, all lanes one way (one-way large roads and avenues). A large-road
+ring has a radius of 18–60 (half width plus a 6-unit island).
+An avenue ring has no inner carriageway (owner's request 2026-11-15): it is the avenue's outer half only (`curveHalfRing`:
+half the middle strip, the two outer lanes, the pavement), its centre line the island's edge, radius (the island's)
+8–60. Its footprint (ground, cover, walk map, minimap, picking, `curveAcross`), lanes and junction arms (outer lanes
+only; the outline follows the island's edge between the ring's two arms) leave the island alone, and a road ending at a
+junction no longer claims ground past its end (`pastJoinedEnd`, which kept the island's edge flat and bare).
+Checked: a large-road ring with two large roads joined (20 turn lanes, all linked) and an avenue ring with two avenues
+joined (12 turn lanes), test cars round both without jams.
 
 ### Tram tracks
 
@@ -144,8 +246,29 @@ Under the pointer: the hint, and once turned, the angle. A new object starts unt
 
 ### Stops
 
-Bus and tram stops on small-road curves: the game's stop tool, the platform bent along the curve (tram stops need
-tracks). A real stop item of the game anchors each stop (invisible), so lines, picking and saving work as usual.
+Bus and tram stops on small-road, large-road and avenue curves (2026-11-14): the game's stop tool,
+the stop's model bent along the curve at the kerb (tram stops need tracks). A real stop item of the game anchors each
+stop (invisible; `stop_bus0N_small` / `_large` / `_avenue` at the pavement's middle), so lines, picking and saving work
+as usual; on large roads and avenues the kerb lane on the stop's side gets STOP where the stop is (bentNodes), and buses
+halt there (tested with REGS_TEST_LINE=0 on both kinds). Tram stops on large roads stand at the kerb beside the kerb
+lane's track (`stop_tram0N_large`); on avenues in the middle strip beside its track, with the game's zebra crossing
+over the carriageway (`stop_tram0N_avenue`, `curveStopOffset` 4.5); the tram lane on the stop's side gets STOP (tested
+with REGS_TEST_LINE=1 on both kinds). Checked on bent curves too (2026-11-14): tram stops 02 and 03 on a large road, bus stops 02 and 03 on both sides
+of an avenue, tram stops on both sides of an avenue's middle strip; the test lines halt at every stop. A tram turns
+round only at a stop on the same track (the large road's kerb track; reverseConsist), so tram stops on both sides of
+an avenue need a loop or a junction to reach each other, as in the game, whose avenue dead end has no tram turn either.
+A large road or avenue curve with tracks ends at a free end in the game's tram end piece (`tram_large_deadend`,
+`tram_avenue_deadend`, no lanes), its open edge on the road dead end's (`curveTramDeadend`).
+
+### Street names
+
+The game's rename tool (T in the editor's toolbar) names curves too (2026-11-14): pointing at a curve marks it and the
+curves of its kind joined on at its ends (through no junction), as the game marks a road segment; with the right button
+held the curve alone. A click opens the game's rename dialog; the name goes on every marked curve (undo takes it back).
+`findNames` offers a curve's name from its nearest point, scored as a road piece, so stops placed in a game near a
+named curve take its name. Engine/tool_curves.cpp (`renameMove`, a stand-in `gsGridItemController` with `<curveName>`
+for the dialog), timeline action `0x070810D0`. Checked (2026-11-14): naming a large-road curve, the hover text, the
+name after saving and loading, undo, and a bus stop placed in a game beside it offered the name.
 
 ## 2. Data model (for code that lays roads, e.g. the OSM import)
 
@@ -160,6 +283,7 @@ A curve is **not** a grid item. `GridData::curves` (engine/grid.h) holds `CurveR
 | `ends` | bit 0: start on a grid road block (the curve continues its straight piece), bit 1: end on a block, bit 2: tram tracks, bit 3 / 4: start / end on a grass tram track (small roads), bit 5: one-way (start → end), bit 6: with bit 5 one lane, bit 7: part of a roundabout ring |
 | `stops` | `{s, side ±1, kind 0 bus / 1 tram, design}` (small roads) |
 | `bridge` | 1: a bridge (see above); saved in the second byte of the kind (section and timeline bytes) |
+| `name` | the street name (UTF-8, empty when unnamed); `findNames` offers it for stop names |
 
 Rules the renderer, lanes and walk map rely on:
 - **Joins and junctions are found by position**: curve ends of road kinds within 0.2 units of each other form a joint;
@@ -177,8 +301,9 @@ levelled, cover, walk map, lanes and the renderer updated; call between `gridEdi
 `timelineRecordCurve(vm, timeline, c, add)` records it for undo. `splitCurve(c, s, first, second)` cuts a curve at arc
 length s (the halves meet exactly). `curveProfile(kind)`, `curveLanes(kind)` give sizes and lane offsets.
 
-Saving: map.grid section `0x07F00000` (format 2: per curve 13 floats with `ends` as the 13th, i32 kind, u32 stop count,
-8 bytes per stop); timeline action `0x070810A0`. Game saves carry the section with the map.
+Saving: map.grid section `0x07F00000` (format 3: per curve 13 floats with `ends` as the 13th, i32 kind, u32 stop count,
+8 bytes per stop, u16 name length and the name; format 2 had no name); timeline action `0x070810A0` (the same bytes
+after an add/remove byte), renames `0x070810D0`. Game saves carry the section with the map.
 
 ### Mapping OpenStreetMap ways (suggestion)
 
@@ -221,7 +346,22 @@ API (engine/paint_edges.h):
 The terrain menu's round pavement brush and its eraser (right button) cut the cells on the brush circle the same way
 (`paintCircle`): strokes get round, smooth borders, a stroke over another paint's edge joins it (where three surfaces
 meet in one cell a small notch stays: a cell holds one cut). Templates (.cimtpl) keep the edges of their cells; the
-minimap counts a cut cell as paved when its paint holds the cell's centre.
+minimap counts a cut cell as paved when its paint holds the cell's centre. 
+
+**Brush shapes** (2026-11-14): a second column beside the brush sizes picks the shape, with drawn symbols
+(`data/regs/ui/toolbar/brush-*.dds`, `tools/make-brush-icons.ps1`; script: the toolbar extension, native
+`regsBrushShape([n])`): circle, square (along the grid), diamond (turned 45°) and line (a strip as wide as the brush
+from the press to the release; pavement and fields). Every brush (pavement, fields, level, soften, shift, ruin) takes the
+shape: its distance gives the height brushes' falloff, the field brush paints the cells whose centre is inside, the
+pavement brush cuts along the rim. The green preview is the shape itself (rim cells clipped to it: `highlightCircle` /
+`highlightPoly`). A pavement stroke paints the shape's sweep between two mouse positions (the convex hull of the shape at
+both: straight sides at any angle) and records it as point pairs (strength 2), so undo replays the same; each stroke is
+one undo step (`timelineCloseBrush`). The shape goes in the brush action's radius byte (top two bits).
+
+**Shift + drag** with the pavement brush paints a straight strip as wide as the brush from the press point to the release
+point, at any angle with exact edges (`paintArea`; the preview is clipped to the strip; one undo step). The field brush still paints whole cells: cut
+field cells were tried (2026-11-14) but the field texture's soil rim, blended from the cell corners, came out ragged
+along the cut.
 
 Saving: map.grid section `0x07F20000` (u32 count; per cell u16 x, u16 z, u8 type, u8 lines | join << 4, u16 0, six
 floats), timeline action `0x070810C0` (the rect and its edges). Painting a cell by hand (terrain menu, either brush)
@@ -235,15 +375,18 @@ reads the cell flags only (a cut cell counts as its flags say).
 | `REGS_START=editor:<map>` / `map:<map>` / `save:<name>`, `REGS_START_RUN=1` | straight into the editor or a game (main.script) |
 | `REGS_DEBUG_CURVES=1` | tool previews, snaps, junction fitting, "N junctions, M turn lanes, K joined both ways", tram ends |
 | `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>`, `REGS_TEST_CURVE_METRO=<n>` | n cars / trams / metro cars on random trips between curve lanes (engine/snowplows.cpp) |
+| `REGS_TEST_CURVE_TRAINS=<n>` | n locomotives end to end over the railway curves (trams on railway tracks) |
 | `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |
+| `REGS_TEST_HILL=x,z,r,h` | at map load: a smooth hill of radius r and height h around world point x, z (unlocked corners; tunnel tests, engine/grid.cpp) |
+| (note) | the editor's undo right after loading a map has nothing to undo: saving on the first day folds that day's actions into the map file (`removeDay`, then the base grid), as in the original |
+| `--at N:tilt:<t>`, `N:zoom:<z>`, `N:dir:<n>` | test runs: the camera's tilt (screenshot mode; 0 looks level, about 0.2 low over the ground), zoom and direction (app/main.cpp). Zoom and direction reset the tilt to the zoom's own: give tilt last |
 | `REGS_TEST_PAINT_AREA=1` or `=x,z` | at map load: a turned car park in asphalt, a round square and an L in paving stones around the map centre (or cell x, z), with cut edges (engine/grid.cpp) |
 | `REGS_DUMP_TEMPLATES=a,b` (`REGS_DUMP_VERTICES=1`) | a template's size, mesh bounds and UVs per material, paths |
 
 ## 4. Not done
 
-Tunnels on curves, express-road junctions and ramps, abutments at bridge ends; underground metro, switches and stations on track curves; one-way large roads and avenues; large-road or avenue roundabouts; stops
-on large-road and avenue curves; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
+Express roads splitting or joining each other (interchanges); underground metro, switches and stations on track curves; arrows on one-way large roads and avenues; yielding to traffic on a roundabout beyond the simulation's crossing rules; road
 texture variations on curves.
 
 ## 5. Files

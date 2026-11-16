@@ -440,6 +440,23 @@ void registerGridNatives(VM& vm) {
       return Value::boolean(false);
     }
     prepareTerrainCells(*data);
+    if (const char* t = std::getenv("REGS_TEST_HILL")) {  // port test (tunnels): a smooth hill "x,z,radius,height" in
+                                                         // world units at map load (unlocked corners only)
+      float hx = 0, hz = 0, hr = 40, hh = 15;
+      std::sscanf(t, "%f,%f,%f,%f", &hx, &hz, &hr, &hh);
+      const float cs = data->cellSize;
+      for (int z = 0; z < data->length; ++z)
+        for (int x = 0; x < data->width; ++x) {
+          float wx = (float(x) - float(data->width) * 0.5f) * cs, wz = (float(z) - float(data->length) * 0.5f) * cs;
+          float d = std::sqrt((wx - hx) * (wx - hx) + (wz - hz) * (wz - hz)) / hr;
+          if (d >= 1.0f) continue;
+          size_t ci = size_t(z) * size_t(data->width) + size_t(x);
+          if (data->flags[ci] & 0x1000) continue;
+          float k = 0.5f + 0.5f * std::cos(d * 3.14159265f);
+          data->height[ci] = int16_t(std::clamp(int(data->height[ci]) + int(std::lround(hh * k * 256.0f / cs)), -0x7fff, 0x7fff));
+        }
+      LOG_INFO("test hill at %.0f,%.0f, radius %.0f, height %.0f", hx, hz, hr, hh);
+    }
     if (const char* t = std::getenv("REGS_TEST_PAINT_AREA")) {  // port test: painted areas with cut edges
       // around cell "x,z" (default: the map's centre): a turned car park in asphalt (0), a round square in paving
       // stones (2) and an L with an inner corner (2)

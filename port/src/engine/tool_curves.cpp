@@ -21,6 +21,8 @@
 #include <string>
 
 #include "core/log.h"
+#include "core/text.h"
+#include "vfs/vfs.h"
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/grid.h"
@@ -70,8 +72,9 @@ struct Snap {
 struct State {
   int mode = 1;  // 0 straight, 1 curved, 2 freeform, 3 remove
   int kind = 0;  // the road kind drawn (CurveProfile): 0 small, 1 large, 2 avenue, 3 alley
-  int oneWay = 0;  // small roads: 0 both ways, 1 one-way with one lane, 2 one-way with two lanes (in the drawing direction)
-  bool bridge = false;  // new curves are bridges (regsCurveToolBridge; REGS_TEST_CURVE_BRIDGE=1 at start)
+  int oneWay = 0;  // 0 both ways; small roads 1 one-way with one lane, 2 with two lanes; large roads and avenues: any
+                   // non-zero one-way with all their lanes (in the drawing direction)
+  int bridge = 0;  // new curves are bridges (1) or tunnels (2) (regsCurveToolBridge; REGS_TEST_CURVE_BRIDGE=1 / 2 at start)
   int step = 0;  // 0 nothing picked, 1 the start, 2 (curved) the bend point too
   Vec3 start, bend;
   bool startDir = false;  // the start's direction is fixed (a snapped end, or drawing on)
@@ -160,7 +163,7 @@ void reset(VM& vm, GridObj* grid) {
 
 // a free point's height over the ground: the pavement 0.2 over it, elevated tracks two cells (as the grid's elevated
 // track tool)
-float freeLift() { return curveIsElevated(g_state.kind) || g_state.bridge ? 6.0f : 0.2f; }
+float freeLift() { return curveIsElevated(g_state.kind) || g_state.bridge == 1 ? 6.0f : 0.2f; }
 
 // the snap target near p: a dead end's closed side (8 units) or a curve's free end (6 units), the nearer one
 Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
@@ -175,7 +178,10 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   const GridData& g = *grid->data;
   const float reach2 = std::max(36.0f, pf.halfWidth * pf.halfWidth);
   for (const CurveRoad& c : g.curves) {
-    if (c.kind != g_state.kind) continue;  // only the same kind of road joins
+    // only the same kind of road joins; an express road and a large road or avenue join through the transition piece
+    auto wide = [](int k) { return k == 1 || k == 2; };
+    if (c.kind != g_state.kind && !(curveIsExpress(c.kind) && wide(g_state.kind)) && !(curveIsExpress(g_state.kind) && wide(c.kind)))
+      continue;
     CurveEnds free = curveFreeEnds(g, c);
     free.free0 = free.free0 && !(c.ends & 8);  // an end on a grass tram track is taken
     free.free1 = free.free1 && !(c.ends & 16);
@@ -190,15 +196,57 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
       if (d <= reach2 && d < bestD) bestD = d, best = Snap{true, q, Vec3{c.dx1, 0, c.dz1}, false, {}};
     }
   }
+  // ramps: an express road's entry or exit port (one ramp per express piece; RampPort)
+  if (!best.ok && curveIsRamp(g_state.kind)) {
+    std::vector<RampPort> used = usedRampPorts(g);
+    for (size_t ei = 0; ei < g.curves.size(); ++ei) {
+      if (!curveIsExpress(g.curves[ei].kind)) continue;
+      for (const RampPort& rp : expressRampPorts(g, int(ei))) {
+        bool taken = false;
+        for (const RampPort& u : used) taken = taken || (u.express == rp.express && u.piece == rp.piece);
+        float d = len2(rp.p - p);
+        if (taken || d > 100.0f || d >= bestD) continue;
+        // drawn toward the express road: only the ports the ramp reaches going on (an entry from behind, an exit from
+        // ahead), not the one it would have to hook round into
+        if (g_state.step >= 1 && dot(flat(rp.p - g_state.start), rp.out * -1.0f) < 0.0f) continue;
+        bestD = d, best = Snap{true, rp.p, rp.out, false, {}};
+      }
+    }
+    if (best.ok && std::getenv("REGS_DEBUG_CURVES"))
+      LOG_INFO("curve tool: ramp port at %.1f,%.1f,%.1f, out %.2f,%.2f", best.p.x, best.p.y, best.p.z, best.out.x, best.out.z);
+  }
+  // the map's edge (roads, express roads, the railway): the end on the border, leaving the map straight out
+  // (curveEndOffMap: no dead end, the traffic's way in and out)
+  if (!best.ok && curveKindLeavesMap(g_state.kind)) {
+    const float hx = float(g.width) * g.cellSize * 0.5f, hz = float(g.length) * g.cellSize * 0.5f;
+    const float bx = hx - std::fabs(p.x), bz = hz - std::fabs(p.z), reach = pf.halfWidth + 6.0f;
+    if (std::min(bx, bz) <= reach && bx >= -reach && bz >= -reach) {
+      Vec3 q = p, out;
+      if (bx <= bz) {
+        q.x = p.x < 0 ? -hx : hx;
+        q.z = std::clamp(p.z, -hz + pf.halfWidth, hz - pf.halfWidth);
+        out = Vec3{p.x < 0 ? 1.0f : -1.0f, 0, 0};
+      } else {
+        q.z = p.z < 0 ? -hz : hz;
+        q.x = std::clamp(p.x, -hx + pf.halfWidth, hx - pf.halfWidth);
+        out = Vec3{0, 0, p.z < 0 ? 1.0f : -1.0f};
+      }
+      q.y = p.y + freeLift();
+      return Snap{true, q, out, false, {}};
+    }
+  }
   if (best.ok || curveNoJunctions(g_state.kind)) return best;  // tracks and express roads: no junctions
   // junction points, in this order: where curve ends meet, the middle of a curve, the middle of a straight block
   const float hw = pf.halfWidth;
   for (const CurveRoad& c : g.curves) {
-    if ((c.kind == 3) != (g_state.kind == 3)) continue;  // road kinds mix at junctions (footpaths among themselves)
+    // road kinds mix at junctions (footpaths among themselves; never tracks or express roads)
+    if (curveJoinClass(c.kind) != curveJoinClass(g_state.kind) || curveNoJunctions(c.kind)) continue;
     for (int end = 0; end < 2; ++end) {
       Vec3 q = end ? Vec3{c.x1, c.y1, c.z1} : Vec3{c.x0, c.y0, c.z0};
       float d = len2(q - p);
-      if (d > hw * hw || d >= bestD) continue;
+      // an avenue ring's ends lie on its inner edge, its road beside them: reached from anywhere on it
+      const float reachJ = curveHalfRing(c) ? hw + curveProfile(c.kind).halfWidth : hw;
+      if (d > reachJ * reachJ || d >= bestD) continue;
       Snap s;
       for (const CurveRoad& k : g.curves) {
         if ((k.kind == 3) != (c.kind == 3)) continue;
@@ -225,12 +273,12 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
   }
   if (best.ok) return best;
   for (const CurveRoad& c : g.curves) {
-    if ((c.kind == 3) != (g_state.kind == 3)) continue;
+    if (curveJoinClass(c.kind) != curveJoinClass(g_state.kind) || curveNoJunctions(c.kind)) continue;
     std::vector<CurveSample> shape = curveShape(c);
     float side, s;
     curveNearest(shape, p.x, p.z, side, s);
     float L = shape.back().s;
-    if (std::fabs(side) >= hw || s < hw + 2.0f || s > L - hw - 2.0f || side * side >= bestD) continue;
+    if (curveAcross(c, side) >= hw || s < hw + 2.0f || s > L - hw - 2.0f || side * side >= bestD) continue;
     CurveSample k = curveAt(shape, s);
     Snap sn;
     sn.ok = true, sn.p = k.p, sn.junction = 2;
@@ -336,7 +384,7 @@ int curveUnder(const GridData& g, const Vec3& p) {
     curveNearest(shape, p.x, p.z, side, s);
     // beyond an end on a road block the point is on the block (the track tool's drag starts there, not on the curve)
     if ((s <= 0.01f && (c.ends & 1)) || (s >= shape.back().s - 0.01f && (c.ends & 2))) continue;
-    float d = std::fabs(side) - curveProfile(c.kind).halfWidth;
+    float d = curveAcross(c, side) - curveProfile(c.kind).halfWidth;
     if (d < bestD) bestD = d, best = int(i);
   }
   return best;
@@ -347,7 +395,8 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
   const GridData& g = *grid->data;
   int x0, z0, x1, z1;
   curveCells(g, c, x0, z0, x1, z1);
-  std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
+  const CurveEnds caps = curveFreeEnds(g, c);
+  std::vector<CurveSample> shape = curveShape(c, caps);
   const float cs = g.cellSize;
   for (uint32_t i : gridItemsNear(vm, grid, x0, z0, x1, z1)) {
     if (i >= g.items.size() || g.items[i].removed) continue;
@@ -366,9 +415,11 @@ bool overItems(VM& vm, GridObj* grid, const CurveRoad& c, std::vector<uint32_t>&
         float wx = (float(x) + 0.5f - float(g.width) * 0.5f) * cs, wz = (float(z) + 0.5f - float(g.length) * 0.5f) * cs;
         float side, s;
         curveNearest(shape, wx, wz, side, s);
-        hit = std::fabs(side) < curveProfile(c.kind).halfWidth - 0.5f;
+        hit = curveAcross(c, side) < curveProfile(c.kind).halfWidth - 0.5f;
+        // a tunnel passes under what stands over its tube
+        if (hit && !curveTunnelOpen(g, c, s, caps)) hit = false;
         // elevated tracks pass over what stays a cell under them (their pillars stand between)
-        if (hit && (curveIsElevated(c.kind) || c.bridge)) {
+        if (hit && (curveIsElevated(c.kind) || c.bridge == 1)) {
           int top = g.items[i].y + (0x200 - int(g.heightBase)) + sh.height;
           hit = top > int(std::lround(curveAt(shape, s).p.y * 256.0f / cs)) - 0x100;
         }
@@ -443,29 +494,36 @@ bool buildCurve(const GridData& g, const Vec3& h, const Snap& sn, CurveRoad& c) 
   bool endBlock = forced && sn.block && st.step > 0;
   c.ends = uint8_t((st.startBlock ? 1 : 0) | (endBlock ? 2 : 0));
   // an end on a grass tram track: the curve gets tracks that run on into it (its turning circle lies over the track)
-  if (c.kind == 0 && st.oneWay) c.ends |= uint8_t(0x20 | (st.oneWay == 1 ? 0x40 : 0));  // one-way, as drawn
-  c.bridge = st.bridge ? 1 : 0;
+  // one-way, as drawn: small roads with one or two lanes, large roads and avenues with all their lanes (2026-11-15)
+  if (c.kind <= 2 && st.oneWay) c.ends |= uint8_t(0x20 | (c.kind == 0 && st.oneWay == 1 ? 0x40 : 0));
+  c.bridge = uint8_t(st.bridge);
   if (st.startBlock && st.startEnd.tram) c.ends |= 8 | 4;
   if (endBlock && sn.end.tram) c.ends |= 16 | 4;
   return true;
 }
 
 // ---- roundabouts (modes 4: one lane, 5: two lanes; owner's request 2026-11-07) ----
-// A ring of four quarter-circle curves (Bézier handles 0.5523·r), one-way counter-clockwise as seen from above (right-hand
+// A ring of four quarter-circle curves (BÃ©zier handles 0.5523Â·r), one-way counter-clockwise as seen from above (right-hand
 // traffic), centre and radius picked with two clicks. Roads join it like any curve: ending on the ring cuts it there
 // and makes a junction, whose lanes keep to the ring's direction.
-std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single) {
-  static const float dx[5] = {1, 0, -1, 0, 1}, dz[5] = {0, -1, 0, 1, 0};  // east, north, west, south (north is −z)
+// large-road and avenue rings (2026-11-15): the same four arcs of that kind, every lane one way (one-way large roads
+// and avenues, sim_graph.cpp), radius from the kind's half width plus a 6-unit island
+// (an avenue ring is its outer half only, so its island is the radius itself)
+float roundaboutMinRadius(int kind) { return kind == 0 ? 10.0f : kind == 2 ? 8.0f : curveProfile(kind).halfWidth + 6.0f; }
+float roundaboutMaxRadius(int kind) { return kind == 0 ? 40.0f : 60.0f; }
+
+std::vector<CurveRoad> roundaboutArcs(const Vec3& C, float r, bool single, int kind = 0) {
+  static const float dx[5] = {1, 0, -1, 0, 1}, dz[5] = {0, -1, 0, 1, 0};  // east, north, west, south (north is âˆ’z)
   std::vector<CurveRoad> arcs;
   for (int q = 0; q < 4; ++q) {
     CurveRoad c;
-    c.kind = 0;
+    c.kind = kind;
     c.x0 = C.x + dx[q] * r, c.y0 = C.y, c.z0 = C.z + dz[q] * r;
     c.x1 = C.x + dx[q + 1] * r, c.y1 = C.y, c.z1 = C.z + dz[q + 1] * r;
     c.dx0 = dz[q], c.dz0 = -dx[q];  // the tangent turning from east to north
     c.dx1 = dz[q + 1], c.dz1 = -dx[q + 1];
     c.a = c.b = 0.5523f * r;
-    c.ends = uint8_t(0x20 | 0x80 | (single ? 0x40 : 0));  // one-way, a ring
+    c.ends = uint8_t(0x20 | 0x80 | (single && kind == 0 ? 0x40 : 0));  // one-way, a ring
     arcs.push_back(c);
   }
   return arcs;
@@ -478,8 +536,8 @@ void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
     clearPreview(grid);
     return;
   }
-  float r = std::clamp(std::sqrt(len2(p - st.start)), 10.0f, 40.0f);
-  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, r, st.mode == 4);
+  float r = std::clamp(std::sqrt(len2(p - st.start)), roundaboutMinRadius(st.kind), roundaboutMaxRadius(st.kind));
+  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, r, st.mode == 4, st.kind);
   bool bad = false;
   for (const CurveRoad& c : arcs) {
     std::vector<uint32_t> trees, blocking;
@@ -498,7 +556,7 @@ void moveRoundabout(VM& vm, GridObj* grid, const Vec3& p) {
 
 void commitRoundabout(VM& vm, ControlObj* player, GridObj* grid) {
   State& st = g_state;
-  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, std::max(10.0f, st.length), st.mode == 4);
+  std::vector<CurveRoad> arcs = roundaboutArcs(st.start, std::max(roundaboutMinRadius(st.kind), st.length), st.mode == 4, st.kind);
   Object* tl = playerTimeline(vm, player);
   unselectAll(vm, grid);
   clearPreview(grid);
@@ -517,8 +575,8 @@ void commitRoundabout(VM& vm, ControlObj* player, GridObj* grid) {
   }
   if (tl) timelineEndGroup(vm, tl);
   gridEditEnd(vm, grid);
-  LOG_INFO("curve tool: roundabout, radius %.1f, %s, %zu curves now", st.length, st.mode == 4 ? "one lane" : "two lanes",
-           grid->data->curves.size());
+  LOG_INFO("curve tool: roundabout, kind %d, radius %.1f, %s, %zu curves now", st.kind, st.length,
+           st.kind ? "all lanes" : st.mode == 4 ? "one lane" : "two lanes", grid->data->curves.size());
   st.step = 0;
 }
 
@@ -582,6 +640,20 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (curveLength(c) < (st.startSnap.junction ? st.startSnap.radius + 1.0f : 0.0f) + (sn.junction ? sn.radius + 1.0f : 0.0f)) bad = true;
   std::vector<uint32_t> trees, blocking;
   if (!bad && overItems(vm, grid, c, trees, blocking)) bad = true;
+  if (!bad && c.bridge == 2) {  // a tunnel: the ground over its tube as high as the portal (6 over the road)
+    std::vector<CurveSample> shape = curveShape(c);
+    float lowest = 1e9f;
+    for (float s = 0; s <= shape.back().s; s += 1.5f) {
+      if (curveTunnelOpen(g, c, s)) continue;
+      CurveSample k = curveAt(shape, s);
+      int cx = int(std::lround(k.p.x / g.cellSize + float(g.width) * 0.5f)), cz = int(std::lround(k.p.z / g.cellSize + float(g.length) * 0.5f));
+      if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length) continue;
+      float ground = float(g.height[size_t(cz) * size_t(g.width) + size_t(cx)]) * g.cellSize / 256.0f;
+      lowest = std::min(lowest, ground - k.p.y);
+    }
+    if (lowest < 6.0f) bad = true;
+    if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: tunnel, ground over the tube at least %.1f over the road", lowest);
+  }
   // at a junction point the new road must keep 30 degrees from the roads there
   float jAngle = 180.0f;
   if (st.startSnap.junction) jAngle = std::min(jAngle, junctionAngle(st.startSnap, Vec3{c.dx0, 0, c.dz0}));
@@ -790,6 +862,110 @@ bool bulldozerFinish(VM& vm, ControlObj* player, GridObj* grid) {
   return g_bulldozer.orig.finish ? g_bulldozer.orig.finish(vm, player, grid) : true;
 }
 
+// ---- the game's rename tool (GRIDMODE_RENAME, the map editor) over curves (2026-11-14) ----
+// Pointing at a curve marks it and the curves of its kind joined on at its ends (not through a junction), as the game
+// marks a road segment; with the right button held the curve alone. The hover event and getReplacedObjects carry a
+// stand-in gsGridItemController whose name reads and writes a pending name (<curveName>, interaction.cpp); the game's
+// dialog sets it and calls applyTool, which names the curves and records it (timeline 0x070810D0). Elsewhere the
+// tool is the game's own.
+struct Renamer {
+  ToolMode orig;
+  std::vector<int> curves;  // the marked curves, the hovered one first
+  bool right = false;
+  uint64_t version = 0;  // the curves' version they were marked at (an undo replays them: marked afresh)
+  Ref<Object> proxy;
+} g_renamer;
+
+// the curves of k's kind joined end to end with it (two ends at a point, no junction)
+std::vector<int> curveChain(const GridData& g, int k) {
+  std::vector<int> out{k};
+  std::set<int> seen{k};
+  for (size_t i = 0; i < out.size(); ++i) {
+    const CurveRoad& c = g.curves[size_t(out[i])];
+    for (int end = 0; end < 2; ++end) {
+      float x = end ? c.x1 : c.x0, z = end ? c.z1 : c.z0;
+      std::vector<int> at;
+      for (size_t j = 0; j < g.curves.size(); ++j) {
+        if (int(j) == out[i]) continue;
+        const CurveRoad& o = g.curves[j];
+        if ((std::fabs(o.x0 - x) < 0.2f && std::fabs(o.z0 - z) < 0.2f) || (std::fabs(o.x1 - x) < 0.2f && std::fabs(o.z1 - z) < 0.2f))
+          at.push_back(int(j));
+      }
+      if (at.size() != 1 || seen.count(at[0]) || g.curves[size_t(at[0])].kind != c.kind) continue;
+      seen.insert(at[0]);
+      out.push_back(at[0]);
+    }
+  }
+  return out;
+}
+
+void renameDrop(ControlObj* player, GridObj* grid) {
+  if (g_renamer.curves.empty()) return;
+  g_renamer.curves.clear();
+  toolState(player).extraReplaced.clear();
+  g_renamer.proxy = Ref<Object>();
+  if (grid) clearPreview(grid);
+}
+
+void renameMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
+  if (!grid || !grid->data) return;
+  ToolState& t = toolState(player);
+  ToolPick pick = toolPick(vm, player, x, y, false);
+  int k = pick.hit ? curveUnder(*grid->data, pick.point) : -1;
+  if (k >= 0) {
+    if (g_renamer.curves.empty() || g_renamer.curves[0] != k || g_renamer.right != t.right ||
+        g_renamer.version != grid->curvesVersion) {
+      if (g_renamer.curves.empty() && g_renamer.orig.cancel) g_renamer.orig.cancel(vm, player, grid);  // the game's marks go
+      const GridData& g = *grid->data;
+      g_renamer.curves = t.right ? std::vector<int>{k} : curveChain(g, k);
+      g_renamer.right = t.right;
+      g_renamer.version = grid->curvesVersion;
+      std::vector<CurveRoad> marked;
+      std::string name;
+      for (int i : g_renamer.curves) {
+        marked.push_back(g.curves[size_t(i)]);
+        if (name.empty()) name = g.curves[size_t(i)].name;
+      }
+      litPreview(vm, grid, marked, false);
+      g_renamer.proxy = vm.newObject(vm.findClass("gsGridItemController"), nullptr);
+      g_renamer.proxy->fieldValues[u"<curveName>"] = Value::string(utf8ToUtf16(name));
+      t.extraReplaced = {g_renamer.proxy.get()};
+      if (std::getenv("REGS_DEBUG_CURVES"))
+        LOG_INFO("rename: curve %d, %zu curves marked, name \"%s\"", k, g_renamer.curves.size(), name.c_str());
+      vm.fireEvent(player, u"onHoverRename", {Value::heap(VT::Object, g_renamer.proxy.get())});
+    }
+    return;
+  }
+  renameDrop(player, grid);
+  if (g_renamer.orig.move) g_renamer.orig.move(vm, player, grid, x, y);
+}
+
+bool renameFinish(VM& vm, ControlObj* player, GridObj* grid) {
+  if (grid && grid->data && !g_renamer.curves.empty() && g_renamer.proxy) {
+    GridData& g = *grid->data;
+    std::string name = utf16ToUtf8(vm.toStr(g_renamer.proxy->fieldValues[u"<curveName>"]));
+    Object* tl = playerTimeline(vm, player);
+    std::vector<int> renamed;
+    for (int i : g_renamer.curves)
+      if (size_t(i) < g.curves.size() && g.curves[size_t(i)].name != name) renamed.push_back(i);
+    if (tl && renamed.size() > 1) timelineBeginGroup(vm, tl, "%2");
+    for (int i : renamed) {
+      g.curves[size_t(i)].name = name;
+      if (tl) timelineRecordCurveName(vm, tl, g.curves[size_t(i)]);
+    }
+    if (tl && renamed.size() > 1) timelineEndGroup(vm, tl);
+    LOG_INFO("rename: %zu curves named \"%s\"", renamed.size(), name.c_str());
+    renameDrop(player, grid);
+    return true;
+  }
+  return g_renamer.orig.finish ? g_renamer.orig.finish(vm, player, grid) : true;
+}
+
+void renameCancel(VM& vm, ControlObj* player, GridObj* grid) {
+  renameDrop(player, grid);
+  if (g_renamer.orig.cancel) g_renamer.orig.cancel(vm, player, grid);
+}
+
 void bulldozerCancel(VM& vm, ControlObj* player, GridObj* grid) {
   if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: cancel (curve %d)", g_bulldozer.curve);
   if (grid && g_bulldozer.curve >= 0) {
@@ -897,7 +1073,7 @@ std::vector<int> ringOf(const GridData& g, int k) {
 struct Wrap {
   ToolMode orig;
   int mode = 0;
-  int curve = -1;       // the curve pointed at, −1 for none (the original tool runs)
+  int curve = -1;       // the curve pointed at, âˆ’1 for none (the original tool runs)
   bool armed = false;   // pressed on it
   bool ok = false;
   CurveRoad after;      // the curve as the click would leave it
@@ -994,6 +1170,12 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
       if ((side >= 0 ? 1 : -1) == w.lastSide && std::fabs(s - w.lastS) < 0.75f) return;
     }
     if (k >= 0) {
+      if (t.cellX != -1 && w.curve < 0) {  // the original tool's red cell (a spot where no stop fits) goes
+        gridEditBegin(vm, grid);
+        gridUnselectArea(vm, grid, t.cellX, t.cellZ, 1, 1);
+        gridEditEnd(vm, grid);
+        t.cellX = t.cellZ = -1;
+      }
       wrapClear(vm, player, grid, w);
       const CurveRoad& c = g.curves[size_t(k)];
       w.curve = k;
@@ -1016,7 +1198,7 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
           invisiblePreview(vm, player, grid, pf.tram, cx, int(c.y0 * 256.0f / cs), cz, 0, false);
       } else {
         CurveRoad::Stop st;
-        w.ok = stopToolTemplate(vm, player, grid, st) && c.kind == 0;  // stops on small-road curves only (so far)
+        w.ok = stopToolTemplate(vm, player, grid, st) && curveTakesStop(c.kind, st.kind);  // small roads; large and avenues: bus
         std::vector<CurveSample> shape = curveShape(c);
         float side, s;
         curveNearest(shape, pick.point.x, pick.point.z, side, s);
@@ -1025,18 +1207,18 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
         w.lastS = s, w.lastSide = st.side;
         float L = curveLength(c);
         if (s < 7.0f || s > L - 7.0f) w.ok = false;
-        if (st.kind == 1 && !(c.ends & 4)) w.ok = false;  // a tram stop needs tracks
+        if (st.kind == 1 && !(c.ends & 4) && c.kind != 6) w.ok = false;  // a tram stop needs tracks (the railway has them)
         for (const CurveRoad::Stop& o : c.stops)
           if (o.side == st.side && std::fabs(o.s - s) < 14.0f) w.ok = false;
         w.after.stops.push_back(st);
         int ax, az, ao;
         stopAnchor(g, w.after, st, ax, az, ao);
         float ay = curveAt(shape, std::clamp(s, 0.0f, L)).p.y;
-        w.stopAnchor = invisiblePreview(vm, player, grid, stopTemplateName(st), ax, int(ay * 256.0f / cs), az, ao, !w.ok);
+        w.stopAnchor = invisiblePreview(vm, player, grid, stopTemplateName(st, c.kind), ax, int(ay * 256.0f / cs), az, ao, !w.ok);
         if (w.stopAnchor < 0) w.ok = false;
         if (std::getenv("REGS_DEBUG_CURVES"))
           LOG_INFO("curve tool: stop target kind %d design %d at s %.1f of %.1f side %d, anchor %d (%s), %s", int(st.kind),
-                   int(st.design), s, L, int(st.side), w.stopAnchor, stopTemplateName(st).c_str(), w.ok ? "fits" : "refused");
+                   int(st.design), s, L, int(st.side), w.stopAnchor, stopTemplateName(st, c.kind).c_str(), w.ok ? "fits" : "refused");
       }
       showAfter(grid, w.after, !w.ok);
       if (w.mode == 0x11)
@@ -1200,6 +1382,14 @@ void registerCurveTool(VM& vm) {
     b.cancel = bulldozerCancel;
     registerToolMode(8, b);
   }
+  {  // the rename tool (GRIDMODE_RENAME, registered before this) names curves too
+    g_renamer.orig = toolModeOf(kGridModeRename);
+    ToolMode r = g_renamer.orig;
+    r.move = renameMove;
+    r.finish = renameFinish;
+    r.cancel = renameCancel;
+    registerToolMode(kGridModeRename, r);
+  }
   vm.setGlobal(u"REGS_GRIDMODE_CURVE_ROAD", Value::integer(kModeCurveRoad));
   // regsCurveToolMode([mode]): the mode (0 straight, 1 curved, 2 freeform, 3 remove); setting it drops the road being drawn
   implementGlobal(vm, u"regsCurveToolMode", [](VM& v, Object*, int argc, const Value* a) {
@@ -1227,11 +1417,36 @@ void registerCurveTool(VM& vm) {
     if (argc > 0) g_state.oneWay = std::clamp(v.toInt(a[0]), 0, 2);
     return Value::integer(g_state.oneWay);
   }, 0, 1);
-  // regsCurveToolBridge([on]): new curves are bridges (deck over the ground as it is, the bridge span and pillars)
-  if (std::getenv("REGS_TEST_CURVE_BRIDGE")) g_state.bridge = true;
+  // regsCurveToolBridge([on]): new curves are bridges (true or 1: deck over the ground as it is, the bridge span and
+  // pillars), tunnels (2: the tube under the ground, portals at the open ends) or plain (false, 0)
+  if (const char* e = std::getenv("REGS_TEST_CURVE_BRIDGE")) g_state.bridge = std::atoi(e) == 2 ? 2 : 1;
   implementGlobal(vm, u"regsCurveToolBridge", [](VM& v, Object*, int argc, const Value* a) {
-    if (argc > 0) g_state.bridge = v.truthy(a[0]);
-    return Value::boolean(g_state.bridge);
+    if (argc > 0) {
+      Value x = v.resolve(a[0]);
+      g_state.bridge = x.type() == VT::Int ? std::clamp(v.toInt(x), 0, 2) : v.truthy(x) ? 1 : 0;
+    }
+    return Value::integer(g_state.bridge);
+  }, 0, 1);
+  // regsAsyncWrites(on): file writes go out on a background thread (the editor's autosave; Vfs::asyncWrites)
+  implementGlobal(vm, u"regsAsyncWrites", [](VM& v, Object*, int argc, const Value* a) {
+    if (argc > 0) v.vfs().asyncWrites = v.truthy(a[0]);
+    return Value::boolean(v.vfs().asyncWrites);
+  }, 0, 1);
+  // regsEnvNumber(name, default): an environment variable as a number, or the default when it is not set (test runs)
+  implementGlobal(vm, u"regsEnvNumber", [](VM& v, Object*, int argc, const Value* a) {
+    Value fallback = argc > 1 ? v.resolve(a[1]) : Value::real(0);
+    std::string name;
+    for (char16_t ch : v.resolve(a[0]).str()) name += char(ch);
+    const char* s = std::getenv(name.c_str());
+    if (!s || !*s) return fallback;
+    return Value::real(float(std::atof(s)));
+  }, 1, 2);
+  // regsToolBusy(player): a tool is in the middle of a drag or a curved road (resetTool would cancel it): the autosave waits
+  implementGlobal(vm, u"regsToolBusy", [](VM& v, Object*, int argc, const Value* a) {
+    bool busy = g_state.step > 0;  // a curved road being drawn (resetTool loses its next click)
+    if (argc > 0)
+      if (Object* p = v.resolve(a[0]).object()) busy = busy || toolState(p).inProgress;
+    return Value::boolean(busy);
   }, 0, 1);
   // regsCurveToolInfo(): [step, length, angle in degrees, fits (0/1), a curve under the cursor (0/1)] for the panel
   implementGlobal(vm, u"regsCurveToolInfo", [](VM&, Object*, int, const Value*) {

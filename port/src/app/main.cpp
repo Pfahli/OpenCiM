@@ -194,6 +194,21 @@ int main(int argc, char** argv) {
           } catch (...) {
           }
           continue;
+        } else if (sc.action == "tilt" || sc.action == "zoom" || sc.action == "dir") {
+          // tilt:<0..1.5>, zoom:<75..500>, dir:<n>: the game camera (MAIN.$gameUI.setCameraTilt / Zoom / Direction)
+          try {
+            auto& vm = eng.vm();
+            if (script::Value* main = vm.findGlobal(u"MAIN")) {
+              const char16_t* fn = sc.action == "tilt" ? u"setCameraTilt" : sc.action == "zoom" ? u"setCameraZoom" : u"setCameraDirection";
+              script::Value arg = sc.action == "dir" ? script::Value::integer(std::atoi(sc.arg.c_str()))
+                                                     : script::Value::real(float(std::atof(sc.arg.c_str())));
+              script::Value ui = vm.getMember(*main, u"$gameUI");
+              if (sc.action == "tilt") vm.setMember(ui, u"$screenShotMode", script::Value::boolean(true));  // ui.script: tilt only then
+              vm.call(vm.getMember(ui, fn), {arg});
+            }
+          } catch (...) {
+          }
+          continue;
         } else if (sc.action == "vsync") {  // vsync:off after a frame-timed load, for frame-time measurements
           d->window().setVsync(sc.arg == "on");
           continue;
@@ -221,5 +236,6 @@ int main(int argc, char** argv) {
     std::printf("%zu distinct unimplemented natives called:\n", miss.size());
     for (auto& [n, k] : miss) std::printf("  %6d  %s\n", n, k.c_str());
   }
+  regs::Vfs::waitForWrites();  // the editor's autosave writes in the background
   return 0;
 }

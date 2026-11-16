@@ -700,6 +700,71 @@ void buildHighlightOverlay(const GridData& g, const GridObj& grid, const Terrain
       return Vec3{float(cx - (g.width >> 1)) * cs, g.height[hc] * k + lift, float(cz - (g.length >> 1)) * cs};
     };
     Part& p = parts[(g.flags[c] & 0x8000) ? 1 : 0];
+    // port: the round pavement brush's rim cells clipped to its circle (a 64-gon around it), heights bilinear
+    // (or to the convex outline highlightPoly: its edges as the clipping lines)
+    const float* rc = grid.highlightCircle;
+    const std::vector<float>& hp = grid.highlightPoly;
+    const bool usePoly = hp.size() >= 6;
+    if (grid.highlightCircleVersion == grid.highlightVersion && (rc[2] > 0 || usePoly)) {
+      // the clipping lines: n·(p − c) − off <= 0 inside; a 64-gon around the circle, or the outline's edges
+      std::vector<std::array<float, 4>> lines;  // nx, nz, cx, cz (off folded into c)
+      if (usePoly) {
+        float mx = 0, mz = 0;
+        const size_t m = hp.size() / 2;
+        for (size_t i = 0; i < m; ++i) mx += hp[2 * i], mz += hp[2 * i + 1];
+        mx /= float(m), mz /= float(m);
+        for (size_t i = 0; i < m; ++i) {
+          float ax = hp[2 * i], az = hp[2 * i + 1], bx = hp[2 * ((i + 1) % m)], bz = hp[2 * ((i + 1) % m) + 1];
+          float nx = bz - az, nz = -(bx - ax);
+          if (nx * (mx - ax) + nz * (mz - az) > 0) nx = -nx, nz = -nz;  // outward
+          lines.push_back({nx, nz, ax, az});
+        }
+      } else {
+        for (int s = 0; s < 64; ++s) {
+          float ang = float(s) * 6.2831853f / 64, nx = std::cos(ang), nz = std::sin(ang);
+          lines.push_back({nx, nz, rc[0] + nx * rc[2], rc[1] + nz * rc[2]});
+        }
+      }
+      auto inside = [&](float px, float pz) {
+        for (const auto& l : lines)
+          if (l[0] * (px - l[2]) + l[1] * (pz - l[3]) > 0) return false;
+        return true;
+      };
+      if (!(inside(float(x), float(z)) && inside(float(x + 1), float(z)) && inside(float(x), float(z + 1)) &&
+            inside(float(x + 1), float(z + 1)))) {
+        std::vector<std::pair<float, float>> poly = {{0.f, 0.f}, {0.f, 1.f}, {1.f, 1.f}, {1.f, 0.f}};  // as a, d, e, b
+        for (size_t s = 0; s < lines.size() && poly.size() >= 3; ++s) {
+          const auto& l = lines[s];
+          auto dist = [&](const std::pair<float, float>& q) { return l[0] * (x + q.first - l[2]) + l[1] * (z + q.second - l[3]); };
+          std::vector<std::pair<float, float>> next;
+          for (size_t i = 0; i < poly.size(); ++i) {
+            const auto& q0 = poly[i];
+            const auto& q1 = poly[(i + 1) % poly.size()];
+            float d0 = dist(q0), d1 = dist(q1);
+            if (d0 <= 0) next.push_back(q0);
+            if ((d0 <= 0) != (d1 <= 0)) {
+              float t = d0 / (d0 - d1);
+              next.push_back({q0.first + (q1.first - q0.first) * t, q0.second + (q1.second - q0.second) * t});
+            }
+          }
+          poly.swap(next);
+        }
+        if (poly.size() < 3) continue;
+        const Vec3 qa = at(x, z), qb = at(x + 1, z), qd = at(x, z + 1), qe = at(x + 1, z + 1);
+        auto lerpAt = [&](const std::pair<float, float>& q) {
+          float u = q.first, v = q.second;
+          float y = (qa.y * (1 - u) + qb.y * u) * (1 - v) + (qd.y * (1 - u) + qe.y * u) * v;
+          return Vec3{qa.x + (qb.x - qa.x) * u, y, qa.z + (qd.z - qa.z) * v};
+        };
+        uint32_t first = vertex(p, lerpAt(poly[0])), prev = vertex(p, lerpAt(poly[1]));
+        for (size_t i = 2; i < poly.size(); ++i) {
+          uint32_t cur = vertex(p, lerpAt(poly[i]));
+          p.indices.insert(p.indices.end(), {first, prev, cur});
+          prev = cur;
+        }
+        continue;
+      }
+    }
     uint32_t a = vertex(p, at(x, z)), b = vertex(p, at(x + 1, z)), d = vertex(p, at(x, z + 1)),
              e = vertex(p, at(x + 1, z + 1));
     p.indices.insert(p.indices.end(), {a, d, b, b, d, e});

@@ -147,6 +147,10 @@ struct VehicleState {
   std::vector<Unit> units;
   int stopA = -1, stopB = -1;   // line stop indices: just left, approaching
   int extraNodes = 0;           // nodes of the next leg already on the track (half the vehicle past the platform)
+  // port: at a turn on the same track (a metro end station) the nodes straight on past the platform the train drove
+  // onto so its middle stands at the stop; the turned leg starts back over their opposites (reverseConsist)
+  std::vector<int> turnNodes;
+  int turnSkip = 0;  // of them, how many lie before the node whose opposite the turned leg starts on
   float stopTime = 0;
   bool halted = false;          // flag 0x400: docked at stopB
   float doorPos = -1;           // the skeleton clip time of the doors (FUN_101081f0), −1 = closed (rest pose)

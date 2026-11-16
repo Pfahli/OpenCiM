@@ -231,9 +231,11 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     float clock = 0, logClock = 0;
     std::vector<int> movers;
   };
-  static TestTrips tests[3] = {{"REGS_TEST_CURVE_CARS", kPathRoad, "era4-suv", "car"},
+  // (REGS_TEST_CURVE_TRAINS=<n>: a diesel locomotive on the railway curves' lanes, to meet trams on railway tracks)
+  static TestTrips tests[4] = {{"REGS_TEST_CURVE_CARS", kPathRoad, "era4-suv", "car"},
                                {"REGS_TEST_CURVE_TRAMS", kPathTram, "tram-01", "tram"},
-                               {"REGS_TEST_CURVE_METRO", kPathMetro, "metro-01", "metro"}};
+                               {"REGS_TEST_CURVE_METRO", kPathMetro, "metro-01", "metro"},
+                               {"REGS_TEST_CURVE_TRAINS", kPathTrain, "diesel-locomotive", "train"}};
   for (TestTrips& tt : tests) {
     const char* t = std::getenv(tt.env);
     if (!t) continue;
@@ -257,7 +259,8 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     }
     std::vector<int> lanes;
     for (int n : s.graph.curveNodes)
-      if ((s.graph.nodes[size_t(n)].flags & tt.medium) && !(s.graph.nodes[size_t(n)].flags & (kPathDeleted | kPathIntersection)))
+      if ((tt.medium == kPathTrain ? (s.graph.nodes[size_t(n)].flags & kPathClassMask) == tt.medium : (s.graph.nodes[size_t(n)].flags & tt.medium) != 0) &&
+          !(s.graph.nodes[size_t(n)].railTwin && tt.medium == kPathTram) && !(s.graph.nodes[size_t(n)].flags & (kPathDeleted | kPathIntersection)))
         lanes.push_back(n);
     int model = modelFor(vm, grid, s, tt.model);
     if (int(cars.size()) < std::atoi(t) && carClock >= 0.5f && lanes.size() > 1 && model >= 0) {
@@ -281,7 +284,19 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
           }
         }
       }
-      for (int k = 0; k < 24 && !turn; ++k) {  // the farthest of a few reachable ones
+      // trains: from the railway curves' farthest lane end to the other (the whole track, to meet trams on it)
+      if (tt.medium == kPathTrain && !turn) {
+        int a = -1, b = -1;
+        float far = -1;
+        for (int x : lanes)
+          for (int y : lanes) {
+            Vec3 d = s.graph.nodes[size_t(y)].p1 - s.graph.nodes[size_t(x)].p0;
+            std::vector<int> p;
+            if (d.x * d.x + d.z * d.z > far && s.graph.search(x, y, false, p, cost) && !p.empty()) far = d.x * d.x + d.z * d.z, a = x, b = y, path = p;
+          }
+        if (a >= 0) from = a, to = b, best = far;
+      }
+      for (int k = 0; k < 24 && !turn && tt.medium != kPathTrain; ++k) {  // the farthest of a few reachable ones
         int e = lanes[plowRandom() % lanes.size()];
         Vec3 d = s.graph.nodes[size_t(e)].p1 - s.graph.nodes[size_t(from)].p0;
         std::vector<int> p;

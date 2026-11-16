@@ -16,6 +16,7 @@ constexpr uint32_t kPathIntersection = 0x10, kPathLaneChange = 0x20, kPathStop =
                    kPathTram = 0x800, kPathTrain = 0x1000, kPathMetro = 0x2000, kPathAir = 0x4000, kPathWater = 0x8000,
                    kPathStart = 0x10000, kPathEnd = 0x20000, kPathAlternativeStop = 0x40000,
                    kPathConnectTo = 0x80000, kPathConnectFrom = 0x100000, kPathIgnoreTraffic = 0x200000,
+                   kPathExternal = 0x400000,
                    kPathPark = 0x8000000, kPathWalk = 0x10000000, kPathBlocker = 0x20000000,
                    kPathFindAlternative = 0x40000000;
 constexpr uint32_t kPathDeleted = 0x80;  // a node of a removed item (live edits): unlinked, out of its bucket
@@ -35,6 +36,7 @@ struct LaneNode {
   std::vector<int> crossings; // nodes that cross or touch this one (§2.4): one may only be entered while the others
                               // are not held
   int inDegree = 0;
+  bool railTwin = false;      // port: the tram lane laid on a railway lane (trams on railway tracks, addRailTwin)
 };
 
 struct LaneGraph {
@@ -45,6 +47,7 @@ struct LaneGraph {
   float cellSize = 3;
   std::vector<int> buckets;                 // head node per 8×8-cell bucket
   std::vector<int> curveNodes;              // port: the curved roads' lanes (rebuildCurveNodes), after the items'
+  std::vector<int> railLinks;               // port: tram connectors between tram tracks and railway tracks (linkTramsToRail)
 
   // FUN_100e2070: nodes with cellX ∈ [x−3, x+w+3], cellZ ∈ [z−3, z+l+3] and all mask bits, in bucket row,
   // bucket column, bucket list order

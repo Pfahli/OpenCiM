@@ -61,6 +61,10 @@ script::Object* simStopController(GridObj* grid, int item);
 // Port QoL, bus lines at tram stops (docs/ui/lines.md §6): the road lane of a tram stop item (GRID_ITEM_*_TRAM) where
 // a bus halts, −1 when the stop does not sit in a street (own track, an avenue's middle strip) or is no tram stop.
 int simBusPlatformAtTramStop(script::VM& vm, GridObj* grid, int item);
+// port: trams on railway tracks: a train station's track item (station-track, terminal-track) is a tram stop
+bool simIsTrainStation(const std::string& templateName);
+// the connections of a placed item, turned with it (engine/tool_objects.cpp)
+uint32_t gridItemConnections(script::VM& vm, GridObj* grid, uint32_t item);
 // the port option (settings regsBusAtTramStops, default on) that lets the add-stop tool give bus lines tram stops
 bool simBusAtTramStops(script::VM& vm);
 

@@ -1,0 +1,47 @@
+// ReGS extension of metro/ui/ui.script (used as installed; see VM::extendSource): the status message box (the panel in
+// the middle of the screen for three seconds) stays away while an autosave runs (MAIN.$regsQuietStatus, set by the
+// game's and the editor's autosave: owner's request 2026-11-15, the box every few minutes got in the way). Instead a
+// small floppy disk blinks in the top right corner (regsShowSaveIcon; owner's request 2026-11-16).
+//@rename showStatusMessage regsBaseShowStatusMessage
+
+//@base
+
+function showStatusMessage($text) {
+  if (MAIN.$regsQuietStatus : false) return;
+  regsBaseShowStatusMessage($text);
+}
+
+$regsSaveIcon = null;
+$regsSaveIconUntil = 0.0;   // seconds of blinking left
+$regsSaveIconThread = null;
+
+// the autosave indicator: regs/ui/save-icon.dds (tools/make-save-icon.ps1), 32x32 in the top right corner, blinking
+// for $secs seconds (a later call extends it). Ignores the mouse.
+function regsShowSaveIcon($secs) {
+  $d = MAIN.$desktop;
+  if (!$regsSaveIcon) {
+    with ($regsSaveIcon = new_control($d)) {
+      .setImage("/regs/ui/save-icon.dds");
+      .canActivate = false;
+      .clickThrough = true;
+    }
+  }
+  $regsSaveIcon.setRect($d.width - 44, 12, 32, 32);
+  $regsSaveIcon.bringToFront();
+  $regsSaveIcon.visible = true;
+  $regsSaveIcon.visibility = 1.0;
+  $regsSaveIconUntil = max($regsSaveIconUntil, float($secs));
+  if ($regsSaveIconThread) return;
+  $regsSaveIconThread = thread :: {
+    $on = true;
+    while ($regsSaveIconUntil > 0.0) {
+      $regsSaveIcon.blend($on ? 0.25 : 1.0, 0.4);
+      $on = !$on;
+      wait 0.4;
+      $regsSaveIconUntil -= 0.4;
+    }
+    $regsSaveIcon.visible = false;
+    $regsSaveIconUntil = 0.0;
+    $regsSaveIconThread = null;
+  };
+}

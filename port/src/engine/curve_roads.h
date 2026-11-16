@@ -42,27 +42,82 @@ struct CurveProfile {
   float capOffset;       // the dead-end piece's centre beyond a free end
   const char* pillar;    // elevated tracks: the pillar template set under every joint of their pieces ("" none)
 };
-constexpr int kCurveKinds = 9;
+constexpr int kCurveKinds = 10;
 // tracks (owner's request 2026-11-08): 4 metro on the ground, 5 elevated metro, 6 the editor's railway (double track);
 // bent like the road kinds, joined smoothly to their own kind only (no junctions), never under tram tracks or stops
 inline bool curveIsTrack(int kind) { return kind >= 4 && kind <= 6; }
 inline bool curveIsElevated(int kind) { return kind == 5; }
-// 8: a tram track on its own bed (2026-11-15, the OSM import's railway=tram off the streets): drawn as the railway's
-// double track (its ballast bed, sleepers and rails at ±1.5, the bumper at a free end), its lanes the tram piece's
-// (tram_small_basic, tram_small_deadend: trams of the player's lines run on it); no car lanes and no pavement, but
-// joined to the roads like a road kind: it meets streets at junctions (the trams run on between it and their tracked
-// arms)
-inline bool curveIsTramBed(int kind) { return kind == 8; }
-// which curve ends may meet: roads of all kinds and tram beds, footpaths, and each track kind on its own
-inline int curveJoinClass(int kind) { return kind >= 3 && kind != 8 ? kind : 0; }
+// 9: a tram track on its own bed (2026-11-15, the OSM import's railway=tram off the streets; kind 8 until main's ramp
+// took it): drawn as the railway's double track (its ballast bed, sleepers and rails at ±1.5, the bumper at a free end),
+// its lanes the tram piece's (tram_small_basic, tram_small_deadend: trams of the player's lines run on it); no car lanes
+// and no pavement, but joined to the roads like a road kind: it meets streets at junctions (the trams run on between it
+// and their tracked arms)
+inline bool curveIsTramBed(int kind) { return kind == 9; }
+// which curve ends may meet: roads of all kinds (ramps and tram beds too), footpaths, and each track kind on its own
+inline int curveJoinClass(int kind) { return kind >= 3 && kind != 8 && kind != 9 ? kind : 0; }
+// 8: the express road's ramp (2026-11-15, road_ramp_basic: 6 wide, one lane on its centre line used both ways as in the
+// game); joins roads at junctions like a road, and an express road at an entry or exit (RampPort below)
+inline bool curveIsRamp(int kind) { return kind == 8; }
+// an avenue roundabout's ring (owner's request 2026-11-15: no inner carriageway): only the avenue's outer half, right of
+// the curve's direction (away from the island): half the middle strip, the outer carriageway's two lanes, the pavement
+inline bool curveHalfRing(const GridData::CurveRoad& c) { return c.kind == 2 && (c.ends & 0xA0) == 0xA0; }
+// how far across the road a point lies for the curve's footprint (ground, cover, walk map, minimap, picking): |side|,
+// for a half ring the side itself (the island side is off the road)
+inline float curveAcross(const GridData::CurveRoad& c, float side) {
+  return curveHalfRing(c) ? (side >= 0.0f ? side : 1e9f) : (side >= 0.0f ? side : -side);
+}
 // 7: the express road (2026-11-13), bent like the avenue; joined smoothly to express roads only, no pedestrians on it
 inline bool curveIsExpress(int kind) { return kind == 7; }
 // kinds whose ends only join smoothly (no junction pieces): tracks and express roads
-inline bool curveNoJunctions(int kind) { return kind >= 4 && kind != 8; }
+inline bool curveNoJunctions(int kind) { return kind >= 4 && kind != 8 && kind != 9; }
 const CurveProfile& curveProfile(int kind);
 // a bridge curve's span template bent along it and its pillar, per kind ("" none)
 const char* curveBridgePiece(int kind);
 const char* curveBridgePillar(int kind);
+// a bridge curve's end span (the abutment, on the template's local −x side: the land), per kind ("" none); drawn at a
+// bridge's ends that do not continue on another bridge curve (2026-11-15)
+const char* curveBridgeEnd(int kind);
+// ---- express ramps (2026-11-15) ----
+// A ramp curve's end on an express curve's port: that express piece is drawn and laned as the game's entry or exit piece
+// (road_express_enter / road_express_exit, bent along the curve), whose slip lane leaves or joins the outer lane of the
+// traffic on that side. Every piece has four ports: on each side an entry (where the slip lane begins, half a block before
+// the piece's centre in the traffic's direction) and an exit (half a block after it), 18 out from the centre line, the ramp
+// meeting the express road at 45 degrees. One ramp per piece.
+struct RampPort {
+  int express = -1;   // the express curve
+  int piece = 0;      // its piece drawn as the entry or exit piece
+  int side = 1;       // +1 right of the express curve's direction (its traffic runs with it), -1 left (against it)
+  bool enter = true;  // an entry (the ramp's traffic merges in) or an exit
+  float sCentre = 0;  // the piece's centre (arc length on the express curve)
+  render::Vec3 p;     // the ramp's end there (y: the express road's height)
+  render::Vec3 out;   // unit, flat: from the express road into the ramp
+  int ramp = -1, rampEnd = 0;  // usedRampPorts: the ramp curve and which of its ends
+};
+// the ports of an express curve (all pieces, both sides, entry and exit)
+std::vector<RampPort> expressRampPorts(const GridData& g, int expressCurve);
+// the ports a ramp curve's end lies on (within 0.3)
+std::vector<RampPort> usedRampPorts(const GridData& g);
+// whether a ramp curve's end lies on an express port
+bool curveEndOnRampPort(const GridData& g, const CurveRoad& c, int end);
+// the entry / exit piece's template, and the bend that puts it on the express curve (appendBentMesh's side and across)
+const char* rampPortPiece(bool enter);
+void rampPortBend(const RampPort& rp, float& side, float& across);
+// express road to large road or avenue (2026-11-15): an express curve's end met smoothly by a large-road or avenue
+// curve's end takes the game's transition piece there (road_express_large_basic / road_express_avenue_basic: the
+// express road on its +x side, the other road's lanes on its -x side). Returns the other road's kind, or -1.
+int curveExpressTransition(const GridData& g, const CurveRoad& c, int end);
+const char* expressTransitionPiece(int kind);
+// whether a curve's end (0 start, 1 end) meets another curve of the same structure (CurveRoad::bridge: plain, bridge,
+// tunnel)
+bool curveEndContinues(const GridData& g, const CurveRoad& c, int end);
+// tunnels (CurveRoad::bridge 2, 2026-11-15): the kind's tunnel tube bent along the curve (tunnel_*_gap) and its portal
+// (tunnel_*_end: the mouth on the template's local -x side, the walls falling to the open road at +x) on the first and
+// last piece where the tunnel does not continue on another tunnel curve ("" none: the kind has no tunnel)
+const char* curveTunnelPiece(int kind);
+const char* curveTunnelEnd(int kind);
+// the street tram dead-end piece (the tracks' end, no lanes) drawn on a large road's or avenue's dead-end piece at a
+// free end of a curve with tracks, per kind ("" none: small roads draw their own turning circle)
+const char* curveTramDeadend(int kind);
 // the driving lanes' offsets right of the centre line (one direction; the other mirrors), and their medium
 struct CurveLanes {
   int count;
@@ -81,8 +136,19 @@ struct CurveSample {
 struct CurveEnds {
   bool free0 = false, free1 = false;  // the start / end touches neither a road block nor another curve
 };
-// against the map's curves (the curve itself, by sameCurve, left out)
+// a tunnel's open parts: the portal pieces at its ends (arc lengths within a piece of an end that does not continue on
+// a tunnel); the ground there is cut down to the road and covered, over the tube it stays as it is. Any other curve: true.
+// s on curveShape(c, caps) (with a free start's cap its arc lengths start a cap reach earlier)
+// margin: the open parts grown that far into the tube (the strip behind a portal's mouth)
+bool curveTunnelOpen(const GridData& g, const CurveRoad& c, float s, CurveEnds caps = {}, float margin = 0.0f);
+// against the map's curves (the curve itself, by sameCurve, left out); an end off the map (curveEndOffMap) is not free
 CurveEnds curveFreeEnds(const GridData& g, const CurveRoad& c);
+// map-edge ends (2026-11-15, as the game's map-edge pieces road_*_port*, track_double_port): an end on the map's border
+// leaving it straight out (within 0.5 units of the edge, its direction within 18° of the outward normal) has no dead end;
+// its lanes are the traffic's way into the map (START) and out of it (END), both EXTERNAL (sim_graph.cpp)
+bool curveEndOffMap(const GridData& g, const CurveRoad& c, int end);
+// the kinds that may lead off the map: roads, the express road and the railway (not footpaths or metro tracks)
+bool curveKindLeavesMap(int kind);
 
 // samples at most `step` apart (at least 2), ends included; the range version only over arc lengths [s0, s1]
 std::vector<CurveSample> sampleCurve(const CurveRoad& c, float step);
@@ -177,6 +243,8 @@ void appendBentMesh(const render::MeshData& src, int materialBase, const std::ve
                     float side, float across, render::MeshData& out, float scale = 1.0f, float dy = 0.0f);
 // a mesh cut into slabs `step` wide along its local x (so bending follows the curve), attributes interpolated
 render::MeshData sliceMeshAlongX(const render::MeshData& src, float step, int axis = 0);
+// the triangles of a mesh whose centre lies at local z >= 0 (an avenue ring's outer half)
+render::MeshData rightHalfOf(const render::MeshData& src);
 // a template's mesh placed rigidly: local x along ax, z along az, y up, origin at o
 void appendPlacedMesh(const render::MeshData& src, int materialBase, const render::Vec3& o, const render::Vec3& ax,
                       const render::Vec3& az, render::MeshData& out);
@@ -192,7 +260,16 @@ CurvePieces curvePieces(const CurveRoad& c, float length = -1);
 void curveCapFrame(const CurveRoad& c, int end, bool openPlusX, render::Vec3& o, render::Vec3& ax, render::Vec3& az);
 // curve stops: the stop item template of a stop, its anchor item's cell and orientation (at the pavement beside s),
 // and GridData::curveAnchors rebuilt from the map's items (after loads and curve edits)
-std::string stopTemplateName(const CurveRoad::Stop& st);
+// (small roads: bus 01-03 and tram; large roads and avenues: their bus stops, stop_bus0N_large / _avenue)
+std::string stopTemplateName(const CurveRoad::Stop& st, int kind = 0);
+// the kinds that take stops: small roads, large roads and avenues (bus and tram; a tram stop needs the curve's tracks)
+inline bool curveTakesStop(int kind, int stopKind) {
+  return (kind >= 0 && kind <= 2 && stopKind >= 0 && stopKind <= 1) || (kind == 6 && stopKind == 1);  // railway: tram stops
+}
+// where a stop's model stands, out from the road's centre line (its own z = 0 line): the kerb (small 3, large 6,
+// avenue 10.5); an avenue's tram stop at the edge of its middle strip (4.5: platform between track and carriageway, its
+// crossing over the carriageway to the pavement)
+float curveStopOffset(int kind, int stopKind);
 void stopAnchor(const GridData& g, const CurveRoad& c, const CurveRoad::Stop& st, int& x, int& z, int& orient);
 void refreshCurveAnchors(GridData& g);
 
@@ -204,7 +281,8 @@ void levelTerrainUnderCurve(GridObj* grid, const CurveRoad& c);
 // through it). Called at the end of fixGridCover / fixGridCoverArea, which clear and re-stamp the cover.
 void applyCurveCover(GridData& g, int x0, int z0, int x1, int z1);
 
-// the section 0x07F00000: u32 count, then per curve 13 floats (the 13th: the end flags) and an i32 kind
+// the section 0x07F00000: u32 count (bits 31 / 30: format 2 / 3), then per curve 13 floats (the 13th: the end flags),
+// an i32 kind, the stops and (format 3) the name (curve_roads.cpp writeCurve)
 void writeCurveSection(const GridData& g, std::vector<uint8_t>& out);
 void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, GridData& g);
 
@@ -213,7 +291,8 @@ void parseCurveSection(const std::vector<uint8_t>& d, size_t body, size_t stop, 
 // (gridEditEnd → simCurvesChanged). The tool and the timeline replay both come here.
 void applyCurveEdit(script::VM& vm, GridObj* grid, const CurveRoad& c, bool add);
 bool sameCurve(const CurveRoad& a, const CurveRoad& b);
-// the timeline action's body: u8 add (1) or remove (0), then the curve as in the section (14 × 4 bytes)
+// the timeline action's body: u8 add (1) or remove (0), then the curve as in the section (format 3; older records
+// have no name)
 std::vector<uint8_t> curveActionBytes(const CurveRoad& c, bool add);
 bool curveFromActionBytes(const std::vector<uint8_t>& raw, CurveRoad& c, bool& add);
 

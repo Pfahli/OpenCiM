@@ -62,6 +62,10 @@ class Vfs {
   // Writes a file: "memory/..." becomes a RAM file; anything else is mapped to disk ("userdata/" -> userdata root,
   // otherwise relative to the install root) and registered as a loose record. Directories are not created.
   bool write(const std::string& path, const std::vector<uint8_t>& data);
+  // port: while set, write() puts disk files out on a background thread (the editor's autosave, so the game does not
+  // stall on the disk); the record is registered at once. waitForWrites() blocks until they are all out (at exit).
+  bool asyncWrites = false;
+  static void waitForWrites();
 
   // Files directly inside dir (names only), optionally filtered by exact extension including the dot.
   std::vector<std::string> listFiles(const std::string& dir, const std::string& ext = "") const;

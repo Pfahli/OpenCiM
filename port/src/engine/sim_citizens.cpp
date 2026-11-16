@@ -574,7 +574,8 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
     curveCells(g, c, cx0, cz0, cx1, cz1);
     cx0 = std::max(cx0, x0), cz0 = std::max(cz0, z0), cx1 = std::min(cx1, x1), cz1 = std::min(cz1, z1);
     if (cx0 > cx1 || cz0 > cz1) continue;
-    std::vector<CurveSample> shape = curveShape(c, curveFreeEnds(g, c));
+    const CurveEnds caps = curveFreeEnds(g, c);
+    std::vector<CurveSample> shape = curveShape(c, caps);
     float mid = shape.back().s * 0.5f;
     const CurveProfile& pf = curveProfile(c.kind);
     for (int cz = cz0; cz <= cz1; ++cz)
@@ -589,10 +590,13 @@ void stampWalkCurves(SimState& s, int x0, int z0, int x1, int z1) {
           float wz = (float(cz) + (float(qz) + 0.5f) * 0.25f - float(g.length) * 0.5f) * cs;
           float side, at;
           curveNearest(shape, wx, wz, side, at);
-          float ad = std::fabs(side);
+          float ad = curveAcross(c, side);
           if (ad > pf.halfWidth) continue;
+          if (!curveTunnelOpen(g, c, at, caps)) continue;  // over a tunnel's tube: the ground as it is
           // tracks and express roads: blocked all across (no crossing)
-          uint32_t code = ad > pf.carriageway ? 2u : !curveNoJunctions(c.kind) && std::fabs(at - mid) <= 1.5f ? 1u : 0u;
+          uint32_t code = ad > pf.carriageway                                                                ? 2u
+                          : !curveNoJunctions(c.kind) && !curveIsRamp(c.kind) && std::fabs(at - mid) <= 1.5f ? 1u
+                                                                                                             : 0u;
           w = (w & ~(3u << (2 * q))) | (code << (2 * q));
           any = true;
           if (code == 2 && !pavement) pavement = true, y = curveAt(shape, at).p.y;

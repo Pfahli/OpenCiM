@@ -2749,7 +2749,7 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
     if (r.pts.size() < 2) continue;
     Chain c;
     c.pts = r.pts;
-    c.kind = r.kind == 6 ? 8 : r.kind == 5 ? 6 : r.kind == 2 ? 3 : r.kind == 3 ? 2 : (r.kind == 1 || r.kind == 4) ? 1 : 0;
+    c.kind = r.kind == 6 ? 9 : r.kind == 5 ? 6 : r.kind == 2 ? 3 : r.kind == 3 ? 2 : (r.kind == 1 || r.kind == 4) ? 1 : 0;
     c.bridge = r.bridge;
     c.underpass = r.underpass;
     if (r.ring && r.kind != 5) c.kind = 0;  // roundabouts: one-way small roads (large ones are not supported yet)
@@ -2758,7 +2758,7 @@ Plan plan(const std::vector<RoadIn>& roads, int W, int L, float cs, const std::v
       c.flags = uint8_t(0x20 | (single ? 0x40 : 0) | (r.ring ? 0x80 : 0));
     }
     // the margin left for the edge pieces; tracks have none and run to the edge (owner 2026-11-14: they ended short of it)
-    const double m = c.kind == 6 || c.kind == 8 ? 1.0 : c.kind == 3 ? 2.0 : c.kind == 0 ? 8.0 : 14.0;
+    const double m = c.kind == 6 || c.kind == 9 ? 1.0 : c.kind == 3 ? 2.0 : c.kind == 0 ? 8.0 : 14.0;
     for (Chain& part : clipChain(c, m, m, W - m, L - m)) {
       auto wet = [&](double x, double z) {
         int cx = int(std::floor(x)), cz = int(std::floor(z));
@@ -6946,7 +6946,7 @@ std::vector<LevelCrossing> cutLevelCrossings(std::vector<CurveRoad>& cs) {
       splitCurve(T, s1, A, C3);
       splitCurve(A, s0, A1, mid);
       const float yr = curveAt(shR, sR).p.y;  // the road's height: the rails lie in its asphalt
-      mid.bridge = 2;
+      mid.bridge = 3;  // (rails let into the road; 2 is main's tunnel)
       mid.y0 = mid.y1 = yr, A1.y1 = yr, C3.y0 = yr;
       cs[size_t(ti)] = A1;
       cs.push_back(mid), cs.push_back(C3);

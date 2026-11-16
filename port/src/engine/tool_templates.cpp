@@ -537,6 +537,8 @@ void registerTemplateTools(VM& vm) {
           if (f & 0x2000) col = 0xFF295383u;
           else if (f & 0x20) col = 0xFF6A5A18u;
           else if (f & 0x08) col = 0xFF7A766Eu;
+          else if (auto e = t.paintEdges.find(paintEdgeKey(x, z)); e != t.paintEdges.end() && paintEdgeInside(e->second, 0.5f, 0.5f))
+            col = 0xFF7A766Eu;  // port: a cut cell whose paint holds its centre
           at(x, z) = col;
         }
       for (const GridData::Item& it : t.items) {

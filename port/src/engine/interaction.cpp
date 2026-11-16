@@ -717,12 +717,18 @@ void registerInteractionNatives(VM& vm) {
   // name: the map's item name (gsGridItem +0x60); writes rename the item
   if (ClassInfo* c = vm.findClass("gsGridItemController"); c && c->fields.count(u"name")) {
     c->fields[u"name"].get = [](VM& v, Object* o) {
+      // port: the rename tool's stand-in for curves (tool_curves.cpp): its pending name
+      if (auto pn = o->fieldValues.find(u"<curveName>"); pn != o->fieldValues.end()) return pn->second;
       GridObj* grid = nullptr;
       uint32_t i = 0;
       if (!controllerItem(v, o, &grid, &i) || i >= grid->data->names.size()) return Value::string(u"");
       return Value::string(utf8ToUtf16(grid->data->names[i]));
     };
     c->fields[u"name"].set = [](VM& v, Object* o, const Value& val) {
+      if (auto pn = o->fieldValues.find(u"<curveName>"); pn != o->fieldValues.end()) {
+        pn->second = Value::string(v.toStr(val));
+        return;
+      }
       GridObj* grid = nullptr;
       uint32_t i = 0;
       if (!controllerItem(v, o, &grid, &i)) return;

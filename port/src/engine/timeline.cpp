@@ -46,8 +46,12 @@ constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x0708101
                    // port: the painted areas' edges of a rect of cells (engine/paint_edges.h paintEdgeActionBytes), kept
                    // in Action::raw
                    kRegsPaintEdges = 0x070810C0,
+                   // port: a curved road renamed: the curve as curveActionBytes (add 1) with its new name; the curve with
+                   // the same ends and handles takes the name
+                   kRegsCurveName = 0x070810D0,
                    // port: a procedural building added (engine/proc_buildings.h procBuildingBytes), kept in Action::raw
-                   kRegsProcBuilding = 0x070810D0;
+                   // (0x070810D0 on the map-editor branch until main's curve names took it)
+                   kRegsProcBuilding = 0x070810E0;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -403,8 +407,18 @@ void applyCreate(Apply& ap, const Action& a, bool preview) {
 void applyBrush(Apply& ap, const Action& a, bool preview) {
   GridData& g = *ap.grid->data;
   int type = a.brushType, r = a.radius;
-  if (type & 0x40) {  // port: the round brush (grid_edit.h), its centres in 1/8 cell, radius r + 0.5
-    for (auto [px, pz] : a.points) gridRoundBrush(ap.grid, type & 0x3f, float(r) + 0.5f, float(px) / 8.0f, float(pz) / 8.0f, a.strength, preview);
+  if (type & 0x40) {  // port: the round brush (grid_edit.h), its centres in 1/8 cell, radius r + 0.5; the radius byte's
+    // top two bits: the brush shape (engine/paint_edges.h kBrushCircle / Square / Diamond)
+    const int rr = uint8_t(a.radius) & 0x3F, shape = uint8_t(a.radius) >> 6;
+    const int bt = type & 0x3f;
+    if (bt >= 1 && bt <= 9 && a.strength == 2 && !preview) {  // pavement sweeps: point pairs (from, to), recorded so
+      for (size_t i = 0; i + 1 < a.points.size(); i += 2) {
+        const float from[2] = {float(a.points[i].first) / 8.0f, float(a.points[i].second) / 8.0f};
+        gridRoundBrush(ap.grid, bt, float(rr) + 0.5f, float(a.points[i + 1].first) / 8.0f, float(a.points[i + 1].second) / 8.0f, 0, false, shape, from);
+      }
+      return;
+    }
+    for (auto [px, pz] : a.points) gridRoundBrush(ap.grid, bt, float(rr) + 0.5f, float(px) / 8.0f, float(pz) / 8.0f, a.strength, preview, shape);
     return;
   }
   if (preview && !(type >= 1 && type <= 8)) return;
@@ -589,6 +603,14 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       ++ap.grid->procVersion;
       break;
     }
+    case kRegsCurveName: {
+      CurveRoad c;
+      bool add = true;
+      if (preview || !curveFromActionBytes(a.raw, c, add)) break;
+      for (CurveRoad& k : g.curves)
+        if (sameCurve(k, c)) k.name = c.name;
+      break;
+    }
     default: break;
   }
 }
@@ -624,6 +646,7 @@ std::u16string labelOf(const Action& a) {
     case kVariation: return u"%!25";
     case kRegsPatch: return u"%!18";  // shown as levelling the terrain
     case kRegsPaintEdges: return u"%!13";  // shown as painting the pavement
+    case kRegsCurveName: return u"%!24";  // shown as renaming
     default: return u"";
   }
 }
@@ -641,6 +664,16 @@ struct Recording {
 std::unordered_map<const Object*, Recording> g_recording;
 
 void resetRecording(Object* s) { g_recording.erase(s); }
+
+}  // namespace
+
+// port: a brush stroke ended: its dabs stay one action (one undo step); the next stroke opens its own
+void timelineCloseBrush(Object* s) {
+  auto it = g_recording.find(s);
+  if (it != g_recording.end()) it->second.brushOpen = false;
+}
+
+namespace {
 
 std::vector<Action>& recordContainer(VM& vm, Object* s, Recording& rec) {
   TimelineData& t = timelineOf(s);
@@ -857,6 +890,14 @@ void timelineRecordProcBuilding(VM& vm, Object* s, const GridData::ProcBuilding&
   Action a;
   a.tag = kRegsProcBuilding;
   a.raw = procBuildingBytes(b);
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordCurveName(VM& vm, Object* s, const CurveRoad& c) {
+  if (!s) return;
+  Action a;
+  a.tag = kRegsCurveName;
+  a.raw = curveActionBytes(c, true);
   recordAction(vm, s, std::move(a));
 }
 
