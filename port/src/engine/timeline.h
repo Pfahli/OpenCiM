@@ -30,6 +30,8 @@ void timelineEndGroup(script::VM& vm, script::Object* timeline);
 // gsGridTimelineAction_createObject (L:0x081a6ca0): the item (flags & 0x42000000) and its parent (flags & 0x2000000);
 // a variation action follows when the item has one (finishTool's pattern)
 void timelineRecordCreate(script::VM& vm, script::Object* timeline, GridObj* grid, uint32_t item);
+// the same for many items at once (removed ones skipped): one insert instead of one per action
+void timelineRecordCreateMany(script::VM& vm, script::Object* timeline, GridObj* grid, const std::vector<int>& items);
 void timelineRecordDelete(script::VM& vm, script::Object* timeline, GridObj* grid, uint32_t item);
 void timelineRecordVariation(script::VM& vm, script::Object* timeline, GridObj* grid, uint32_t item, uint32_t variation);
 void timelineRecordName(script::VM& vm, script::Object* timeline, GridObj* grid, uint32_t item, const std::string& name);

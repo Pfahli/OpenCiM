@@ -4760,10 +4760,12 @@ int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
       if (pt.kind == 22 && std::hypot(pt.x - jx, pt.z - jz) <= j.radius / cs + 3.0) signals = true;
     for (const CurveArm& arm : j.arms) {
       if (arm.flow == 2) continue;  // (one-way away from the junction: nobody comes in there)
-      const float hw = curveProfile(arm.kind).halfWidth;
+      const float hw = curveProfile(arm.kind).halfWidth, kerb = curveProfile(arm.kind).carriageway;
       const render::Vec3 right{arm.out.z, 0, -arm.out.x};
       double px, pz, mx, mz;
-      cellOf(arm.mouth + arm.out * 2.0f + right * (hw - 0.5f), px, pz);
+      // right at the junction's corner (owner 2026-11-16: not set back along the street): where the arm meets the
+      // junction, on the pavement just behind the kerb
+      cellOf(arm.mouth - arm.out * 0.3f + right * std::min(kerb + 0.7f, hw - 0.3f), px, pz);
       cellOf(arm.mouth + arm.out * 3.0f, mx, mz);
       int osmSign = 0;
       for (const PointIn& pt : d.trafficPts)
@@ -4773,7 +4775,15 @@ int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
                          : (osmSign == 24 || (arm.kind == 0 && big >= 2)) ? giveWay
                                                                           : std::string();
       const int y = int(std::lround(arm.mouth.y * 256.0f / cs));
-      if (!name.empty() && placeAt(vm, grid, a, name, px, pz, arm.out.x, arm.out.z, ok, 6, y) >= 0) ++(signals ? nLights : nSigns);
+      // facing the traffic coming in: a sign's face is its front; a traffic light's lenses look along its model's +x
+      // (owner 2026-11-16: the lights faced sideways)
+      double fx = arm.out.x, fz = arm.out.z;
+      if (signals) armFront(arm.out.x, arm.out.z, fx, fz);
+      if (!name.empty() && placeAt(vm, grid, a, name, px, pz, fx, fz, ok, 6, y) >= 0) {
+        ++(signals ? nLights : nSigns);
+        if (std::getenv("REGS_DEBUG_OSM"))
+          LOG_INFO("osm: %s at world %.0f, %.0f (junction at %.0f, %.0f)", name.c_str(), (px - W * 0.5) * cs, (pz - L * 0.5) * cs, j.centre.x, j.centre.z);
+      }
       if (!direction.empty() && arm.kind >= 1 && big >= 3 && arm.curve >= 0 && curveLength(g.curves[size_t(arm.curve)]) > 45.0f) {
         cellOf(arm.mouth + arm.out * 25.0f + right * (hw - 0.5f), px, pz);
         if (placeAt(vm, grid, a, direction, px, pz, arm.out.x, arm.out.z, ok, 6) >= 0) ++nDir;
@@ -7818,9 +7828,10 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     a.stage = 6;
   }
   // done: the new objects on the timeline, their events, the overlay picture
-  for (int i : a.made)
-    if (size_t(i) < g.items.size() && !g.items[size_t(i)].removed) timelineRecordCreate(vm, a.timeline, grid, uint32_t(i));
+  const double tDone = now();
+  timelineRecordCreateMany(vm, a.timeline, grid, a.made);
   if (a.timeline) timelineEndGroup(vm, a.timeline);
+  if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu objects on the timeline in %.1f s", a.made.size(), now() - tDone);
   if (std::getenv("REGS_DEBUG_OSM")) {
     int w;
     float up = groundAbovePavement(g, g.curves, w);
@@ -7837,6 +7848,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       LOG_ERROR("onCreateInstance: %s", e.what());
     }
   }
+  if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: their creation events after %.1f s", now() - tDone);
   if (!d.satellite.empty()) {
     GroundOverlay& o = groundOverlay();
     o.bgra = d.satellite;
@@ -8096,7 +8108,9 @@ void registerOsmNatives(VM& vm) {
     bool done = applySlice(v, grid, player, a[1], a[2], budget);
     if (done) {
       g_apply.reset();
+      const double t0 = now();
       gridEditHoldSimulation(v, grid, false);
+      LOG_INFO("osm: the simulation took in the import in %.1f s", now() - t0);
     }
     return Value::boolean(done);
   });

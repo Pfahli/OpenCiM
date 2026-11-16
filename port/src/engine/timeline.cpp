@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -737,6 +738,45 @@ void timelineRecordCreate(VM& vm, Object* s, GridObj* grid, uint32_t item) {
     t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ;
     recordAction(vm, s, std::move(t));
   }
+}
+
+void timelineRecordCreateMany(VM& vm, Object* s, GridObj* grid, const std::vector<int>& items) {
+  // (the same actions as timelineRecordCreate one by one, which puts each at the front: in one insert, newest first.
+  // One by one took hours for the OSM import of a 2048 × 2048 map, every insert moving all actions before it)
+  if (!s || !grid || !grid->data) return;
+  const GridData& g = *grid->data;
+  std::vector<Action> batch;
+  batch.reserve(items.size() * 2);
+  for (int i : items) {
+    if (i < 0 || size_t(i) >= g.items.size() || g.items[size_t(i)].removed) continue;
+    const uint32_t item = uint32_t(i);
+    const GridData::Item& it = g.items[item];
+    Action a;
+    a.tag = kCreate;
+    a.obj = refOf(grid, item, 0x42000000);
+    if (it.parent && it.parent <= g.items.size()) a.parent = refOf(grid, it.parent - 1, kFlagAutoChild);
+    batch.push_back(std::move(a));
+    if (it.variation) {
+      Action v;
+      v.tag = kVariation;
+      v.obj = refOf(grid, item, kFlagAutoChild);
+      v.variation = it.variation;
+      batch.push_back(std::move(v));
+    }
+    if (itemOffGrid(it)) {
+      Action t;
+      t.tag = kRegsTurn;
+      t.obj = refOf(grid, item, kFlagAutoChild);
+      t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ;
+      batch.push_back(std::move(t));
+    }
+  }
+  if (batch.empty()) return;
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  c.insert(c.begin(), std::make_move_iterator(batch.rbegin()), std::make_move_iterator(batch.rend()));
+  if (!rec.groupOpen) vm.fireEvent(s, u"onChange", {});
 }
 
 void timelineRecordDelete(VM& vm, Object* s, GridObj* grid, uint32_t item) {
