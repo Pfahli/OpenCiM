@@ -2094,8 +2094,8 @@ void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector
       // (owner 2026-11-16 later: "the stone doesn't look like a castle": the yellow London rubble greyed, the even part
       // of it below its coursed band, as the quarry stone of a castle on the Rhine)
       if (k == kProcCastleStone)
-        tex = cropGameTexture(vm, "addons/london/props/tower-walls/TowerOfLondonWall_D.dds", 250, 700, 320, 320, true, 0.4f, 0.9f);
-      if (k == kProcWalk) tex = cropGameTexture(vm, "metro/graphics/concreteplates04.dds", 0, 0, 0, 0, false, 0.55f, 0.8f);
+        tex = cropGameTexture(vm, "addons/london/props/tower-walls/TowerOfLondonWall_D.dds", 250, 700, 320, 320, true, 0.45f, 0.6f);
+      if (k == kProcWalk) tex = cropGameTexture(vm, "metro/graphics/concreteplates04.dds", 0, 0, 0, 0, false, 0.55f, 0.6f);
       if (!tex)
         if (const GameTile* gt = gameTileFor(k)) tex = cropGameTexture(vm, gt->path, gt->x, gt->y, gt->w, gt->h);
       m.textures = {tex ? tex : uploadTex(texs[size_t(k)])};

@@ -675,6 +675,16 @@ void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ) 
   }
   if (cn != -1 && cn >= nearZ) nearZ = cn;
   if (cf != -1) farZ = std::min(cf, farZ);
+  // port (owner 2026-11-16: "the 3D models clip into the camera very early"): the main camera's script sets its near
+  // plane to 30 (engine.script), which cuts away whatever comes within 30 units: towers and trees when zoomed in or
+  // tilted toward them. The near plane follows the camera's distance to its point instead, a tenth of it, 1 to 30
+  // (depth precision stays: 0.01 at 300 units with a near plane of 1); the debug camera's own eye takes 1
+  if (isFloatingCamera(vm, cam) && cam->fieldValues.count(u"<offset>")) {
+    const Vec3 off = vec3Of(cam->fieldValues[u"<offset>"]);
+    float want = std::clamp(std::sqrt(off.x * off.x + off.y * off.y + off.z * off.z) * 0.1f, 1.0f, 30.0f);
+    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) want = 1.0f;
+    nearZ = std::min(nearZ, want);
+  }
 }
 
 uint32_t combinerProgram(Display& d, VM& vm, const std::string& shader, uint32_t matFlags, uint32_t env) {
