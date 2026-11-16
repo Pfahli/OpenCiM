@@ -1029,6 +1029,7 @@ bool outdoorSeating(const T& tags, int eatery, uint64_t id) {
 struct ImportData {
   int W = 0, L = 0, flags = 0;
   double cellM = 2.5;            // metres per cell
+  double lat = 0, lon = 0;       // the area's centre (degrees)
   std::vector<AreaIn> areas;
   std::vector<PointIn> points;
   // painted areas with exact edges (paint_edges.h, 2026-11-14): car parks in asphalt (0), squares and market places in
@@ -1402,6 +1403,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
   const int W = fr.W, L = fr.L;
   double mx0 = fr.mercX(0), mx1 = fr.mercX(W), my0 = fr.mercY(0), my1 = fr.mercY(L);
   double south = myToLat(my1), north = myToLat(my0), west = mxToLon(mx0), east = mxToLon(mx1);
+  data->lat = (south + north) * 0.5, data->lon = (west + east) * 0.5;
   auto fail = [&](const std::string& e) {
     *errorOut = e;
     return;
@@ -3656,6 +3658,25 @@ struct Candidate {
   int w, l;
 };
 
+// buildings only the Tokyo or the US packages bring (names in neither the base game nor a European package; read from
+// their envsets 2026-11-16): left out of an import in Europe (owner 2026-11-16: Japanese neon facades in Bruchsal looked
+// random). The import sets it from the area's position.
+bool g_europeanImport = false;
+bool foreignToEurope(const std::string& n) {
+  static const std::set<std::string> kNames = {
+      // Tokyo
+      "commercial01", "commercial02", "commercial03", "commercial04", "commercial05", "cornerbuilding01", "cornerbuilding02",
+      "cornerbuilding03", "highschool", "kabuki-theatre", "officebuilding05", "palace", "park-tower", "ryokan", "senso-jin-gate",
+      "senso-jin-temple", "shopping-center", "shopping-center-b", "sky-tree", "temple-01", "temple-02", "tenement-03",
+      "tenement-04", "tokyo-tower",
+      // the US (New York brownstones, Californian offices, landmarks)
+      "apartment06", "apartment07", "apartment08", "apartment09", "blockhouse04", "blockhouse07", "blockhouse08", "blockhouse09",
+      "blockhouse10", "blockhouse11", "blockhouse12", "blockhouse13", "central-station", "empire-state-building", "fastfood02",
+      "lombard-street", "office-building01", "office-building02", "office-building03", "statue-of-liberty",
+      "transamerica-pyramid"};
+  return kNames.count(n) != 0;
+}
+
 std::vector<Candidate> categoryTemplates(VM& vm, GridObj* grid, const Value& buildings, const std::string& cat) {
   std::vector<Candidate> out;
   MapObj* m = vm.resolve(buildings).map();
@@ -3669,6 +3690,7 @@ std::vector<Candidate> categoryTemplates(VM& vm, GridObj* grid, const Value& bui
       // signs in the building lists (the grocery's signs among the commercial buildings) are no buildings: in a small
       // footprint they stood in rows in the yards (owner 2026-11-14)
       if (name.find("sign") != std::string::npos) continue;
+      if (g_europeanImport && foreignToEurope(name)) continue;
       auto it = grid->templates.find(name);
       if (it == grid->templates.end()) continue;
       Object* o = it->second.get();
@@ -7082,6 +7104,8 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     return true;
   }
   if (a.stage == 0) {  // begin: the group, the old objects
+    // (in Europe: none of the Tokyo or US packages' own buildings, foreignToEurope)
+    g_europeanImport = d.lat > 34.0 && d.lat < 72.0 && d.lon > -25.0 && d.lon < 45.0;
     a.timeline = playerTimeline(vm, player);
     if (a.timeline) timelineBeginGroup(vm, a.timeline, "%9 OpenStreetMap");
     a.used.assign(size_t(W) * size_t(L), 0);
