@@ -54,7 +54,9 @@ enum ProcMaterial { kProcHall = 0, kProcHallDoor = 1, kProcPlaster = 2 /* 4 */, 
                     kProcGPalaceUp = 44, kProcGPalaceGround, kProcGHouse1Up, kProcGHouse1Ground, kProcGHouse2Up, kProcGHouse2Ground,
                     kProcGBlue, kProcGOrange, kProcGPink, kProcGGreen, kProcGShopGround, kProcGOfficeUp, kProcGOfficeRibbon,
                     kProcGBrickWin, kProcGGothicWin, kProcGLancets, kProcGRose, kProcGGothicDoor, kProcGBaroqueBay, kProcGRoundWin,
-                    kProcGRedTiles, kProcMaterialCount };
+                    kProcGRedTiles,
+                    // 2026-11-16 (owner: the castle roof looked weird): a castle's wall walk in the game's large stone slabs
+                    kProcWalk, kProcMaterialCount };
 // 7: a church (2026-11-16, owner: "build different church types"), its type in ProcBuilding::roof: 0 romanesque (rubble
 // stone, small round-headed windows, a squat square tower with a pyramid roof), 1 gothic (sandstone blocks, tall pointed
 // windows, buttresses, a steep roof, a slender tower with an octagonal spire; twin towers on a big one), 2 baroque

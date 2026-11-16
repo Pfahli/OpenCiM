@@ -876,7 +876,7 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   // (the skirt reaches 12 down: on a slope the walls go into the ground, no floating wing)
   const float y = src.y, top = src.y + src.height, skirt = src.y - 12.0f;
   const float bay = hall ? 6.0f : palace ? 3.4f : castle ? 4.5f : church ? (chType == 3 ? 3.0f : chType == 2 ? 4.6f : 4.2f) : 3.6f;
-  const float uScale = hall ? 6.0f : office ? 3.2f : castle ? 3.0f : 3.6f, vScale = hall ? 6.0f : office ? 3.6f : castle ? 3.0f : 3.2f;
+  const float uScale = hall ? 6.0f : office ? 3.2f : castle ? 6.0f : 3.6f, vScale = hall ? 6.0f : office ? 3.6f : castle ? 6.0f : 3.2f;
   const float fl = std::hypot(src.frontX, src.frontZ);
   const float fx = fl > 1e-6f ? src.frontX / fl : 0, fz = fl > 1e-6f ? src.frontZ / fl : 0;
   // a church's main axis (the outline's principal direction, its points taken along the edges), its extent (s along it,
@@ -1011,7 +1011,7 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
       }
       continue;
     }
-    if (church || castle) {  // stone (a baroque church: its painted nave bay over the whole height), painted windows on it
+    if (church) {  // stone (a baroque church: its painted nave bay over the whole height), painted windows on it
       if (church && chType == 2) {
         const int nb = std::max(1, int(std::round(len / ((top - y) * tileAspect(kProcGBaroqueBay)))));
         bd.quad(kProcGBaroqueBay, w.at(0, y, 0), w.at(len, y, 0), w.at(len, top, 0), w.at(0, top, 0), w.n, 0, 0, float(nb), 1);
@@ -1127,16 +1127,29 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
         }
         if (castle) {  // a gate on the front, few small windows deep in the thick wall
           if (ground && isDoorBay(k) && bw >= 2.4f) {
-            const float dw = 1.9f, s0 = (bw - dw) * 0.5f;
-            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0.0f, std::min(3.1f, fh - 0.4f), 0.7f, kProcDoor, kProcCastleStone,
-                    false, 0, 0);
+            // (2026-11-16, owner: the painted cathedral windows did not fit the new stone: real openings with round heads)
+            const float dw = 1.9f, s0 = (bw - dw) * 0.5f, dh = std::min(2.9f, fh - 1.2f);
+            opening(bd, w, mat, uScale, vScale, y, b0, bw, y0, fh, s0, s0 + dw, 0.0f, dh, 0.7f, kProcDoor, kProcCastleStone, false, 0, 0);
+            archHead(w, b0 + s0, b0 + s0 + dw, y0 + dh, false, kProcDoor);
             continue;
           }
           if (hashU(seed ^ uint32_t(i * 977u + f * 131u + uint32_t(k) * 7919u)) % 100 < (ground ? 65u : 35u)) {
             plain();
             continue;
           }
-          window(0.7f, 1.3f, 2.6f, 0.55f, 0, 1, false, paneFor());
+          // a narrow window deep in the thick wall, its round head over it (a pair of them on a wide bay upstairs)
+          const float ww = 0.6f, o0 = 1.2f, o1 = std::min(2.5f, fh - 0.7f);
+          if (!ground && bw >= 3.4f) {
+            for (int p = 0; p < 2; ++p) {
+              const float c = bw * (p ? 0.64f : 0.36f);
+              opening(bd, w, mat, uScale, vScale, y, b0 + (p ? bw * 0.5f : 0.0f), bw * 0.5f, y0, fh, c - (p ? bw * 0.5f : 0.0f) - ww * 0.5f,
+                      c - (p ? bw * 0.5f : 0.0f) + ww * 0.5f, o0, o1, 0.55f, paneFor(), kProcCastleStone, false, 0, 0);
+              archHead(w, b0 + c - ww * 0.5f, b0 + c + ww * 0.5f, y0 + o1, false, kProcGlass);
+            }
+            continue;
+          }
+          window(ww, o0, o1, 0.55f, 0, 0, false, paneFor());
+          if (ww <= bw - 0.3f && o1 <= fh - 0.1f) archHead(w, b0 + (bw - ww) * 0.5f, b0 + (bw + ww) * 0.5f, y0 + o1, false, kProcGlass);
           continue;
         }
         if (hall) {
@@ -1491,8 +1504,8 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
   } else if (castle) {
     // the wall walk behind battlements (merlons every 1.6 along the parapet), round towers with conical roofs at the
     // outer corners (the sharpest first, up to six; roofs of slate or red tiles by the variant)
-    // (the wall walk in plain grey stone: the game's flat roof tile showed its seams as stripes, owner 2026-11-16)
-    flatRoof(o, top + 0.02f, kProcRustica, 6.0f);
+    // (the wall walk in stone slabs: the game's flat roof tile showed its seams as stripes, plain stone looked odd; owner 2026-11-16)
+    flatRoof(o, top + 0.02f, kProcWalk, 7.0f);
     // (owner 2026-11-16: "the walls should be more filigree on top"; were a parapet 0.9 high and 0.6 thick with merlons
     // 0.9 wide every 1.6; then "the stones on the merlons are too high": each face took the whole stone tile): a thin
     // parapet standing out on a row of small corbels, low slender merlons with thin caps, all in the walls' stone at the
@@ -1988,8 +2001,11 @@ float tileAspect(int mat) {
   const GameTile* t = gameTileFor(mat);
   return t && t->h > 0 ? float(t->w) / float(t->h) : 1.0f;
 }
-// a rectangle of a game texture as a texture of its own (repeating, mipmapped, bottom row first); 0 when missing
-uint32_t cropGameTexture(script::VM& vm, const char* path, int x, int y, int w, int h, bool seamless = false) {
+// a rectangle of a game texture as a texture of its own (repeating, mipmapped, bottom row first; w = 0: the whole
+// texture); seamless: its edges blended to repeat; sat, gain: its colours toward grey and brighter or darker; 0 when
+// missing
+uint32_t cropGameTexture(script::VM& vm, const char* path, int x, int y, int w, int h, bool seamless = false, float sat = 1.0f,
+                         float gain = 1.0f) {
   static std::map<std::string, std::pair<std::vector<uint8_t>, std::pair<int, int>>> decoded;  // (decoded once per file)
   auto it = decoded.find(path);
   if (it == decoded.end()) {
@@ -2004,10 +2020,16 @@ uint32_t cropGameTexture(script::VM& vm, const char* path, int x, int y, int w, 
   }
   const auto& [rgba, size] = it->second;
   const int iw = size.first, ih = size.second;
+  if (w <= 0) x = 0, y = 0, w = iw, h = ih;
   if (rgba.empty() || x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > iw || y + h > ih) return 0;
   std::vector<uint8_t> px(size_t(w) * size_t(h) * 4);
   for (int r = 0; r < h; ++r)  // (flipped: the bottom row first, v = 0 at the bottom as the meshes take it)
     std::memcpy(&px[size_t(r) * size_t(w) * 4], &rgba[(size_t(y + h - 1 - r) * size_t(iw) + size_t(x)) * 4], size_t(w) * 4);
+  if (sat != 1.0f || gain != 1.0f)
+    for (size_t i = 0; i + 3 < px.size(); i += 4) {
+      const float l = 0.3f * px[i] + 0.59f * px[i + 1] + 0.11f * px[i + 2];
+      for (int k = 0; k < 3; ++k) px[i + size_t(k)] = uint8_t(std::clamp((l + (float(px[i + size_t(k)]) - l) * sat) * gain, 0.0f, 255.0f));
+    }
   if (seamless) {  // blended toward the crop shifted by half its size near its edges (which meet seamlessly there)
     const std::vector<uint8_t> src = px;
     const float m = 0.22f;
@@ -2069,7 +2091,11 @@ void collectProcBuildings(Display& d, script::VM& vm, GridObj* grid, std::vector
       // a castle's stone (owner 2026-11-16: "the texture looks very flat and unrealistic"; the cathedral's plain stone is
       // a fine dark noise): the Tower of London's rubble masonry where the London package is installed, its edges blended
       // so it repeats without seams
-      if (k == kProcCastleStone) tex = cropGameTexture(vm, "addons/london/props/tower-walls/TowerOfLondonWall_D.dds", 220, 600, 420, 420, true);
+      // (owner 2026-11-16 later: "the stone doesn't look like a castle": the yellow London rubble greyed, the even part
+      // of it below its coursed band, as the quarry stone of a castle on the Rhine)
+      if (k == kProcCastleStone)
+        tex = cropGameTexture(vm, "addons/london/props/tower-walls/TowerOfLondonWall_D.dds", 250, 700, 320, 320, true, 0.4f, 0.9f);
+      if (k == kProcWalk) tex = cropGameTexture(vm, "metro/graphics/concreteplates04.dds", 0, 0, 0, 0, false, 0.55f, 0.8f);
       if (!tex)
         if (const GameTile* gt = gameTileFor(k)) tex = cropGameTexture(vm, gt->path, gt->x, gt->y, gt->w, gt->h);
       m.textures = {tex ? tex : uploadTex(texs[size_t(k)])};
