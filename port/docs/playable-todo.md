@@ -420,6 +420,25 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   corners. Standalone McDonald's / Burger King / KFC (brand, wikidata or name; a building or a point in it, at most
   three times the restaurant's size) become the game's fast food restaurant. The import holds the simulation's
   rebuilds back until it ends (gridEditHoldSimulation): on 2048 × 2048 each slice's rebuild took up to 80 s.
+  2048 × 2048 (Bruchsal) now completes: 185,580 objects, 7,733 buildings, 134,799 trees; the timeline gets the objects
+  in one insert (timelineRecordCreateMany; one by one took hours), the simulation's one rebuild at the end takes
+  ~130 s (the game stands still meanwhile). Rendering such a map is slow (well under 10 fps seen, with a second window).
+  Working traffic lights (engine/traffic_lights.cpp): traffic-lights01 near side at the stop line on the right-hand
+  pavement (the zebra lies 0.17-2.88 inside the mouth), lenses on its model +x facing the oncoming traffic; lamp
+  positions from the texture's red / amber / green texels on the lens side; a 40 s cycle (green 16, amber 3, red 20,
+  red-amber 1), the cross direction half a cycle later, green waves along each junction's main axis at 12 units/s;
+  glow sprites by day and night, at night a small pool on the street via night_lights' extraNightLights (the light map
+  is monochrome: warm for red/amber). Decoration only: vehicles do not stop. One-way signs (traffic-sign09, the blue
+  arrow panel, found by its UVs) at the start of one-way streets facing the junction. Restaurant tables on the
+  pavement where the house stands at it. In Europe none of the Tokyo / US packages' own buildings (foreignToEurope);
+  open land behind houses gets trees and bushes only, no garden things.
+  Open (seen in the 2026-11-16 screenshots): the Schloss became rows of terraced houses with blank gable walls; the
+  Schlossgarten's basins are dry rock pits ringed by hedges; OSM fence pieces stand alone on lawns where what they
+  enclosed is missing; the Siemens roundabout not checked (the geocoder found another stretch of the street).
+  Screenshot runs: the scratchpad place.ps1 imports a place, copies its autosave to maps/a1 and starts it as a sandbox
+  (Neues Spiel → Sandbox → the map → Start) by day, at night (REGS_DEBUG_TIME=22), in rain (REGS_TEST_WEATHER=heavy,
+  REGS_TEST_GROUND=puddles) and snow (=snow, =snow, REGS_TEST_SEASON=350); the weather mod must be enabled in the
+  stand-in documents' mods/mods.json.
   Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
   signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
   the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at
