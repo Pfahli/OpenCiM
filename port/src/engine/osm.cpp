@@ -578,6 +578,7 @@ struct RoadIn {
   bool bridge = false, oneway = false, treeLined = false, dropped = false;
   bool ring = false;  // junction=roundabout
   bool underpass = false;  // a short tunnel (under a railway or road): on the ground, what crosses it bridges it
+  bool foot = false;       // a footway, path, cycleway or steps (2026-11-16): a footpath (kind 2)
   int cls = 0;   // 0 minor, 1 tertiary, 2 secondary, 3 primary, 4 trunk/motorway
   int lanes = 0;
   double width = 0;  // metres (0 unknown)
@@ -1495,7 +1496,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
            "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian)$\"]" + b + ";way[\"natural\"=\"tree_row\"]" + b +
            ";way[\"place\"=\"square\"]" + b + ";way[\"amenity\"=\"parking\"]" + b + ";way[\"area:highway\"]" + b +
            ";way[\"railway\"~\"^(rail|light_rail)$\"]" + b + ";node[\"railway\"~\"^(station|halt)$\"]" + b +
-           ";way[\"highway\"=\"service\"]" + b + ";way[\"railway\"=\"tram\"]" + b +
+           ";way[\"highway\"=\"service\"]" + b + ";way[\"highway\"~\"^(footway|path|cycleway|bridleway|steps)$\"]" + b + ";way[\"railway\"=\"tram\"]" + b +
            ";node[\"amenity\"~\"^(fountain|bench|waste_basket|bicycle_parking|telephone|post_box|toilets|clock|vending_machine|taxi|recycling|shelter)$\"]" + b +
            ";node[\"highway\"~\"^(street_lamp|traffic_signals|stop|give_way)$\"]" + b + ";node[\"traffic_sign\"~\"city_limit|DE:310\"]" + b +
            ";node[\"advertising\"=\"column\"]" + b + ";node[\"barrier\"=\"bollard\"]" + b + ";node[\"historic\"~\"^(memorial|monument)$\"]" + b +
@@ -1839,7 +1840,17 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
           if (tags.str("area") == "yes") continue;
           RoadIn r;
           r.underpass = under;
-          r.kind = hw == "pedestrian" ? 2 : 0;
+          // footways, paths, cycleways, steps (owner 2026-11-16: only grass around the Schloss, the garden's paths were
+          // never asked for): footpaths; not the sidewalks and crossings mapped as their own ways (the streets have theirs)
+          const bool foot = hw == "footway" || hw == "path" || hw == "cycleway" || hw == "bridleway" || hw == "steps";
+          if (foot) {
+            const std::string fw = tags.str("footway"), cw = tags.str("cycleway"), pw = tags.str("path");
+            if (fw == "sidewalk" || fw == "crossing" || fw == "traffic_island" || cw == "crossing" || cw == "sidewalk" ||
+                pw == "sidewalk" || pw == "crossing" || tags.str("indoor") == "yes" || tags.str("access") == "no")
+              continue;
+          }
+          r.foot = foot;
+          r.kind = hw == "pedestrian" || foot ? 2 : 0;
           r.cls = (hw == "motorway" || hw == "trunk") ? 4 : hw == "primary" ? 3 : hw == "secondary" ? 2 : hw == "tertiary" ? 1 : 0;
           r.bridge = tags.str("bridge") == "yes" || tags.str("bridge") == "viaduct";
           std::string ow = tags.str("oneway");
@@ -1925,6 +1936,47 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
   osm = Json();
   data->green.assign(size_t(W) * size_t(L), 0);
   for (const Edges& e : greenEdges) fillEdges(e, W, L, [&](int x, int z) { data->green[size_t(z) * size_t(W) + size_t(x)] = 1; });
+  // footways running along a street (a sidewalk mapped as a way of its own but not tagged so): a path two thirds of whose
+  // points lie within 9 m of a street's centre line goes (the street draws its pavement itself)
+  {
+    std::map<std::pair<int, int>, std::vector<std::pair<std::pair<double, double>, std::pair<double, double>>>> segs;
+    for (const RoadIn& r : data->roads)
+      if (!r.foot && r.kind != 2 && r.kind < 5)
+        for (size_t k = 0; k + 1 < r.pts.size(); ++k) {
+          const auto a = r.pts[k], b2 = r.pts[k + 1];
+          for (int gz = int(std::floor(std::min(a.second, b2.second) / 16)) - 1; gz <= int(std::floor(std::max(a.second, b2.second) / 16)) + 1; ++gz)
+            for (int gx = int(std::floor(std::min(a.first, b2.first) / 16)) - 1; gx <= int(std::floor(std::max(a.first, b2.first) / 16)) + 1; ++gx)
+              segs[{gx, gz}].push_back({a, b2});
+        }
+    const double near = 9.0 / cellM;
+    int dropped = 0, kept = 0;
+    std::vector<RoadIn> keep;
+    for (RoadIn& r : data->roads) {
+      if (r.foot) {
+        int close = 0, all = 0;
+        for (size_t k = 0; k + 1 < r.pts.size(); ++k)
+          for (double q : {0.0, 0.5}) {
+            const double px = r.pts[k].first + (r.pts[k + 1].first - r.pts[k].first) * q, pz = r.pts[k].second + (r.pts[k + 1].second - r.pts[k].second) * q;
+            ++all;
+            auto it = segs.find({int(std::floor(px / 16)), int(std::floor(pz / 16))});
+            if (it == segs.end()) continue;
+            for (auto& sg : it->second)
+              if (segDist(px, pz, sg.first, sg.second) < near) {
+                ++close;
+                break;
+              }
+          }
+        if (all && close * 3 > all * 2) {
+          ++dropped;
+          continue;
+        }
+        ++kept;
+      }
+      keep.push_back(std::move(r));
+    }
+    data->roads.swap(keep);
+    if (kept || dropped) LOG_INFO("osm: %d footways and paths, %d more along streets left out (sidewalks)", kept, dropped);
+  }
   classifyRoads(data->roads, treeRows, cellM);
   mergeTracks(data->roads);
   tramBeds(*data);
@@ -6741,12 +6793,15 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     for (int x = int(x0); x <= int(x1); ++x) {
       if (!insideRing(ring, x + 0.5, z + 0.5)) continue;
       const size_t i = size_t(z) * size_t(W) + size_t(x);
-      if (a.used[i] != 0 && a.used[i] != 8) ++busy;
+      // (a palace, castle or church: only roads, water, tracks and buildings block it; paving under it gives way: a church on
+      // a square whose paving covers it, Freiburg's Münster, 2026-11-16)
+      const uint8_t u = a.used[i];
+      if (special ? (u == 1 || u == 2 || u == 3 || u == 7) : (u != 0 && u != 8)) ++busy;
       else cells.push_back(i);
       for (int dz = 0; dz <= 1; ++dz)
         for (int dx = 0; dx <= 1; ++dx) hi = std::max(hi, int(g.height[size_t(z + dz) * size_t(W) + size_t(x + dx)]));
     }
-  if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 40 : 15)) return false;  // (a palace may have a path through its yard)
+  if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 10 : 15)) return false;
   GridData::ProcBuilding pb;
   // halls only for industry, farms and railways (owner 2026-11-15: no warehouses in the town centre); offices for
   // workplaces, shops (shop windows and signs below, a big low store from 700 cells and at most two levels) for
@@ -7776,6 +7831,14 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       for (const BuildingIn& b : d.buildings)
         if (b.row >= 0) blocks[b.row].push_back(&b);
       a.inRow.assign(d.buildings.size(), 0);
+      // (before them the palaces, castles and churches, so the rows keep clear of them; 2026-11-16: a row house stood in
+      // the Hofkirche)
+      int special = 0;
+      for (size_t i = 0; i < d.buildings.size(); ++i) {
+        const BuildingIn& b = d.buildings[i];
+        if ((b.castle || b.church >= 0) && placeProcBuilding(vm, grid, a, b)) a.inRow[i] = 1, ++special;
+      }
+      if (special) LOG_INFO("osm: %d palaces, castles and churches placed first", special);
       a.yardSeeds.clear();
       int made = 0, houses = 0;
       for (auto& [id, members] : blocks) {
