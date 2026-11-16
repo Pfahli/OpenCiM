@@ -458,6 +458,18 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   windows on two in three.
   Not checked yet: a castle and the gothic / baroque / modern churches in a screenshot (Bruchsal: palace, wing and the
   romanesque Hofkirche checked).
+  2026-11-16 evening (owner): passages through procedural buildings (ProcBuilding::passages, bit 7 of the record's roof
+  byte): where a road or footpath crosses a footprint (in through one wall, out through another or into a junction
+  inside; its middle at least 0.6 of its half width from the walls; not one that ends inside, a path to a door) the
+  osm import cuts it into straight pieces (cells under them neither block nor are taken); the mesh is clipped against
+  each piece's box (anything under y1: every style's walls, windows, buttresses, towers) and lined with side walls and
+  a ceiling. Clear 3.2 over footpaths, 4.5 over roads, 1.2 under the eaves at least. Castle and church pieces from 8
+  cells (gatehouses, small wings: Cochem's gate passage). Castle battlements finer: a 0.3 parapet standing out on
+  corbels, merlons 0.6 wide with caps every 1.5. Statues sized (GridData::Item::scale, drawn only; saved in the item
+  turn section, bit 30, and the timeline's turn record): OSM's height where given (4 of 414 cached statues), else a
+  usual height by kind (figure 3.8 m, bust 2.4, obelisk / stele 4.5, stone 1.5, sculpture 3, monument 5.5): the game's
+  statues are 11–12 m at the import's scale. Open: passages are boxes (no arch), and only procedural buildings get
+  them (row houses of game models leave the way's cells free instead).
   Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
   signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
   the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at

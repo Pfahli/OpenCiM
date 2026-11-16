@@ -112,16 +112,19 @@ void writeItemTurns(const GridData& g, std::vector<uint8_t>& out) {
     std::memcpy(&a, &f, 4);
     put32(body, a);
   };
+  bool sizes = false;  // (the sizes, bit 30, only when an item has one)
+  for (size_t i = 0; i < g.items.size(); ++i) sizes = sizes || (refs[i] && g.items[i].scale != 1);
   for (size_t i = 0; i < g.items.size(); ++i)
     if (refs[i] && itemOffGrid(g.items[i])) {
       put32(body, refs[i]);
       putF(g.items[i].yaw);
       putF(g.items[i].offX);
       putF(g.items[i].offZ);
+      if (sizes) putF(g.items[i].scale);
       ++count;
     }
   if (!count) return;
-  putU32(body, 0, count | 0x80000000u);
+  putU32(body, 0, count | 0x80000000u | (sizes ? 0x40000000u : 0u));
   put32(out, kItemTurnSectionTag);
   put32(out, uint32_t(body.size()));
   out.insert(out.end(), body.begin(), body.end());

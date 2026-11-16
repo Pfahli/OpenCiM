@@ -75,7 +75,7 @@ struct Action {
   uint16_t on = 0;
   std::string text;                  // name (UTF-8, as the network's name table)
   uint32_t variation = 0;            // variation
-  float turn[3] = {0, 0, 0};         // port: kRegsTurn (yaw, offX, offZ)
+  float turn[4] = {0, 0, 0, 1};      // port: kRegsTurn (yaw, offX, offZ, scale; older records end before the scale)
   std::vector<uint8_t> raw;          // unknown tags, kept as read (body)
 };
 
@@ -172,7 +172,7 @@ void readActions(const Reader& r, size_t at, size_t end, std::vector<Action>& ou
         break;
       case kRegsTurn:
         a.obj = readRef(r, body);
-        for (int k = 0; k < 3 && body + 48 + size_t(k) * 4 <= stop; ++k) std::memcpy(&a.turn[k], r.d.data() + body + 44 + k * 4, 4);
+        for (int k = 0; k < 4 && body + 48 + size_t(k) * 4 <= stop; ++k) std::memcpy(&a.turn[k], r.d.data() + body + 44 + k * 4, 4);
         break;
       default: a.raw.assign(r.d.begin() + std::ptrdiff_t(body), r.d.begin() + std::ptrdiff_t(stop)); break;
     }
@@ -559,6 +559,7 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       GridData::Item& it = g.items[size_t(i)];
       bool ok = std::isfinite(a.turn[0]) && std::fabs(a.turn[1]) < 3 && std::fabs(a.turn[2]) < 3;
       it.yaw = ok ? a.turn[0] : 0.0f, it.offX = ok ? a.turn[1] : 0.0f, it.offZ = ok ? a.turn[2] : 0.0f;
+      it.scale = std::isfinite(a.turn[3]) && a.turn[3] >= 0.1f && a.turn[3] <= 10.0f ? a.turn[3] : 1.0f;
       gridEditItemChanged(ap.grid, uint32_t(i));
       break;
     }
@@ -768,7 +769,7 @@ void timelineRecordCreate(VM& vm, Object* s, GridObj* grid, uint32_t item) {
     Action t;
     t.tag = kRegsTurn;
     t.obj = refOf(grid, item, kFlagAutoChild);
-    t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ;
+    t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ, t.turn[3] = it.scale;
     recordAction(vm, s, std::move(t));
   }
 }
@@ -800,7 +801,7 @@ void timelineRecordCreateMany(VM& vm, Object* s, GridObj* grid, const std::vecto
       Action t;
       t.tag = kRegsTurn;
       t.obj = refOf(grid, item, kFlagAutoChild);
-      t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ;
+      t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ, t.turn[3] = it.scale;
       batch.push_back(std::move(t));
     }
   }

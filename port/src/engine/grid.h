@@ -35,6 +35,9 @@ struct GridData {
     // port: a shift in world units off the footprint's centre (|x|, |z| ≤ half a cell: an object snapped to a turned
     // neighbour's grid), saved and drawn with yaw
     float offX = 0, offZ = 0;
+    // port: a uniform size factor on the template's model (2026-11-16, owner: statues sized as OSM has them), drawn only
+    // (the cells stay the template's); saved with yaw (bit 30 of the section's count)
+    float scale = 1;
   };
   std::vector<std::string> types;
   std::vector<Item> items;
@@ -102,6 +105,13 @@ struct GridData {
     uint8_t roof = 0;                              // 0 flat with a parapet, 1 gabled (four corners only)
     uint8_t style = 0;                             // 0 hall, 1 plaster, 2 brick
     float frontX = 0, frontZ = 0;                  // toward the street (doors on the walls facing it); 0, 0 unknown
+    // passages through it (2026-11-16, owner: roads and footpaths through buildings get tunnels): a straight run from
+    // (x0, z0) to (x1, z1), half as wide as `half`, clear from y0 (the way's level) to y1; the building is cut away there
+    // and lined (side walls, a ceiling)
+    struct Passage {
+      float x0 = 0, z0 = 0, x1 = 0, z1 = 0, half = 2, y0 = 0, y1 = 3;
+    };
+    std::vector<Passage> passages;
   };
   std::vector<ProcBuilding> procBuildings;
 };
@@ -133,10 +143,11 @@ inline void itemTurn(const GridData::Item& it, float& c, float& s) {
 }
 
 // port: placed off the grid: turned freely or shifted (GridData::Item::yaw, offX, offZ)
-inline bool itemOffGrid(const GridData::Item& it) { return it.yaw != 0 || it.offX != 0 || it.offZ != 0; }
+inline bool itemOffGrid(const GridData::Item& it) { return it.yaw != 0 || it.offX != 0 || it.offZ != 0 || it.scale != 1; }
 
-// port: the items' free turns and shifts in map.grid: u32 count (bit 31: with the shifts), then per item off the grid its
-// 1-based saved index (savedItemRefs), the angle and (bit 31) offX, offZ as floats
+// port: the items' free turns and shifts in map.grid: u32 count (bit 31: with the shifts, bit 30: with the sizes), then
+// per item off the grid its 1-based saved index (savedItemRefs), the angle, (bit 31) offX, offZ and (bit 30) the scale
+// as floats
 constexpr uint32_t kItemTurnSectionTag = 0x07F10000;
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);

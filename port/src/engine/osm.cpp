@@ -39,6 +39,7 @@
 #include "engine/interaction.h"
 #include "engine/paint_edges.h"
 #include "engine/proc_buildings.h"
+#include "engine/scene3d.h"
 #include "engine/platform.h"
 #include "engine/timeline.h"
 #include "engine/tool_tracks.h"
@@ -1052,6 +1053,7 @@ struct PointIn {
   double x = 0, z = 0;
   int kind = 0;
   int sub = 0;
+  double heightM = 0;  // statues: OSM's height tag in metres (2026-11-16), 0 when it has none
 };
 // a place to eat: 1 cafe / ice cream, 2 restaurant, 3 pub / bar, 4 fast food, 0 none
 int eateryKind(const std::string& am) {
@@ -1649,6 +1651,12 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
             if (kind >= 0) {
               PointIn pt;
               pt.x = fr.cellX(lonToMx(el.num("lon"))), pt.z = fr.cellZ(latToMy(el.num("lat"))), pt.kind = kind, pt.sub = sub;
+              if (kind == 8 || kind == 9 || kind == 10) {  // a statue's height ("7", "7 m", "7,5")
+                std::string h = tags.str("height");
+                std::replace(h.begin(), h.end(), ',', '.');
+                const double v = std::atof(h.c_str());
+                if (v >= 0.3 && v <= 80.0) pt.heightM = v;
+              }
               if (pt.x >= 1 && pt.z >= 1 && pt.x < W - 1 && pt.z < L - 1) data->points.push_back(pt);
               continue;
             }
@@ -5146,6 +5154,27 @@ int placeAds(VM& vm, GridObj* grid, Apply& a) {
   return nPosters + nBoards + nColumns;
 }
 
+// a template's model height in metres at the import's scale (cellM metres a cell; 0 when its mesh cannot be read)
+double modelHeightM(VM& vm, GridObj* grid, const std::string& name, double cellM) {
+  static std::map<std::string, double> units;  // (the mesh's height in world units, per template)
+  auto it = units.find(name);
+  if (it == units.end()) {
+    double h = 0;
+    auto t = grid->templates.find(name);
+    if (auto* o = t == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(t->second.get())) {
+      std::shared_ptr<const render::ObjectData> data = o->data;
+      if (!data && !o->pendingPath.empty()) data = loadObjectCached(vm, o->pendingPath);
+      if (data && data->mesh.positions.size() >= 3) {
+        float lo = 1e30f, hi = -1e30f;
+        for (size_t k = 1; k < data->mesh.positions.size(); k += 3) lo = std::min(lo, data->mesh.positions[k]), hi = std::max(hi, data->mesh.positions[k]);
+        h = double(hi - lo) * o->loadScale[1];
+      }
+    }
+    it = units.emplace(name, h).first;
+  }
+  return it->second * cellM / grid->data->cellSize;
+}
+
 // OSM's street furniture where it is mapped; benches, kiosks and the like face the street they stand by, lamps reach
 // over it; points on the carriageway move to its kerb
 void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, double>>& lamps) {
@@ -5173,12 +5202,32 @@ void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, 
                                              : firstOf(grid, {"sculpture-01", "standing-statue"});
       auto free = [](uint8_t u) { return u == 0 || u == 5; };
       bool done = false;
+      int item = -1;
       for (int r = 0; r <= 3 && !done; ++r)
         for (int dz = -r; dz <= r && !done; ++dz)
           for (int dx = -r; dx <= r && !done; ++dx) {
             if (std::max(std::abs(dx), std::abs(dz)) != r) continue;
-            if (placeAt(vm, grid, a, name, px + dx, pz + dz, tx, tz, free, 6) >= 0) done = true, ++made;
+            if ((item = placeAt(vm, grid, a, name, px + dx, pz + dz, tx, tz, free, 6)) >= 0) done = true, ++made;
           }
+      // its size (owner 2026-11-16: statues sized as OSM has them): OSM's height where it has one (few do: 4 of 414 in
+      // the cached towns), else a usual height for its kind; the model scaled to it from its own height at the import's
+      // scale (cellM metres a cell)
+      if (item >= 0) {
+        const double want = pt.heightM > 0 ? pt.heightM
+                            : pt.kind == 9 ? (name == "obelisk" ? 7.0 : 5.5)  // a monument: a rider on a plinth, an obelisk
+                            : pt.sub == 1  ? 3.8                              // a figure on its plinth
+                            : pt.sub == 2  ? 2.4                              // a bust on its pedestal
+                            : pt.sub == 3  ? 4.5                              // an obelisk, a stele, a war memorial
+                            : pt.sub == 5  ? 1.5                              // a stone
+                                           : 3.0;                             // a sculpture
+        const double model = modelHeightM(vm, grid, name, a.d->cellM);
+        if (model > 0.2) {
+          const float s = float(std::clamp(want / model, 0.35, 3.0));
+          if (std::fabs(s - 1.0f) > 0.04f) grid->data->items[size_t(item)].scale = s;
+          if (std::getenv("REGS_DEBUG_OSM"))
+            LOG_INFO("osm: statue %s: model %.1f m, %s %.1f m, scale %.2f", name.c_str(), model, pt.heightM > 0 ? "OSM" : "usual", want, s);
+        }
+      }
       continue;
     }
     double fx = tx, fz = tz;
@@ -6712,6 +6761,95 @@ int fillFootprint(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const Va
 // convex hull; halls for industry, workplaces, railways and big low shops, else plaster or brick; the height from
 // building:levels (halls 4.5 a level, at least 6; houses 3.2 a floor); a gabled roof on a four-cornered house at most
 // 15 cells wide; the doors on the walls facing the nearest street
+// ---- passages through buildings (2026-11-16, owner: "if roads and footpaths go through buildings, can you please add
+// some tunnels through them") ----
+struct PassageRun {
+  GridData::ProcBuilding::Passage q;  // (y1 set once the building's height is known)
+  float top = 0, clear = 3.2f;        // the way's highest point under it, the headroom it needs
+};
+// the straight passages of the roads and footpaths through a footprint (cells): a curve's stretch inside it that comes
+// in through a wall and goes out through one (or meets another curve inside it), its middle well inside the walls (not
+// a street skimming a corner), cut into straight pieces where it bends; a way that ends inside (a path to a door) none
+std::vector<PassageRun> passageRuns(const GridData& g, const Ring& ring) {
+  std::vector<PassageRun> out;
+  const double W = g.width, L = g.length, cs = g.cellSize;
+  double bx0 = 1e30, bz0 = 1e30, bx1 = -1e30, bz1 = -1e30;
+  for (auto& q : ring) bx0 = std::min(bx0, q.first), bz0 = std::min(bz0, q.second), bx1 = std::max(bx1, q.first), bz1 = std::max(bz1, q.second);
+  auto toCell = [&](const render::Vec3& p) { return std::pair<double, double>{p.x / cs + W * 0.5, p.z / cs + L * 0.5}; };
+  auto edgeDist = [&](std::pair<double, double> p) {
+    double d = 1e30;
+    for (size_t i = 0; i < ring.size(); ++i) d = std::min(d, segDist(p.first, p.second, ring[i], ring[(i + 1) % ring.size()]));
+    return d * cs;
+  };
+  auto joined = [&](const CurveRoad& c, float x, float z) {
+    for (const CurveRoad& k : g.curves)
+      if (!sameCurve(k, c) && ((std::fabs(k.x0 - x) < 0.2f && std::fabs(k.z0 - z) < 0.2f) || (std::fabs(k.x1 - x) < 0.2f && std::fabs(k.z1 - z) < 0.2f)))
+        return true;
+    return false;
+  };
+  for (const CurveRoad& c : g.curves) {
+    if (!(c.kind <= 3 || c.kind == 9) || c.bridge == 1 || c.bridge == 2) continue;  // (roads, footpaths, tram beds on the ground)
+    const std::vector<CurveSample> s = sampleCurve(c, 0.75f);
+    bool near = false;
+    for (const CurveSample& k : s) {
+      const auto p = toCell(k.p);
+      near = near || (p.first > bx0 - 1 && p.first < bx1 + 1 && p.second > bz0 - 1 && p.second < bz1 + 1);
+    }
+    if (!near) continue;
+    std::vector<char> in(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+      const auto p = toCell(s[i].p);
+      in[i] = insideRing(ring, p.first, p.second);
+    }
+    const float hw = curveProfile(c.kind).halfWidth;
+    for (size_t i = 0; i < s.size();) {
+      if (!in[i]) {
+        ++i;
+        continue;
+      }
+      size_t j = i;
+      while (j + 1 < s.size() && in[j + 1]) ++j;
+      const bool enter = i > 0 || joined(c, c.x0, c.z0), leave = j + 1 < s.size() || joined(c, c.x1, c.z1);
+      const float lenIn = s[j].s - s[i].s;
+      if (std::getenv("REGS_DEBUG_OSM"))
+        LOG_INFO("osm: passage? kind %d at %.0f, %.0f: in %s, out %s, %.1f inside, %.1f from the walls", c.kind, s[i].p.x, s[i].p.z,
+                 enter ? "yes" : "no", leave ? "yes" : "no", lenIn, edgeDist(toCell(s[(i + j) / 2].p)));
+      // (a gate through a castle's wing 2.2 thick: 1.5 inside will do, its middle 0.9 from the walls for a footpath)
+      if (enter && leave && lenIn >= 1.5f && edgeDist(toCell(s[(i + j) / 2].p)) >= 0.6 * std::min(double(hw), 2.0)) {
+        const size_t a = i > 0 ? i - 1 : i, b = j + 1 < s.size() ? j + 1 : j;  // (a sample beyond each wall)
+        for (size_t k0 = a; k0 < b;) {
+          size_t k1 = k0 + 1;  // as far as the way stays within 0.5 of the straight line
+          while (k1 < b) {
+            bool ok = true;
+            for (size_t m = k0 + 1; m <= k1 && ok; ++m)
+              ok = segDist(s[m].p.x, s[m].p.z, {s[k0].p.x, s[k0].p.z}, {s[k1 + 1].p.x, s[k1 + 1].p.z}) < 0.5;
+            if (!ok) break;
+            ++k1;
+          }
+          const render::Vec3 p0 = s[k0].p, p1 = s[k1].p;
+          float dx = p1.x - p0.x, dz = p1.z - p0.z;
+          const float l = std::hypot(dx, dz);
+          if (l > 1e-3f) {
+            dx /= l, dz /= l;
+            // (out past the walls at the stretch's ends; past a bend's joint enough to leave no wedge of wall)
+            const float e0 = k0 == a ? 1.0f : hw * 0.6f + 0.3f, e1 = k1 == b ? 1.0f : hw * 0.6f + 0.3f;
+            PassageRun r;
+            r.q.x0 = p0.x - dx * e0, r.q.z0 = p0.z - dz * e0, r.q.x1 = p1.x + dx * e1, r.q.z1 = p1.z + dz * e1;
+            r.q.half = hw + 0.3f;
+            r.q.y0 = 1e30f, r.top = -1e30f;
+            for (size_t m = k0; m <= k1; ++m) r.q.y0 = std::min(r.q.y0, s[m].p.y), r.top = std::max(r.top, s[m].p.y);
+            r.clear = c.kind == 3 ? 3.2f : 4.5f;
+            out.push_back(r);
+          }
+          k0 = k1;
+        }
+      }
+      i = j + 1;
+    }
+  }
+  return out;
+}
+
 bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
   GridData& g = *grid->data;
   const int W = g.width, L = g.length;
@@ -6721,7 +6859,8 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     const char* e = std::getenv("REGS_OSM_PROC_MIN");
     return e ? std::atof(e) : 300.0;
   }();
-  const double kMin = special ? 20.0 : kMinDefault;
+  // (special ones from 8 cells, 50 m²: a castle's gatehouses and small wings, which its paths run through, 2026-11-16)
+  const double kMin = special ? 8.0 : kMinDefault;
   Ring ring;
   if (b.polygon) {
     ring = b.pts;
@@ -6783,10 +6922,21 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     }
   }
   const double area = polyArea(ring);
-  if (area < kMin) return false;
+  if (area < kMin) {
+    if (special && std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %s at cells %.0f, %.0f left out: %.0f cells", b.castle ? "castle" : "church", ring[0].first, ring[0].second, area);
+    return false;
+  }
   double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
   for (auto& q : ring) x0 = std::min(x0, q.first), z0 = std::min(z0, q.second), x1 = std::max(x1, q.first), z1 = std::max(z1, q.second);
   if (x0 < 1 || z0 < 1 || x1 > W - 2 || z1 > L - 2) return false;  // wholly on the map
+  // the roads and footpaths running through it: passages (their cells do not block it)
+  const std::vector<PassageRun> runs = passageRuns(g, ring);
+  auto inPassage = [&](double cx, double cz) {
+    const double wx = (cx - W * 0.5) * g.cellSize, wz = (cz - L * 0.5) * g.cellSize;
+    for (const PassageRun& r : runs)
+      if (segDist(wx, wz, {r.q.x0, r.q.z0}, {r.q.x1, r.q.z1}) < r.q.half + 1.5 + g.cellSize) return true;
+    return false;
+  };
   std::vector<size_t> cells;
   int busy = 0, hi = -0x8000;
   for (int z = int(z0); z <= int(z1); ++z)
@@ -6796,13 +6946,18 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
       // (a palace, castle or church: only roads, water, tracks and buildings block it; paving under it gives way: a church on
       // a square whose paving covers it, Freiburg's Münster, 2026-11-16)
       const uint8_t u = a.used[i];
-      if (special ? (u == 1 || u == 2 || u == 3 || u == 7) : (u != 0 && u != 8)) ++busy;
+      if (u == 2 && !runs.empty() && inPassage(x + 0.5, z + 0.5)) {  // (a way's cell under a passage: neither busy nor taken)
+      } else if (special ? (u == 1 || u == 2 || u == 3 || u == 7) : (u != 0 && u != 8)) ++busy;
       else cells.push_back(i);
       for (int dz = 0; dz <= 1; ++dz)
         for (int dx = 0; dx <= 1; ++dx) hi = std::max(hi, int(g.height[size_t(z + dz) * size_t(W) + size_t(x + dx)]));
     }
   // (special ones: up to 30 % over roads or paths: footpaths run through a castle's gates and a palace's passages)
-  if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 30 : 15)) return false;
+  if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 30 : 15)) {
+    if (special && std::getenv("REGS_DEBUG_OSM"))
+      LOG_INFO("osm: %s at cells %.0f, %.0f left out: %d of %zu cells taken, %zu passages", b.castle ? "castle" : "church", x0, z0, busy, cells.size() + size_t(busy), runs.size());
+    return false;
+  }
   GridData::ProcBuilding pb;
   // halls only for industry, farms and railways (owner 2026-11-15: no warehouses in the town centre); offices for
   // workplaces, shops (shop windows and signs below, a big low store from 700 cells and at most two levels) for
@@ -6850,10 +7005,19 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
   cx /= double(ring.size()), cz /= double(ring.size());
   if (const StreetIndex::P* st = g_streets.nearest(cx, cz, std::max(x1 - x0, z1 - z0) * 0.5 + 8.0))
     pb.frontX = float(st->x - cx), pb.frontZ = float(st->z - cz);
+  // the passages: clear over the way (a footpath 3.2, a road 4.5) and at least 1.2 under the eaves; none where the
+  // building is too low for 2.4 of headroom
+  for (const PassageRun& r : runs) {
+    GridData::ProcBuilding::Passage q = r.q;
+    q.y1 = std::min(r.top + r.clear, pb.y + pb.height - 1.2f);
+    if (q.y1 - q.y0 >= 2.4f) pb.passages.push_back(q);
+    if (std::getenv("REGS_DEBUG_OSM"))
+      LOG_INFO("osm: passage from %.1f, %.1f to %.1f, %.1f, half %.1f, %.1f to %.1f%s", q.x0, q.z0, q.x1, q.z1, q.half, q.y0, q.y1, q.y1 - q.y0 >= 2.4f ? "" : " (too low)");
+  }
   if (std::getenv("REGS_DEBUG_OSM"))
-    LOG_INFO("osm: procedural %s at world %.0f, %.0f: %.0f cells, %zu corners, height %.1f, roof %d",
+    LOG_INFO("osm: procedural %s at world %.0f, %.0f: %.0f cells, %zu corners, height %.1f, roof %d, %zu passages",
              pb.style == 7 ? "church" : pb.style == 5 ? "palace" : pb.style == 6 ? "castle" : hall ? "hall" : pb.style == 1 ? "plaster" : pb.style == 2 ? "brick" : pb.style == 3 ? "office" : bigStore ? "store" : "shop",
-             (cx - W * 0.5) * cs, (cz - L * 0.5) * cs, area, ring.size(), pb.height, pb.roof);
+             (cx - W * 0.5) * cs, (cz - L * 0.5) * cs, area, ring.size(), pb.height, pb.roof, pb.passages.size());
   for (size_t i : cells) a.used[i] = 3;
   g.procBuildings.push_back(pb);
   ++grid->procVersion;

@@ -75,7 +75,7 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
   size_t cells = size_t(std::max(0, g.width)) * size_t(std::max(0, g.length));
   struct Turn {
     uint32_t ref;
-    float yaw, offX, offZ;
+    float yaw, offX, offZ, scale;
   };
   std::vector<Turn> turns;  // port: the items' free turns and shifts, set once the items are read
   r.children(root + 24, end, [&](uint32_t tag, size_t body, size_t stop) {
@@ -95,8 +95,9 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
     } else if (tag == kProcBuildingSectionTag) {  // port: procedural buildings (engine/proc_buildings.h)
       parseProcBuildingSection(d, body, stop, g);
     } else if (tag == kItemTurnSectionTag && body + 4 <= stop) {  // port: items off the grid (Item::yaw, offX, offZ)
-      uint32_t count = r.u32(body) & 0x7fffffffu;
-      size_t each = (r.u32(body) & 0x80000000u) ? 16 : 8;  // bit 31: with the shifts
+      uint32_t count = r.u32(body) & 0x3fffffffu;
+      const bool shifts = (r.u32(body) & 0x80000000u) != 0, sizes = (r.u32(body) & 0x40000000u) != 0;
+      size_t each = (shifts ? 16 : 8) + (sizes ? 4 : 0);  // bit 31: with the shifts, bit 30: with the sizes
       auto f = [&](size_t at) {
         float v;
         std::memcpy(&v, d.data() + at, 4);
@@ -104,7 +105,7 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
       };
       for (uint32_t i = 0; i < count && body + 4 + size_t(i + 1) * each <= stop; ++i) {
         size_t p = body + 4 + size_t(i) * each;
-        turns.push_back({r.u32(p), f(p + 4), each > 8 ? f(p + 8) : 0.0f, each > 8 ? f(p + 12) : 0.0f});
+        turns.push_back({r.u32(p), f(p + 4), shifts ? f(p + 8) : 0.0f, shifts ? f(p + 12) : 0.0f, sizes ? f(p + each - 4) : 1.0f});
       }
     } else if (tag == 0x07020000) {  // network: type names, 16-byte items, names
       uint32_t typeCount = r.u32(body), itemCount = r.u32(body + 4);
@@ -153,6 +154,7 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
     if (t.ref >= 1 && t.ref <= g.items.size() && std::isfinite(t.yaw) && std::fabs(t.offX) < 3 && std::fabs(t.offZ) < 3) {
       GridData::Item& it = g.items[t.ref - 1];
       it.yaw = t.yaw, it.offX = t.offX, it.offZ = t.offZ;
+      it.scale = std::isfinite(t.scale) && t.scale >= 0.1f && t.scale <= 10.0f ? t.scale : 1.0f;
     }
   if (g.height.size() != cells) {
     if (error) *error = "terrain section missing";

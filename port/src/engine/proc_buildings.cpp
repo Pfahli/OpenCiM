@@ -43,13 +43,27 @@ float getF(const uint8_t* p) {
 // one record at p (at most n bytes); its size, 0 when it does not fit
 size_t readRecord(const uint8_t* p, size_t n, GridData::ProcBuilding& b) {
   if (n < 24) return 0;
-  b.roof = p[0], b.style = p[1];
+  b.roof = p[0] & 0x7F, b.style = p[1];
+  const bool passages = (p[0] & 0x80) != 0;  // (bit 7 of the roof byte: passages follow the points)
   const uint16_t count = uint16_t(p[2] | p[3] << 8);
-  const size_t size = 24 + size_t(count) * 8;
+  size_t size = 24 + size_t(count) * 8;
   if (n < size || count < 3) return 0;
   b.y = getF(p + 4), b.height = getF(p + 8), b.roofHeight = getF(p + 12), b.frontX = getF(p + 16), b.frontZ = getF(p + 20);
   b.outline.clear();
   for (uint16_t i = 0; i < count; ++i) b.outline.push_back({getF(p + 24 + i * 8), getF(p + 28 + i * 8)});
+  b.passages.clear();
+  if (passages) {
+    if (n < size + 2) return 0;
+    const uint16_t np = uint16_t(p[size] | p[size + 1] << 8);
+    size += 2;
+    if (n < size + size_t(np) * 28) return 0;
+    for (uint16_t i = 0; i < np; ++i, size += 28) {
+      GridData::ProcBuilding::Passage q;
+      q.x0 = getF(p + size), q.z0 = getF(p + size + 4), q.x1 = getF(p + size + 8), q.z1 = getF(p + size + 12);
+      q.half = getF(p + size + 16), q.y0 = getF(p + size + 20), q.y1 = getF(p + size + 24);
+      b.passages.push_back(q);
+    }
+  }
   return size;
 }
 
@@ -544,6 +558,149 @@ bool insetPolygon(const std::vector<std::pair<float, float>>& o, float d, std::v
   return std::fabs(signedArea(in)) > 0.05 * std::fabs(signedArea(o));
 }
 
+// ---- passages (2026-11-16, owner: "if roads and footpaths go through buildings, add some tunnels through them") ----
+// A passage is a box: across its axis within ±half, along it between its ends, up to y1 (no floor: everything under it
+// goes too, the walls' skirts in the ground). Every triangle of the finished building is clipped against it and only its
+// part outside stays (whatever the style drew there: painted floors, stone, windows, buttresses, towers); then the
+// passage is lined where it runs inside the footprint: side walls on its edges, end walls where it stops inside, a
+// ceiling.
+struct ClipVert {
+  Vec3 p, n;
+  float u, v;
+};
+using ClipPoly = std::vector<ClipVert>;
+
+// the planes of a passage's box, each as (a, b, c, d): inside where a·x + b·y + c·z + d < 0
+std::array<std::array<float, 4>, 5> passagePlanes(const GridData::ProcBuilding::Passage& q) {
+  float ax = q.x1 - q.x0, az = q.z1 - q.z0;
+  const float len = std::max(1e-4f, std::hypot(ax, az));
+  ax /= len, az /= len;
+  const float nx = -az, nz = ax;  // across
+  return {{{nx, 0, nz, -(nx * q.x0 + nz * q.z0) - q.half},
+           {-nx, 0, -nz, (nx * q.x0 + nz * q.z0) - q.half},
+           {ax, 0, az, -(ax * q.x1 + az * q.z1)},
+           {-ax, 0, -az, ax * q.x0 + az * q.z0},
+           {0, 1, 0, -q.y1}}};
+}
+
+void splitPoly(const ClipPoly& in, const std::array<float, 4>& pl, ClipPoly& out, ClipPoly& inside) {
+  out.clear(), inside.clear();
+  auto f = [&](const Vec3& p) { return pl[0] * p.x + pl[1] * p.y + pl[2] * p.z + pl[3]; };
+  for (size_t i = 0; i < in.size(); ++i) {
+    const ClipVert &a = in[i], &b = in[(i + 1) % in.size()];
+    const float fa = f(a.p), fb = f(b.p);
+    (fa >= 0 ? out : inside).push_back(a);
+    if ((fa >= 0) != (fb >= 0)) {
+      const float t = fa / (fa - fb);
+      ClipVert c;
+      c.p = a.p + (b.p - a.p) * t, c.n = a.n + (b.n - a.n) * t, c.u = a.u + (b.u - a.u) * t, c.v = a.v + (b.v - a.v) * t;
+      out.push_back(c), inside.push_back(c);
+    }
+  }
+}
+
+void cutPassages(Builder& bd, const std::vector<GridData::ProcBuilding::Passage>& ps) {
+  std::vector<std::array<std::array<float, 4>, 5>> planes;
+  std::vector<std::array<float, 6>> boxes;  // (min x, max x, min z, max z, max y) per passage, for a quick test
+  for (const auto& q : ps) {
+    planes.push_back(passagePlanes(q));
+    const float r = q.half + 0.01f;
+    boxes.push_back({std::min(q.x0, q.x1) - r, std::max(q.x0, q.x1) + r, std::min(q.z0, q.z1) - r, std::max(q.z0, q.z1) + r, q.y1});
+  }
+  for (MeshData& m : bd.parts) {
+    if (m.indices.empty()) continue;
+    MeshData o;
+    auto vert = [&](size_t i) {
+      return ClipVert{{m.positions[i * 3], m.positions[i * 3 + 1], m.positions[i * 3 + 2]},
+                      {m.normals[i * 3], m.normals[i * 3 + 1], m.normals[i * 3 + 2]},
+                      m.uv0[i * 2], m.uv0[i * 2 + 1]};
+    };
+    auto emit = [&](const ClipPoly& poly) {
+      if (poly.size() < 3) return;
+      const uint32_t base = uint32_t(o.vertexCount());
+      for (const ClipVert& c : poly) {
+        o.positions.insert(o.positions.end(), {c.p.x, c.p.y, c.p.z});
+        o.normals.insert(o.normals.end(), {c.n.x, c.n.y, c.n.z});
+        o.uv0.insert(o.uv0.end(), {c.u, c.v});
+      }
+      for (uint32_t k = 1; k + 1 < uint32_t(poly.size()); ++k) o.indices.insert(o.indices.end(), {base, base + k, base + k + 1});
+    };
+    ClipPoly a, b, rest;
+    for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+      std::vector<ClipPoly> pieces{{vert(m.indices[t]), vert(m.indices[t + 1]), vert(m.indices[t + 2])}};
+      for (size_t k = 0; k < planes.size(); ++k) {
+        std::vector<ClipPoly> next;
+        for (ClipPoly& pc : pieces) {
+          float lx = 1e30f, hx = -1e30f, lz = 1e30f, hz = -1e30f, ly = 1e30f;
+          for (const ClipVert& c : pc) lx = std::min(lx, c.p.x), hx = std::max(hx, c.p.x), lz = std::min(lz, c.p.z), hz = std::max(hz, c.p.z), ly = std::min(ly, c.p.y);
+          const auto& bx = boxes[k];
+          if (hx < bx[0] || lx > bx[1] || hz < bx[2] || lz > bx[3] || ly > bx[4]) {
+            next.push_back(std::move(pc));
+            continue;
+          }
+          rest = pc;
+          for (const auto& pl : planes[k]) {  // what lies outside a plane stays; on with what lies inside it
+            splitPoly(rest, pl, a, b);
+            if (a.size() >= 3) next.push_back(a);
+            rest.swap(b);
+            if (rest.size() < 3) break;
+          }
+        }
+        pieces.swap(next);
+      }
+      for (const ClipPoly& pc : pieces) emit(pc);
+    }
+    m = std::move(o);
+  }
+}
+
+// the lining of a passage inside the footprint o (counter-clockwise): the footprint clipped to the passage's strip, its
+// edges on the strip's sides and ends walls facing into the passage, a ceiling over it
+void linePassage(Builder& bd, const std::vector<std::pair<float, float>>& o, const GridData::ProcBuilding::Passage& q, int wallMat,
+                 int ceilMat) {
+  const auto pl = passagePlanes(q);
+  std::vector<std::pair<float, float>> poly = o;
+  for (int k = 0; k < 4; ++k) {  // (Sutherland-Hodgman against the strip's four vertical planes)
+    std::vector<std::pair<float, float>> next;
+    auto f = [&](const std::pair<float, float>& p) { return pl[size_t(k)][0] * p.first + pl[size_t(k)][2] * p.second + pl[size_t(k)][3]; };
+    for (size_t i = 0; i < poly.size(); ++i) {
+      const auto &a = poly[i], &b = poly[(i + 1) % poly.size()];
+      const float fa = f(a), fb = f(b);
+      if (fa < 0) next.push_back(a);
+      if ((fa < 0) != (fb < 0)) {
+        const float t = fa / (fa - fb);
+        next.push_back({a.first + (b.first - a.first) * t, a.second + (b.second - a.second) * t});
+      }
+    }
+    poly.swap(next);
+    if (poly.size() < 3) return;
+  }
+  const float y0 = q.y0 - 0.6f, y1 = q.y1;
+  for (size_t i = 0; i < poly.size(); ++i) {  // the walls: edges on one of the planes (not those on the footprint's walls)
+    const auto &a = poly[i], &b = poly[(i + 1) % poly.size()];
+    int on = -1;
+    for (int k = 0; k < 4 && on < 0; ++k) {
+      auto f = [&](const std::pair<float, float>& p) { return pl[size_t(k)][0] * p.first + pl[size_t(k)][2] * p.second + pl[size_t(k)][3]; };
+      if (std::fabs(f(a)) < 0.02f && std::fabs(f(b)) < 0.02f) on = k;
+    }
+    const float len = std::hypot(b.first - a.first, b.second - a.second);
+    if (on < 0 || len < 0.05f) continue;
+    const Vec3 n{-pl[size_t(on)][0], 0, -pl[size_t(on)][2]};  // into the passage
+    // (a concave footprint clips to bridges along a plane over a courtyard between two wings: no wall there)
+    if (!insidePoly(o, (a.first + b.first) * 0.5f - n.x * 0.05f, (a.second + b.second) * 0.5f - n.z * 0.05f)) continue;
+    const float s0 = (a.first * -n.z + a.second * n.x) / 3.0f;
+    bd.quad(wallMat, {a.first, y0, a.second}, {b.first, y0, b.second}, {b.first, y1, b.second}, {a.first, y1, a.second}, n, s0, 0,
+            s0 + len / 3.0f, (y1 - y0) / 3.0f);
+  }
+  if (signedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
+  std::vector<std::array<size_t, 3>> tris;
+  if (!triangulate(poly, tris)) return;
+  for (const auto& t : tris) {
+    const Vec3 p0{poly[t[0]].first, y1, poly[t[0]].second}, p1{poly[t[1]].first, y1, poly[t[1]].second}, p2{poly[t[2]].first, y1, poly[t[2]].second};
+    bd.tri(ceilMat, p0, p1, p2, {0, -1, 0}, p0.x / 3.0f, p0.z / 3.0f, p1.x / 3.0f, p1.z / 3.0f, p2.x / 3.0f, p2.z / 3.0f);
+  }
+}
+
 }  // namespace
 
 void writeProcBuildingSection(const GridData& g, std::vector<uint8_t>& out) {
@@ -574,10 +731,17 @@ void parseProcBuildingSection(const std::vector<uint8_t>& d, size_t body, size_t
 
 std::vector<uint8_t> procBuildingBytes(const GridData::ProcBuilding& b) {
   std::vector<uint8_t> o;
-  o.push_back(b.roof), o.push_back(b.style);
+  o.push_back(uint8_t((b.roof & 0x7F) | (b.passages.empty() ? 0 : 0x80))), o.push_back(b.style);
   put16(o, uint16_t(std::min<size_t>(b.outline.size(), 0xFFFF)));
   putF(o, b.y), putF(o, b.height), putF(o, b.roofHeight), putF(o, b.frontX), putF(o, b.frontZ);
   for (size_t i = 0; i < b.outline.size() && i < 0xFFFF; ++i) putF(o, b.outline[i].first), putF(o, b.outline[i].second);
+  if (!b.passages.empty()) {
+    put16(o, uint16_t(std::min<size_t>(b.passages.size(), 0xFFFF)));
+    for (size_t i = 0; i < b.passages.size() && i < 0xFFFF; ++i) {
+      const GridData::ProcBuilding::Passage& q = b.passages[i];
+      putF(o, q.x0), putF(o, q.z0), putF(o, q.x1), putF(o, q.z1), putF(o, q.half), putF(o, q.y0), putF(o, q.y1);
+    }
+  }
   return o;
 }
 
@@ -1264,20 +1428,34 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
     // the wall walk behind battlements (merlons every 1.6 along the parapet), round towers with conical roofs at the
     // outer corners (the sharpest first, up to six; roofs of slate or red tiles by the variant)
     flatRoof(o, top + 0.02f, kProcRoofFlat, 8.0f);
-    const float ph = 0.9f, mh = 0.9f, th = 0.6f;
+    // (owner 2026-11-16: "the walls should be more filigree on top"; were a parapet 0.9 high and 0.6 thick with merlons
+    // 0.9 wide every 1.6): a thin parapet standing 0.18 out on a row of small corbels, slender merlons with caps
+    const float ph = 0.7f, mh = 0.75f, th = 0.3f, out = 0.18f, step = 0.75f, mw = 0.3f;
     for (const Edge& e : edges) {
       if (e.len < 0.05f) continue;
       const Vec3 n{e.nx, 0, e.nz};
-      const float ix = -e.nx * th, iz = -e.nz * th;
-      bd.quad(kProcCastleStone, {e.ax, top, e.az}, {e.bx, top, e.bz}, {e.bx, top + ph, e.bz}, {e.ax, top + ph, e.az}, n, 0, top / 3.0f, e.len / 3.0f,
-              (top + ph) / 3.0f);
-      bd.quad(kProcCastleStone, {e.ax, top + ph, e.az}, {e.bx, top + ph, e.bz}, {e.bx + ix, top + ph, e.bz + iz}, {e.ax + ix, top + ph, e.az + iz},
-              {0, 1, 0}, 0, 0, e.len / 3.0f, 0.2f);
+      // the parapet's outer face (out past the wall), its inner face, its top, its underside over the corbels
+      const float ox = e.nx * out, oz = e.nz * out, ix = -e.nx * (th - out), iz = -e.nz * (th - out);
+      const float y0 = top - 0.3f;
+      bd.quad(kProcCastleStone, {e.ax + ox, y0, e.az + oz}, {e.bx + ox, y0, e.bz + oz}, {e.bx + ox, top + ph, e.bz + oz}, {e.ax + ox, top + ph, e.az + oz}, n,
+              0, y0 / 3.0f, e.len / 3.0f, (top + ph) / 3.0f);
+      bd.quad(kProcCastleStone, {e.ax + ox, top + ph, e.az + oz}, {e.bx + ox, top + ph, e.bz + oz}, {e.bx + ix, top + ph, e.bz + iz},
+              {e.ax + ix, top + ph, e.az + iz}, {0, 1, 0}, 0, 0, e.len / 3.0f, 0.1f);
       bd.quad(kProcCastleStone, {e.bx + ix, top, e.bz + iz}, {e.ax + ix, top, e.az + iz}, {e.ax + ix, top + ph, e.az + iz},
-              {e.bx + ix, top + ph, e.bz + iz}, n * -1.0f, 0, 0, e.len / 3.0f, 0.3f);
-      for (float s = 0.45f; s + 0.45f <= e.len; s += 1.6f) {
-        const float cx = e.ax + e.dx * (s + 0.45f) - e.nx * th * 0.5f, cz = e.az + e.dz * (s + 0.45f) - e.nz * th * 0.5f;
-        bd.box(kProcCastleStone, kProcCastleStone, cx, cz, top + ph, top + ph + mh, e.dx, e.dz, 0.45f, th * 0.5f);
+              {e.bx + ix, top + ph, e.bz + iz}, n * -1.0f, 0, 0, e.len / 3.0f, 0.25f);
+      bd.quad(kProcCastleStone, {e.ax, y0, e.az}, {e.bx, y0, e.bz}, {e.bx + ox, y0, e.bz + oz}, {e.ax + ox, y0, e.az + oz}, {0, -1, 0}, 0, 0, e.len / 3.0f,
+              0.06f);
+      const int k = std::max(1, int(std::floor((e.len - 0.3f) / step)));
+      const float st = (e.len - 0.3f) / float(k);  // (whole steps along the edge: a merlon at both ends)
+      for (int m = 0; m <= k; ++m) {
+        const float s = std::clamp(0.15f + float(m) * st, mw, e.len - mw);
+        // a corbel under the parapet
+        const float kx = e.ax + e.dx * s + e.nx * out * 0.5f, kz = e.az + e.dz * s + e.nz * out * 0.5f;
+        bd.box(kProcCastleStone, kProcCastleStone, kx, kz, y0 - 0.45f, y0, e.dx, e.dz, 0.09f, out * 0.5f);
+        if (m % 2) continue;  // (a merlon on every other corbel, the embrasures between)
+        const float cx = e.ax + e.dx * s + e.nx * (out - th * 0.5f), cz = e.az + e.dz * s + e.nz * (out - th * 0.5f);
+        bd.box(kProcCastleStone, kProcCastleStone, cx, cz, top + ph, top + ph + mh, e.dx, e.dz, mw, th * 0.5f);
+        bd.box(kProcCastleStone, kProcCastleStone, cx, cz, top + ph + mh, top + ph + mh + 0.07f, e.dx, e.dz, mw + 0.04f, th * 0.5f + 0.04f);
       }
     }
     struct Corner {
@@ -1628,6 +1806,11 @@ void buildProcBuildingMesh(const GridData::ProcBuilding& src, MeshData& out) {
     }
   } else {
     LOG_WARN("proc buildings: an outline of %zu points did not triangulate (no roof)", o.size());
+  }
+  if (!src.passages.empty()) {  // the passages through it: cut out, then lined (stone in castles and churches, else plaster)
+    cutPassages(bd, src.passages);
+    const int lining = castle || church ? kProcCastleStone : brick ? kProcBrick + int(var % 3) : kProcTrim;
+    for (const auto& q : src.passages) linePassage(bd, o, q, lining, lining);
   }
   for (int mat = 0; mat < kProcMaterialCount; ++mat) {  // into the output: one submesh per material
     const MeshData& m = bd.parts[size_t(mat)];
