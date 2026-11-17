@@ -495,7 +495,48 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     else LOG_ERROR("screenshot failed: %s", shot_.string().c_str());
     shot_.clear();
   }
+  const auto beforePresent = std::chrono::steady_clock::now();
   render::gpu::dev().present();
+  benchFrame(std::chrono::duration<double, std::milli>(beforePresent - frameStart).count());
+}
+
+// REGS_BENCH=<first frame>:<frames> (docs/renderer/vulkan.md §10): from the first frame on, the interval between two
+// presents (the whole game frame: simulation, scripts, rendering and waiting for the GPU) and the CPU time of the
+// render call before the present, then one summary line in the log. Run with vsync and the frame limit off.
+void Display::benchFrame(double renderCpuMs) {
+  static const char* spec = std::getenv("REGS_BENCH");
+  if (!spec) return;
+  static int first = 0, count = 0, frame = 0;
+  static bool parsed = false, done = false;
+  static std::vector<double> intervals, cpu, gpu;
+  static std::chrono::steady_clock::time_point last;
+  if (!parsed) {
+    parsed = true;
+    if (std::sscanf(spec, "%d:%d", &first, &count) != 2 || count <= 0) done = true;
+  }
+  auto now = std::chrono::steady_clock::now();
+  ++frame;
+  if (!done && frame > first) {
+    intervals.push_back(std::chrono::duration<double, std::milli>(now - last).count());
+    cpu.push_back(renderCpuMs);
+    if (double g = render::gpu::dev().gpuFrameMs(); g >= 0) gpu.push_back(g);
+    if (int(intervals.size()) >= count) {
+      done = true;
+      std::vector<double> s = intervals;
+      std::sort(s.begin(), s.end());
+      double sum = 0, cpuSum = 0;
+      for (double v : intervals) sum += v;
+      for (double v : cpu) cpuSum += v;
+      auto pct = [&](double p) { return s[std::min(s.size() - 1, size_t(p * double(s.size())))]; };
+      std::sort(gpu.begin(), gpu.end());
+      double gpuMedian = gpu.empty() ? -1 : gpu[gpu.size() / 2];
+      double gpuP95 = gpu.empty() ? -1 : gpu[std::min(gpu.size() - 1, size_t(0.95 * double(gpu.size())))];
+      LOG_INFO("bench: %s, %dx%d, %d frames: %.1f fps average, frame ms median %.2f, p95 %.2f, p99 %.2f, max %.2f; render cpu ms %.2f; gpu ms median %.2f, p95 %.2f",
+               render::gpu::dev().name(), r2d_.frameWidth(), r2d_.frameHeight(), count, 1000.0 * double(s.size()) / sum,
+               pct(0.5), pct(0.95), pct(0.99), s.back(), cpuSum / double(cpu.size()), gpuMedian, gpuP95);
+    }
+  }
+  last = now;
 }
 
 void Display::syncRenderSettings(VM& vm) {

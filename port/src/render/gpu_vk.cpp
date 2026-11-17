@@ -61,7 +61,8 @@ namespace {
   X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBias)             \
   X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyBuffer) X(vkCmdBlitImage)  \
   X(vkCmdCopyImage) X(vkCmdResolveImage) X(vkCmdPushDescriptorSetKHR) X(vkCmdClearColorImage)                        \
-  X(vkCmdClearDepthStencilImage) X(vkGetBufferDeviceAddress) X(vkCreateAccelerationStructureKHR)                    \
+  X(vkCmdClearDepthStencilImage) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool)                 \
+  X(vkCmdWriteTimestamp2) X(vkGetQueryPoolResults) X(vkGetBufferDeviceAddress) X(vkCreateAccelerationStructureKHR)                    \
   X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
   X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR)
 
@@ -466,6 +467,7 @@ class VkDeviceImpl final : public Device {
 
   // ---- ray queries ----
   bool rayTracing() const override { return rt_; }
+  double gpuFrameMs() const override { return gpuMs_; }
   uint32_t createBlas(uint32_t vertexBuffer, int stride, int vertexCount, uint32_t indexBuffer, const IndexRange* ranges,
                       int count) override;
   void destroyBlas(uint32_t blas) override;
@@ -684,6 +686,26 @@ class VkDeviceImpl final : public Device {
   int renderingFb_ = -1;
   bool nullDrawLogged_ = false;
 
+  // GPU frame time: two timestamps per frame slot, read when the slot's fence has passed
+  VkQueryPool timestamps_ = VK_NULL_HANDLE;
+  double timestampNs_ = 1;
+  double gpuMs_ = -1;
+  bool timingPending_[kFrames] = {};
+  void frameTimestampStart() {
+    if (!timestamps_) return;
+    uint32_t q = uint32_t(frame_) * 2;
+    vkCmdResetQueryPool(cmd(), timestamps_, q, 2);
+    vkCmdWriteTimestamp2(cmd(), VK_PIPELINE_STAGE_2_NONE, timestamps_, q);
+  }
+  void readFrameTimestamps() {
+    if (!timestamps_ || !timingPending_[frame_]) return;
+    uint64_t t[2] = {0, 0};
+    if (vkGetQueryPoolResults(dev_, timestamps_, uint32_t(frame_) * 2, 2, sizeof t, t, sizeof(uint64_t),
+                              VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && t[1] > t[0])
+      gpuMs_ = double(t[1] - t[0]) * timestampNs_ / 1e6;
+    timingPending_[frame_] = false;
+  }
+
   // ray queries
   bool rt_ = false;
   VkDeviceSize scratchAlign_ = 256;
@@ -827,6 +849,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   vkGetPhysicalDeviceProperties(phys_, &props);
   maxAniso_ = props.limits.maxSamplerAnisotropy;
   uboAlign_ = std::max<VkDeviceSize>(16, props.limits.minUniformBufferOffsetAlignment);
+  timestampNs_ = props.limits.timestampPeriod > 0 ? props.limits.timestampPeriod : 1.0;
   info_ = "Vulkan " + std::to_string(VK_API_VERSION_MAJOR(props.apiVersion)) + "." +
           std::to_string(VK_API_VERSION_MINOR(props.apiVersion)) + "." + std::to_string(VK_API_VERSION_PATCH(props.apiVersion)) +
           " / " + props.deviceName;
@@ -913,7 +936,14 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     vkCreateSemaphore(dev_, &sci2, nullptr, &f.acquired);
   }
   vkResetFences(dev_, 1, &frames_[0].fence);
+  {
+    VkQueryPoolCreateInfo qci2{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    qci2.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    qci2.queryCount = kFrames * 2;
+    if (vkCreateQueryPool(dev_, &qci2, nullptr, &timestamps_) != VK_SUCCESS) timestamps_ = VK_NULL_HANDLE;
+  }
   beginCommands();
+  frameTimestampStart();
 
   if (!createSwapchain(error)) return false;
   if (!makeBackBuffer(std::max(1, window_.width()), std::max(1, window_.height()))) {
@@ -1081,6 +1111,7 @@ void VkDeviceImpl::shutdown() {
       vkDestroyCommandPool(dev_, f.pool, nullptr);
     }
     destroySwapchain();
+    if (timestamps_) vkDestroyQueryPool(dev_, timestamps_, nullptr);
     alloc_.shutdown();
     vkDestroyDevice(dev_, nullptr);
     dev_ = VK_NULL_HANDLE;
@@ -1191,6 +1222,10 @@ void VkDeviceImpl::present() {
                    &b, VK_FILTER_NEAREST);
     imageBarrier(cmd(), dst, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
   }
+  if (timestamps_) {
+    vkCmdWriteTimestamp2(cmd(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timestamps_, uint32_t(frame_) * 2 + 1);
+    timingPending_[frame_] = true;
+  }
   vkEndCommandBuffer(f.cmd);
   VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, f.cmd, 0};
   VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, f.acquired, 0,
@@ -1226,7 +1261,9 @@ void VkDeviceImpl::present() {
   for (auto& c : n.ring) c.used = 0;
   n.ringCurrent = 0;
   n.tlasBuilt = false;
+  readFrameTimestamps();
   beginCommands();
+  frameTimestampStart();
 }
 
 // ---------------------------------------------------------------------------------------------------------------

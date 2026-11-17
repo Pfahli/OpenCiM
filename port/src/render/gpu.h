@@ -140,6 +140,9 @@ class Device {
   virtual void beginFrame(int width, int height) = 0;  // the back buffer's size this frame
   virtual void present() = 0;
   virtual void setVsync(bool on) = 0;
+  // GPU time of a recently finished frame in ms, from timestamps at the frame's start and end (a few frames old so
+  // reading it never waits); −1 until the first is known or when the device cannot measure it (benchmarks)
+  virtual double gpuFrameMs() const { return -1; }
 
   // ---- ray queries (docs/renderer/vulkan.md §9.3): Vulkan with VK_KHR_ray_query only; the defaults do nothing ----
   virtual bool rayTracing() const { return false; }

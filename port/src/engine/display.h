@@ -86,6 +86,7 @@ class Display {
     std::u16string text;
   };
   void drawFpsReadout(script::VM& vm);
+  void benchFrame(double renderCpuMs);  // REGS_BENCH frame-time measurement (display.cpp)
   void syncRenderSettings(script::VM& vm);  // antialiasing, anisotropy and vsync follow the settings (live)
   bool vsync_ = false, vsyncKnown_ = false;
   void dropGuiTargets();  // render-target textures are made again at the new UI scale

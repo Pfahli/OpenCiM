@@ -352,8 +352,31 @@ class GlDevice final : public Device {
   }
 
   // ---- frame ----
-  void beginFrame(int, int) override {}
-  void present() override { window_.swap(); }
+  // GPU frame time (GL 3.3 timer queries): a timestamp pair per frame in a ring of 4, read when the slot comes round
+  void beginFrame(int, int) override {
+    Timing& t = timing_[timingSlot_];
+    if (!t.q[0]) gl::GenQueries(2, t.q);
+    if (t.pending) {
+      unsigned long long a = 0, b = 0;
+      gl::GetQueryObjectui64v(t.q[0], 0x8866 /* GL_QUERY_RESULT */, &a);
+      gl::GetQueryObjectui64v(t.q[1], 0x8866, &b);
+      if (b > a) gpuMs_ = double(b - a) / 1e6;
+      t.pending = false;
+    }
+    gl::QueryCounter(t.q[0], 0x8E28 /* GL_TIMESTAMP */);
+    t.begun = true;
+  }
+  void present() override {
+    Timing& t = timing_[timingSlot_];
+    if (t.begun) {
+      gl::QueryCounter(t.q[1], 0x8E28);
+      t.pending = true;
+      t.begun = false;
+      timingSlot_ = (timingSlot_ + 1) % 4;
+    }
+    window_.swap();
+  }
+  double gpuFrameMs() const override { return gpuMs_; }
   void setVsync(bool on) override { window_.setVsync(on); }
 
  private:
@@ -381,6 +404,13 @@ class GlDevice final : public Device {
   }
 
   platform::Window& window_;
+  struct Timing {
+    uint32_t q[2] = {0, 0};
+    bool begun = false, pending = false;
+  };
+  Timing timing_[4];
+  int timingSlot_ = 0;
+  double gpuMs_ = -1;
   std::vector<uint8_t> cube_;  // per texture name: a cube map
   uint32_t program_ = 0;
   int active_ = 0;

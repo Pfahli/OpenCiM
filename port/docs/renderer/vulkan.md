@@ -291,3 +291,49 @@ square. It multiplies the whole colour, not only the ambient term (a post pass c
 * NVIDIA DLSS Super Resolution through the Streamline SDK (or the NGX DLSS SDK). Same inputs as FSR 2 (9.2). The
   runtime DLL (`nvngx_dlss.dll`) may be shipped under NVIDIA's DLSS licence terms; the SDK download and the licence need
   the owner's OK first. Vulkan only, RTX cards only; other cards keep the other upscalers.
+
+## 10. Benchmarks
+
+Measured 2026-11-17 on the owner's machine (RTX 3080, driver 621.01), Vienna sandbox save (`run\documents-bench`: 4×
+MSAA, shadows "High", anisotropy 8×, bloom off, vsync and frame limit off), the save's own camera with the game clock
+running, 1 500 frames after an 1 800-frame warm-up. Tool: `toolsench.ps1 -Docs <sandbox> -Sizes 1600x900,2560x1440`
+(engine switch `REGS_BENCH=<first>:<frames>`). Frame = present to present (simulation, scripts, rendering, waiting);
+render CPU = the render call up to the present; GPU = timestamps at the frame's start and end (OpenGL timer queries,
+Vulkan timestamp queries), a few frames old.
+
+| Configuration | Window | FPS | Median frame ms | p99 ms | Render CPU ms | GPU ms |
+|---|---|---|---|---|---|---|
+| OpenGL | 1600×900 | 122.1 | 7.69 | 17.12 | 3.88 | 1.60 |
+| Vulkan | 1600×900 | 127.5 | 7.47 | 16.26 | 3.87 | 1.48 |
+| OpenGL + TAA | 1600×900 | 123.9 | 7.69 | 16.47 | 3.85 | 2.43 |
+| Vulkan + TAA | 1600×900 | 125.2 | 7.58 | 16.71 | 3.96 | 2.21 |
+| OpenGL + TAA, 67 % | 1600×900 | 126.7 | 7.50 | 16.27 | 3.72 | 2.27 |
+| Vulkan + TAA, 67 % | 1600×900 | 119.8 | 7.91 | 16.89 | 4.10 | 1.76 |
+| Vulkan + RT shadows | 1600×900 | 135.9 | 6.92 | 15.83 | 3.33 | 2.50 |
+| Vulkan + RT shadows + RT AO + TAA | 1600×900 | 136.6 | 6.94 | 15.82 | 3.37 | 3.07 |
+| OpenGL | 2560×1440 | 125.7 | 7.57 | 16.25 | 3.77 | 2.31 |
+| Vulkan | 2560×1440 | 125.1 | 7.51 | 17.32 | 3.91 | 2.26 |
+| OpenGL + TAA | 2560×1440 | 125.7 | 7.55 | 16.24 | 3.78 | 2.48 |
+| Vulkan + TAA | 2560×1440 | 123.2 | 7.54 | 17.21 | 3.97 | 2.44 |
+| OpenGL + TAA, 67 % | 2560×1440 | 124.9 | 7.56 | 16.40 | 3.78 | 2.42 |
+| Vulkan + TAA, 67 % | 2560×1440 | 124.3 | 7.59 | 16.65 | 3.96 | 2.43 |
+| Vulkan + RT shadows | 2560×1440 | 135.7 | 6.98 | 15.98 | 3.42 | 4.37 |
+| Vulkan + RT shadows + RT AO + TAA | 2560×1440 | 127.8 | 7.35 | 16.51 | 3.60 | 6.42 |
+
+What it says:
+* **The game is CPU-bound on this machine.** Every configuration runs at about 125 fps: a frame is ~7.5 ms, of which
+  the render call takes ~3.8 ms of CPU and the simulation and scripts the rest, while the GPU works 1.5-2.5 ms. More
+  frames per second have to come from the CPU side (simulation, scripts, the render call's work per draw), not from the
+  graphics API. Differences of ±3 fps between single runs are noise (a first round with two runs each agreed within that;
+  one OpenGL + TAA run at 94-106 fps there did not repeat).
+* **OpenGL and Vulkan are even.** Same frame rate, same GPU time (2.31 vs 2.26 ms at 1440p); Vulkan's render CPU is
+  0.1-0.2 ms higher, the cost of emulating GL's per-call state machine (§2). A Vulkan path designed around pipelines,
+  descriptor sets and multithreaded command recording would be where Vulkan pulls ahead on the CPU.
+* **TAA costs ~0.2 ms of GPU** at 1440p, nothing visible in the frame rate.
+* **Render scale does not save GPU time in this scene**: the GPU's work here is not pixel-bound (shadow map, many small
+  draws). It pays off on weaker GPUs or at 4K and above, and it is the base for FSR.
+* **Raytraced shadows make the game faster** (+8 % fps, 135.9 vs 125): the shadow map then draws only foliage and
+  skinned casters, so the render CPU drops by ~0.5 ms, while the rays add ~1-2 ms of GPU time the GPU has to spare.
+* **Raytraced AO adds ~2 ms of GPU at 1440p** (with shadows and TAA 6.4 ms in all), still under the CPU's frame time.
+* **Loading:** the first view is drawn ~0.4 s later under Vulkan (973 vs 563 ms), glslang compiling the programs; a
+  SPIR-V cache (§8 step 3e) would remove that.
