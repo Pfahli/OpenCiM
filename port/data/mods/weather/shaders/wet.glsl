@@ -119,9 +119,14 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
   float amount;
   float slush = 0.0, bank = 0.0;
   float edge = (cls == 3 || cls == 4 || cls == 5) ? regs_roadEdge(s.pos.xz) : -1.2;
+  // the kerb's snow (banks, little hills, the plows' windrows) is pushed and shovelled there from the snow around it,
+  // so while it snows it comes after the surfaces next to it (grass from a dusting, pavements from 25 %, the banks
+  // from about 40 %, the hills last), never as a white line on bare ground; in a thaw it is the last to go
+  float kerbIn = mix(0.42, 0.05, weather_snow.z), kerbFull = mix(0.8, 0.3, weather_snow.z);
+  float kerbSnow = smoothstep(kerbIn, kerbFull, cover);
   // little snow hills along the kerb, both sides of it (pushed off the road and shovelled off the pavement): lumps of
   // 1-2 m, a heap field 0..1 that is a little brighter on top
-  float hillZone = (1.0 - smoothstep(0.15, 1.15, abs(edge))) * smoothstep(0.25, 0.7, cover) * up;  // fading out softly (regs_roadEdge ends at 1.2 m)
+  float hillZone = (1.0 - smoothstep(0.15, 1.15, abs(edge))) * smoothstep(kerbIn + 0.12, kerbFull + 0.1, cover) * up;  // fading out softly (regs_roadEdge ends at 1.2 m)
   float hill = 0.0;
   if (hillZone > 0.0) {
     float lump = 0.65 * weather_noise(s.pos.xz * 0.75 + vec2(3.7, 1.3)) + 0.35 * weather_noise(s.pos.xz * 1.9 + vec2(9.2, 4.4));
@@ -136,7 +141,7 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     float ridge = 1.0 - smoothstep(0.1, 1.15, abs(edge - 0.1));  // its crest just on the road side of the kerb
     float lumpB = 0.55 * weather_noise(s.pos.xz * 0.45 + vec2(5.3, 2.9)) + 0.3 * weather_noise(s.pos.xz * 1.3 + vec2(1.7, 6.1))
                 + 0.15 * weather_noise(s.pos.xz * 3.1 + vec2(8.8, 0.4));
-    heap = clamp(plowHeap * (0.45 + 0.75 * lumpB) * ridge, 0.0, 1.0) * smoothstep(0.15, 0.6, cover) * up;
+    heap = clamp(plowHeap * (0.45 + 0.75 * lumpB) * ridge, 0.0, 1.0) * kerbSnow * up;
   }
   if (cls == 4) {
     // roads: the more traffic a lane had lately (the engine's lane traffic), the less snow stays on it: busy lanes
@@ -160,13 +165,13 @@ void weather_snow_apply(inout vec4 c, RegsSurface s, vec3 dry) {
     // the blade's ends leave a low rim along the cleared strip (where it meets snow that was not cleared)
     amount = max(amount, 0.8 * 4.0 * plowed * (1.0 - plowed) * smoothstep(0.3, 0.8, cover));
     // the bank by the engine's smooth road edge (no 0.5 m steps along the kerb)
-    bank = (1.0 - smoothstep(0.25, 1.1, max(edge, 0.0))) * smoothstep(0.08, 0.4, cover);
+    bank = (1.0 - smoothstep(0.25, 1.1, max(edge, 0.0))) * kerbSnow;
     amount = max(amount, bank);
     slush *= 1.0 - bank;
   } else if (cls == 3 || cls == 5) {
     // pavements, squares, platforms: the bank on their edge by the road; where people walk lately (the engine's
     // trodden map) the snow is trodden grey and partly bare; single walkers leave faint lines, filled in by new snow
-    bank = (1.0 - smoothstep(0.2, 0.9, max(-edge, 0.0))) * smoothstep(0.08, 0.4, cover);
+    bank = (1.0 - smoothstep(0.2, 0.9, max(-edge, 0.0))) * kerbSnow;
     float trod = smoothstep(0.08, 0.7, regs_troddenAt(s.pos.xz)) * (1.0 - 0.5 * weather_snow.y);
     amount = smoothstep(0.25, 0.8, cover) * (1.0 - 0.75 * trod);
     slush = 0.85 * trod * smoothstep(0.25, 0.8, cover);

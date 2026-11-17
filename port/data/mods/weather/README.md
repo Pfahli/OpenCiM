@@ -101,7 +101,9 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
   straight edges on the cards), the green showing between.
 * **Streets:** the engine's lane traffic decides how much snow stays: quiet lanes white with faint tyre tracks, busy
   lanes grey slush with dark tracks at the wheels (along the lanes, following curves); banks of snow along the kerbs on
-  both sides, brighter, melting last; the thaw clears roads first, then pavements, then grass and roofs.
+  both sides, brighter, melting last; the thaw clears roads first, then pavements, then grass and roofs. While it
+  snows the kerb's snow (banks, little hills, windrows) comes after the surfaces next to it: grass from a dusting,
+  pavements from a quarter of the cover, the banks from about 40 %, never a white line on bare ground.
 * **Snowplows:** while snow lies and it is not thawing, 6 plows (the base game's SUV in orange with a blade, push
   arms and a flashing amber beacon the engine builds) take long trips through the city; the lane behind a plow is
   bare dark asphalt with a low rim at the strip's edge, filling in again with new snow (about 10 minutes of heavy
