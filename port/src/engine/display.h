@@ -21,7 +21,8 @@ class TextureObj;
 // window.init(), unless the host runs headless.
 class Display {
  public:
-  bool open(const platform::WindowDesc& desc, std::string* error);
+  // the window and its graphics device: Vulkan when asked and available, else OpenGL 3.3
+  bool open(const platform::WindowDesc& desc, bool vulkan, std::string* error);
   platform::Window& window() { return *window_; }
   render::Renderer2D& r2d() { return r2d_; }
   render::Renderer3D& r3d() { return r3d_; }

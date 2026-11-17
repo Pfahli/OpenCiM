@@ -137,12 +137,29 @@ void WindowObj::tick(VM& vm, float dt) {
   if (Display* d = display(); d && d->windowObject() == this) d->renderFrame(vm, this, fieldValues[u"video"].object());
 }
 
-bool Display::open(const platform::WindowDesc& desc, std::string* error) {
-  window_ = platform::createWindow();
-  if (!window_->create(desc, error)) return false;
-  auto device = render::gpu::createGlDevice(*window_, error);
-  if (!device) return false;
-  render::gpu::setDevice(std::move(device));
+bool Display::open(const platform::WindowDesc& desc, bool vulkan, std::string* error) {
+  // Vulkan first when chosen; any failure there opens OpenGL in a new window (docs/renderer/vulkan.md §7)
+  if (vulkan) {
+    platform::WindowDesc vd = desc;
+    vd.openGL = false;
+    window_ = platform::createWindow();
+    std::string why;
+    std::unique_ptr<render::gpu::Device> device;
+    if (window_->create(vd, &why)) device = render::gpu::createVulkanDevice(*window_, desc.vsync, &why);
+    if (device) {
+      render::gpu::setDevice(std::move(device));
+    } else {
+      LOG_WARN("display: Vulkan is not available (%s), using OpenGL 3.3", why.c_str());
+      window_.reset();
+    }
+  }
+  if (!window_) {
+    window_ = platform::createWindow();
+    if (!window_->create(desc, error)) return false;
+    auto device = render::gpu::createGlDevice(*window_, error);
+    if (!device) return false;
+    render::gpu::setDevice(std::move(device));
+  }
   if (!r2d_.init(error) || !r3d_.init(error)) return false;
   LOG_INFO("display: %dx%d, %s", window_->width(), window_->height(), r2d_.info.c_str());
   if (int dpi = window_->dpi()) LOG_INFO("display: %d dpi (%d %%), per-monitor DPI aware", dpi, dpi * 100 / 96);
@@ -684,9 +701,10 @@ void registerDisplayNatives(VM& vm) {
     desc.title = v.toStr(field(v, s, u"title"));
     desc.fullscreen = !host().forceWindowed && v.truthy(field(v, s, u"fullscreen"));
     desc.vsync = v.truthy(field(v, s, u"vsync"));
-    // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, the only one so far; others are planned
-    if (int engine = int(settingNumber(v, u"regsRenderer", 0)); engine != 0)
-      LOG_WARN("graphics engine %d is not available yet, using OpenGL 3.3", engine);
+    // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, 1 = Vulkan (falls back to OpenGL when it cannot start);
+    // REGS_RENDERER=gl|vulkan overrides the setting (test runs)
+    int engine = int(settingNumber(v, u"regsRenderer", 0));
+    if (const char* r = std::getenv("REGS_RENDERER")) engine = std::string(r) == "vulkan" ? 1 : 0;
     // the engine put MSAA into the window's pixel format without post-processing (and into the effect buffers with
     // it). Port: never into the pixel format, which cannot change once set; views without effects draw into a
     // multisampled target (msaaTarget), so the antialiasing setting applies while the game runs
@@ -694,7 +712,7 @@ void registerDisplayNatives(VM& vm) {
     auto d = std::make_unique<Display>();
     d->antialiasing = std::max(0, v.toInt(field(v, s, u"antialiasing")));
     std::string err;
-    if (!d->open(desc, &err)) {
+    if (!d->open(desc, engine == 1, &err)) {
       LOG_ERROR("cannot open the game window: %s", err.c_str());
       host().quit = true;
       return Value();

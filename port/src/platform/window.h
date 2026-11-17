@@ -6,8 +6,8 @@
 
 namespace regs::platform {
 
-// OS window with an OpenGL 3.3 core context. The engine talks only to this interface, so other backends
-// (SDL, Wayland, Cocoa, a Vulkan swapchain) can replace the Win32 one without touching the engine.
+// OS window, with an OpenGL 3.3 core context or (openGL = false) bare for a Vulkan surface. The engine talks only to
+// this interface, so other backends (SDL, Wayland, Cocoa) can replace the Win32 one without touching the engine.
 
 struct WindowDesc {
   int width = 1024, height = 768;
@@ -18,6 +18,7 @@ struct WindowDesc {
   bool vsync = true;
   bool visible = true;  // false: a hidden window that only provides a context (tools)
   int samples = 0;      // MSAA samples of the window surface (window.antialiasing without postProcess)
+  bool openGL = true;   // false: no GL pixel format or context (the Vulkan device makes its own surface)
 };
 
 // Raw input as the OS reports it; the engine's input layer turns it into the game's events.
@@ -56,6 +57,9 @@ class Window {
   virtual int dpi() const { return 96; }
   // OpenGL entry point lookup for the current context.
   virtual void* glProc(const char* name) const = 0;
+  // The OS handles a Vulkan surface is made from (Win32: HWND and HINSTANCE).
+  virtual void* nativeWindow() const = 0;
+  virtual void* nativeInstance() const = 0;
 };
 
 std::unique_ptr<Window> createWindow();

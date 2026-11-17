@@ -149,5 +149,8 @@ bool hasDevice();
 
 // The OpenGL 3.3 device on a window with a current context; null (error set) when GL entry points are missing.
 std::unique_ptr<Device> createGlDevice(platform::Window& window, std::string* error);
+// The Vulkan device on a window made without a GL context (WindowDesc::openGL = false); null (error set) when Vulkan is
+// missing, has no suitable GPU, or the port was built without it (CMake REGS_VULKAN).
+std::unique_ptr<Device> createVulkanDevice(platform::Window& window, bool vsync, std::string* error);
 
 }  // namespace regs::render::gpu
