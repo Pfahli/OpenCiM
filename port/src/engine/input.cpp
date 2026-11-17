@@ -535,6 +535,7 @@ void dispatchInput(Engine& eng) {
     }
     if (!w) continue;
     Ref<Object> keepW(w);
+    if (cameraInputEvent(vm, w, e)) continue;  // the smooth camera's wheel, gestures and Ctrl + middle drag
     bool events = !vm.truthy(vm.getMember(obj(w), u"disableInputEvents"));
     auto key = [&](const char16_t* ev, int k) {
       w->fieldValues[u"key"] = Value::integer(k);
@@ -588,7 +589,10 @@ void dispatchInput(Engine& eng) {
 
 int inputModifiers() { return g_modifiers; }
 
+int engineKeyOf(int vk) { return vkToKey(vk); }
+
 void registerInputNatives(VM& vm) {
+  registerCameraInputNatives(vm);
   if (ClassInfo* c = vm.findClass("gsDesktop")) c->factory = [](const ClassInfo* ci) { return Ref<Object>(new DesktopObj(ci)); };
   implement(vm, "gsWindow", u"addInputTarget", [](VM& v, Object* s, int argc, const Value* a) {
     auto* w = dynamic_cast<WindowObj*>(s);

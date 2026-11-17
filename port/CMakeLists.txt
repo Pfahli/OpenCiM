@@ -40,6 +40,7 @@ add_library(regs_engine STATIC
   src/engine/gui_relayout.cpp
   src/engine/font.cpp
   src/engine/input.cpp
+  src/engine/camera_input.cpp
   src/render/gl.cpp
   src/render/image.cpp
   src/render/renderer2d.cpp
@@ -95,6 +96,7 @@ add_library(regs_engine STATIC
   src/engine/user_folders.cpp
   src/engine/debug_economy.cpp
   src/platform/window_win32.cpp
+  src/platform/touchpad_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp
 )
@@ -140,6 +142,6 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32)
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
-  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32)
+  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid)
 endif()
 

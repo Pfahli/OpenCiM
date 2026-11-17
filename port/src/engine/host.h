@@ -17,6 +17,8 @@ struct Host {
   bool quit = false;                // set by quit()
   bool headless = true;             // no window or rendering (tools, tests)
   bool forceWindowed = false;       // ignore the settings' fullscreen flag
+  int forceWidth = 0, forceHeight = 0;  // --size WxH: the window's client size whatever the settings (screenshots, 4K)
+  bool hideGui = false;             // --at ui:off: the scene only, no interface (screenshots)
   std::filesystem::path dataDir;    // the port's overlay files (empty = none)
   bool communityAddons = false;     // mount community addons and loose install overrides (Vfs::setCommunityContent)
   std::filesystem::path modsDir;    // --mods: the user mods folder (default <user root>\mods, engine/mods.h)

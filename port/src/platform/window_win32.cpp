@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "platform/touchpad_win32.h"
 #include "platform/window.h"
 
 namespace regs::platform {
@@ -90,7 +91,16 @@ class Win32Window final : public Window {
       x = r.left;
       y = r.top;
     } else {
-      AdjustWindowRectEx(&r, style, FALSE, 0);
+      MONITORINFO mi{sizeof mi};
+      GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
+      if (desc.width >= mi.rcMonitor.right - mi.rcMonitor.left || desc.height >= mi.rcMonitor.bottom - mi.rcMonitor.top) {
+        style = WS_POPUP;  // as large as the monitor or larger (4K screenshots): a plain window at its corner, no frame
+        x = mi.rcMonitor.left;
+        y = mi.rcMonitor.top;
+        oversize_ = true;
+      } else {
+        AdjustWindowRectEx(&r, style, FALSE, 0);
+      }
     }
     hwnd_ = CreateWindowExW(0, kClass, reinterpret_cast<const wchar_t*>(desc.title.c_str()), style, x, y,
                             r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, this);
@@ -139,6 +149,14 @@ class Win32Window final : public Window {
     setVsync(desc.vsync);
     if (desc.visible) ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
+    // two-finger gestures on a touchscreen (zoom, turn, pan); one finger stays a mouse (tools, clicks), and the
+    // touchpad's twist comes as raw input (smooth camera, owner's request 2026-11-17)
+    GESTURECONFIG gc[] = {{GID_ZOOM, GC_ZOOM, 0},
+                          {GID_ROTATE, GC_ROTATE, 0},
+                          {GID_PAN, GC_PAN, GC_PAN_WITH_SINGLE_FINGER_VERTICALLY | GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY |
+                                                GC_PAN_WITH_INERTIA}};
+    SetGestureConfig(hwnd_, 0, UINT(sizeof(gc) / sizeof(gc[0])), gc, sizeof(GESTURECONFIG));
+    touchpad_.attach(hwnd_);
     RECT cr;
     GetClientRect(hwnd_, &cr);
     width_ = cr.right;
@@ -253,6 +271,77 @@ class Win32Window final : public Window {
         emit(e);
         return 0;
       }
+      case WM_MOUSEHWHEEL: {  // a tilting wheel or two fingers swiped sideways on a touchpad
+        InputEvent e{T::MouseHWheel};
+        POINT p{GET_X_LPARAM(l), GET_Y_LPARAM(l)};
+        ScreenToClient(hwnd_, &p);
+        e.x = p.x;
+        e.y = p.y;
+        e.wheel = float(GET_WHEEL_DELTA_WPARAM(w)) / WHEEL_DELTA;
+        emit(e);
+        return 0;
+      }
+      case WM_GESTURE: {
+        GESTUREINFO gi{};
+        gi.cbSize = sizeof(gi);
+        if (!GetGestureInfo(reinterpret_cast<HGESTUREINFO>(l), &gi)) break;
+        POINT p{gi.ptsLocation.x, gi.ptsLocation.y};
+        ScreenToClient(hwnd_, &p);
+        const bool begin = (gi.dwFlags & GF_BEGIN) != 0, end = (gi.dwFlags & GF_END) != 0;
+        InputEvent e{T::Gesture};
+        e.x = p.x;
+        e.y = p.y;
+        if (gi.dwID == GID_ZOOM) {
+          const double dist = double(gi.ullArguments);
+          if (!begin && gestureDist_ > 0) {
+            e.gesture = 1;
+            e.value = float(dist / gestureDist_);
+            emit(e);
+          }
+          gestureDist_ = dist;
+        } else if (gi.dwID == GID_ROTATE) {
+          const double a = GID_ROTATE_ANGLE_FROM_ARGUMENT(DWORD(gi.ullArguments & 0xFFFFFFFFu));
+          if (!begin) {
+            e.gesture = 2;
+            e.value = float(a - gestureAngle_);
+            emit(e);
+          }
+          gestureAngle_ = begin ? 0.0 : a;
+        } else if (gi.dwID == GID_PAN) {
+          if (!begin) {
+            e.gesture = 3;
+            e.dx = float(p.x - gesturePan_.x);
+            e.dy = float(p.y - gesturePan_.y);
+            emit(e);
+          }
+          gesturePan_ = p;
+        }
+        if (end && gi.dwID != GID_BEGIN && gi.dwID != GID_END) {
+          InputEvent f{T::Gesture};
+          f.gesture = 4;
+          f.x = p.x;
+          f.y = p.y;
+          emit(f);
+        }
+        CloseGestureInfoHandle(reinterpret_cast<HGESTUREINFO>(l));
+        return 0;
+      }
+      case WM_INPUT: {
+        float angle = 0;
+        bool ended = false;
+        if (touchpad_.input(l, angle, ended)) {
+          InputEvent e{T::Gesture};
+          POINT p{};
+          GetCursorPos(&p);
+          ScreenToClient(hwnd_, &p);
+          e.x = p.x;
+          e.y = p.y;
+          e.gesture = ended ? 4 : 2;
+          e.value = angle;
+          emit(e);
+        }
+        break;  // DefWindowProc cleans up the raw input
+      }
       case WM_KEYDOWN: case WM_SYSKEYDOWN: {
         InputEvent e{T::KeyDown};
         e.key = int(w);
@@ -300,6 +389,14 @@ class Win32Window final : public Window {
       }
       case WM_DPICHANGED: return 0;
       case WM_ERASEBKGND: return 1;
+      case WM_GETMINMAXINFO:  // a window larger than the monitor keeps its size
+        if (oversize_) {
+          auto* mmi = reinterpret_cast<MINMAXINFO*>(l);
+          mmi->ptMaxTrackSize.x = mmi->ptMaxSize.x = 16384;
+          mmi->ptMaxTrackSize.y = mmi->ptMaxSize.y = 16384;
+          return 0;
+        }
+        break;
       case WM_CLOSE: emit({T::Close}); return 0;  // the game decides (scripts may ask before quitting)
     }
     return DefWindowProcW(hwnd_, m, w, l);
@@ -321,6 +418,10 @@ class Win32Window final : public Window {
   int width_ = 0, height_ = 0;
   char16_t highSurrogate_ = 0;
   std::vector<InputEvent> queued_;
+  bool oversize_ = false;
+  double gestureDist_ = 0, gestureAngle_ = 0;  // WM_GESTURE: the last zoom distance and turn angle
+  POINT gesturePan_{};
+  TouchpadTwist touchpad_;
 };
 
 }  // namespace

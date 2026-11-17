@@ -22,7 +22,8 @@ struct WindowDesc {
 
 // Raw input as the OS reports it; the engine's input layer turns it into the game's events.
 struct InputEvent {
-  enum class Type : uint8_t { MouseMove, MouseDown, MouseUp, MouseWheel, KeyDown, KeyUp, Char, Activate, Deactivate, Close, Resize };
+  enum class Type : uint8_t { MouseMove, MouseDown, MouseUp, MouseWheel, KeyDown, KeyUp, Char, Activate, Deactivate, Close, Resize,
+                              MouseHWheel, Gesture };
   Type type = Type::MouseMove;
   int x = 0, y = 0;     // client pixels, top-left origin (mouse events); new client size (Resize)
   int button = 0;       // 0 left, 1 right, 2 middle
@@ -30,7 +31,12 @@ struct InputEvent {
   bool repeat = false;  // KeyDown from auto-repeat
   bool system = false;  // WM_SYSKEYDOWN/UP (Alt held, F10): the game never sees these on Windows
   char32_t ch = 0;      // Char
-  float wheel = 0;      // notches, positive away from the user
+  float wheel = 0;      // notches, positive away from the user (MouseHWheel: positive to the right)
+  // Gesture (touchscreen two fingers, touchpad twist; x, y = the fingers' centre): 1 zoom (value = the fingers' distance
+  // now / before), 2 turn (value = radians since the last one, counterclockwise positive), 3 pan (dx, dy = pixels the
+  // centre moved), 4 end (the fingers lifted)
+  uint8_t gesture = 0;
+  float value = 0, dx = 0, dy = 0;
 };
 
 class Window {

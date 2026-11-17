@@ -1,7 +1,10 @@
 // ReGS Game options page (settings menu > Game; opened by the main.script extension, regsOpenGamePage): the port's
-// game options that fit none of the original pages. For now the autosave (main.script extension, "autosave"):
+// game options that fit none of the original pages. The autosave (main.script extension, "autosave"):
 //   $settings.$regsAutosaveMinutes   0 (off), 5, 10 (default), 15 or 30 minutes of real time in the game
 //   $settings.$regsAutosaveKeep      how many autosaves are kept: 3 (default), 5 or 10
+// and the camera (metro/scripts/ui.script extension, port/docs/camera.md):
+//   $settings.$regsSmoothCamera      stepless, smooth turning and zoom, touch gestures (default on)
+//   $settings.$regsCameraSnap        a free turn snaps into the eight main directions (default on)
 // OK stores and exports the settings, Cancel drops the changes; both close the page.
 $desktop = MAIN.$desktop;
 $settings = MAIN.$settings;
@@ -16,6 +19,8 @@ $c = $box.$content;
 
 $minutes = int($settings.$regsAutosaveMinutes : 10);
 $keep = int($settings.$regsAutosaveKeep : 3);
+$smooth = $settings.$regsSmoothCamera : true;
+$snap = $settings.$regsCameraSnap : true;
 
 function label($x, $y, $w, $text, $title) {
   with ($l = new_control($c)) {
@@ -38,6 +43,25 @@ function radioRow($group, $y, $values, $texts, $chosen) {
     label($x + 22, $y, 96, $texts[$i], false);
     if ($values[$i] == $chosen) MAIN.$ui.selectChoiceButton($b, $group);
   }
+}
+
+// a checkbox with its text; $name: the variable it shows (smooth or snap)
+function checkRow($y, $name, $text, $hint) {
+  $b = MAIN.$ui.createChoiceButton($c, "self", 40, $y + 1, 16, 16, "", macro($name) :: toggle($0), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+  label(62, $y, 600, $text, false);
+  with (label(62, $y + 20, $c.width - 110, $hint, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
+  return $b;
+}
+
+function showChecks() {
+  MAIN.$ui.selectChoiceButton($smooth ? $smoothBox : null, $smoothBox);
+  MAIN.$ui.selectChoiceButton($snap ? $snapBox : null, $snapBox);
+}
+
+function toggle($name) {
+  if ($name == "smooth") $smooth = !$smooth;
+  else $snap = !$snap;
+  showChecks();
 }
 
 function pick($group, $v) {
@@ -64,6 +88,13 @@ foreach ([$regs.$regs_autosave_note1, $regs.$regs_autosave_note2]) {
   with (label(40, $y, $c.width - 80, current, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
   $y += 22;
 }
+$y += 24;
+label(40, $y, 600, $regs.$regs_camera_heading, true);
+$y += 34;
+$smoothBox = checkRow($y, "smooth", $regs.$regs_camera_smooth, $regs.$regs_camera_smooth_hint);
+$y += 50;
+$snapBox = checkRow($y, "snap", $regs.$regs_camera_snap, $regs.$regs_camera_snap_hint);
+showChecks();
 
 function pageButton($text, $action) {
   with ($b = MAIN.$ui.createButton($c, 4, 0, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
@@ -85,6 +116,10 @@ function save() {
   $settings.setVariable("regsAutosaveKeep", $keep);
   $settings.exportVariables("regsAutosaveMinutes");
   $settings.exportVariables("regsAutosaveKeep");
+  $settings.setVariable("regsSmoothCamera", $smooth);
+  $settings.setVariable("regsCameraSnap", $snap);
+  $settings.exportVariables("regsSmoothCamera");
+  $settings.exportVariables("regsCameraSnap");
   MAIN.$main.regsCloseGamePage();
 }
 

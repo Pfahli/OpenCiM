@@ -176,6 +176,11 @@ int Display::applyDisplay(VM& vm, bool fullscreen, int w, int h, bool relayout) 
   // resolution and refresh rate), so the resolution sizes the window when it is not fullscreen
   w = std::max(320, w);
   h = std::max(240, h);
+  if (host().forceWidth > 0 && host().forceHeight > 0) {  // --size keeps its window
+    fullscreen = false;
+    w = host().forceWidth;
+    h = host().forceHeight;
+  }
   int rw = w, rh = h;
   if (fullscreen) window_->monitorSize(rw, rh);
   bool sameWindow = fullscreen == window_->fullscreen() && rw == window_->width() && rh == window_->height();
@@ -462,12 +467,13 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
       r2d_.setProjection(px, py, pw, ph, uw, uh);
       GuiPass pass{vm, *this, px, py, pixels ? uiScale : ph};
       pass.scissor(int(px), int(py), int(pw), int(ph));
-      // the viewport is its own client area: its children are drawn in it
-      for (auto& c : vp->children)
-        if (auto* cc = dynamic_cast<ControlObj*>(c.get())) pass.control(cc);
+      // the viewport is its own client area: its children are drawn in it (not with --at ui:off)
+      if (!host().hideGui)
+        for (auto& c : vp->children)
+          if (auto* cc = dynamic_cast<ControlObj*>(c.get())) pass.control(cc);
     }
   }
-  drawFpsReadout(vm);
+  if (!host().hideGui) drawFpsReadout(vm);
   r2d_.endFrame();
   if (captureNext) {
     auto fn = std::move(captureNext);
@@ -688,6 +694,11 @@ void registerDisplayNatives(VM& vm) {
     desc.height = std::max(240, v.toInt(field(v, s, u"height")));
     desc.title = v.toStr(field(v, s, u"title"));
     desc.fullscreen = !host().forceWindowed && v.truthy(field(v, s, u"fullscreen"));
+    if (host().forceWidth > 0 && host().forceHeight > 0) {  // --size: e.g. 3840x2160 for 4K screenshots
+      desc.width = host().forceWidth;
+      desc.height = host().forceHeight;
+      desc.fullscreen = false;
+    }
     desc.vsync = v.truthy(field(v, s, u"vsync"));
     // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, the only one so far; others are planned
     if (int engine = int(settingNumber(v, u"regsRenderer", 0)); engine != 0)
