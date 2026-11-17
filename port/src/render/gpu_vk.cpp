@@ -1451,6 +1451,20 @@ uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& f
     plci.pSetLayouts = &p.setLayout;
     vkCreatePipelineLayout(dev_, &plci, nullptr, &p.layout);
     for (size_t i = 0; i < p.uniforms.size(); ++i) p.locations[p.uniforms[i].name] = int(i);
+    static const bool debug = std::getenv("REGS_VK_DEBUG") != nullptr;
+    static int dumped = 0;
+    if (debug && dumped < 6) {  // the reflection of the first programs (REGS_VK_DEBUG)
+      ++dumped;
+      LOG_INFO("vulkan: program %zu: block binding %d, %d bytes, %zu uniforms, inputs %zu", programs_.size(), p.blockBinding,
+               int(p.block.size()), p.uniforms.size(), p.inputs.size());
+      std::string ins;
+      for (int l : p.inputs) ins += std::to_string(l) + " ";
+      LOG_INFO("  inputs: %s", ins.c_str());
+      for (const vk::UniformInfo& u : p.uniforms)
+        LOG_INFO("  %s: %s off %d n %d stride %d cols %d comps %d binding %d", u.name.c_str(),
+                 u.sampler ? (u.cube ? "samplerCube" : u.shadow ? "sampler2DShadow" : "sampler2D") : "value", u.offset,
+                 u.arraySize, u.arrayStride, u.columns, u.components, u.binding);
+    }
   }
   for (uint32_t i = 1; i < programs_.size(); ++i)
     if (!programs_[i].used) {
