@@ -15,6 +15,7 @@
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "render/gpu.h"
+#include "engine/temporal.h"
 #include "render/glsl.h"
 #include "vfs/vfs.h"
 
@@ -614,6 +615,7 @@ void resetSizedEffects(Display& d) {
   d.r3d().destroyTarget(st.blurB);
   d.r3d().destroyTarget(st.postOut);
   d.r3d().destroyTarget(msaaScene());
+  temporalReset(d);
 }
 
 }  // namespace regs::engine

@@ -54,6 +54,7 @@ add_library(regs_engine STATIC
   src/engine/terrain.cpp
   src/engine/grid_items.cpp
   src/engine/effects.cpp
+  src/engine/temporal.cpp
   src/engine/settings.cpp
   src/engine/minimap.cpp
   src/engine/skinning.cpp

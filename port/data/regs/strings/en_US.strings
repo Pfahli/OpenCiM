@@ -17,7 +17,7 @@ $regs_lensBlur_item = "Lens blur: %0";
 $regs_lensBlur_values = ["Off", "Light", "Strong", "Tilt-shift"];
 $regs_renderer_item = "Graphics engine:";
 $regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
-$regs_renderer_planned = "Planned: a modern graphics engine (Vulkan) for raytracing and DLSS";
+$regs_renderer_hint = "Applies after a restart. Vulkan falls back to OpenGL when the graphics card or driver cannot run it";
 $regs_showFps_item = "Performance readout (FPS, frame time)";
 $regs_dayNight_item = "Day and night (changing time of day)";
 $regs_uiScale_item = "UI scale:";
@@ -45,6 +45,18 @@ $regs_saves_newFolder_dialog = "Name of the new folder:";
 // the settings menu's Game page (regs/ui/game.script): autosave
 $regs_game_button = "Game";
 $regs_game_title = "Game";
+// the settings menu's Image quality page (regs/ui/quality.script): TAA and render scale (docs/renderer/vulkan.md §9)
+$regs_quality_button = "Image quality";
+$regs_quality_title = "Image quality";
+$regs_quality_aa_heading = "Antialiasing";
+$regs_taa_label = "Temporal antialiasing (TAA)";
+$regs_taa_values = ["Off", "On"];
+$regs_taa_note = "Smooths edges and shimmering textures over several frames. Works with every antialiasing setting.";
+$regs_quality_scale_heading = "Render scale";
+$regs_renderScale_label = "3D view resolution";
+$regs_renderScale_values = ["100%%", "85%%", "77%%", "67%%", "50%%"];  // label texts: %% shows a %
+$regs_renderScale_note1 = "Below 100 %% the city is drawn at a lower resolution and scaled up: faster, a little softer. Menus stay sharp.";
+$regs_renderScale_note2 = "With TAA the scaling is temporal (sharper), without it a spatial upscaler with sharpening.";
 $regs_autosave_heading = "Autosave";
 $regs_autosave_interval_label = "Save every";
 $regs_autosave_off_item = "Off";

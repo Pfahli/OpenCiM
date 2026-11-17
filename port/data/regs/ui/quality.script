@@ -1,0 +1,98 @@
+// ReGS Image quality page (settings menu > Image quality; opened by the main.script extension, regsOpenQualityPage):
+// the port's image options beyond the original graphics page (docs/renderer/vulkan.md §9). The engine reads them every
+// frame (engine/temporal.cpp), so they apply as soon as OK stores them.
+//   $settings.$regsTaa           0 off, 1 temporal antialiasing
+//   $settings.$regsRenderScale   100, 85, 77, 67 or 50 (%): the 3D view's render size; below 100 % it is upscaled,
+//                                temporally with TAA, else with the spatial upscaler
+// OK stores and exports the settings, Cancel drops the changes; both close the page.
+$desktop = MAIN.$desktop;
+$settings = MAIN.$settings;
+
+$file = "regs/strings/" + MAIN.$language + ".strings";
+if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+$regs = load "/" + $file;
+
+$box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - 600) * 0.5), 1000, 600, 1 | 2 | 4 | 8, $desktop);
+$title = MAIN.$ui.createHeadingBar($box, $regs.$regs_quality_title);
+$c = $box.$content;
+
+$taa = int($settings.$regsTaa : 0);
+$renderScale = int($settings.$regsRenderScale : 100);
+
+function label($x, $y, $w, $text, $title) {
+  with ($l = new_control($c)) {
+    .setRect($x, $y, $w, 18);
+    if ($title) MAIN.$ui.setTitleFont(current);
+    else MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $l;
+}
+
+// a row of radio buttons: the values, their texts, the one shown as chosen
+function radioRow($group, $y, $values, $texts, $chosen) {
+  for ($i = 0; $i < #$values; ++$i) {
+    $x = 300 + $i * 120;
+    $b = MAIN.$ui.createChoiceButton($c, $group, $x, $y + 1, 16, 16, "", macro($group, $values[$i]) :: pick($0, $1), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+    label($x + 22, $y, 96, $texts[$i], false);
+    if ($values[$i] == $chosen) MAIN.$ui.selectChoiceButton($b, $group);
+  }
+}
+
+function pick($group, $v) {
+  if ($group == "regsTaa") $taa = $v;
+  else $renderScale = $v;
+}
+
+function note($y, $text) {
+  with (label(40, $y, $c.width - 80, $text, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
+}
+
+$y = 60;
+label(40, $y, 600, $regs.$regs_quality_aa_heading, true);
+$y += 34;
+label(40, $y, 250, $regs.$regs_taa_label, false);
+radioRow("regsTaa", $y, [0, 1], $regs.$regs_taa_values, $taa);
+$y += 24;
+note($y, $regs.$regs_taa_note);
+$y += 44;
+label(40, $y, 600, $regs.$regs_quality_scale_heading, true);
+$y += 34;
+label(40, $y, 250, $regs.$regs_renderScale_label, false);
+$scaleValues = [100, 85, 77, 67, 50];
+radioRow("regsRenderScale", $y, $scaleValues, $regs.$regs_renderScale_values, $renderScale);
+$y += 24;
+note($y, $regs.$regs_renderScale_note1);
+$y += 22;
+note($y, $regs.$regs_renderScale_note2);
+
+function pageButton($text, $action) {
+  with ($b = MAIN.$ui.createButton($c, 4, 0, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+    .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  MAIN.$ui.setTitleFont($b);
+  return $b;
+}
+with ($okButton = pageButton(MAIN.$strings.$menu_ok_button, macro :: save())) {
+  .setRect(40, $c.height - .height - 20, .width, .height);
+}
+with ($backButton = pageButton(MAIN.$strings.$menu_cancel_button, macro :: MAIN.$main.regsCloseQualityPage())) {
+  .setRect($c.width - .width - 40, $c.height - .height - 20, .width, .height);
+}
+
+function save() {
+  $settings.setVariable("regsTaa", $taa);
+  $settings.setVariable("regsRenderScale", $renderScale);
+  $settings.exportVariables("regsTaa");
+  $settings.exportVariables("regsRenderScale");
+  MAIN.$main.regsCloseQualityPage();
+}
+
+event this.onDestroy::() {
+  delete $regs;
+  delete $box;
+}

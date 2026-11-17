@@ -440,6 +440,12 @@ void Renderer3D::blitToBack(const RenderTarget& t, int x, int y, int w, int h, i
   dev().blit(t.fbo, 0, 0, 0, w, h, x, backH - y - h, x + w, backH - y, true, false);
 }
 
+void Renderer3D::blitDepthScaled(const RenderTarget& src, const RenderTarget& dst, int sw, int sh, int dw, int dh) {
+  resolve(src);
+  dev().scissorTest(false);
+  dev().blit(src.fbo, dst.fbo, 0, 0, sw, sh, 0, 0, dw, dh, false, true);
+}
+
 void Renderer3D::blitDepth(const RenderTarget& src, const RenderTarget& dst, int w, int h) {
   dev().scissorTest(false);
   dev().blit(src.msFbo ? src.msFbo : src.fbo, dst.fbo, 0, 0, w, h, 0, 0, w, h, false, true);
@@ -464,7 +470,7 @@ void Renderer3D::destroyTarget(RenderTarget& t) {
 }
 
 void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count, const float custom0[4], const float uv[4][4],
-                          const float* rect, const float* custom1) {
+                          const float* rect, const float* custom1, const float* matrix) {
   if (!program) return;
   if (!quadVao_) {
     quadVbo_ = dev().createBuffer();
@@ -503,6 +509,7 @@ void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count,
   dev().uniform1f(l.alphaRef, -1.0f);
   if (custom0) dev().uniform4fv(l.custom[0], 1, custom0);
   if (custom1) dev().uniform4fv(l.custom[1], 1, custom1);
+  if (matrix) dev().uniformMatrix4fv(l.matrix, 1, matrix);
   for (int i = 0; i < count && i < 8; ++i) {
     dev().uniform1i(l.texture[i], i);
     dev().bindTexture(i, textures[i]);

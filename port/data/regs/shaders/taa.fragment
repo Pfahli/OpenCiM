@@ -1,0 +1,83 @@
+// ReGS temporal antialiasing and temporal upscaling (settings regsTaa, regsRenderScale; docs/renderer/vulkan.md §9.1-9.2).
+// The scene was drawn with a sub-pixel jitter, possibly at a lower resolution than this output. Per output pixel: the
+// current frame sampled without the jitter, last frame's result found again through the depth (camera motion), clipped
+// to the current frame's neighbourhood so moving things and newly seen surfaces do not smear, then blended.
+// texture0 = current colour (render size), texture1 = its depth, texture2 = history (output size)
+// custom0 = (1/render width, 1/render height, jitter u, jitter v): the jitter as the image content moved, in uv
+// custom1 = (1/output width, 1/output height, blend of the new frame, history valid 0/1)
+// matrix  = this frame's NDC (unjittered) → last frame's clip space
+uniform sampler2D texture0;
+uniform sampler2D texture1;
+uniform sampler2D texture2;
+uniform vec4 custom0;
+uniform vec4 custom1;
+uniform mat4 matrix;
+varying vec4 texCoord;
+
+vec3 toYCoCg(vec3 c) { return vec3(dot(c, vec3(0.25, 0.5, 0.25)), dot(c, vec3(0.5, 0.0, -0.5)), dot(c, vec3(-0.25, 0.5, -0.25))); }
+vec3 fromYCoCg(vec3 c) { return vec3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+
+// Catmull-Rom history read from 5 bilinear taps (keeps the history sharp over many frames)
+vec4 historyAt(vec2 uv) {
+  vec2 size = 1.0 / custom1.xy;
+  vec2 p = uv * size - 0.5;
+  vec2 f = fract(p);
+  vec2 c = (floor(p) + 0.5) / size;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  vec2 w3 = f * f * (-0.5 + 0.5 * f);
+  vec2 w12 = w1 + w2;
+  vec2 t0 = c - custom1.xy, t3 = c + 2.0 * custom1.xy, t12 = c + (w2 / w12) * custom1.xy;
+  vec4 r = texture2D(texture2, vec2(t12.x, t0.y)) * (w12.x * w0.y);
+  r += texture2D(texture2, vec2(t0.x, t12.y)) * (w0.x * w12.y);
+  r += texture2D(texture2, t12) * (w12.x * w12.y);
+  r += texture2D(texture2, vec2(t3.x, t12.y)) * (w3.x * w12.y);
+  r += texture2D(texture2, vec2(t12.x, t3.y)) * (w12.x * w3.y);
+  float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+  return max(r / wsum, vec4(0.0));
+}
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  vec2 cuv = uv + custom0.zw;  // where this output pixel's unjittered position lies in the jittered frame
+  // the nearest real sample of this frame and how close it lies to this output pixel (render texels): close samples
+  // count fully, far ones little, so a smaller render size still converges to a sharp image (temporal upscaling)
+  vec2 rsize = 1.0 / custom0.xy;
+  vec2 p = cuv * rsize - 0.5;
+  vec2 dd = p - floor(p + 0.5);
+  float near = exp(-dot(dd, dd) * 3.0);
+  vec4 current = texture2D(texture0, (floor(p + 0.5) + 0.5) * custom0.xy);
+  // neighbourhood of the current frame (3×3 render texels): mean and spread in YCoCg
+  vec3 m1 = vec3(0.0), m2 = vec3(0.0);
+  for (int j = -1; j <= 1; ++j)
+    for (int i = -1; i <= 1; ++i) {
+      vec3 s = toYCoCg(texture2D(texture0, cuv + vec2(float(i), float(j)) * custom0.xy).rgb);
+      m1 += s;
+      m2 += s * s;
+    }
+  m1 /= 9.0;
+  vec3 sigma = sqrt(max(m2 / 9.0 - m1 * m1, vec3(0.0)));
+  // where this point was last frame: its depth back to a position, through last frame's camera
+  float depth = texture2D(texture1, cuv).r;
+  vec4 prev = matrix * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  vec2 puv = prev.xy / prev.w * 0.5 + 0.5;
+  float alpha = custom1.z * near;
+  if (custom1.w < 0.5 || prev.w <= 0.0 || puv.x < 0.0 || puv.y < 0.0 || puv.x > 1.0 || puv.y > 1.0) {
+    gl_FragColor = vec4(texture2D(texture0, cuv).rgb, current.a);  // no history here: the frame as it is
+    return;
+  }
+  vec3 hist = toYCoCg(historyAt(puv).rgb);
+  // variance clipping: the history pulled into the current neighbourhood's box
+  vec3 lo = m1 - 1.25 * sigma, hi = m1 + 1.25 * sigma;
+  vec3 center = 0.5 * (lo + hi), ext = max(0.5 * (hi - lo), vec3(0.0001));
+  vec3 d = hist - center;
+  vec3 a = abs(d / ext);
+  float k = max(a.x, max(a.y, a.z));
+  if (k > 1.0) hist = center + d / k;
+  // faster response where the image moves a lot (less blur on panning)
+  float motion = length((puv - uv) / custom1.xy);
+  alpha = max(alpha, clamp(motion * 0.02, 0.0, 0.25));
+  vec3 col = mix(fromYCoCg(hist), current.rgb, alpha);
+  gl_FragColor = vec4(max(col, vec3(0.0)), current.a);
+}

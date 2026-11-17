@@ -499,11 +499,12 @@ function regsRelayoutMenus() {
   this.perform("graphics");
 }
 
-// Settings menu (main and pause menu): the port's entries "Mods" (regs/ui/mods.script, the mods' options) and "Game"
-// (regs/ui/game.script, autosave) above Back. The pages show while the machine stays in SettingsMenu (main.states is
+// Settings menu (main and pause menu): the port's entries "Mods" (regs/ui/mods.script, the mods' options), "Game"
+// (regs/ui/game.script, autosave) and "Image quality" (regs/ui/quality.script: TAA, render scale) above Back. The pages show while the machine stays in SettingsMenu (main.states is
 // not changed), so they close themselves (regsCloseModsPage, regsCloseGamePage) and the settings buttons come back.
 $regsModsPage = null;
 $regsGamePage = null;
+$regsQualityPage = null;
 function regsSettingsButton($regsSbText, $regsSbAction) {
   with (MAIN.$ui.createButton($menu.$buttonArea, 4, 0, 322, 32, $regsSbText, $regsSbAction, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
     .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
@@ -521,6 +522,7 @@ function regsSettingsButton($regsSbText, $regsSbAction) {
 event this.enter::["SettingsMenu"]() {
   regsSettingsButton(regsText("regs_mods_button"), macro :: MAIN.$main.regsOpenModsPage());
   regsSettingsButton(regsText("regs_game_button"), macro :: MAIN.$main.regsOpenGamePage());
+  regsSettingsButton(regsText("regs_quality_button"), macro :: MAIN.$main.regsOpenQualityPage());
 }
 function regsOpenModsPage() {
   if ($regsModsPage) return;
@@ -542,6 +544,17 @@ function regsCloseGamePage() {
   if (!$regsGamePage) return;
   delete $regsGamePage;
   $regsGamePage = null;
+  $menu.$menuArea.visible = true;
+}
+function regsOpenQualityPage() {
+  if ($regsQualityPage) return;
+  $menu.$menuArea.visible = false;
+  $regsQualityPage = load "/regs/ui/quality.script";
+}
+function regsCloseQualityPage() {
+  if (!$regsQualityPage) return;
+  delete $regsQualityPage;
+  $regsQualityPage = null;
   $menu.$menuArea.visible = true;
 }
 

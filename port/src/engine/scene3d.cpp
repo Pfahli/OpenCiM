@@ -13,6 +13,7 @@
 #include "engine/api.h"
 #include "engine/display.h"
 #include "engine/effects.h"
+#include "engine/temporal.h"
 #include "engine/grid.h"
 #include "engine/gui.h"
 #include "engine/night_lights.h"
@@ -600,18 +601,38 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   { auto ts_ = std::chrono::steady_clock::now(); assignPrograms(d, vm, items, v.env); gPhaseSeconds[6] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   if (v.particles) prepareParticlePrograms(d, vm, particles, v.env);
   uint32_t clear = uint32_t(vm.toInt(fieldOf(vm, vp, u"clearColor")));
+  // port TAA and render scale (game view, engine/temporal.h): the scene is drawn jittered and/or smaller into the
+  // temporal input, then resolved or upscaled to the view's size (before the colour styles)
+  TemporalPass temporal;
+  if (!rt && !grids.empty()) temporal = temporalBegin(d, vm, w, h, v);
+  const int sw = temporal.active ? temporal.rw : w, sh = temporal.active ? temporal.rh : h;
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites
   // it into this rect (docs/renderer/bloom.md §3.3)
   const RenderTarget* hdr = nullptr;
   if (bloom && !rt) {
     bloomTick(vm, bloom, vm.frameDt());
-    hdr = bloomSceneTarget(d, vm, bloom, w, h);
+    hdr = bloomSceneTarget(d, vm, bloom, sw, sh);
   }
   // port style effects (game view): the scene, or the bloom composite, goes into the style input first
   const RenderTarget* styled = nullptr;
   const bool postHooks = !rt && !grids.empty() && postHooksWanted(vm, scene);  // the mods' post hooks (render/glsl.h)
-  if (!rt && !grids.empty() && (styleActive(vm) || postHooks)) styled = styleTarget(d, vm, w, h, hdr ? 0 : d.antialiasing);
-  if (hdr) {
+  if (!rt && !grids.empty() && (styleActive(vm) || postHooks))
+    styled = styleTarget(d, vm, w, h, hdr || temporal.active ? 0 : d.antialiasing);
+  if (temporal.active) {
+    if (hdr) {  // bloom at the render size, composited into the temporal input with its depth
+      d.r3d().begin(hdr, 0, hdr->height - sh, sw, sh, clear, (clear >> 24) != 0, bw, bh);
+      d.r3d().draw(v, items);
+      d.r3d().end(bw, bh);
+      bloomFinish(d, vm, bloom, 0, 0, sw, sh, bw, bh, temporal.input);
+      d.r3d().blitDepth(*hdr, *temporal.input, sw, sh);
+    } else {  // always cleared: the history needs every pixel
+      d.r3d().begin(temporal.input, 0, 0, sw, sh, (clear >> 24) ? clear : 0u, true, bw, bh);
+      d.r3d().draw(v, items);
+    }
+    d.r3d().end(bw, bh);
+    temporalFinish(d, vm, temporal, x, y, w, h, bw, bh, styled);
+    d.r3d().end(bw, bh);
+  } else if (hdr) {
     d.r3d().begin(hdr, 0, hdr->height - h, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);
     d.r3d().end(bw, bh);

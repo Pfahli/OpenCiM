@@ -165,19 +165,15 @@ function regsSetLensBlur() {
   $lensBlur = int($lensBlurSlider.$value);
 }
 
-// ---- graphics engine (left column): OpenGL 3.3 now; the others are listed until they exist ----
+// ---- graphics engine (left column): OpenGL 3.3 or Vulkan, chosen when the game starts (Display::open; Vulkan falls
+// back to OpenGL when it cannot start) ----
 
 regsLabel(60, 450, $regs.$regs_renderer_item);
 $regsRendererButtons = [];
 for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
-  with ($regsRendererButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsRenderer", 170 + $i * 78, 450, 76, 18, $regs.$regs_renderer_values[$i], macro($i) :: regsSetRenderer($0))) {
-    if ($i > 0) {
-      .enabled = false;   // planned
-      .visibility = 0.35;
-    }
-  }
+  $regsRendererButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsRenderer", 170 + $i * 78, 450, 76, 18, $regs.$regs_renderer_values[$i], macro($i) :: regsSetRenderer($0));
+  MAIN.$ui.setTooltip($regsRendererButtons[$i], $regs.$regs_renderer_hint, 0, -1);
 }
-MAIN.$ui.setTooltip($regsRendererButtons[1], $regs.$regs_renderer_planned, 0, -1);
 
 // ---- UI scale (left column, under the graphics engine): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
 // window opens or changes (Display::chooseUiScale, docs/ui/scaling.md). Unset: 2x on windows taller than 1800 px,
@@ -220,11 +216,10 @@ function regsSetDayNight($value) {
 regsSetDayNight($dayNight);
 
 function regsSetRenderer($index) {
-  if ($index > 0) return;
   $renderer = $index;
   MAIN.$ui.selectChoiceButton($regsRendererButtons[$renderer], "regsRenderer");
 }
-regsSetRenderer(0);
+regsSetRenderer($renderer < #$regsRendererButtons ? $renderer : 0);
 
 function regsCurrentPreset() {
   for ($i = 0; $i < #$regsPresets; ++$i) {

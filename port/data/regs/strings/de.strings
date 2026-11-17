@@ -17,7 +17,7 @@ $regs_lensBlur_item = "Tiefenunschärfe: %0";
 $regs_lensBlur_values = ["Aus", "Leicht", "Stark", "Tilt-Shift"];
 $regs_renderer_item = "Grafik-Engine:";
 $regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
-$regs_renderer_planned = "Geplant: moderne Grafik-Engine (Vulkan) für Raytracing und DLSS";
+$regs_renderer_hint = "Gilt nach einem Neustart. Vulkan fällt auf OpenGL zurück, wenn Grafikkarte oder Treiber es nicht können";
 $regs_showFps_item = "Leistungsanzeige (FPS, Bildzeit)";
 $regs_dayNight_item = "Tag und Nacht (wechselnde Tageszeit)";
 $regs_uiScale_item = "UI-Skalierung:";
@@ -45,6 +45,18 @@ $regs_saves_newFolder_dialog = "Name des neuen Ordners:";
 // Seite „Spiel" im Einstellungsmenü (regs/ui/game.script): automatisches Speichern
 $regs_game_button = "Spiel";
 $regs_game_title = "Spiel";
+// Seite Bildqualität im Einstellungsmenü (regs/ui/quality.script): TAA und Renderauflösung
+$regs_quality_button = "Bildqualität";
+$regs_quality_title = "Bildqualität";
+$regs_quality_aa_heading = "Kantenglättung";
+$regs_taa_label = "Temporale Kantenglättung (TAA)";
+$regs_taa_values = ["Aus", "An"];
+$regs_taa_note = "Glättet Kanten und flimmernde Texturen über mehrere Bilder. Funktioniert mit jeder Antialiasing-Stufe.";
+$regs_quality_scale_heading = "Renderauflösung";
+$regs_renderScale_label = "Auflösung der 3D-Ansicht";
+$regs_renderScale_values = ["100%%", "85%%", "77%%", "67%%", "50%%"];  // Beschriftungen: %% zeigt ein %
+$regs_renderScale_note1 = "Unter 100 %% wird die Stadt kleiner gezeichnet und hochskaliert: schneller, etwas weicher. Menüs bleiben scharf.";
+$regs_renderScale_note2 = "Mit TAA wird zeitlich skaliert (schärfer), ohne TAA räumlich mit Nachschärfen.";
 $regs_autosave_heading = "Automatisch speichern";
 $regs_autosave_interval_label = "Speichern alle";
 $regs_autosave_off_item = "Aus";

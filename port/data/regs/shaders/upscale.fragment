@@ -1,0 +1,43 @@
+// ReGS spatial upscaler (setting regsRenderScale below 100 % without TAA; docs/renderer/vulkan.md §9.2): the scene
+// drawn at a lower resolution, scaled to the view with a Catmull-Rom kernel (sharper than bilinear, no ringing worth
+// mentioning at these ratios) and then contrast-adaptive sharpening: each pixel pushed away from its neighbours' mean,
+// less where the local contrast is already high, so edges do not halo.
+// texture0 = the scene (render size), texture1 = its depth (copied to the output's depth elsewhere)
+// custom0 = (1/render width, 1/render height, sharpening 0..1, 0), custom1 = (1/output width, 1/output height, 0, 0)
+uniform sampler2D texture0;
+uniform vec4 custom0;
+uniform vec4 custom1;
+varying vec4 texCoord;
+
+vec4 catmullRom(vec2 uv) {
+  vec2 size = 1.0 / custom0.xy;
+  vec2 p = uv * size - 0.5;
+  vec2 f = fract(p);
+  vec2 c = (floor(p) + 0.5) / size;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  vec2 w3 = f * f * (-0.5 + 0.5 * f);
+  vec2 w12 = w1 + w2;
+  vec2 t0 = c - custom0.xy, t3 = c + 2.0 * custom0.xy, t12 = c + (w2 / w12) * custom0.xy;
+  vec4 r = texture2D(texture0, vec2(t12.x, t0.y)) * (w12.x * w0.y);
+  r += texture2D(texture0, vec2(t0.x, t12.y)) * (w0.x * w12.y);
+  r += texture2D(texture0, t12) * (w12.x * w12.y);
+  r += texture2D(texture0, vec2(t3.x, t12.y)) * (w3.x * w12.y);
+  r += texture2D(texture0, vec2(t12.x, t3.y)) * (w12.x * w3.y);
+  float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+  return max(r / wsum, vec4(0.0));
+}
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  vec4 c = catmullRom(uv);
+  // contrast-adaptive sharpening over the output's 4 neighbours
+  vec3 n = catmullRom(uv + vec2(0.0, custom1.y)).rgb, s = catmullRom(uv - vec2(0.0, custom1.y)).rgb;
+  vec3 e = catmullRom(uv + vec2(custom1.x, 0.0)).rgb, w = catmullRom(uv - vec2(custom1.x, 0.0)).rgb;
+  vec3 mn = min(c.rgb, min(min(n, s), min(e, w))), mx = max(c.rgb, max(max(n, s), max(e, w)));
+  vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(0.0001)), 0.0, 1.0));
+  vec3 wgt = -amp * mix(0.125, 0.2, custom0.z);
+  vec3 col = (c.rgb + (n + s + e + w) * wgt) / (1.0 + 4.0 * wgt);
+  gl_FragColor = vec4(clamp(col, 0.0, 1.0), c.a);
+}

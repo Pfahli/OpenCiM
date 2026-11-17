@@ -200,6 +200,12 @@ FSR 2/3 and DLSS need Vulkan (the vendor libraries have no OpenGL path; ray quer
 
 ### 9.1 Motion vectors, jittered camera, TAA
 
+Status (2026-11-17): done for phase 1 in `engine/temporal.cpp` and `data/regs/shaders/taa.fragment`, setting
+`$regsTaa` on the settings page Image quality (`REGS_TAA=0|1` for tests). Checked on the Vienna save under OpenGL and
+Vulkan (the two agree as closely as without TAA): edges and texture shimmer smooth, moving vehicles without trails.
+Known: the scrolling arrows of route strips are averaged away (texture animation has no motion vectors; overlays
+would have to be drawn after the resolve). Phase 2 (object motion vectors) not started.
+
 * **Jitter:** the game view's projection gets a sub-pixel offset each frame (Halton 2,3 over 8 frames, in clip space
   `2·offset / size` added to the projection's third column). Only the game's 3D view; GUI views, render-to-texture
   views and shadow maps stay unjittered.
@@ -216,6 +222,10 @@ FSR 2/3 and DLSS need Vulkan (the vendor libraries have no OpenGL path; ray quer
   Option "Antialiasing: TAA" next to the MSAA choices (TAA replaces MSAA when chosen).
 
 ### 9.2 Upscaling ("render scale")
+
+Status (2026-11-17): render scale and both own upscalers done (`$regsRenderScale`, `REGS_RENDER_SCALE=<percent>`);
+temporal at 67 % is about as sharp as the spatial upscaler, which keeps the 100 % look closest. With bloom on, bloom
+runs at the render size. FSR not started (needs the owner's OK for the FidelityFX SDK download).
 
 * Option "Render scale" 100 / 85 / 77 / 67 / 50 %: the 3D view renders into a smaller scene target; the GUI always
   at full size.
