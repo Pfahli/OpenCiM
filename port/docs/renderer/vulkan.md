@@ -227,7 +227,7 @@ Status (2026-11-17): render scale and both own upscalers done (`$regsRenderScale
 temporal at 67 % is about as sharp as the spatial upscaler, which keeps the 100 % look closest. With bloom on, bloom
 runs at the render size. AMD FSR 3.1 upscaling done on Vulkan (`$regsUpscaler` = 1, `REGS_UPSCALER=1`; below).
 
-* Option "Render scale" 100 / 85 / 77 / 67 / 50 %: the 3D view renders into a smaller scene target; the GUI always
+* Option "Render scale" 50 .. 100 % (a slider in 1 % steps): the 3D view renders into a smaller scene target; the GUI always
   at full size.
 * **Own temporal upscaler (TAAU):** the TAA history is at output size and is fed with the jittered low-resolution
   frames (each new sample lands in the output pixel it covers, weighted by distance): the best quality without any
@@ -236,7 +236,7 @@ runs at the render size. AMD FSR 3.1 upscaling done on Vulkan (`$regsUpscaler` =
   local gradient) and contrast-adaptive sharpening. Written here; AMD's FSR 1 shaders (MIT) are an alternative that
   would be copied with their licence.
 * **AMD FSR 3.1 upscaler** (done, Vulkan only): option "Upscaler: ReGS / AMD FSR 3.1" on the Image quality page
-  (`$regsUpscaler` 0 / 1, `REGS_UPSCALER`). FSR takes the place of TAA and of the own upscalers and also runs at
+  (a drop-down list, room for more upscalers; `$regsUpscaler` 0 / 1, `REGS_UPSCALER`). FSR takes the place of TAA and of the own upscalers and also runs at
   100 % (native antialiasing). The code:
   * `third_party/fidelityfx-fsr`: the FSR parts of the FidelityFX SDK v1.1.4 (MIT; v2.x has a different licence,
     see `third_party/README.md`), built into the static library `regs_ffx` with the SDK's own Vulkan backend.
@@ -318,7 +318,7 @@ square. It multiplies the whole colour, not only the ambient term (a post pass c
 
 Owner's request 2026-11-17, placed before frame generation (FSR 3's frame generation replaces the presentation, so it
 has to be built for the HDR swapchain from the start). Settings on the Image quality page: `$regsHdr` (0 / 1),
-`$regsHdrPaperWhite` (120 .. 300 nits, default 200), `$regsHdrPeak` (600 .. 2000 nits, default 1000); test switches
+`$regsHdrPaperWhite` (slider, 80 .. 400 nits, default 200), `$regsHdrPeak` (slider, 400 .. 4000 nits, default 1000); test switches
 `REGS_HDR`, `REGS_HDR_PAPER`, `REGS_HDR_PEAK`. OpenGL has no dependable HDR path on Windows, so it stays SDR there.
 
 * **Swapchain** (`gpu_vk.cpp`): with `VK_EXT_swapchain_colorspace` the surface lists `A2B10G10R10` +
