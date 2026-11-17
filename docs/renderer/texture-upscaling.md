@@ -185,6 +185,30 @@ textures (`metro/objects/`, `metro/graphics/`).
 Decision unchanged: the built-in filter is the default and the only thing the game makes; AI stays an optional
 generator mode for players who like the cleaner look. The cache was restored to the built-in filter afterwards.
 
+### 8.2 Real-CUGAN and waifu2x tried (2026-11-17)
+
+Owner's OK for two more tools, unpacked in a scratch folder only and run only on PNGs exported from the install:
+`realcugan-ncnn-vulkan-20220728-windows.zip` (43.8 MB, MIT, SHA-256 `c6e08d46…def400e01`) and
+`waifu2x-ncnn-vulkan-20250915-windows.zip` (33.9 MB, MIT, SHA-256 `7425be94…5adfbdc87`), both from nihui's GitHub
+releases. Six textures went through `--external` (building `tenement01`, `tram_04`, `foliage-final`, `terrain`,
+`paving_checker`, the UI icon `bus01-icon`) and were compared texel for texel against the built-in filter and x4plus.
+
+| upscaler (2×) | 6 textures | look |
+|---|---|---|
+| built-in | 5 s in total incl. the material scan | keeps grain and grime, slightly crisper |
+| Real-ESRGAN x4plus | 8.3 s | smooth; the grass terrain becomes a flat green surface |
+| Real-CUGAN se, no-denoise (`-n 0`) | 1.4 s | invents worm-shaped blobs on grass, a yellow fringe on the tram's top edge, smooths facades; its UI icon shifted colours and was rejected (28/255) |
+| Real-CUGAN se, conservative (`-n -1`) | 1.3 s | softer, smears the grime |
+| waifu2x CUnet, no denoise (`-n -1`) | 1.2 s | crispest edges (paving diagonals, window frames) and keeps the grain, but **unreliable here**: the same tram PNG came back fine once, dark blue (62/255 off, rejected) three times and all black once |
+| waifu2x upconv_7 photo, noise 0 | 1.0 s | closest to the built-in result with slightly cleaner edges and lettering; no failures in these runs |
+
+(Timings include each tool's model load of ~0.5 s; the per-texture cost is well under 0.2 s for the 2× models.)
+
+The anime-trained models (CUGAN, CUnet) read the game's photo-sourced grain as noise or line art. waifu2x photo is the
+only one that adds sharpness without changing the art, but the difference from the built-in filter is small, too
+small to justify a download for players. Decision unchanged; the safeguard (§8.1) proved necessary again, catching
+the broken CUnet output and the CUGAN icon.
+
 ## 9. Later
 
 * An in-game choice "built-in / AI" would need the port to fetch or bundle Real-ESRGAN (BSD-3 code and weights, MIT
