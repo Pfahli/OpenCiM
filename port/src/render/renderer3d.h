@@ -106,6 +106,7 @@ struct GpuMesh {
   };
   std::vector<Part> parts;
   uint32_t skinVbo = 0;  // TEXCOORD3/4: weights · 32767 and palette slots (or 8 weights)
+  uint32_t vertexCount = 0;
   Vec3 center;
   float radius = 0;
 };
@@ -188,10 +189,19 @@ struct SceneView {
   Mat4 shadowTransform, shadowWarp;
   float shadowParams[4] = {0, 0, 0, 0};
   bool flipCull = false;  // env 0x20: cull front faces (shadow pass with useBackSide)
+  // raytraced shadows (docs/renderer/vulkan.md §9.3): the main pass's programs trace toward sunWorld; the shadow-map
+  // pass then draws only what the rays leave out (alpha-tested and blended materials, skinned meshes)
+  bool rayShadows = false;
+  Vec3 sunWorld;
+  bool shadowMapLeftovers = false;
   const ParticleDrawList* particles = nullptr;  // drawn at the end of draw() (engine/particles.cpp collects them)
 };
 
 enum : uint32_t { kEnvFog = 0x1, kEnvShadowMap = 0x2, kEnvShadowMapRender = 0x4, kEnvShadowRender = 0x8, kEnvShadow = 0x10 };
+// port pass bit (never given to the game's combiner scripts): the programs with raytraced shadows
+constexpr uint32_t kEnvRayShadows = 0x40000000u;
+// port pass bit: the programs with raytraced reflections (water and glass, docs/renderer/vulkan.md §9.7)
+constexpr uint32_t kEnvRayReflections = 0x20000000u;
 
 struct DrawItem {
   const GpuMesh* mesh = nullptr;
@@ -234,7 +244,15 @@ class Renderer3D {
   // A combiner variant: GLSL 1.10 as generated, translated to 3.30 (render/glsl.h) and linked with the attribute
   // slots of upload(). 0 on failure (error set).
   // hooks: add the mods' shader hooks (render/glsl.h; the scene combiner variants).
-  uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false);
+  // rayShadows: the fragment stage traces its shadow toward the sun (Vulkan with ray queries only, render/glsl.h).
+  // rays: kRayShadows / kRayReflections (render/glsl.h); true = ray shadows
+  uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false,
+                        unsigned rays = 0);
+  // The frame's ray-query scene from a draw list (docs/renderer/vulkan.md §9.3): every part that casts a shadow except
+  // foliage, blended and skinned parts (those stay in the shadow map), as instances of per-mesh bottom-level structures
+  // (built the first time a mesh is seen).
+  // False when the device has no ray queries.
+  bool buildRayScene(const std::vector<DrawItem>& items);
   // The mods' post hooks (render/glsl.h): a program from the post vertex shader (GLSL 1.10) and postHookFragment();
   // postHookState puts it in use with the view's hook uniforms and maps, ready for drawQuad (scene colour on unit 0,
   // its depth on unit 1, custom0 = one texel).
@@ -259,13 +277,18 @@ class Renderer3D {
   void blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH);
   // copies the depth of src (its multisample buffer when it has one) into dst's depth, bottom-left w×h
   void blitDepth(const RenderTarget& src, const RenderTarget& dst, int w, int h);
+  // the same from src's bottom-left sw×sh scaled (nearest) onto dst's bottom-left dw×dh (render scale, §9.2)
+  void blitDepthScaled(const RenderTarget& src, const RenderTarget& dst, int sw, int sh, int dw, int dh);
   void destroyTarget(RenderTarget& t);
   // A post-effect pass into the bound target and viewport: a quad drawn with a combiner program (attributes
   // POSITION and TEXCOORD0 as a vec4 per corner, corners TL, TR, BR, BL), textures on units 0..n−1 and the custom0
   // parameter. rect = (left, top, right, bottom) in glOrtho(0, 1, 1, 0) units of the viewport (y = 0 at the top),
   // null = the whole viewport. Depth test, culling and blending off.
+  // matrix: the program's "matrix" uniform (a mat4, column-major), when given. multiply: the result multiplies what
+  // is in the target (blend DST_COLOR × src) instead of replacing it.
   void drawQuad(uint32_t program, const uint32_t* textures, int count, const float custom0[4], const float uv[4][4],
-                const float* rect = nullptr, const float* custom1 = nullptr);
+                const float* rect = nullptr, const float* custom1 = nullptr, const float* matrix = nullptr,
+                bool multiply = false);
   // The red channel of a float texture (glGetTexImage(GL_RED, GL_FLOAT)), w·h values.
   void readRed(uint32_t texture, int w, int h, std::vector<float>& out);
   // Starts drawing into a target (or the back buffer when null) inside the pixel rect; clears depth, and colour
@@ -294,10 +317,14 @@ class Renderer3D {
     int hookOn = -1, surfaceClass = -1, hookInvViewProj = -1, hookEye = -1, hookTime = -1, hookSurfaceRect = -1,
         hookItem = -1, hookTrafficRect = -1, hookFootRect = -1, hookNight = -1, hookLaneCells = -1;
     std::map<std::string, int> hookUniforms;
+    int sunPos = -1;  // raytraced shadows (render/glsl.h)
+    int eyePos = -1;  // raytraced reflections: the camera in world space
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
   };
   std::map<uint32_t, ProgramLocs> locs_;
+  // bottom-level structures per (vertex layout, material table): the parts included depend on the materials
+  std::map<std::pair<uint32_t, const void*>, uint32_t> blas_;
   const ProgramLocs& locs(uint32_t prog);
   void setupProgram(const SceneView& v, uint32_t prog);
   void hookState(const SceneView& v, uint32_t prog);

@@ -13,6 +13,9 @@
 #include "engine/api.h"
 #include "engine/display.h"
 #include "engine/effects.h"
+#include "engine/hdr.h"
+#include "engine/temporal.h"
+#include "render/gpu.h"
 #include "engine/grid.h"
 #include "engine/gui.h"
 #include "engine/night_lights.h"
@@ -221,13 +224,35 @@ GpuMaterial gpuMaterial(Display& d, VM& vm, const MaterialDef& m) {
 
 // the variant of a combiner (empty path: the default shader) for (material flags, mesh flags, environment flags),
 // compiled on first use
-uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags = 0) {
+// surfaceClass: the material's (renderer3d.h kSurface*); the mods' puddles get traced reflections on roads, pavements
+// and platforms only (-1: unknown, none)
+uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags = 0,
+                    int surfaceClass = -1) {
   static const bool off = std::getenv("REGS_NO_COMBINER") != nullptr;  // debugging: the built-in shader only
   if (off) return 0;
   ShaderCombiner* c = getCombiner(vm, utf8ToUtf16(shader));
   if (!c) return 0;
-  ShaderVariant* v = combinerVariant(vm, c, flags, meshFlags, env);
+  // the port's ray bits are never given to the game's combiner: the same variant, its program with rays (shadows
+  // where it samples the shadow map, reflections where it reads an environment cube)
+  ShaderVariant* v = combinerVariant(vm, c, flags, meshFlags, env & ~(kEnvRayShadows | kEnvRayReflections));
   if (!v || v->failed) return 0;
+  unsigned rays = 0;
+  if ((env & kEnvRayShadows) && (env & kEnvShadowMap)) rays |= render::kRayShadows;
+  const bool puddleSurface = surfaceClass == kSurfaceRoad || surfaceClass == kSurfacePavement || surfaceClass == kSurfacePlatform;
+  if ((env & kEnvRayReflections) &&
+      (v->fragment.find("textureCube") != std::string::npos || (puddleSurface && render::hooksReadEnvMap())))
+    rays |= render::kRayReflections;
+  if (rays) {
+    if (!v->programRays[rays] && !v->raysFailed[rays]) {
+      std::string err;
+      v->programRays[rays] = d.r3d().buildProgram(v->vertex, v->fragment, &err, true, rays);
+      if (!v->programRays[rays]) {
+        v->raysFailed[rays] = true;
+        LOG_WARN("shader variant %s 0x%x/0x%x with rays %u: %s", shader.empty() ? "default" : shader.c_str(), flags, env, rays, err.c_str());
+      }
+    }
+    if (v->programRays[rays]) return v->programRays[rays];
+  }
   if (!v->program) {
     std::string err;
     v->program = d.r3d().buildProgram(v->vertex, v->fragment, &err, true);  // with the mods' shader hooks
@@ -246,7 +271,7 @@ void assignPrograms(Display& d, VM& vm, std::vector<DrawItem>& items, uint32_t e
     if (auto* mats = const_cast<std::vector<GpuMaterial>*>(it.materials);
         mats && std::find(seen.begin(), seen.end(), mats) == seen.end() && (seen.push_back(mats), true))
       for (GpuMaterial& m : *mats)
-        if (!m.hasProgramFor(env)) m.setProgram(env, programFor(d, vm, m.shader, m.flags, env, m.meshFlags));
+        if (!m.hasProgramFor(env)) m.setProgram(env, programFor(d, vm, m.shader, m.flags, env, m.meshFlags, m.surfaceClass));
 }
 
 // collects the drawable objects, suns, grids and the sky (fog) of a scene subtree
@@ -550,6 +575,15 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   d.r2d().flushAll();
   // shadows (docs/renderer/shadows.md): fit the light camera to this view, render the depth map from the light,
   // then the main pass samples it on unit 7 with ENVIROMENT_SHADOWMAP
+  // raytraced shadows (settings regsRtShadows, REGS_RT_SHADOWS=0|1; docs/renderer/vulkan.md §9.3): Vulkan with ray
+  // queries, the map view, the game's shadows on; the rays replace the map for opaque casters
+  bool rayShadows = false;
+  if (shadow && !rt && !grids.empty() && render::gpu::dev().rayTracing()) {
+    rayShadows = settingNumber(vm, u"regsRtShadows", 0) > 0;
+    if (const char* e = std::getenv("REGS_RT_SHADOWS")) rayShadows = std::atoi(e) != 0;
+  }
+  bool rayScene = false;  // the frame's ray-query scene, built once for the shadows and the occlusion
+  auto ensureRayScene = [&] { return rayScene || (rayScene = d.r3d().buildRayScene(items)); };
   if (shadow && !rt && fieldOf(vm, shadow, u"viewport").object() == vp) {
     Object* lightObj = fieldOf(vm, shadow, u"light").object();
     Light sun;
@@ -584,12 +618,20 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         lv.shadowWarp = fit.warp;
         lv.lights.clear();
         lv.fog = false;
+        lv.shadowMapLeftovers = rayShadows;
         assignPrograms(d, vm, items, lv.env);
         if (v.particles) prepareParticlePrograms(d, vm, particles, lv.env);
         d.r3d().begin(map, 0, 0, map->width, map->height, 0, false, bw, bh);
         d.r3d().draw(lv, items);
         d.r3d().end(bw, bh);
         v.env |= kEnvShadowMap;
+        if (rayShadows && ensureRayScene()) {
+          v.env |= kEnvRayShadows;
+          // REGS_RT_SHADOWS=2 (a check): the ray programs and the foliage-only map, but the rays switched off
+          static const bool raysOff = std::getenv("REGS_RT_SHADOWS") && std::atoi(std::getenv("REGS_RT_SHADOWS")) == 2;
+          v.rayShadows = !raysOff;
+          v.sunWorld = sun.position;
+        }
         v.shadowMap = map->depth;
         v.shadowTransform = fit.lightProj * fit.lightView * inverseRigid(v.view);  // main eye space → light clip
         v.shadowWarp = fit.warp;
@@ -597,21 +639,59 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       }
     }
   }
+  // raytraced reflections (settings regsRtReflections, REGS_RT_REFLECTIONS=0|1; docs/renderer/vulkan.md §9.7): water and
+  // the reflective materials (glass) trace their environment-cube lookups; Vulkan with ray queries, the map view
+  if (!rt && !grids.empty() && render::gpu::dev().rayReflections()) {
+    bool on = settingNumber(vm, u"regsRtReflections", 0) > 0;
+    if (const char* e = std::getenv("REGS_RT_REFLECTIONS")) on = std::atoi(e) != 0;
+    if (on && ensureRayScene()) {
+      v.env |= kEnvRayReflections;
+      if (!v.rayShadows)  // the hits are lit by the sun (with ray shadows its position is known already)
+        for (Object* s : suns) {
+          Light sl;
+          if (sunLight(vm, s, sl)) {
+            v.sunWorld = sl.position;
+            break;
+          }
+        }
+    }
+  }
   { auto ts_ = std::chrono::steady_clock::now(); assignPrograms(d, vm, items, v.env); gPhaseSeconds[6] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   if (v.particles) prepareParticlePrograms(d, vm, particles, v.env);
   uint32_t clear = uint32_t(vm.toInt(fieldOf(vm, vp, u"clearColor")));
+  // port TAA and render scale (game view, engine/temporal.h): the scene is drawn jittered and/or smaller into the
+  // temporal input, then resolved or upscaled to the view's size (before the colour styles)
+  TemporalPass temporal;
+  if (!rt && !grids.empty()) temporal = temporalBegin(d, vm, w, h, v);
+  if (temporal.ao && !ensureRayScene()) temporal.ao = false;
+  const int sw = temporal.active ? temporal.rw : w, sh = temporal.active ? temporal.rh : h;
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites
   // it into this rect (docs/renderer/bloom.md §3.3)
   const RenderTarget* hdr = nullptr;
   if (bloom && !rt) {
     bloomTick(vm, bloom, vm.frameDt());
-    hdr = bloomSceneTarget(d, vm, bloom, w, h);
+    hdr = bloomSceneTarget(d, vm, bloom, sw, sh);
   }
   // port style effects (game view): the scene, or the bloom composite, goes into the style input first
   const RenderTarget* styled = nullptr;
   const bool postHooks = !rt && !grids.empty() && postHooksWanted(vm, scene);  // the mods' post hooks (render/glsl.h)
-  if (!rt && !grids.empty() && (styleActive(vm) || postHooks)) styled = styleTarget(d, vm, w, h, hdr ? 0 : d.antialiasing);
-  if (hdr) {
+  if (!rt && !grids.empty() && (styleActive(vm) || postHooks))
+    styled = styleTarget(d, vm, w, h, hdr || temporal.active ? 0 : d.antialiasing);
+  if (temporal.active) {
+    if (hdr) {  // bloom at the render size, composited into the temporal input with its depth
+      d.r3d().begin(hdr, 0, hdr->height - sh, sw, sh, clear, (clear >> 24) != 0, bw, bh);
+      d.r3d().draw(v, items);
+      d.r3d().end(bw, bh);
+      bloomFinish(d, vm, bloom, 0, 0, sw, sh, bw, bh, temporal.input);
+      d.r3d().blitDepth(*hdr, *temporal.input, sw, sh);
+    } else {  // always cleared: the history needs every pixel
+      d.r3d().begin(temporal.input, 0, 0, sw, sh, (clear >> 24) ? clear : 0u, true, bw, bh);
+      d.r3d().draw(v, items);
+    }
+    d.r3d().end(bw, bh);
+    temporalFinish(d, vm, temporal, x, y, w, h, bw, bh, styled);
+    d.r3d().end(bw, bh);
+  } else if (hdr) {
     d.r3d().begin(hdr, 0, hdr->height - h, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);
     d.r3d().end(bw, bh);
@@ -645,6 +725,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     styleFinish(d, vm, x, y, w, h, bw, bh, nearZ, farZ * viewScale, std::sqrt(dot(toTarget, toTarget)), postHooks ? &v : nullptr);
     d.r3d().end(bw, bh);
   }
+  if (!rt) hdrExpandView(d, vm, x, y, w, h, bw, bh);  // HDR output: the view's highlights, before the GUI over it
+  if (!rt) temporalHudless(d, vm, x, y, w, h, bw, bh);  // frame generation: the view before the GUI
   d.r2d().resume();
 }
 

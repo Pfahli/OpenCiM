@@ -1,0 +1,23 @@
+// ReGS motion vectors for AMD FSR (setting regsUpscaler; docs/renderer/vulkan.md §9.2). Camera motion only: every
+// render pixel's depth back to a position, through last frame's camera, as a uv delta (last frame − this frame),
+// without the jitter (FSR's "non-jittered" vectors). Moving vehicles get the camera's motion; FSR's reactive and
+// disocclusion masks take care of the rest.
+// texture0 = depth (render size, drawn with the jitter)
+// custom0 = (1/render width, 1/render height, jitter u, jitter v): the jitter as the image content moved, in uv
+// custom1 = (history valid 0/1, 0, 0, 0)
+// matrix  = this frame's NDC (unjittered) → last frame's clip space
+uniform sampler2D texture0;
+uniform vec4 custom0;
+uniform vec4 custom1;
+uniform mat4 matrix;
+varying vec4 texCoord;
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  float depth = texture2D(texture0, uv).r;
+  vec2 pos = uv - custom0.zw;  // the unjittered position this texel shows
+  vec4 prev = matrix * vec4(pos * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  vec2 mv = vec2(0.0);
+  if (custom1.x > 0.5 && prev.w > 0.0) mv = prev.xy / prev.w * 0.5 + 0.5 - pos;
+  gl_FragColor = vec4(mv, 0.0, 1.0);
+}

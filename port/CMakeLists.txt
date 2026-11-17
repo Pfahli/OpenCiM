@@ -42,6 +42,7 @@ add_library(regs_engine STATIC
   src/engine/input.cpp
   src/engine/camera_input.cpp
   src/render/gl.cpp
+  src/render/gpu_gl.cpp
   src/render/image.cpp
   src/render/renderer2d.cpp
   src/render/renderer3d.cpp
@@ -54,6 +55,8 @@ add_library(regs_engine STATIC
   src/engine/terrain.cpp
   src/engine/grid_items.cpp
   src/engine/effects.cpp
+  src/engine/temporal.cpp
+  src/engine/hdr.cpp
   src/engine/settings.cpp
   src/engine/minimap.cpp
   src/engine/skinning.cpp
@@ -114,6 +117,150 @@ if(MSVC)
   set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "/W0")
 else()
   set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+
+# Vulkan render backend (docs/renderer/vulkan.md §6): Khronos Vulkan-Headers and glslang (GLSL -> SPIR-V at run time)
+# from third_party; without the headers the port builds with OpenGL only and the Vulkan setting falls back to OpenGL.
+# Without glslang the Vulkan device builds but compiles no shader (bring-up only: clears and presents). vulkan-1.dll
+# is loaded at run time, never linked. REGS_VULKAN_HEADERS may point at another Vulkan-Headers include directory.
+set(REGS_VULKAN_HEADERS ${CMAKE_SOURCE_DIR}/third_party/vulkan-headers/include CACHE PATH "Vulkan-Headers include directory")
+set(REGS_VULKAN_MODE AUTO CACHE STRING "Vulkan render backend: AUTO (when the headers are found), ON or OFF")
+set_property(CACHE REGS_VULKAN_MODE PROPERTY STRINGS AUTO ON OFF)
+if(REGS_VULKAN_MODE STREQUAL "AUTO")
+  if(EXISTS ${REGS_VULKAN_HEADERS}/vulkan/vulkan.h)
+    set(REGS_VULKAN ON)
+  else()
+    set(REGS_VULKAN OFF)
+  endif()
+else()
+  set(REGS_VULKAN ${REGS_VULKAN_MODE})
+endif()
+if(REGS_VULKAN AND NOT EXISTS ${REGS_VULKAN_HEADERS}/vulkan/vulkan.h)
+  message(WARNING "REGS_VULKAN: no vulkan/vulkan.h under ${REGS_VULKAN_HEADERS}, building without Vulkan")
+  set(REGS_VULKAN OFF)
+endif()
+if(REGS_VULKAN)
+  target_sources(regs_engine PRIVATE src/render/gpu_vk.cpp)
+  target_include_directories(regs_engine PRIVATE ${REGS_VULKAN_HEADERS})
+  target_compile_definitions(regs_engine PRIVATE REGS_VULKAN=1 VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR)
+endif()
+if(REGS_VULKAN AND EXISTS ${CMAKE_SOURCE_DIR}/third_party/glslang/CMakeLists.txt)
+  set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+  set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+  set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+  set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+  set(ENABLE_CTEST OFF CACHE BOOL "" FORCE)
+  set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+  set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  add_subdirectory(third_party/glslang EXCLUDE_FROM_ALL)
+  target_sources(regs_engine PRIVATE src/render/vk_shader.cpp)
+  target_link_libraries(regs_engine PRIVATE glslang::glslang glslang::glslang-default-resource-limits)
+  # AMD FSR 3.1 upscaling (third_party/fidelityfx-fsr, FidelityFX SDK v1.1.4, MIT; docs/renderer/vulkan.md §9.2). The
+  # shaders are compiled at build time by the port's own ffx-shadergen (glslang) instead of AMD's prebuilt tools; only
+  # the permutations the port uses are built (the fixed options below match render/fsr_vk.cpp's context flags).
+  set(FFX_DIR ${CMAKE_SOURCE_DIR}/third_party/fidelityfx-fsr)
+  if(EXISTS ${FFX_DIR}/LICENSE.txt)
+    add_executable(ffx-shadergen src/tools/ffx_shadergen.cpp)
+    target_link_libraries(ffx-shadergen PRIVATE glslang::glslang glslang::glslang-default-resource-limits)
+    set(FFX_GEN ${CMAKE_BINARY_DIR}/ffx_shaders)
+    set(FFX_GPU ${FFX_DIR}/include/FidelityFX/gpu)
+    set(FSR3U_ARGS
+      -I ${FFX_GPU} -I ${FFX_GPU}/fsr3upscaler
+      -D FFX_GPU=1 -D FFX_GLSL=1
+      -D FFX_FSR3UPSCALER_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF=0 -D FFX_FSR3UPSCALER_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FSR3UPSCALER_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1 -D FFX_FSR3UPSCALER_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FSR3UPSCALER_OPTION_UPSAMPLE_USE_LANCZOS_TYPE=2
+      --option FFX_FSR3UPSCALER_OPTION_REPROJECT_USE_LANCZOS_TYPE --option FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT
+      --option FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS --option FFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS
+      --option FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH --option FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING
+      --fixed FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT=0 --fixed FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS=1
+      --fixed FFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS=0 --fixed FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH=0)
+    set(FFX_GENERATED)
+    foreach(pass accumulate autogen_reactive debug_view luma_instability luma_pyramid prepare_inputs prepare_reactivity rcas
+                 shading_change shading_change_pyramid)
+      set(name ffx_fsr3upscaler_${pass}_pass)
+      set(src ${FFX_DIR}/src/backends/vk/shaders/fsr3upscaler/${name}.glsl)
+      add_custom_command(
+        OUTPUT ${FFX_GEN}/${name}_permutations.h ${FFX_GEN}/${name}_wave64_permutations.h
+               ${FFX_GEN}/${name}_16bit_permutations.h ${FFX_GEN}/${name}_wave64_16bit_permutations.h
+        COMMAND ffx-shadergen --source ${src} --name ${name} --out ${FFX_GEN} ${FSR3U_ARGS}
+        DEPENDS ffx-shadergen ${src}
+        COMMENT "ffx-shadergen ${name}")
+      list(APPEND FFX_GENERATED ${FFX_GEN}/${name}_permutations.h)
+    endforeach()
+    # FSR 3 frame generation (docs/renderer/vulkan.md §9.4): frame interpolation and optical flow; the fixed options match
+    # render/fsr_vk.cpp (motion vectors without jitter, depth 0 near .. 1 far); low-resolution vectors and the optical
+    # flow's HDR (PQ) input vary
+    set(FI_ARGS
+      -I ${FFX_GPU} -I ${FFX_GPU}/frameinterpolation -D FFX_GPU=1 -D FFX_GLSL=1
+      -D FFX_FRAMEINTERPOLATION_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF=0 -D FFX_FRAMEINTERPOLATION_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FRAMEINTERPOLATION_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1 -D FFX_FRAMEINTERPOLATION_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FRAMEINTERPOLATION_OPTION_UPSAMPLE_USE_LANCZOS_TYPE=2
+      --option FFX_FRAMEINTERPOLATION_OPTION_LOW_RES_MOTION_VECTORS --option FFX_FRAMEINTERPOLATION_OPTION_JITTER_MOTION_VECTORS
+      --option FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
+      --fixed FFX_FRAMEINTERPOLATION_OPTION_JITTER_MOTION_VECTORS=0 --fixed FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH=0)
+    set(OF_ARGS -I ${FFX_GPU} -I ${FFX_GPU}/opticalflow -D FFX_GPU=1 -D FFX_GLSL=1 --option FFX_OPTICALFLOW_OPTION_HDR_COLOR_INPUT)
+    foreach(pass reconstruct_and_dilate disocclusion_mask reconstruct_previous_depth setup game_motion_vector_field
+                 optical_flow_vector_field compute_game_vector_field_inpainting_pyramid compute_inpainting_pyramid inpainting
+                 debug_view)
+      list(APPEND FFX_FI_PASSES ffx_frameinterpolation_${pass}_pass)
+    endforeach()
+    list(APPEND FFX_FI_PASSES ffx_frameinterpolation_pass)
+    foreach(name ${FFX_FI_PASSES})
+      set(src ${FFX_DIR}/src/backends/vk/shaders/frameinterpolation/${name}.glsl)
+      add_custom_command(
+        OUTPUT ${FFX_GEN}/${name}_permutations.h ${FFX_GEN}/${name}_wave64_permutations.h
+               ${FFX_GEN}/${name}_16bit_permutations.h ${FFX_GEN}/${name}_wave64_16bit_permutations.h
+        COMMAND ffx-shadergen --source ${src} --name ${name} --out ${FFX_GEN} ${FI_ARGS}
+        DEPENDS ffx-shadergen ${src}
+        COMMENT "ffx-shadergen ${name}")
+      list(APPEND FFX_GENERATED ${FFX_GEN}/${name}_permutations.h)
+    endforeach()
+    foreach(pass compute_luminance_pyramid compute_optical_flow_advanced compute_scd_divergence filter_optical_flow
+                 generate_scd_histogram prepare_luma scale_optical_flow_advanced)
+      set(name ffx_opticalflow_${pass}_pass)
+      if(pass MATCHES "advanced$" OR pass STREQUAL "filter_optical_flow")
+        set(name ${name}_v5)
+      endif()
+      set(src ${FFX_DIR}/src/backends/vk/shaders/opticalflow/${name}.glsl)
+      add_custom_command(
+        OUTPUT ${FFX_GEN}/${name}_permutations.h ${FFX_GEN}/${name}_wave64_permutations.h
+               ${FFX_GEN}/${name}_16bit_permutations.h ${FFX_GEN}/${name}_wave64_16bit_permutations.h
+        COMMAND ffx-shadergen --source ${src} --name ${name} --out ${FFX_GEN} ${OF_ARGS}
+        DEPENDS ffx-shadergen ${src}
+        COMMENT "ffx-shadergen ${name}")
+      list(APPEND FFX_GENERATED ${FFX_GEN}/${name}_permutations.h)
+    endforeach()
+    add_library(regs_ffx STATIC
+      ${FFX_DIR}/src/shared/ffx_assert.cpp
+      ${FFX_DIR}/src/shared/ffx_message.cpp
+      ${FFX_DIR}/src/shared/ffx_object_management.cpp
+      ${FFX_DIR}/src/shared/ffx_breadcrumbs_list.cpp
+      ${FFX_DIR}/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
+      ${FFX_DIR}/src/backends/vk/ffx_vk.cpp
+      ${FFX_DIR}/src/backends/shared/ffx_shader_blobs.cpp
+      ${FFX_DIR}/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp
+      ${FFX_DIR}/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+      ${FFX_DIR}/src/components/opticalflow/ffx_opticalflow.cpp
+      ${FFX_DIR}/src/backends/shared/blob_accessors/ffx_frameinterpolation_shaderblobs.cpp
+      ${FFX_DIR}/src/backends/shared/blob_accessors/ffx_opticalflow_shaderblobs.cpp
+      src/render/fsr_vk.cpp
+      ${FFX_GENERATED})
+    target_include_directories(regs_ffx PRIVATE ${FFX_DIR}/include ${FFX_DIR}/src ${FFX_DIR}/src/components ${FFX_DIR}/src/shared
+                               ${FFX_DIR}/src/backends/shared ${FFX_GEN} ${REGS_VULKAN_HEADERS} ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(regs_ffx PRIVATE FFX_FSR3UPSCALER FFX_FI FFX_OF VK_USE_PLATFORM_WIN32_KHR _UNICODE UNICODE)
+    if(MSVC)
+      target_compile_options(regs_ffx PRIVATE /W0 /FIbit)
+    endif()
+    target_link_libraries(regs_engine PRIVATE regs_ffx)
+    target_compile_definitions(regs_engine PRIVATE REGS_FFX=1)
+  endif()
+elseif(REGS_VULKAN)
+  target_sources(regs_engine PRIVATE src/render/vk_shader_stub.cpp)
+else()
+  target_sources(regs_engine PRIVATE src/render/gpu_vk_stub.cpp)
 endif()
 
 add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/texture_tools.cpp src/tools/crash_win32.cpp)

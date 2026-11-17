@@ -1,0 +1,57 @@
+// ReGS raytraced ambient occlusion (setting regsRtAo; Vulkan with ray queries; docs/renderer/vulkan.md §9.3).
+// Built with the ray-query additions of the translator (regs_Scene, the frame's scene). Per pixel: the position from
+// the depth, the normal from the neighbouring positions, a few short rays over the hemisphere (cosine-weighted, turned
+// per pixel and per frame so TAA or the blur average them); occlusion by how near the hits are.
+// texture0 = depth of the drawn frame; matrix = inverse view-projection of that frame (with its jitter)
+// custom0 = (1/width, 1/height, frame number, ray length in m), custom1 = (strength, 0, 0, 0)
+uniform sampler2D texture0;
+uniform vec4 custom0;
+uniform vec4 custom1;
+uniform mat4 matrix;
+varying vec4 texCoord;
+
+vec3 worldAt(vec2 uv, float d) {
+  vec4 p = matrix * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+  return p.xyz / p.w;
+}
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  float d = texture2D(texture0, uv).r;
+  if (d >= 0.99999) {  // sky
+    gl_FragColor = vec4(1.0);
+    return;
+  }
+  vec3 p = worldAt(uv, d);
+  // the normal from the closer neighbour on each axis (no smearing across silhouettes)
+  vec2 ex = vec2(custom0.x, 0.0), ey = vec2(0.0, custom0.y);
+  vec3 pr = worldAt(uv + ex, texture2D(texture0, uv + ex).r), pl = worldAt(uv - ex, texture2D(texture0, uv - ex).r);
+  vec3 pu = worldAt(uv + ey, texture2D(texture0, uv + ey).r), pd = worldAt(uv - ey, texture2D(texture0, uv - ey).r);
+  vec3 dx = abs(dot(pr - p, pr - p)) < abs(dot(p - pl, p - pl)) ? pr - p : p - pl;
+  vec3 dy = abs(dot(pu - p, pu - p)) < abs(dot(p - pd, p - pd)) ? pu - p : p - pd;
+  vec3 n = normalize(cross(dx, dy));
+  vec3 eye = worldAt(uv, 0.0);  // a point on the near plane along this pixel's ray
+  if (dot(n, eye - p) < 0.0) n = -n;
+  vec3 t = normalize(abs(n.y) < 0.9 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, vec3(1.0, 0.0, 0.0)));
+  vec3 b = cross(n, t);
+  float turn = hash(uv / custom0.xy + vec2(custom0.z * 7.31, custom0.z * 3.17)) * 6.2831853;
+  float len = custom0.w, occl = 0.0;
+  // start off the surface (further at a distance, where depth is coarser) and ignore hits closer than 10 cm: paving
+  // and road layers lie a few centimetres over the terrain and must not occlude themselves
+  vec3 o = p + n * (0.05 + 0.0015 * length(p - eye));
+  for (int i = 0; i < 4; ++i) {
+    // 4 cosine-weighted directions: radius sqrt(u), angle spread evenly plus the per-pixel turn
+    float u = (float(i) + 0.5) / 4.0;
+    float a = turn + float(i) * 2.3999632;
+    float r = sqrt(u);
+    vec3 dir = normalize(t * (r * cos(a)) + b * (r * sin(a)) + n * sqrt(1.0 - u));
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, regs_Scene, 5u, 255u, o, 0.1, dir, len);  // terminate on first hit | opaque
+    while (rayQueryProceedEXT(q)) {}
+    if (rayQueryGetIntersectionTypeEXT(q, true) != 0u) occl += 1.0 - rayQueryGetIntersectionTEXT(q, true) / len;
+  }
+  float ao = 1.0 - custom1.x * occl / 4.0;
+  gl_FragColor = vec4(vec3(clamp(ao, 0.0, 1.0)), 1.0);
+}

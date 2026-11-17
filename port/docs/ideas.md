@@ -5,8 +5,31 @@ it is, what already exists, and the open decisions. Order is not priority.
 
 ## Graphics
 
-* **New graphics engine (Vulkan).** Raytracing (shadows, reflections, GI) and DLSS/upscaling. The settings page already
-  lists the engine choice (`$regsRenderer`, Vulkan shown as planned). Base: the renderer contract in `docs/renderer/`.
+* **New graphics engine (Vulkan).** Done on branch claude/vulkan-renderer-903225 (2026-11-17): Vulkan 1.3 next to
+  OpenGL behind one device interface, chosen with `$regsRenderer` (graphics page), the same picture as OpenGL. Plan,
+  status and what follows: `docs/renderer/vulkan.md`.
+* **TAA and render scale.** Done (same branch): temporal antialiasing and a render scale with temporal or spatial
+  upscaling, on the new settings page Image quality; both graphics engines (`docs/renderer/vulkan.md` §9.1-9.2). Open:
+  per-object motion vectors (vehicles, people), route-strip arrows smear under TAA (texture animation).
+* **Raytraced shadows.** Done (same branch): sun shadows by ray queries on Vulkan, option on the Image quality page
+  (`docs/renderer/vulkan.md` §9.3), and raytraced ambient occlusion. Open: foliage still from the shadow map (alpha in
+  the rays), soft shadows, reflections on water and glass, global illumination.
+* **FSR 3 frame generation.** Done (same branch): a generated frame between two real ones on Vulkan with the FSR
+  upscaler, presented by the device's own present thread (`docs/renderer/vulkan.md` §9.4). Open: display-timed pacing,
+  per-object motion vectors.
+* **Raytraced reflections.** Water and glass done (same branch): the game's environment-cube reflections are traced
+  against the city on Vulkan, option on the Image quality page (`docs/renderer/vulkan.md` §9.7). The weather mod's puddles are
+  traced too. Open: foliage and night lights in the reflections, a sheen on wet streets.
+* **HDR output.** Done (same branch): HDR10 output on Vulkan with Windows HDR on, settings on the Image quality page
+  (on/off, paper white, peak); the SDR picture's highlights are lifted, menus stay at paper white
+  (`docs/renderer/vulkan.md` §9.6). Open: real HDR intensities for lamps, windows and the sun.
+* **AMD FSR 3.1 upscaling.** Done (same branch): option "Upscaler: AMD FSR 3.1" on the Image quality page, Vulkan only
+  (FidelityFX SDK v1.1.4, MIT, in `third_party/fidelityfx-fsr`; `docs/renderer/vulkan.md` §9.2). Open: per-object
+  motion vectors, a reactive mask for particles; FSR 3 frame generation next, then raytraced reflections.
+* **Raytracing, frame generation, DLSS, FSR.** Owner's scope 2026-11-17 ("Also add features like Raytracing, Lossless
+  Scaling etc"): raytraced shadows and ambient occlusion first, then reflections; frame generation (own interpolation,
+  or FSR 3); AMD FSR 2/3 and NVIDIA DLSS upscalers (SDK downloads need the owner's OK). Plan: `docs/renderer/vulkan.md`
+  §9.3-9.5.
 * **High-resolution textures.** Replacement texture packs, loaded like ReGS mods (`docs/mod-manager.md`) without
   touching the game files.
   * **Done (branch claude/texture-upscale-bcb6d4, `../docs/renderer/texture-upscaling.md`):** "Sharper textures (2x

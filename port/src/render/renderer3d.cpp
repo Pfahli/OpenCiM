@@ -5,10 +5,12 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "render/glsl.h"
 
 namespace regs::render {
+
+using gpu::dev;
 
 namespace {
 
@@ -212,41 +214,12 @@ void main() {
 }
 )";
 
-uint32_t compile(gl::GLenum type, const char* src, std::string* error) {
-  uint32_t s = gl::CreateShader(type);
-  gl::ShaderSource(s, 1, &src, nullptr);
-  gl::CompileShader(s);
-  int ok = 0;
-  gl::GetShaderiv(s, gl::COMPILE_STATUS, &ok);
-  if (!ok) {
-    char log[4096];
-    gl::GetShaderInfoLog(s, sizeof log, nullptr, log);
-    if (error) *error = log;
-    return 0;
-  }
-  return s;
-}
-
 }  // namespace
 
 bool Renderer3D::init(std::string* error) {
-  uint32_t vs = compile(gl::VERTEX_SHADER, kVertex, error), fs = compile(gl::FRAGMENT_SHADER, kFragment, error);
-  if (!vs || !fs) return false;
-  program_ = gl::CreateProgram();
-  gl::AttachShader(program_, vs);
-  gl::AttachShader(program_, fs);
-  gl::LinkProgram(program_);
-  gl::DeleteShader(vs);
-  gl::DeleteShader(fs);
-  int ok = 0;
-  gl::GetProgramiv(program_, gl::LINK_STATUS, &ok);
-  if (!ok) {
-    char log[4096];
-    gl::GetProgramInfoLog(program_, sizeof log, nullptr, log);
-    if (error) *error = log;
-    return false;
-  }
-  auto loc = [&](const char* n) { return gl::GetUniformLocation(program_, n); };
+  program_ = dev().createProgram(kVertex, kFragment, {}, error);
+  if (!program_) return false;
+  auto loc = [&](const char* n) { return dev().uniformLocation(program_, n); };
   u_.modelView = loc("uModelView");
   u_.proj = loc("uProj");
   u_.normal = loc("uNormalMatrix");
@@ -294,34 +267,26 @@ GpuMesh Renderer3D::upload(const MeshData& src, const SkinLayout& layout) {
     else v[i].t[0] = 1, v[i].t[1] = v[i].t[2] = 0, v[i].t[3] = 1;
     v[i].c = m.colors.size() > i ? m.colors[i] : 0xFFFFFFFF;
   }
-  gl::GenVertexArrays(1, &g.vao);
-  gl::BindVertexArray(g.vao);
-  gl::GenBuffers(1, &g.vbo);
-  gl::BindBuffer(gl::ARRAY_BUFFER, g.vbo);
-  gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(v.size() * sizeof(Vtx)), v.data(), gl::STATIC_DRAW);
-  gl::GenBuffers(1, &g.ibo);
-  gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, g.ibo);
-  gl::BufferData(gl::ELEMENT_ARRAY_BUFFER, gl::GLsizeiptr(m.indices.size() * 4), m.indices.data(), gl::STATIC_DRAW);
-  auto attr = [](int i, int n, gl::GLenum type, bool norm, size_t off) {
-    gl::EnableVertexAttribArray(gl::GLuint(i));
-    gl::VertexAttribPointer(gl::GLuint(i), n, type, norm, sizeof(Vtx), reinterpret_cast<void*>(off));
-  };
-  attr(0, 3, gl::FLOAT, false, offsetof(Vtx, p));
-  attr(1, 3, gl::FLOAT, false, offsetof(Vtx, n));
-  attr(2, 2, gl::FLOAT, false, offsetof(Vtx, uv0));
-  attr(3, 2, gl::FLOAT, false, offsetof(Vtx, uv1));
-  attr(4, 4, gl::FLOAT, false, offsetof(Vtx, t));
-  attr(5, 4, gl::UNSIGNED_BYTE, true, offsetof(Vtx, c));
+  gpu::Device& d = dev();
+  g.vbo = d.createBuffer();
+  d.bufferData(g.vbo, v.size() * sizeof(Vtx), v.data(), false);
+  g.ibo = d.createBuffer();
+  d.bufferData(g.ibo, m.indices.size() * 4, m.indices.data(), false);
+  using gpu::AttribType;
+  std::vector<gpu::VertexAttrib> attrs = {
+      {0, 3, AttribType::Float, g.vbo, int(sizeof(Vtx)), offsetof(Vtx, p)},
+      {1, 3, AttribType::Float, g.vbo, int(sizeof(Vtx)), offsetof(Vtx, n)},
+      {2, 2, AttribType::Float, g.vbo, int(sizeof(Vtx)), offsetof(Vtx, uv0)},
+      {3, 2, AttribType::Float, g.vbo, int(sizeof(Vtx)), offsetof(Vtx, uv1)},
+      {4, 4, AttribType::Float, g.vbo, int(sizeof(Vtx)), offsetof(Vtx, t)},
+      {5, 4, AttribType::UByteNorm, g.vbo, int(sizeof(Vtx)), offsetof(Vtx, c)}};
   if (skinned) {  // a second stream at TEXCOORD3/4 (attribute slots 6 and 7)
-    gl::GenBuffers(1, &g.skinVbo);
-    gl::BindBuffer(gl::ARRAY_BUFFER, g.skinVbo);
-    gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(skinAttr.size() * 4), skinAttr.data(), gl::STATIC_DRAW);
-    for (int i = 0; i < 2; ++i) {
-      gl::EnableVertexAttribArray(gl::GLuint(6 + i));
-      gl::VertexAttribPointer(gl::GLuint(6 + i), 4, gl::FLOAT, false, 32, reinterpret_cast<void*>(size_t(16 * i)));
-    }
+    g.skinVbo = d.createBuffer();
+    d.bufferData(g.skinVbo, skinAttr.size() * 4, skinAttr.data(), false);
+    for (int i = 0; i < 2; ++i) attrs.push_back({6 + i, 4, AttribType::Float, g.skinVbo, 32, size_t(16 * i)});
   }
-  gl::BindVertexArray(0);
+  g.vao = d.createVertexInput(attrs.data(), int(attrs.size()), g.ibo);
+  g.vertexCount = uint32_t(n);
   for (size_t si = 0; si < m.submeshes.size(); ++si) {
     const Submesh& s = m.submeshes[si];
     GpuMesh::Part p{s.firstIndex, s.indexCount, s.material, s.colorize};
@@ -365,187 +330,164 @@ GpuMesh Renderer3D::upload(const MeshData& src, const SkinLayout& layout) {
 }
 
 void Renderer3D::destroy(GpuMesh& m) {
-  if (m.ibo) gl::DeleteBuffers(1, &m.ibo);
-  if (m.skinVbo) gl::DeleteBuffers(1, &m.skinVbo);
-  if (m.vbo) gl::DeleteBuffers(1, &m.vbo);
-  if (m.vao) gl::DeleteVertexArrays(1, &m.vao);
+  for (auto it = blas_.begin(); it != blas_.end();) {  // its ray-query structures
+    if (it->first.first == m.vao) {
+      dev().destroyBlas(it->second);
+      it = blas_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  if (m.vao) dev().destroyVertexInput(m.vao);
+  if (m.ibo) dev().destroyBuffer(m.ibo);
+  if (m.skinVbo) dev().destroyBuffer(m.skinVbo);
+  if (m.vbo) dev().destroyBuffer(m.vbo);
   m = GpuMesh();
 }
 
 bool Renderer3D::makeTarget(RenderTarget& t, int w, int h, TargetFormat format, bool withDepth, bool clampToEdge) {
+  gpu::Device& d = dev();
   t.width = w;
   t.height = h;
-  gl::GenTextures(1, &t.color);
-  gl::BindTexture(gl::TEXTURE_2D, t.color);
-  if (format == TargetFormat::Rgba16f) gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA16F, w, h, 0, gl::RGBA, gl::HALF_FLOAT, nullptr);
-  else gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::BGRA, gl::UNSIGNED_BYTE, nullptr);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, clampToEdge ? gl::CLAMP_TO_EDGE : gl::REPEAT);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, clampToEdge ? gl::CLAMP_TO_EDGE : gl::REPEAT);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
-  if (withDepth) {
-    gl::GenRenderbuffers(1, &t.depth);
-    gl::BindRenderbuffer(gl::RENDERBUFFER, t.depth);
-    gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT24, w, h);
-  }
-  gl::GenFramebuffers(1, &t.fbo);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
-  gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, t.color, 0);
-  if (withDepth) gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, t.depth);
-  bool ok = gl::CheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-  return ok;
+  t.color = d.createTexture(gpu::TexKind::Tex2D, 1);
+  d.texImage(t.color, 0, 0, format == TargetFormat::Rgba16f ? gpu::Format::RGBA16F : gpu::Format::RGBA8, w, h,
+             gpu::Pixels::None, nullptr);
+  gpu::SamplerDesc s;
+  s.wrapS = s.wrapT = clampToEdge ? gpu::Wrap::ClampToEdge : gpu::Wrap::Repeat;
+  s.maxLevel = 0;
+  d.setSampler(t.color, s);
+  if (withDepth) t.depth = d.createRenderbuffer(gpu::Format::Depth24, w, h, 0);
+  t.fbo = d.createFramebuffer(t.color, t.depth);
+  return t.fbo != 0;
 }
 
 bool Renderer3D::makeDepthTarget(RenderTarget& t, int w, int h) {
+  gpu::Device& d = dev();
   t.width = w;
   t.height = h;
   t.depthTexture = true;
-  gl::GenTextures(1, &t.depth);
-  gl::BindTexture(gl::TEXTURE_2D, t.depth);
-  gl::TexImage2D(gl::TEXTURE_2D, 0, gl::DEPTH_COMPONENT24, w, h, 0, gl::DEPTH_COMPONENT, gl::UNSIGNED_INT, nullptr);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+  t.depth = d.createTexture(gpu::TexKind::Tex2D, 1);
+  d.texImage(t.depth, 0, 0, gpu::Format::Depth24, w, h, gpu::Pixels::None, nullptr);
   // outside the map counts as lit: clamp to a border of depth 1 (shadows.md §4.1)
-  static const float border[4] = {1, 1, 1, 1};
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_BORDER);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_BORDER);
-  gl::TexParameterfv(gl::TEXTURE_2D, gl::TEXTURE_BORDER_COLOR, border);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_COMPARE_MODE, gl::COMPARE_REF_TO_TEXTURE);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_COMPARE_FUNC, gl::LEQUAL);
-  gl::GenFramebuffers(1, &t.fbo);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
-  gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::TEXTURE_2D, t.depth, 0);
-  gl::DrawBuffer(gl::NONE);
-  gl::ReadBuffer(gl::NONE);
-  bool ok = gl::CheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-  return ok;
+  gpu::SamplerDesc s;
+  s.wrapS = s.wrapT = gpu::Wrap::ClampToBorder;
+  s.borderWhite = true;
+  s.maxLevel = 0;
+  s.compareLEqual = true;
+  d.setSampler(t.depth, s);
+  t.fbo = d.createFramebuffer(0, t.depth);
+  return t.fbo != 0;
 }
 
 bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture, TargetFormat format) {
-  if (!makeTarget(t, w, h, format, samples <= 0 && !depthTexture, true)) return false;
+  gpu::Device& d = dev();
   if (depthTexture) {  // a sampleable depth on the (resolve) framebuffer
-    gl::GenTextures(1, &t.depthTex);
-    gl::BindTexture(gl::TEXTURE_2D, t.depthTex);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::DEPTH_COMPONENT24, w, h, 0, gl::DEPTH_COMPONENT, gl::UNSIGNED_INT, nullptr);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
-    gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
-    gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::TEXTURE_2D, t.depthTex, 0);
-    bool ok = gl::CheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
-    gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-    if (!ok) return false;
+    t.width = w;
+    t.height = h;
+    t.color = d.createTexture(gpu::TexKind::Tex2D, 1);
+    d.texImage(t.color, 0, 0, format == TargetFormat::Rgba16f ? gpu::Format::RGBA16F : gpu::Format::RGBA8, w, h,
+               gpu::Pixels::None, nullptr);
+    gpu::SamplerDesc cs;
+    cs.wrapS = cs.wrapT = gpu::Wrap::ClampToEdge;
+    cs.maxLevel = 0;
+    d.setSampler(t.color, cs);
+    t.depthTex = d.createTexture(gpu::TexKind::Tex2D, 1);
+    d.texImage(t.depthTex, 0, 0, gpu::Format::Depth24, w, h, gpu::Pixels::None, nullptr);
+    gpu::SamplerDesc ds;
+    ds.minFilter = ds.magFilter = gpu::Filter::Nearest;
+    ds.wrapS = ds.wrapT = gpu::Wrap::ClampToEdge;
+    ds.maxLevel = 0;
+    d.setSampler(t.depthTex, ds);
+    t.fbo = d.createFramebuffer(t.color, t.depthTex);
+    if (!t.fbo) return false;
+  } else if (!makeTarget(t, w, h, format, samples <= 0, true)) {
+    return false;
   }
   if (samples <= 0) return true;
   t.samples = samples;
-  gl::GenRenderbuffers(1, &t.msColor);
-  gl::BindRenderbuffer(gl::RENDERBUFFER, t.msColor);
-  gl::RenderbufferStorageMultisample(gl::RENDERBUFFER, samples, format == TargetFormat::Rgba16f ? gl::RGBA16F : gl::RGBA8, w, h);
-  gl::GenRenderbuffers(1, &t.msDepth);
-  gl::BindRenderbuffer(gl::RENDERBUFFER, t.msDepth);
-  gl::RenderbufferStorageMultisample(gl::RENDERBUFFER, samples, gl::DEPTH_COMPONENT24, w, h);
-  gl::GenFramebuffers(1, &t.msFbo);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, t.msFbo);
-  gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, t.msColor);
-  gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, t.msDepth);
-  bool ok = gl::CheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-  return ok;
+  t.msColor = d.createRenderbuffer(format == TargetFormat::Rgba16f ? gpu::Format::RGBA16F : gpu::Format::RGBA8, w, h, samples);
+  t.msDepth = d.createRenderbuffer(gpu::Format::Depth24, w, h, samples);
+  t.msFbo = d.createFramebuffer(t.msColor, t.msDepth);
+  return t.msFbo != 0;
 }
 
 void Renderer3D::splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH, int regionH) {
   const int h = regionH > 0 ? std::min(regionH, t.height) : t.height;
-  gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
-  gl::Viewport(0, 0, t.width, h);
-  gl::Enable(gl::SCISSOR_TEST);
-  gl::Scissor(0, 0, t.width, h);
-  gl::ClearColor(0, 0, 0, 0);
-  gl::Clear(gl::COLOR_BUFFER_BIT);
-  gl::Disable(gl::DEPTH_TEST);
-  gl::Disable(gl::CULL_FACE);
-  gl::Enable(gl::BLEND);
-  gl::BlendFunc(gl::ONE, gl::ONE);
-  gl::UseProgram(program);
-  gl::BindVertexArray(mesh.vao);
+  dev().bindFramebuffer(t.fbo);
+  dev().viewport(0, 0, t.width, h);
+  dev().scissorTest(true);
+  dev().scissor(0, 0, t.width, h);
+  dev().clear(true, false, 0, 0, 0, 0);
+  dev().depthTest(false);
+  dev().cull(false);
+  dev().blend(true);
+  dev().blendFunc(gpu::Blend::One, gpu::Blend::One);
+  dev().useProgram(program);
+  dev().bindVertexInput(mesh.vao);
   for (const GpuMesh::Part& p : mesh.parts)
-    gl::DrawElements(gl::TRIANGLES, gl::GLsizei(p.indexCount), gl::UNSIGNED_INT, reinterpret_cast<void*>(size_t(p.firstIndex) * 4));
-  gl::BindVertexArray(0);
-  gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-  gl::Disable(gl::BLEND);
-  gl::Disable(gl::SCISSOR_TEST);
-  gl::Enable(gl::DEPTH_TEST);
-  gl::Enable(gl::CULL_FACE);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-  gl::Viewport(0, 0, backW, backH);
+    dev().drawElements(gpu::Prim::Triangles, int(p.indexCount), p.firstIndex);
+  dev().bindVertexInput(0);
+  dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
+  dev().blend(false);
+  dev().scissorTest(false);
+  dev().depthTest(true);
+  dev().cull(true);
+  dev().bindFramebuffer(0);
+  dev().viewport(0, 0, backW, backH);
 }
 
 void Renderer3D::resolve(const RenderTarget& t) {
   if (!t.msFbo) return;
-  gl::BindFramebuffer(gl::READ_FRAMEBUFFER, t.msFbo);
-  gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, t.fbo);
-  gl::Disable(gl::SCISSOR_TEST);
-  gl::BlitFramebuffer(0, 0, t.width, t.height, 0, 0, t.width, t.height,
-                      gl::COLOR_BUFFER_BIT | (t.depthTex ? gl::DEPTH_BUFFER_BIT : 0), gl::NEAREST);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  dev().scissorTest(false);
+  dev().blit(t.msFbo, t.fbo, 0, 0, t.width, t.height, 0, 0, t.width, t.height, true, t.depthTex != 0);
 }
 
 void Renderer3D::blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH) {
   if (!t.fbo) return;
   resolve(t);  // a multisample source must be resolved at its own size before a blit to another position
-  gl::BindFramebuffer(gl::READ_FRAMEBUFFER, t.fbo);
-  gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
-  gl::Disable(gl::SCISSOR_TEST);
-  gl::BlitFramebuffer(0, 0, w, h, x, backH - y - h, x + w, backH - y, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  dev().scissorTest(false);
+  dev().blit(t.fbo, 0, 0, 0, w, h, x, backH - y - h, x + w, backH - y, true, false);
+}
+
+void Renderer3D::blitDepthScaled(const RenderTarget& src, const RenderTarget& dst, int sw, int sh, int dw, int dh) {
+  resolve(src);
+  dev().scissorTest(false);
+  dev().blit(src.fbo, dst.fbo, 0, 0, sw, sh, 0, 0, dw, dh, false, true);
 }
 
 void Renderer3D::blitDepth(const RenderTarget& src, const RenderTarget& dst, int w, int h) {
-  gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src.msFbo ? src.msFbo : src.fbo);
-  gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, dst.fbo);
-  gl::Disable(gl::SCISSOR_TEST);
-  gl::BlitFramebuffer(0, 0, w, h, 0, 0, w, h, gl::DEPTH_BUFFER_BIT, gl::NEAREST);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  dev().scissorTest(false);
+  dev().blit(src.msFbo ? src.msFbo : src.fbo, dst.fbo, 0, 0, w, h, 0, 0, w, h, false, true);
 }
 
 void Renderer3D::readRed(uint32_t texture, int w, int h, std::vector<float>& out) {
   out.assign(size_t(w) * size_t(h), 0.0f);
-  gl::BindTexture(gl::TEXTURE_2D, texture);
-  gl::PixelStorei(gl::PACK_ALIGNMENT, 4);
-  gl::GetTexImage(gl::TEXTURE_2D, 0, gl::RED, gl::FLOAT, out.data());
-  gl::BindTexture(gl::TEXTURE_2D, 0);
+  dev().readTextureRed(texture, w, h, out.data());
 }
 
 void Renderer3D::destroyTarget(RenderTarget& t) {
-  if (t.msFbo) gl::DeleteFramebuffers(1, &t.msFbo);
-  if (t.msColor) gl::DeleteRenderbuffers(1, &t.msColor);
-  if (t.msDepth) gl::DeleteRenderbuffers(1, &t.msDepth);
-  if (t.fbo) gl::DeleteFramebuffers(1, &t.fbo);
-  if (t.depthTex) gl::DeleteTextures(1, &t.depthTex);
-  if (t.depth && t.depthTexture) gl::DeleteTextures(1, &t.depth);
-  else if (t.depth) gl::DeleteRenderbuffers(1, &t.depth);
-  if (t.color) gl::DeleteTextures(1, &t.color);
+  gpu::Device& d = dev();
+  if (t.msFbo) d.destroyFramebuffer(t.msFbo);
+  if (t.msColor) d.destroyRenderbuffer(t.msColor);
+  if (t.msDepth) d.destroyRenderbuffer(t.msDepth);
+  if (t.fbo) d.destroyFramebuffer(t.fbo);
+  if (t.depthTex) d.destroyTexture(t.depthTex);
+  if (t.depth && t.depthTexture) d.destroyTexture(t.depth);
+  else if (t.depth) d.destroyRenderbuffer(t.depth);
+  if (t.color) d.destroyTexture(t.color);
   t = RenderTarget{};
 }
 
 void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count, const float custom0[4], const float uv[4][4],
-                          const float* rect, const float* custom1) {
+                          const float* rect, const float* custom1, const float* matrix, bool multiply) {
   if (!program) return;
   if (!quadVao_) {
-    gl::GenVertexArrays(1, &quadVao_);
-    gl::BindVertexArray(quadVao_);
-    gl::GenBuffers(1, &quadVbo_);
-    gl::BindBuffer(gl::ARRAY_BUFFER, quadVbo_);
-    gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(4 * 7 * sizeof(float)), nullptr, gl::STREAM_DRAW);
-    gl::EnableVertexAttribArray(0);  // regs_Vertex
-    gl::VertexAttribPointer(0, 3, gl::FLOAT, false, 7 * sizeof(float), nullptr);
-    gl::EnableVertexAttribArray(2);  // regs_MultiTexCoord0
-    gl::VertexAttribPointer(2, 4, gl::FLOAT, false, 7 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
+    quadVbo_ = dev().createBuffer();
+    dev().bufferData(quadVbo_, 4 * 7 * sizeof(float), nullptr, true);
+    const gpu::VertexAttrib attrs[2] = {
+        {0, 3, gpu::AttribType::Float, quadVbo_, int(7 * sizeof(float)), 0},                   // regs_Vertex
+        {2, 4, gpu::AttribType::Float, quadVbo_, int(7 * sizeof(float)), 3 * sizeof(float)}};  // regs_MultiTexCoord0
+    quadVao_ = dev().createVertexInput(attrs, 2, 0);
   }
   // corners TL, TR, BR, BL in clip space (identity matrices), drawn as two triangles; the rect is in
   // glOrtho(0, 1, 1, 0) units, so x_clip = 2x − 1 and y_clip = 1 − 2y
@@ -560,62 +502,67 @@ void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count,
     v[i][2] = 0;
     for (int c = 0; c < 4; ++c) v[i][3 + c] = uv[k][c];
   }
-  gl::BindVertexArray(quadVao_);
-  gl::BindBuffer(gl::ARRAY_BUFFER, quadVbo_);
-  gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(sizeof(v)), v, gl::STREAM_DRAW);
-  gl::Disable(gl::DEPTH_TEST);
-  gl::Disable(gl::CULL_FACE);
-  gl::Disable(gl::BLEND);
-  gl::Disable(gl::POLYGON_OFFSET_FILL);
-  gl::DepthMask(0);
-  gl::UseProgram(program);
+  dev().bindVertexInput(quadVao_);
+  dev().bufferData(quadVbo_, sizeof(v), v, true);
+  dev().depthTest(false);
+  dev().cull(false);
+  dev().blend(false);
+  dev().polygonOffset(false, 0, 0);
+  dev().depthMask(0);
+  dev().useProgram(program);
   const ProgramLocs& l = locs(program);
   static const Mat4 identity;
-  gl::UniformMatrix4fv(l.mvp, 1, 0, identity.m);
-  gl::UniformMatrix4fv(l.mv, 1, 0, identity.m);
-  gl::UniformMatrix4fv(l.proj, 1, 0, identity.m);
-  gl::Uniform1f(l.alphaRef, -1.0f);
-  if (custom0) gl::Uniform4fv(l.custom[0], 1, custom0);
-  if (custom1) gl::Uniform4fv(l.custom[1], 1, custom1);
+  dev().uniformMatrix4fv(l.mvp, 1, identity.m);
+  dev().uniformMatrix4fv(l.mv, 1, identity.m);
+  dev().uniformMatrix4fv(l.proj, 1, identity.m);
+  dev().uniform1f(l.alphaRef, -1.0f);
+  if (custom0) dev().uniform4fv(l.custom[0], 1, custom0);
+  if (custom1) dev().uniform4fv(l.custom[1], 1, custom1);
+  if (matrix) dev().uniformMatrix4fv(l.matrix, 1, matrix);
   for (int i = 0; i < count && i < 8; ++i) {
-    gl::Uniform1i(l.texture[i], i);
-    gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(i));
-    gl::BindTexture(gl::TEXTURE_2D, textures[i]);
+    dev().uniform1i(l.texture[i], i);
+    dev().bindTexture(i, textures[i]);
   }
-  gl::ActiveTexture(gl::TEXTURE0);
-  gl::DrawArrays(gl::TRIANGLES, 0, 6);
-  gl::DepthMask(1);
-  gl::BindVertexArray(0);
+  if (multiply) {
+    dev().blend(true);
+    dev().blendFunc(gpu::Blend::DstColor, gpu::Blend::Zero);
+  }
+  dev().drawArrays(gpu::Prim::Triangles, 0, 6);
+  if (multiply) {
+    dev().blend(false);
+    dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
+  }
+  dev().depthMask(1);
+  dev().bindVertexInput(0);
 }
 
 void Renderer3D::begin(const RenderTarget* t, int x, int y, int w, int h, uint32_t clearArgb, bool clearColor, int backW,
                        int backH) {
-  gl::BindFramebuffer(gl::FRAMEBUFFER, t ? (t->msFbo ? t->msFbo : t->fbo) : 0);
+  dev().bindFramebuffer(t ? (t->msFbo ? t->msFbo : t->fbo) : 0);
   // the back buffer takes a top-left rect; a target holds the view in its bottom-left corner (GL rows from the bottom),
   // which is the part the GUI image crops when the target is larger than the view (scene-basics.md §7.1)
   int vy = t ? y : backH - y - h;
-  gl::Viewport(x, vy, w, h);
-  gl::Enable(gl::SCISSOR_TEST);
-  gl::Scissor(x, vy, w, h);
-  gl::ClearColor(float(clearArgb >> 16 & 0xFF) / 255, float(clearArgb >> 8 & 0xFF) / 255, float(clearArgb & 0xFF) / 255, 0);
-  gl::ClearDepth(1.0);
-  gl::DepthMask(1);
-  gl::Clear(gl::DEPTH_BUFFER_BIT | (clearColor ? gl::COLOR_BUFFER_BIT : 0));
-  gl::Enable(gl::DEPTH_TEST);
-  gl::DepthFunc(gl::LEQUAL);
-  gl::Enable(gl::CULL_FACE);
-  gl::CullFace(gl::BACK);
-  gl::Disable(gl::BLEND);
+  dev().viewport(x, vy, w, h);
+  dev().scissorTest(true);
+  dev().scissor(x, vy, w, h);
+  dev().depthMask(1);
+  dev().clear(clearColor, true, float(clearArgb >> 16 & 0xFF) / 255, float(clearArgb >> 8 & 0xFF) / 255,
+              float(clearArgb & 0xFF) / 255, 0, 1.0f);
+  dev().depthTest(true);
+  dev().depthFunc(gpu::Compare::LEqual);
+  dev().cull(true);
+  dev().cullFace(gpu::Face::Back);
+  dev().blend(false);
   (void)backW;
 }
 
 void Renderer3D::end(int backW, int backH) {
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-  gl::Disable(gl::DEPTH_TEST);
-  gl::Disable(gl::CULL_FACE);
-  gl::DepthMask(1);
-  gl::Viewport(0, 0, backW, backH);
-  gl::BindVertexArray(0);
+  dev().bindFramebuffer(0);
+  dev().depthTest(false);
+  dev().cull(false);
+  dev().depthMask(1);
+  dev().viewport(0, 0, backW, backH);
+  dev().bindVertexInput(0);
 }
 
 void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p) {
@@ -626,10 +573,9 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
   auto bindSlot = [&](uint32_t flag, const char* name) {
     if (!(m.flags & flag)) return;
     if (size_t(unit) < m.textures.size()) {
-      gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(unit));
-      gl::BindTexture(gl::TEXTURE_2D, m.textures[size_t(unit)]);
+      dev().bindTexture(unit, m.textures[size_t(unit)]);
     }
-    gl::Uniform1i(gl::GetUniformLocation(program_, name), unit);
+    dev().uniform1i(dev().uniformLocation(program_, name), unit);
     ++unit;
   };
   bindSlot(kMatDiffuseMap, "uDiffuseMap");
@@ -638,32 +584,31 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
   bindSlot(0x20000, "uIlluminationMap");
   bindSlot(0x100000, "uAoMap");
   if ((m.flags & kMatReflection) && m.envCube) {  // the environment cube follows the 2D maps
-    gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(unit));
-    gl::BindTexture(gl::TEXTURE_CUBE_MAP, m.envCube);
-    gl::Uniform1i(gl::GetUniformLocation(program_, "uEnvMap"), unit);
+    dev().bindTexture(unit, m.envCube, true);
+    dev().uniform1i(dev().uniformLocation(program_, "uEnvMap"), unit);
   }
-  gl::Uniform1f(gl::GetUniformLocation(program_, "uReflection"), m.reflection);
-  gl::ActiveTexture(gl::TEXTURE0);
-  gl::Uniform1i(u_.flags, int((m.flags & kMatReflection) && !m.envCube ? m.flags & ~kMatReflection : m.flags));
+  dev().uniform1f(dev().uniformLocation(program_, "uReflection"), m.reflection);
+  dev().uniform1i(u_.flags, int((m.flags & kMatReflection) && !m.envCube ? m.flags & ~kMatReflection : m.flags));
   const float sd = v.surfaceDiffuse, ss = v.surfaceSpecular;  // port atmosphere (SceneView)
   float am[4] = {m.ambient[0] * sd, m.ambient[1] * sd, m.ambient[2] * sd, m.ambient[3]};
-  gl::Uniform4fv(u_.matAmbient, 1, am);
+  dev().uniform4fv(u_.matAmbient, 1, am);
   float d[4] = {m.diffuse[0] * sd, m.diffuse[1] * sd, m.diffuse[2] * sd, m.diffuse[3] * it.alpha};
-  gl::Uniform4fv(u_.matDiffuse, 1, d);
+  dev().uniform4fv(u_.matDiffuse, 1, d);
   float sp[4] = {m.specular[0] * ss, m.specular[1] * ss, m.specular[2] * ss, m.specular[3]};
-  gl::Uniform4fv(u_.matSpecular, 1, sp);
+  dev().uniform4fv(u_.matSpecular, 1, sp);
   float em[4] = {m.emission[0] * v.emissionScale, m.emission[1] * v.emissionScale, m.emission[2] * v.emissionScale, m.emission[3]};
-  gl::Uniform4fv(u_.matEmission, 1, em);
-  gl::Uniform1f(u_.shininess, m.shininess);
-  if (m.flags & kMatTwoSided) gl::Disable(gl::CULL_FACE);
-  else gl::Enable(gl::CULL_FACE);
-  gl::DrawElements(gl::TRIANGLES, gl::GLsizei(p.indexCount), gl::UNSIGNED_INT,
-                   reinterpret_cast<void*>(size_t(p.firstIndex) * 4));
+  dev().uniform4fv(u_.matEmission, 1, em);
+  dev().uniform1f(u_.shininess, m.shininess);
+  if (m.flags & kMatTwoSided) dev().cull(false);
+  else dev().cull(true);
+  dev().drawElements(gpu::Prim::Triangles, int(p.indexCount), p.firstIndex);
 }
 
-uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks) {
+uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks,
+                                  unsigned rays) {
   std::string why;
-  std::string vs = translateGlsl110(vs110, false, &why, hooks), fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks);
+  std::string vs = translateGlsl110(vs110, false, &why, hooks),
+              fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks, rays);
   if (vs.empty() || fs.empty()) {
     if (error) *error = "unsupported built-in " + why;
     return 0;
@@ -682,10 +627,10 @@ uint32_t Renderer3D::buildPostHookProgram(const std::string& vs110, std::string*
 }
 
 void Renderer3D::postHookState(const SceneView& v, uint32_t prog) {
-  gl::UseProgram(prog);
+  dev().useProgram(prog);
   hookState(v, prog);
   Mat4 inv = inverse(v.proj * v.view);
-  gl::UniformMatrix4fv(gl::GetUniformLocation(prog, "regs_PostInvViewProj"), 1, 0, inv.m);
+  dev().uniformMatrix4fv(dev().uniformLocation(prog, "regs_PostInvViewProj"), 1, inv.m);
 }
 
 // programs linked and the time spent (load-time measurements: Display::renderFrame logs slow frames)
@@ -700,40 +645,26 @@ uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, s
       gLinkSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     }
   } timed;
-  uint32_t v = compile(gl::VERTEX_SHADER, vs.c_str(), error), f = v ? compile(gl::FRAGMENT_SHADER, fs.c_str(), error) : 0;
-  if (!v || !f) return 0;
-  uint32_t prog = gl::CreateProgram();
-  gl::AttachShader(prog, v);
-  gl::AttachShader(prog, f);
   // the vertex layout of upload(): fixed-function arrays become generic attributes at fixed slots
-  const char* names[] = {"regs_Vertex", "regs_Normal", "regs_MultiTexCoord0", "regs_MultiTexCoord1",
-                         "regs_MultiTexCoord2", "regs_Color", "regs_MultiTexCoord3", "regs_MultiTexCoord4"};
-  for (int i = 0; i < 8; ++i) gl::BindAttribLocation(prog, gl::GLuint(i), names[i]);
-  gl::LinkProgram(prog);
-  gl::DeleteShader(v);
-  gl::DeleteShader(f);
-  int ok = 0;
-  gl::GetProgramiv(prog, gl::LINK_STATUS, &ok);
-  if (!ok) {
-    char log[4096];
-    gl::GetProgramInfoLog(prog, sizeof log, nullptr, log);
-    if (error) *error = log;
-    return 0;
-  }
+  uint32_t prog = dev().createProgram(vs, fs,
+                                      {{0, "regs_Vertex"}, {1, "regs_Normal"}, {2, "regs_MultiTexCoord0"},
+                                       {3, "regs_MultiTexCoord1"}, {4, "regs_MultiTexCoord2"}, {5, "regs_Color"},
+                                       {6, "regs_MultiTexCoord3"}, {7, "regs_MultiTexCoord4"}},
+                                      error);
+  if (!prog) return 0;
   // the hooks' environment cube lives on unit 8 (a sampler left at unit 0 would clash with the 2D map there)
-  int env = gl::GetUniformLocation(prog, "regs_EnvMap"), surf = gl::GetUniformLocation(prog, "regs_SurfaceMap");
+  int env = dev().uniformLocation(prog, "regs_EnvMap"), surf = dev().uniformLocation(prog, "regs_SurfaceMap");
   if (env >= 0 || surf >= 0) {
-    gl::GLint current = 0;
-    gl::GetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &current);
-    gl::UseProgram(prog);
-    if (env >= 0) gl::Uniform1i(env, kHookEnvUnit);
-    if (surf >= 0) gl::Uniform1i(surf, kHookSurfaceUnit);
+    uint32_t current = dev().currentProgram();
+    dev().useProgram(prog);
+    if (env >= 0) dev().uniform1i(env, kHookEnvUnit);
+    if (surf >= 0) dev().uniform1i(surf, kHookSurfaceUnit);
     const std::pair<const char*, int> traffic[] = {
         {"regs_LaneTraffic", kHookLaneTrafficUnit},
         {"regs_TopMap", kHookTopUnit}, {"regs_FootAtlas", kHookFootAtlasUnit}};
     for (const auto& [name, unit] : traffic)
-      if (int loc = gl::GetUniformLocation(prog, name); loc >= 0) gl::Uniform1i(loc, unit);
-    gl::UseProgram(gl::GLuint(current));
+      if (int loc = dev().uniformLocation(prog, name); loc >= 0) dev().uniform1i(loc, unit);
+    dev().useProgram(current);
   }
   return prog;
 }
@@ -742,7 +673,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   auto it = locs_.find(prog);
   if (it != locs_.end()) return it->second;
   ProgramLocs& l = locs_[prog];
-  auto at = [&](const std::string& n) { return gl::GetUniformLocation(prog, n.c_str()); };
+  auto at = [&](const std::string& n) { return dev().uniformLocation(prog, n.c_str()); };
   l.mv = at("regs_ModelViewMatrix");
   l.proj = at("regs_ProjectionMatrix");
   l.mvp = at("regs_ModelViewProjectionMatrix");
@@ -798,6 +729,8 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.hookFootRect = at("regs_FootRect");
     l.hookNight = at("regs_HookNight");
   }
+  l.sunPos = at("regs_SunPos");
+  l.eyePos = at("regs_EyePos");
   l.viewInverse = at("regs_ViewInverse");
   l.projInverse = at("regs_ProjInverse");
   l.night = at("regs_Night");
@@ -817,57 +750,59 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
 // per-pass state of a combiner program (gsIShader::apply with programChanged, interfaces-3d.md §3.3)
 void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   const ProgramLocs& l = locs(prog);
-  gl::UniformMatrix4fv(l.proj, 1, 0, v.proj.m);
-  gl::Uniform4fv(l.modelAmbient, 1, v.lightModelAmbient);
-  for (int i = 0; i < 8; ++i) gl::Uniform1i(l.texture[i], i);
+  dev().uniformMatrix4fv(l.proj, 1, v.proj.m);
+  dev().uniform4fv(l.modelAmbient, 1, v.lightModelAmbient);
+  for (int i = 0; i < 8; ++i) dev().uniform1i(l.texture[i], i);
   int n = int(std::min<size_t>(v.lights.size(), 8));
   for (int i = 0; i < n; ++i) {
     const Light& li = v.lights[size_t(i)];
     Vec3 p = transformPoint(v.view, li.position);  // glLightfv(GL_POSITION) under the view matrix: eye space, w = 1
-    gl::Uniform4f(l.lightPos[i], p.x, p.y, p.z, 1);
-    gl::Uniform4fv(l.lightAmbient[i], 1, li.ambient);
-    gl::Uniform4fv(l.lightDiffuse[i], 1, li.diffuse);
-    gl::Uniform4fv(l.lightSpecular[i], 1, li.specular);
-    gl::Uniform1f(l.lightConst[i], 1);
-    gl::Uniform1f(l.lightSpotCut[i], 180);
-    gl::Uniform1f(l.lightSpotCos[i], -1);
+    dev().uniform4f(l.lightPos[i], p.x, p.y, p.z, 1);
+    dev().uniform4fv(l.lightAmbient[i], 1, li.ambient);
+    dev().uniform4fv(l.lightDiffuse[i], 1, li.diffuse);
+    dev().uniform4fv(l.lightSpecular[i], 1, li.specular);
+    dev().uniform1f(l.lightConst[i], 1);
+    dev().uniform1f(l.lightSpotCut[i], 180);
+    dev().uniform1f(l.lightSpotCos[i], -1);
   }
   // no scene fog: push it out of reach (the default shader always applies fog)
-  gl::Uniform4fv(l.fogColor, 1, v.fogColor);
-  gl::Uniform1f(l.fogStart, v.fog ? v.fogStart : 1e30f);
-  gl::Uniform1f(l.fogEnd, v.fog ? v.fogEnd : 1e30f);
-  gl::Uniform1f(l.fogScale, v.fog && v.fogEnd > v.fogStart ? 1.0f / (v.fogEnd - v.fogStart) : 0.0f);
-  gl::Uniform1f(l.fogDensity, 1);
-  gl::Uniform3f(l.eyepos, v.eye.x, v.eye.y, v.eye.z);
-  gl::Uniform1f(l.timer, v.timer);
+  dev().uniform4fv(l.fogColor, 1, v.fogColor);
+  dev().uniform1f(l.fogStart, v.fog ? v.fogStart : 1e30f);
+  dev().uniform1f(l.fogEnd, v.fog ? v.fogEnd : 1e30f);
+  dev().uniform1f(l.fogScale, v.fog && v.fogEnd > v.fogStart ? 1.0f / (v.fogEnd - v.fogStart) : 0.0f);
+  dev().uniform1f(l.fogDensity, 1);
+  dev().uniform3f(l.eyepos, v.eye.x, v.eye.y, v.eye.z);
+  dev().uniform1f(l.timer, v.timer);
   float vo[9];  // vieworient: GLSL r * vieworient = eye-space direction to world space (scene-basics.md §6.5)
   for (int c = 0; c < 3; ++c)
     for (int r = 0; r < 3; ++r) vo[c * 3 + r] = v.view.at(r, c);
-  gl::UniformMatrix3fv(l.vieworient, 1, 0, vo);
+  dev().uniformMatrix3fv(l.vieworient, 1, vo);
   Vec3 up{v.view.at(0, 1), v.view.at(1, 1), v.view.at(2, 1)};  // world +Y in eye space
-  gl::Uniform3f(l.worldup, up.x, up.y, up.z);
-  gl::UniformMatrix4fv(l.shadowTransform, 1, 0, v.shadowTransform.m);
-  gl::UniformMatrix4fv(l.shadowWarp, 1, 0, v.shadowWarp.m);
-  gl::Uniform4fv(l.shadowParams, 1, v.shadowParams);
+  dev().uniform3f(l.worldup, up.x, up.y, up.z);
+  dev().uniformMatrix4fv(l.shadowTransform, 1, v.shadowTransform.m);
+  dev().uniformMatrix4fv(l.shadowWarp, 1, v.shadowWarp.m);
+  dev().uniform4fv(l.shadowParams, 1, v.shadowParams);
   // port night lights (docs/renderer/night-lights.md): the world position from clip space (eye z = −w) and the
   // window and lamp terms of the patched default shader
   Mat4 vi = inverseRigid(v.view);
-  gl::UniformMatrix4fv(l.viewInverse, 1, 0, vi.m);
-  gl::Uniform4f(l.projInverse, 1.0f / v.proj.at(0, 0), 1.0f / v.proj.at(1, 1), v.proj.at(0, 2), v.proj.at(1, 2));
-  gl::Uniform4fv(l.night, 1, v.night);
-  gl::Uniform1f(l.shop, v.shopShare);
-  gl::Uniform1i(l.windowMask, kNightMapUnit);
-  gl::Uniform1i(l.lampMap, kNightMapUnit);
-  gl::Uniform4fv(l.lampMapXf, 1, v.lampMapXf);
-  gl::Uniform4fv(l.lampHeight, 1, v.lampHeight);
-  gl::Uniform1i(l.carMap, kNightMapUnit);
-  gl::Uniform4fv(l.carMapXf, 1, v.carMapXf);
-  gl::Uniform4f(l.carLight, v.carLight[0], v.carLight[1], v.carMap ? v.carLight[2] : 0.0f, 0);
+  dev().uniformMatrix4fv(l.viewInverse, 1, vi.m);
+  dev().uniform4f(l.projInverse, 1.0f / v.proj.at(0, 0), 1.0f / v.proj.at(1, 1), v.proj.at(0, 2), v.proj.at(1, 2));
+  dev().uniform4fv(l.night, 1, v.night);
+  dev().uniform4f(l.sunPos, v.sunWorld.x, v.sunWorld.y, v.sunWorld.z, v.rayShadows ? 1.0f : 0.0f);
+  if (l.eyePos >= 0) dev().uniform4f(l.eyePos, v.eye.x, v.eye.y, v.eye.z, 1.0f);
+  dev().uniform1f(l.shop, v.shopShare);
+  dev().uniform1i(l.windowMask, kNightMapUnit);
+  dev().uniform1i(l.lampMap, kNightMapUnit);
+  dev().uniform4fv(l.lampMapXf, 1, v.lampMapXf);
+  dev().uniform4fv(l.lampHeight, 1, v.lampHeight);
+  dev().uniform1i(l.carMap, kNightMapUnit);
+  dev().uniform4fv(l.carMapXf, 1, v.carMapXf);
+  dev().uniform4f(l.carLight, v.carLight[0], v.carLight[1], v.carMap ? v.carLight[2] : 0.0f, 0);
   if (l.hookOn >= 0) {  // the mods' shader hooks: colour passes of hooked views; shadow-map passes for some (2)
     bool colour = !(v.env & (kEnvShadowMapRender | kEnvShadowRender));
     static const bool shadowHooks = shadowHooksRegistered();
     bool on = v.hooks && (colour || ((v.env & kEnvShadowMapRender) && shadowHooks));
-    gl::Uniform1f(l.hookOn, on ? (colour ? 1.0f : 2.0f) : 0.0f);
+    dev().uniform1f(l.hookOn, on ? (colour ? 1.0f : 2.0f) : 0.0f);
     if (on) {
       hookState(v, prog);
     }
@@ -879,58 +814,51 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
 void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
   const ProgramLocs& l = locs(prog);
   Mat4 inv = inverse(v.proj * v.view);
-  gl::UniformMatrix4fv(l.hookInvViewProj, 1, 0, inv.m);
-  gl::Uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
-  gl::Uniform1f(l.hookTime, v.timer);
-  gl::Uniform1f(l.hookNight, v.night[3]);
+  dev().uniformMatrix4fv(l.hookInvViewProj, 1, inv.m);
+  dev().uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
+  dev().uniform1f(l.hookTime, v.timer);
+  dev().uniform1f(l.hookNight, v.night[3]);
   ProgramLocs& lw = locs_[prog];
   for (const auto& [name, value] : shaderHookUniforms()) {
     auto it = lw.hookUniforms.find(name);
-    if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, gl::GetUniformLocation(prog, name.c_str())).first;
-    if (it->second >= 0) gl::Uniform4fv(it->second, 1, value.data());
+    if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, dev().uniformLocation(prog, name.c_str())).first;
+    if (it->second >= 0) dev().uniform4fv(it->second, 1, value.data());
   }
-  gl::Uniform4fv(l.hookSurfaceRect, 1, v.hookSurfaceRect);
-  gl::ActiveTexture(gl::TEXTURE0 + kHookEnvUnit);
-  gl::BindTexture(gl::TEXTURE_CUBE_MAP, v.hookEnvCube);
-  gl::ActiveTexture(gl::TEXTURE0 + kHookSurfaceUnit);
-  gl::BindTexture(gl::TEXTURE_2D, v.hookSurfaceMap);
-  gl::Uniform4fv(l.hookTrafficRect, 1, v.hookTrafficRect);
-  gl::Uniform4fv(l.hookLaneCells, 1, v.hookLaneCells);
-  gl::ActiveTexture(gl::TEXTURE0 + kHookLaneTrafficUnit);
-  gl::BindTexture(gl::TEXTURE_2D, v.hookLaneTraffic);
-  gl::ActiveTexture(gl::TEXTURE0 + kHookTopUnit);
-  gl::BindTexture(gl::TEXTURE_2D, v.hookTopMap);
-  gl::Uniform4fv(l.hookFootRect, 1, v.hookFootRect);
-  gl::ActiveTexture(gl::TEXTURE0 + kHookFootAtlasUnit);
-  gl::BindTexture(gl::TEXTURE_2D, v.hookFootAtlas);
+  dev().uniform4fv(l.hookSurfaceRect, 1, v.hookSurfaceRect);
+  dev().bindTexture(kHookEnvUnit, v.hookEnvCube, true);
+  dev().bindTexture(kHookSurfaceUnit, v.hookSurfaceMap);
+  dev().uniform4fv(l.hookTrafficRect, 1, v.hookTrafficRect);
+  dev().uniform4fv(l.hookLaneCells, 1, v.hookLaneCells);
+  dev().bindTexture(kHookLaneTrafficUnit, v.hookLaneTraffic);
+  dev().bindTexture(kHookTopUnit, v.hookTopMap);
+  dev().uniform4fv(l.hookFootRect, 1, v.hookFootRect);
+  dev().bindTexture(kHookFootAtlasUnit, v.hookFootAtlas);
   for (const ShaderHookTexture& t : shaderHookTextures()) {  // the mods' own textures (regsShaderTexture)
     auto it = lw.hookUniforms.find(t.sampler);
-    if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(t.sampler, gl::GetUniformLocation(prog, t.sampler.c_str())).first;
+    if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(t.sampler, dev().uniformLocation(prog, t.sampler.c_str())).first;
     if (it->second < 0) continue;
-    gl::Uniform1i(it->second, t.unit);
-    gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(t.unit));
-    gl::BindTexture(gl::TEXTURE_2D, t.texture);
+    dev().uniform1i(it->second, t.unit);
+    dev().bindTexture(t.unit, t.texture);
   }
-  gl::ActiveTexture(gl::TEXTURE0);
 }
 
 void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
                               uint32_t prog, float alphaRef) {
   const ProgramLocs& l = locs(prog);
-  gl::Uniform1f(l.alphaRef, alphaRef);  // glAlphaFunc(GREATER, ref) of the queue
+  dev().uniform1f(l.alphaRef, alphaRef);  // glAlphaFunc(GREATER, ref) of the queue
   const float es = v.emissionScale;
-  gl::Uniform4f(l.matEmission, m.emission[0] * es, m.emission[1] * es, m.emission[2] * es, m.emission[3]);
+  dev().uniform4f(l.matEmission, m.emission[0] * es, m.emission[1] * es, m.emission[2] * es, m.emission[3]);
   // ambient alpha = object fade; the scene's surface factors (port atmosphere) on the colours
   const float sd = v.surfaceDiffuse, ss = v.surfaceSpecular;
   float amb[4] = {m.ambient[0] * sd, m.ambient[1] * sd, m.ambient[2] * sd, m.ambient[3] * it.alpha};
   float dif[4] = {m.diffuse[0] * sd, m.diffuse[1] * sd, m.diffuse[2] * sd, m.diffuse[3]};
   float spe[4] = {m.specular[0] * ss, m.specular[1] * ss, m.specular[2] * ss, m.specular[3]};
-  gl::Uniform4fv(l.matAmbient, 1, amb);
-  gl::Uniform4fv(l.matDiffuse, 1, dif);
-  gl::Uniform4fv(l.matSpecular, 1, spe);
-  gl::Uniform1f(l.matShininess, m.shininess);
-  if (l.surfaceClass >= 0) gl::Uniform1i(l.surfaceClass, it.surfaceClass >= 0 ? it.surfaceClass : m.surfaceClass);
-  if (l.hookItem >= 0) gl::Uniform1f(l.hookItem, it.hookValue);
+  dev().uniform4fv(l.matAmbient, 1, amb);
+  dev().uniform4fv(l.matDiffuse, 1, dif);
+  dev().uniform4fv(l.matSpecular, 1, spe);
+  dev().uniform1f(l.matShininess, m.shininess);
+  if (l.surfaceClass >= 0) dev().uniform1i(l.surfaceClass, it.surfaceClass >= 0 ? it.surfaceClass : m.surfaceClass);
+  if (l.hookItem >= 0) dev().uniform1f(l.hookItem, it.hookValue);
   int n = int(std::min<size_t>(v.lights.size(), 8));
   for (int i = 0; i < n; ++i) {  // gl_FrontLightProduct = light × material, component-wise
     const Light& li = v.lights[size_t(i)];
@@ -940,41 +868,37 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
       pd[k] = li.diffuse[k] * dif[k];
       ps[k] = li.specular[k] * spe[k];
     }
-    gl::Uniform4fv(l.productAmbient[i], 1, pa);
-    gl::Uniform4fv(l.productDiffuse[i], 1, pd);
-    gl::Uniform4fv(l.productSpecular[i], 1, ps);
+    dev().uniform4fv(l.productAmbient[i], 1, pa);
+    dev().uniform4fv(l.productDiffuse[i], 1, pd);
+    dev().uniform4fv(l.productSpecular[i], 1, ps);
   }
   float tint[4];
   for (int k = 0; k < 4; ++k) tint[k] = it.colorize[k] * float(p.colorize >> (k == 3 ? 24 : 16 - 8 * k) & 0xFF) / 255.0f;
-  gl::Uniform4fv(l.colorize, 1, tint);
-  gl::Uniform1f(l.reflection, m.reflection);
+  dev().uniform4fv(l.colorize, 1, tint);
+  dev().uniform1f(l.reflection, m.reflection);
   if (l.windowOn >= 0) {  // port night lights: the material's window groups, on the first unit after its textures
     const int maskUnit = int(m.textures.size());
     float code = !m.windowMask || maskUnit >= kMaterialUnits ? 0.0f : m.windowKind == 1 ? it.lampCode
                  : m.windowKind >= 4 ? (v.night[3] > 0.05f ? float(m.windowKind) : 0.0f)
                  : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
-    gl::Uniform1f(l.windowOn, code);
-    if (m.windowKind == 1) gl::Uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, it.cabinLight);
+    dev().uniform1f(l.windowOn, code);
+    if (m.windowKind == 1) dev().uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, it.cabinLight);
     // the sampler points at the light map's unit when unused: never at a unit where the material has a cube
-    gl::Uniform1i(l.windowMask, code > 0 ? maskUnit : kNightMapUnit);
+    dev().uniform1i(l.windowMask, code > 0 ? maskUnit : kNightMapUnit);
     if (code > 0) {
-      gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(maskUnit));
-      gl::BindTexture(gl::TEXTURE_2D, m.windowMask);
+      dev().bindTexture(maskUnit, m.windowMask);
     }
   }
-  for (int i = 0; i < 8; ++i) gl::Uniform4fv(l.custom[i], 1, it.layerCustom ? it.layerCustom[i] : m.custom[i]);
-  if (it.hasCustom4) gl::Uniform4f(l.custom[4], it.custom4[0], it.custom4[1], m.custom[4][2], m.custom[4][3]);
-  gl::UniformMatrix4fv(l.matrix, 1, 0, it.world.m);
+  for (int i = 0; i < 8; ++i) dev().uniform4fv(l.custom[i], 1, it.layerCustom ? it.layerCustom[i] : m.custom[i]);
+  if (it.hasCustom4) dev().uniform4f(l.custom[4], it.custom4[0], it.custom4[1], m.custom[4][2], m.custom[4][3]);
+  dev().uniformMatrix4fv(l.matrix, 1, it.world.m);
   for (size_t i = 0; i < m.textures.size() && i < size_t(kMaterialUnits); ++i) {
-    gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(i));
-    gl::BindTexture(i < m.cube.size() && m.cube[i] ? gl::TEXTURE_CUBE_MAP : gl::TEXTURE_2D, m.textures[i]);
+    dev().bindTexture(int(i), m.textures[i], i < m.cube.size() && m.cube[i]);
   }
-  gl::ActiveTexture(gl::TEXTURE0);
-  if (m.flags & kMatTwoSided) gl::Disable(gl::CULL_FACE);
-  else gl::Enable(gl::CULL_FACE);
+  if (m.flags & kMatTwoSided) dev().cull(false);
+  else dev().cull(true);
   if (p.groups.empty() || l.bones < 0) {
-    gl::DrawElements(gl::TRIANGLES, gl::GLsizei(p.indexCount), gl::UNSIGNED_INT,
-                     reinterpret_cast<void*>(size_t(p.firstIndex) * 4));
+    dev().drawElements(gpu::Prim::Triangles, int(p.indexCount), p.firstIndex);
     return;
   }
   // per bone group: the palette's skin matrices (invBind · world; identity = bind pose), then its index range
@@ -987,14 +911,13 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
       const Mat4& s = it.bones && b < it.bones->size() ? (*it.bones)[b] : identity;
       palette.insert(palette.end(), s.m, s.m + 16);
     }
-    gl::UniformMatrix4fv(l.bones, gl::GLsizei(g.palette.size()), 0, palette.data());
-    gl::DrawElements(gl::TRIANGLES, gl::GLsizei(g.indexCount), gl::UNSIGNED_INT,
-                     reinterpret_cast<void*>(size_t(g.firstIndex) * 4));
+    dev().uniformMatrix4fv(l.bones, int(g.palette.size()), palette.data());
+    dev().drawElements(gpu::Prim::Triangles, int(g.indexCount), g.firstIndex);
   }
 }
 
 void Renderer3D::setupFallback(const SceneView& v) {
-  gl::UniformMatrix4fv(u_.proj, 1, 0, v.proj.m);
+  dev().uniformMatrix4fv(u_.proj, 1, v.proj.m);
   // lights in eye space, as glLightfv transforms positions by the current modelview (the view matrix)
   int n = int(std::min<size_t>(v.lights.size(), 8));
   float pos[24], amb[32], dif[32], spe[32];
@@ -1007,24 +930,24 @@ void Renderer3D::setupFallback(const SceneView& v) {
     std::memcpy(dif + i * 4, v.lights[size_t(i)].diffuse, 16);
     std::memcpy(spe + i * 4, v.lights[size_t(i)].specular, 16);
   }
-  gl::Uniform1i(u_.lightCount, n);
+  dev().uniform1i(u_.lightCount, n);
   if (n) {
-    gl::Uniform3fv(u_.lightPos, n, pos);
-    gl::Uniform4fv(u_.lightAmbient, n, amb);
-    gl::Uniform4fv(u_.lightDiffuse, n, dif);
-    gl::Uniform4fv(u_.lightSpecular, n, spe);
+    dev().uniform3fv(u_.lightPos, n, pos);
+    dev().uniform4fv(u_.lightAmbient, n, amb);
+    dev().uniform4fv(u_.lightDiffuse, n, dif);
+    dev().uniform4fv(u_.lightSpecular, n, spe);
   }
-  gl::Uniform4fv(u_.modelAmbient, 1, v.lightModelAmbient);
-  gl::Uniform1i(u_.fog, v.fog ? 1 : 0);
-  gl::Uniform4f(u_.fogParams, v.fogStart, v.fogEnd > v.fogStart ? 1.0f / (v.fogEnd - v.fogStart) : 0.0f, 0, 0);
+  dev().uniform4fv(u_.modelAmbient, 1, v.lightModelAmbient);
+  dev().uniform1i(u_.fog, v.fog ? 1 : 0);
+  dev().uniform4f(u_.fogParams, v.fogStart, v.fogEnd > v.fogStart ? 1.0f / (v.fogEnd - v.fogStart) : 0.0f, 0, 0);
   float v2w[9];  // eye-space directions back to world space: transpose of the view rotation
   for (int r = 0; r < 3; ++r)
     for (int c = 0; c < 3; ++c) v2w[c * 3 + r] = v.view.at(c, r);
-  gl::UniformMatrix3fv(gl::GetUniformLocation(program_, "uViewToWorld"), 1, 0, v2w);
-  gl::Uniform4fv(u_.fogColor, 1, v.fogColor);
-  gl::Uniform1f(u_.alphaRef, 0.2f);
+  dev().uniformMatrix3fv(dev().uniformLocation(program_, "uViewToWorld"), 1, v2w);
+  dev().uniform4fv(u_.fogColor, 1, v.fogColor);
+  dev().uniform1f(u_.alphaRef, 0.2f);
   static const int debugShade = std::getenv("REGS_DEBUG_SHADE") ? std::atoi(std::getenv("REGS_DEBUG_SHADE")) : 0;
-  gl::Uniform1i(gl::GetUniformLocation(program_, "uDebug"), debugShade);
+  dev().uniform1i(dev().uniformLocation(program_, "uDebug"), debugShade);
 }
 
 void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
@@ -1056,6 +979,10 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
       const GpuMaterial& m = materialOf(it, p);
       uint32_t prog = m.programFor(v.env);
       if (shadowPass && (!prog || (m.flags & (kMatNoShadow | kMatDecal)))) continue;
+      // with raytraced shadows the map keeps what the rays leave out (foliage, blended, skinned)
+      if (shadowPass && v.shadowMapLeftovers && !(m.flags & kMatAlphaBlend) && m.surfaceClass != kSurfaceFoliage &&
+          p.groups.empty())
+        continue;
       Vec3 dv = transformPoint(it.world, p.center) - v.eye;
       // MATERIAL_ZERO_RADIUS (water): radius −100, so it sorts before other blended parts nearby (terrain.md §6.4)
       float radius = (m.flags & 0x02000000u) ? -100.0f : p.radius;
@@ -1069,50 +996,41 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   auto farToNear = [](const Q& a, const Q& b) { return a.key > b.key; };
   std::stable_sort(tested.begin(), tested.end(), farToNear);
   std::stable_sort(blended.begin(), blended.end(), farToNear);
-  if (v.flipCull) gl::CullFace(gl::FRONT);
+  if (v.flipCull) dev().cullFace(gpu::Face::Front);
   if (v.env & kEnvShadowMap) {
-    gl::ActiveTexture(gl::TEXTURE0 + 7);
-    gl::BindTexture(gl::TEXTURE_2D, v.shadowMap);
-    gl::ActiveTexture(gl::TEXTURE0);
+    dev().bindTexture(7, v.shadowMap);
   }
   if (v.lampMap || v.carMap) {  // port night lights: the light map (lamps and headlights in one) for the whole pass
-    gl::ActiveTexture(gl::TEXTURE0 + kNightMapUnit);
-    gl::BindTexture(gl::TEXTURE_2D, v.lampMap ? v.lampMap : v.carMap);
-    gl::ActiveTexture(gl::TEXTURE0);
+    dev().bindTexture(kNightMapUnit, v.lampMap ? v.lampMap : v.carMap);
   }
   uint32_t current = 0;
   const DrawItem* bound = nullptr;
-  gl::GLenum blendSrc = gl::SRC_ALPHA, blendDst = gl::ONE_MINUS_SRC_ALPHA;
+  gpu::Blend blendSrc = gpu::Blend::SrcAlpha, blendDst = gpu::Blend::OneMinusSrcAlpha;
   // opaque: no alpha test; alpha-tested: GREATER 0.2 with depth writes; blended and decals: GREATER 0.001 without
   auto run = [&](const std::vector<Q>& q, float ref, bool depthWrite) {
-    gl::DepthMask(depthWrite);
+    dev().depthMask(depthWrite);
     for (const Q& e : q) {
       const GpuMaterial& m = materialOf(*e.it, *e.p);
       if (!shadowPass) {
         // polygon offset (interfaces-3d.md material state): blended and decal (−2,−2), a depth offset d gives (2d, 2d)
         float off = (m.flags & (kMatAlphaBlend | kMatDecal)) ? -2.0f : 0.0f;
         if (m.depthOffset != 0) off = 2.0f * m.depthOffset;
-        if (off != 0) {
-          gl::Enable(gl::POLYGON_OFFSET_FILL);
-          gl::PolygonOffset(off, off);
-        } else {
-          gl::Disable(gl::POLYGON_OFFSET_FILL);
-        }
+        dev().polygonOffset(off != 0, off, off);
         // blend function (interfaces-3d.md §2.10): MODULATE (DST_COLOR, ZERO), MODULATE_2 (DST_COLOR, SRC_COLOR),
         // ADDITIVE (ONE, ONE), ADDITIVE_A (SRC_ALPHA, ONE: the street-light glows of the night maps), else alpha
-        constexpr gl::GLenum kSrcColor = 0x0300, kDstColor = 0x0306;
-        gl::GLenum src = gl::SRC_ALPHA, dst = gl::ONE_MINUS_SRC_ALPHA;
-        if (m.flags & 0x40000u) src = kDstColor, dst = gl::ZERO;
-        else if (m.flags & 0x80000u) src = kDstColor, dst = kSrcColor;
-        else if (m.flags & 0x80u) src = gl::ONE, dst = gl::ONE;
-        else if (m.flags & 0x100u) dst = gl::ONE;
-        if (src != blendSrc || dst != blendDst) gl::BlendFunc(blendSrc = src, blendDst = dst);
+        using gpu::Blend;
+        Blend src = Blend::SrcAlpha, dst = Blend::OneMinusSrcAlpha;
+        if (m.flags & 0x40000u) src = Blend::DstColor, dst = Blend::Zero;
+        else if (m.flags & 0x80000u) src = Blend::DstColor, dst = Blend::SrcColor;
+        else if (m.flags & 0x80u) src = Blend::One, dst = Blend::One;
+        else if (m.flags & 0x100u) dst = Blend::One;
+        if (src != blendSrc || dst != blendDst) dev().blendFunc(blendSrc = src, blendDst = dst);
       }
       uint32_t prog = e.program ? e.program : program_;
       if (prog != current) {
         current = prog;
         bound = nullptr;
-        gl::UseProgram(prog);
+        dev().useProgram(prog);
         if (e.program) setupProgram(v, prog);
         else setupFallback(v);
       }
@@ -1124,15 +1042,15 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         if (e.program) {
           const ProgramLocs& l = locs(prog);
           Mat4 mvp = v.proj * mv;
-          gl::UniformMatrix4fv(l.mv, 1, 0, mv.m);
-          gl::UniformMatrix4fv(l.mvp, 1, 0, mvp.m);
-          gl::UniformMatrix3fv(l.nm, 1, 0, nm);
+          dev().uniformMatrix4fv(l.mv, 1, mv.m);
+          dev().uniformMatrix4fv(l.mvp, 1, mvp.m);
+          dev().uniformMatrix3fv(l.nm, 1, nm);
         } else {
-          gl::UniformMatrix4fv(u_.modelView, 1, 0, mv.m);
-          gl::UniformMatrix3fv(u_.normal, 1, 0, nm);
-          gl::Uniform4fv(u_.colorize, 1, e.it->colorize);
+          dev().uniformMatrix4fv(u_.modelView, 1, mv.m);
+          dev().uniformMatrix3fv(u_.normal, 1, nm);
+          dev().uniform4fv(u_.colorize, 1, e.it->colorize);
         }
-        gl::BindVertexArray(e.it->mesh->vao);
+        dev().bindVertexInput(e.it->mesh->vao);
       }
       if (e.program) drawCombined(v, *e.it, *e.p, m, prog, ref);
       else drawPart(v, *e.it, *e.p);
@@ -1140,17 +1058,59 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   };
   run(opaque, -1.0f, true);
   if (!shadowPass) {
-    gl::Enable(gl::BLEND);  // the alpha-test queue blends too: cut-out edges are smoothed (§1.2)
-    gl::BlendFunc(blendSrc = gl::SRC_ALPHA, blendDst = gl::ONE_MINUS_SRC_ALPHA);
+    dev().blend(true);  // the alpha-test queue blends too: cut-out edges are smoothed (§1.2)
+    dev().blendFunc(blendSrc = gpu::Blend::SrcAlpha, blendDst = gpu::Blend::OneMinusSrcAlpha);
   }
   run(tested, 0.2f, true);
   run(blended, 0.001f, shadowPass);
   if (v.particles && !v.particles->sprites.empty()) drawParticles(v, *v.particles);
-  gl::Disable(gl::BLEND);
-  if (blendSrc != gl::SRC_ALPHA || blendDst != gl::ONE_MINUS_SRC_ALPHA) gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-  gl::DepthMask(1);
-  gl::CullFace(gl::BACK);
-  gl::BindVertexArray(0);
+  dev().blend(false);
+  if (blendSrc != gpu::Blend::SrcAlpha || blendDst != gpu::Blend::OneMinusSrcAlpha) dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
+  dev().depthMask(1);
+  dev().cullFace(gpu::Face::Back);
+  dev().bindVertexInput(0);
+}
+
+bool Renderer3D::buildRayScene(const std::vector<DrawItem>& items) {
+  gpu::Device& d = dev();
+  if (!d.rayTracing()) return false;
+  static const GpuMaterial fallbackMaterial;
+  std::vector<gpu::Device::Instance> inst;
+  inst.reserve(items.size());
+  for (const DrawItem& it : items) {
+    if (!it.mesh || !it.mesh->vao || it.layerMaterial >= 0 || it.surfaceClass == kSurfaceOverlay) continue;
+    auto key = std::make_pair(it.mesh->vao, static_cast<const void*>(it.materials));
+    auto found = blas_.find(key);
+    if (found == blas_.end()) {
+      // the parts that cast a ray-traced shadow: what the shadow-map pass would draw except foliage (its cut-outs need
+      // the texture), blended and skinned parts; other alpha-tested materials (most buildings) count as opaque
+      std::vector<gpu::Device::IndexRange> ranges;
+      for (const GpuMesh::Part& p : it.mesh->parts) {
+        const GpuMaterial& m =
+            it.materials && size_t(p.material) < it.materials->size() ? (*it.materials)[size_t(p.material)] : fallbackMaterial;
+        if (m.flags & (kMatNoShadow | kMatDecal | kMatAlphaBlend)) continue;
+        if (m.surfaceClass == kSurfaceOverlay || m.surfaceClass == kSurfaceWater || m.surfaceClass == kSurfaceFoliage ||
+            !p.groups.empty())
+          continue;
+        // hit shading (raytraced reflections): the base texture and the diffuse colour
+        gpu::Device::IndexRange r{p.firstIndex, int(p.indexCount)};
+        if ((m.flags & kMatDiffuseMap) && !m.textures.empty()) r.texture = m.textures[0];
+        auto byte = [](float v) { return uint32_t(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+        r.color = byte(m.diffuse[0]) | byte(m.diffuse[1]) << 8 | byte(m.diffuse[2]) << 16 | 0xFF000000u;
+        ranges.push_back(r);
+      }
+      uint32_t b = ranges.empty() ? 0 : d.createBlas(it.mesh->vbo, int(sizeof(Vtx)), int(it.mesh->vertexCount), it.mesh->ibo, ranges.data(), int(ranges.size()));
+      found = blas_.emplace(key, b).first;
+    }
+    if (!found->second) continue;
+    gpu::Device::Instance k;
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 4; ++c) k.transform[r * 4 + c] = it.world.at(r, c);
+    k.blas = found->second;
+    inst.push_back(k);
+  }
+  d.buildScene(inst.data(), int(inst.size()));
+  return true;
 }
 
 // gsParticleSystem_OGL::startRendering / renderParticle / endRendering (L:0x08218b60, 0x08218ee0, 0x08219720;
@@ -1168,22 +1128,17 @@ void Renderer3D::drawParticles(const SceneView& v, const ParticleDrawList& list)
   };
   const size_t n = list.sprites.size();
   if (!particleMesh_.vao) {
-    gl::GenVertexArrays(1, &particleMesh_.vao);
-    gl::BindVertexArray(particleMesh_.vao);
-    gl::GenBuffers(1, &particleMesh_.vbo);
-    gl::GenBuffers(1, &particleMesh_.ibo);
-    gl::BindBuffer(gl::ARRAY_BUFFER, particleMesh_.vbo);
-    gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, particleMesh_.ibo);
-    auto attr = [](int i, int k, gl::GLenum type, bool norm, size_t off) {
-      gl::EnableVertexAttribArray(gl::GLuint(i));
-      gl::VertexAttribPointer(gl::GLuint(i), k, type, norm, sizeof(PVtx), reinterpret_cast<void*>(off));
-    };
-    attr(0, 3, gl::FLOAT, false, offsetof(PVtx, p));
-    attr(1, 3, gl::FLOAT, false, offsetof(PVtx, n));
-    attr(2, 2, gl::FLOAT, false, offsetof(PVtx, uv));
-    attr(5, 4, gl::UNSIGNED_BYTE, true, offsetof(PVtx, c));
+    particleMesh_.vbo = dev().createBuffer();
+    particleMesh_.ibo = dev().createBuffer();
+    using gpu::AttribType;
+    const gpu::VertexAttrib attrs[4] = {
+        {0, 3, AttribType::Float, particleMesh_.vbo, int(sizeof(PVtx)), offsetof(PVtx, p)},
+        {1, 3, AttribType::Float, particleMesh_.vbo, int(sizeof(PVtx)), offsetof(PVtx, n)},
+        {2, 2, AttribType::Float, particleMesh_.vbo, int(sizeof(PVtx)), offsetof(PVtx, uv)},
+        {5, 4, AttribType::UByteNorm, particleMesh_.vbo, int(sizeof(PVtx)), offsetof(PVtx, c)}};
+    particleMesh_.vao = dev().createVertexInput(attrs, 4, particleMesh_.ibo);
   }
-  gl::BindVertexArray(particleMesh_.vao);
+  dev().bindVertexInput(particleMesh_.vao);
   if (n > particleQuads_) {  // the quad index buffer: (0,1,2) (0,2,3) per quad
     particleQuads_ = std::max(n, particleQuads_ * 2);
     std::vector<uint32_t> idx(particleQuads_ * 6);
@@ -1192,7 +1147,7 @@ void Renderer3D::drawParticles(const SceneView& v, const ParticleDrawList& list)
       uint32_t* o = &idx[q * 6];
       o[0] = b, o[1] = b + 1, o[2] = b + 2, o[3] = b, o[4] = b + 2, o[5] = b + 3;
     }
-    gl::BufferData(gl::ELEMENT_ARRAY_BUFFER, gl::GLsizeiptr(idx.size() * 4), idx.data(), gl::STATIC_DRAW);
+    dev().bufferData(particleMesh_.ibo, idx.size() * 4, idx.data(), false);
   }
   // the pass camera's right and up axes in world space (rows of the view rotation)
   Vec3 R{v.view.at(0, 0), v.view.at(0, 1), v.view.at(0, 2)}, U{v.view.at(1, 0), v.view.at(1, 1), v.view.at(1, 2)};
@@ -1227,24 +1182,23 @@ void Renderer3D::drawParticles(const SceneView& v, const ParticleDrawList& list)
     ++quads;
   }
   if (!quads) {
-    gl::BindVertexArray(0);
+    dev().bindVertexInput(0);
     return;
   }
-  gl::BindBuffer(gl::ARRAY_BUFFER, particleMesh_.vbo);
-  gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(quads * 4 * sizeof(PVtx)), nullptr, gl::STREAM_DRAW);  // orphan
-  gl::BufferSubData(gl::ARRAY_BUFFER, 0, gl::GLsizeiptr(quads * 4 * sizeof(PVtx)), particleVerts_.data());
-  gl::Disable(gl::POLYGON_OFFSET_FILL);
+  dev().bufferData(particleMesh_.vbo, quads * 4 * sizeof(PVtx), nullptr, true);  // orphan
+  dev().bufferSubData(particleMesh_.vbo, 0, quads * 4 * sizeof(PVtx), particleVerts_.data());
+  dev().polygonOffset(false, 0, 0);
   if (shadowPass) {
-    gl::Disable(gl::BLEND);
-    gl::DepthMask(1);
+    dev().blend(false);
+    dev().depthMask(1);
   } else {
-    gl::Enable(gl::BLEND);
-    gl::DepthMask(0);
+    dev().blend(true);
+    dev().depthMask(0);
   }
   float nm[9];
   normalMatrix(v.view, nm);
   Mat4 mvp = v.proj * v.view;
-  gl::Disable(gl::CULL_FACE);  // the system's flag 0x40
+  dev().cull(false);  // the system's flag 0x40
   // the batches of one program differ only in their texture: the pass and material uniforms are set once per program
   // (sorting interleaves the batches, so runs are short and switch programs often)
   std::vector<uint32_t> ready;
@@ -1268,50 +1222,49 @@ void Renderer3D::drawParticles(const SceneView& v, const ParticleDrawList& list)
     }
     if (prog != current) {
       current = prog;
-      gl::UseProgram(prog);
+      dev().useProgram(prog);
       if (std::find(ready.begin(), ready.end(), prog) == ready.end()) {
         ready.push_back(prog);
         setupProgram(v, prog);
         const ProgramLocs& l = locs(prog);
-        gl::UniformMatrix4fv(l.mv, 1, 0, v.view.m);
-        gl::UniformMatrix4fv(l.mvp, 1, 0, mvp.m);
-        gl::UniformMatrix3fv(l.nm, 1, 0, nm);
+        dev().uniformMatrix4fv(l.mv, 1, v.view.m);
+        dev().uniformMatrix4fv(l.mvp, 1, mvp.m);
+        dev().uniformMatrix3fv(l.nm, 1, nm);
         const GpuMaterial& m = *pb.material;
-        gl::Uniform1f(l.alphaRef, shadowPass ? 0.2f : 0.001f);
-        gl::Uniform4fv(l.matEmission, 1, m.emission);
-        gl::Uniform4fv(l.matAmbient, 1, m.ambient);
-        gl::Uniform4fv(l.matDiffuse, 1, m.diffuse);
-        gl::Uniform4fv(l.matSpecular, 1, m.specular);
+        dev().uniform1f(l.alphaRef, shadowPass ? 0.2f : 0.001f);
+        dev().uniform4fv(l.matEmission, 1, m.emission);
+        dev().uniform4fv(l.matAmbient, 1, m.ambient);
+        dev().uniform4fv(l.matDiffuse, 1, m.diffuse);
+        dev().uniform4fv(l.matSpecular, 1, m.specular);
         int nl = int(std::min<size_t>(v.lights.size(), 8));
         for (int i = 0; i < nl; ++i) {  // gl_FrontLightProduct
           const Light& li = v.lights[size_t(i)];
           float pa[4], pd[4];
           for (int k = 0; k < 4; ++k) pa[k] = li.ambient[k] * m.ambient[k], pd[k] = li.diffuse[k] * m.diffuse[k];
-          gl::Uniform4fv(l.productAmbient[i], 1, pa);
-          gl::Uniform4fv(l.productDiffuse[i], 1, pd);
+          dev().uniform4fv(l.productAmbient[i], 1, pa);
+          dev().uniform4fv(l.productDiffuse[i], 1, pd);
         }
         static const Mat4 identity;
-        gl::UniformMatrix4fv(l.matrix, 1, 0, identity.m);
+        dev().uniformMatrix4fv(l.matrix, 1, identity.m);
       }
     }
     if (!shadowPass && pb.blend != blend) {
       blend = pb.blend;
-      if (blend & 0x80) gl::BlendFunc(gl::ONE, gl::ONE);
-      else if (blend & 0x100) gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
-      else gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+      if (blend & 0x80) dev().blendFunc(gpu::Blend::One, gpu::Blend::One);
+      else if (blend & 0x100) dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::One);
+      else dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
     }
     uint32_t tex = pb.material->textures.empty() ? 0 : pb.material->textures[0];
     if (tex != texture) {
       texture = tex;
-      gl::ActiveTexture(gl::TEXTURE0);
-      gl::BindTexture(gl::TEXTURE_2D, tex);
+      dev().bindTexture(0, tex);
     }
-    gl::DrawElements(gl::TRIANGLES, gl::GLsizei(count * 6), gl::UNSIGNED_INT, reinterpret_cast<void*>(q * 6 * 4));
+    dev().drawElements(gpu::Prim::Triangles, int(count * 6), q * 6);
     q += count;
   }
-  gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-  gl::DepthMask(1);
-  gl::BindVertexArray(0);
+  dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
+  dev().depthMask(1);
+  dev().bindVertexInput(0);
 }
 
 }  // namespace regs::render

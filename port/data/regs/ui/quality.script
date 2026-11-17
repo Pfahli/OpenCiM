@@ -1,0 +1,224 @@
+// ReGS Image quality page (graphics page > Image quality button; opened by the main.script extension, regsOpenQualityPage):
+// the port's image options beyond the original graphics page (docs/renderer/vulkan.md §9). The engine reads them every
+// frame (engine/temporal.cpp), so they apply as soon as OK stores them.
+//   $settings.$regsTaa           0 off, 1 temporal antialiasing
+//   $settings.$regsRenderScale   50 .. 100 (%, slider in 1 % steps): the 3D view's render size; below 100 % it is
+//                                upscaled, temporally with TAA, else with the spatial upscaler
+//   $settings.$regsUpscaler      0 the port's TAA / upscaler, 1 AMD FSR 3.1 (drop-down list; Vulkan; replaces TAA,
+//                                also at 100 %)
+//   $settings.$regsFrameGen      0 off, 1 FSR 3 frame generation (Vulkan, with the FSR upscaler)
+//   $settings.$regsHdr           0 off, 1 HDR output (Vulkan with Windows HDR on; engine/hdr.cpp)
+//   $settings.$regsHdrPaperWhite 80 .. 400 nits (slider, 10-nit steps): menus and the game's normal white
+//   $settings.$regsHdrPeak       400 .. 4000 nits (slider, 50-nit steps): the display's maximum, highlights roll off
+//                                into it
+//   $settings.$regsRtShadows     0 off, 1 raytraced sun shadows (Vulkan on a GPU with ray queries, shadows on)
+//   $settings.$regsRtAo          0 off, 1 raytraced ambient occlusion (Vulkan on a GPU with ray queries)
+//   $settings.$regsRtReflections 0 off, 1 raytraced reflections on water and glass (Vulkan, ray queries, bindless)
+// OK stores and exports the settings, Cancel drops the changes; both close the page.
+$desktop = MAIN.$desktop;
+$settings = MAIN.$settings;
+
+$file = "regs/strings/" + MAIN.$language + ".strings";
+if (!file_exists($file)) $file = "regs/strings/en_US.strings";
+$regs = load "/" + $file;
+
+$boxH = $desktop.height - 20 < 800 ? $desktop.height - 20 : 800;
+$box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - $boxH) * 0.5), 1000, $boxH, 1 | 2 | 4 | 8, $desktop);
+$title = MAIN.$ui.createHeadingBar($box, $regs.$regs_quality_title);
+$c = $box.$content;
+
+$taa = int($settings.$regsTaa : 0);
+$renderScale = int($settings.$regsRenderScale : 100);
+$upscaler = int($settings.$regsUpscaler : 0);
+$frameGen = int($settings.$regsFrameGen : 0);
+$hdr = int($settings.$regsHdr : 0);
+$hdrPaper = int($settings.$regsHdrPaperWhite : 200);
+$hdrPeak = int($settings.$regsHdrPeak : 1000);
+$rtShadows = int($settings.$regsRtShadows : 0);
+$rtAo = int($settings.$regsRtAo : 0);
+$rtReflections = int($settings.$regsRtReflections : 0);
+
+function label($x, $y, $w, $text, $title) {
+  with ($l = new_control($c)) {
+    .setRect($x, $y, $w, 18);
+    if ($title) MAIN.$ui.setTitleFont(current);
+    else MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  return $l;
+}
+
+// a row of radio buttons: the values, their texts, the one shown as chosen
+function radioRow($group, $y, $values, $texts, $chosen) {
+  for ($i = 0; $i < #$values; ++$i) {
+    $x = 300 + $i * 120;
+    $b = MAIN.$ui.createChoiceButton($c, $group, $x, $y + 1, 16, 16, "", macro($group, $values[$i]) :: pick($0, $1), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+    label($x + 22, $y, 96, $texts[$i], false);
+    if ($values[$i] == $chosen) MAIN.$ui.selectChoiceButton($b, $group);
+  }
+}
+
+// a drop-down list (the game's createDropList in the look of its dark fields, with its small arrow): the values,
+// their texts, the one shown as chosen
+function dropDown($group, $x, $y, $w, $values, $texts, $chosen) {
+  // the field: a dark panel under the list's button (the button's own background is its hover highlight)
+  with ($field = new_control($c)) {
+    .setRect($x, $y - 3, $w, 24);
+    .background = 0xFF0E0B09;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($d = MAIN.$ui.createDropList($c, $x, $y - 3, $w, 24)) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .$list.background = 0xFF1A1512;
+  }
+  with ($arrow = new_control($d)) {
+    .setRect($w - 21, 4, 16, 16);
+    .setImage("/metro/ui/down-small.dds");
+    .visible = true;
+    .canActivate = false;
+  }
+  for ($i = 0; $i < #$values; ++$i) {
+    with ($item = MAIN.$ui.addDropListItem($d, "  " + $texts[$i], macro($group, $values[$i]) :: pick($0, $1))) {
+      .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    }
+    if ($values[$i] == $chosen) MAIN.$ui.selectDropListItem($item);
+  }
+  return $d;
+}
+
+// a slider from $min to $max; its value (rounded by the caller's action) is shown right of it with $format's %0
+function slider($y, $min, $max, $value, $format, $shown) {
+  $s = MAIN.$ui.createSlider($c, $value, $min, $max, 300, $y - 5, 210, 27);
+  with (label(525, $y, 160, $format, false)) {
+    .setArg(0, $shown);
+  }
+  return $s;
+}
+
+function pick($group, $v) {
+  if ($group == "regsTaa") $taa = $v;
+  else if ($group == "regsUpscaler") $upscaler = $v;
+  else if ($group == "regsFrameGen") $frameGen = $v;
+  else if ($group == "regsHdr") $hdr = $v;
+  else if ($group == "regsRtShadows") $rtShadows = $v;
+  else if ($group == "regsRtAo") $rtAo = $v;
+  else if ($group == "regsRtReflections") $rtReflections = $v;
+}
+
+function note($y, $text) {
+  with (label(40, $y, $c.width - 80, $text, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
+}
+
+$y = 50;
+label(40, $y, 600, $regs.$regs_quality_aa_heading, true);
+$y += 34;
+label(40, $y, 250, $regs.$regs_taa_label, false);
+radioRow("regsTaa", $y, [0, 1], $regs.$regs_taa_values, $taa);
+$y += 24;
+note($y, $regs.$regs_taa_note);
+$y += 36;
+label(40, $y, 600, $regs.$regs_quality_scale_heading, true);
+$y += 34;
+label(40, $y, 250, $regs.$regs_renderScale_label, false);
+$renderScale = $renderScale < 50 ? 50 : ($renderScale > 100 ? 100 : $renderScale);
+$scaleSlider = slider($y, 50.0, 100.0, $renderScale, $regs.$regs_percent_value, macro :: $renderScale);
+$scaleSlider.$action = macro :: setRenderScale();
+function setRenderScale() {
+  $renderScale = int($scaleSlider.$value + 0.5);
+}
+$y += 28;
+note($y, $regs.$regs_renderScale_note1);
+$y += 22;
+note($y, $regs.$regs_renderScale_note2);
+$y += 34;
+label(40, $y, 250, $regs.$regs_upscaler_label, false);
+$upscalerList = dropDown("regsUpscaler", 300, $y, 210, [0, 1], $regs.$regs_upscaler_values, $upscaler);
+$y += 30;
+label(40, $y, 250, $regs.$regs_frameGen_label, false);
+radioRow("regsFrameGen", $y, [0, 1], $regs.$regs_taa_values, $frameGen);
+$y += 28;
+note($y, $regs.$regs_upscaler_note);
+$y += 36;
+label(40, $y, 600, $regs.$regs_quality_rt_heading, true);
+$y += 34;
+label(40, $y, 250, $regs.$regs_rtShadows_label, false);
+radioRow("regsRtShadows", $y, [0, 1], $regs.$regs_taa_values, $rtShadows);
+$y += 30;
+label(40, $y, 250, $regs.$regs_rtAo_label, false);
+radioRow("regsRtAo", $y, [0, 1], $regs.$regs_taa_values, $rtAo);
+$y += 30;
+label(40, $y, 250, $regs.$regs_rtReflections_label, false);
+radioRow("regsRtReflections", $y, [0, 1], $regs.$regs_taa_values, $rtReflections);
+$y += 24;
+note($y, $regs.$regs_rtShadows_note1);
+$y += 22;
+note($y, $regs.$regs_rtShadows_note2);
+$y += 36;
+label(40, $y, 600, $regs.$regs_hdr_heading, true);
+$y += 34;
+label(40, $y, 250, $regs.$regs_hdr_label, false);
+radioRow("regsHdr", $y, [0, 1], $regs.$regs_taa_values, $hdr);
+$y += 30;
+label(40, $y, 250, $regs.$regs_hdrPaper_label, false);
+$paperSlider = slider($y, 80.0, 400.0, $hdrPaper, $regs.$regs_nits_value, macro :: $hdrPaper);
+$paperSlider.$action = macro :: setPaperWhite();
+function setPaperWhite() {
+  $hdrPaper = int($paperSlider.$value / 10.0 + 0.5) * 10;
+}
+$y += 34;
+label(40, $y, 250, $regs.$regs_hdrPeak_label, false);
+$peakSlider = slider($y, 400.0, 4000.0, $hdrPeak, $regs.$regs_nits_value, macro :: $hdrPeak);
+$peakSlider.$action = macro :: setPeak();
+function setPeak() {
+  $hdrPeak = int($peakSlider.$value / 50.0 + 0.5) * 50;
+}
+$y += 28;
+note($y, $regs.$regs_hdr_note);
+
+function pageButton($text, $action) {
+  with ($b = MAIN.$ui.createButton($c, 4, 0, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+    .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+    .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  }
+  MAIN.$ui.setTitleFont($b);
+  return $b;
+}
+with ($okButton = pageButton(MAIN.$strings.$menu_ok_button, macro :: save())) {
+  .setRect(40, $c.height - .height - 20, .width, .height);
+}
+with ($backButton = pageButton(MAIN.$strings.$menu_cancel_button, macro :: MAIN.$main.regsCloseQualityPage())) {
+  .setRect($c.width - .width - 40, $c.height - .height - 20, .width, .height);
+}
+
+function save() {
+  $settings.setVariable("regsTaa", $taa);
+  $settings.setVariable("regsRenderScale", $renderScale);
+  $settings.setVariable("regsRtShadows", $rtShadows);
+  $settings.exportVariables("regsRtShadows");
+  $settings.setVariable("regsRtAo", $rtAo);
+  $settings.exportVariables("regsRtAo");
+  $settings.setVariable("regsRtReflections", $rtReflections);
+  $settings.exportVariables("regsRtReflections");
+  $settings.exportVariables("regsTaa");
+  $settings.exportVariables("regsRenderScale");
+  $settings.setVariable("regsUpscaler", $upscaler);
+  $settings.exportVariables("regsUpscaler");
+  $settings.setVariable("regsFrameGen", $frameGen);
+  $settings.exportVariables("regsFrameGen");
+  $settings.setVariable("regsHdr", $hdr);
+  $settings.exportVariables("regsHdr");
+  $settings.setVariable("regsHdrPaperWhite", $hdrPaper);
+  $settings.exportVariables("regsHdrPaperWhite");
+  $settings.setVariable("regsHdrPeak", $hdrPeak);
+  $settings.exportVariables("regsHdrPeak");
+  MAIN.$main.regsCloseQualityPage();
+}
+
+event this.onDestroy::() {
+  delete $regs;
+  delete $box;
+}

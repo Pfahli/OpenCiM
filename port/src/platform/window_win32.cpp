@@ -60,7 +60,7 @@ class Win32Window final : public Window {
     // a throwaway window and legacy context give access to the WGL extension entry points
     CreateContextAttribs createAttribs = nullptr;
     ChoosePixelFormat choose = nullptr;
-    {
+    if (desc.openGL) {
       HWND tmp = CreateWindowExW(0, kClass, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, inst, nullptr);
       HDC tdc = GetDC(tmp);
       PIXELFORMATDESCRIPTOR pfd = legacyFormat();
@@ -74,7 +74,7 @@ class Win32Window final : public Window {
       ReleaseDC(tmp, tdc);
       DestroyWindow(tmp);
     }
-    if (!createAttribs) {
+    if (desc.openGL && !createAttribs) {
       if (error) *error = "the graphics driver does not offer OpenGL 3.3 (wglCreateContextAttribsARB missing)";
       return false;
     }
@@ -107,6 +107,15 @@ class Win32Window final : public Window {
     if (!hwnd_) {
       if (error) *error = "CreateWindowEx failed";
       return false;
+    }
+    if (!desc.openGL) {  // a bare window for a Vulkan surface
+      if (desc.visible) ShowWindow(hwnd_, SW_SHOW);
+      UpdateWindow(hwnd_);
+      RECT cr;
+      GetClientRect(hwnd_, &cr);
+      width_ = cr.right;
+      height_ = cr.bottom;
+      return true;
     }
     dc_ = GetDC(hwnd_);
     int format = 0;
@@ -176,7 +185,9 @@ class Win32Window final : public Window {
     queued_.clear();
   }
 
-  void swap() override { SwapBuffers(dc_); }
+  void swap() override {
+    if (dc_) SwapBuffers(dc_);
+  }
   void setTitle(const std::u16string& t) override { SetWindowTextW(hwnd_, reinterpret_cast<const wchar_t*>(t.c_str())); }
   void setVsync(bool on) override {
     if (swapInterval_) swapInterval_(on ? 1 : 0);
@@ -224,6 +235,8 @@ class Win32Window final : public Window {
     DPI_AWARENESS a = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hwnd_));
     return a == DPI_AWARENESS_PER_MONITOR_AWARE ? int(GetDpiForWindow(hwnd_)) : 0;
   }
+  void* nativeWindow() const override { return hwnd_; }
+  void* nativeInstance() const override { return GetModuleHandleW(nullptr); }
   void* glProc(const char* name) const override {
     void* p = reinterpret_cast<void*>(wglGetProcAddress(name));
     auto bad = reinterpret_cast<intptr_t>(p);

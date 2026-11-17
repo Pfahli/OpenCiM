@@ -26,7 +26,7 @@
 #include "engine/night_lights.h"
 #include "engine/shaders.h"
 #include "platform/window.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "render/image.h"
 #include "render/mesh.h"
 #include "render/renderer3d.h"
@@ -256,16 +256,22 @@ int cmdShaders(int argc, char** argv) {
   platform::WindowDesc desc;
   desc.width = desc.height = 64;
   desc.visible = false;
+  // REGS_RENDERER=vulkan: the variants go through the Vulkan device (glslang to SPIR-V and pipeline layouts)
+  const char* renderer = std::getenv("REGS_RENDERER");
+  const bool vulkan = renderer && std::string(renderer) == "vulkan";
+  desc.openGL = !vulkan;
   std::string err;
   if (!win->create(desc, &err)) {
-    std::fprintf(stderr, "no OpenGL context: %s\n", err.c_str());
+    std::fprintf(stderr, "no window: %s\n", err.c_str());
     return 1;
   }
-  auto proc = [](const char* n, void* u) { return static_cast<platform::Window*>(u)->glProc(n); };
-  if (const char* missing = gl::load(proc, win.get())) {
-    std::fprintf(stderr, "missing %s\n", missing);
+  auto device = vulkan ? render::gpu::createVulkanDevice(*win, false, &err) : render::gpu::createGlDevice(*win, &err);
+  if (device) std::printf("device: %s\n", device->info().c_str());
+  if (!device) {
+    std::fprintf(stderr, "%s\n", err.c_str());
     return 1;
   }
+  render::gpu::setDevice(std::move(device));
   render::Renderer3D r3d;
   if (!r3d.init(&err)) {
     std::fprintf(stderr, "renderer: %s\n", err.c_str());

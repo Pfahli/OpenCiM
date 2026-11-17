@@ -5,7 +5,7 @@
 #include <cmath>
 
 #include "core/log.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 
 namespace regs::engine {
 
@@ -133,27 +133,21 @@ void uploadTop(SurfaceMap& m) {
       }
     return rect;
   };
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 2);
+  using namespace render::gpu;
   if (!m.topTexture) {
-    gl::GenTextures(1, &m.topTexture);
-    gl::BindTexture(gl::TEXTURE_2D, m.topTexture);
+    m.topTexture = dev().createTexture(TexKind::Tex2D, 1);
     // linear: regs_shelterDepth's quick "anything overhead nearby?" test and the trodden map; the exact reads use
     // texelFetch
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
+    SamplerDesc s;
+    s.wrapS = s.wrapT = Wrap::ClampToEdge;
+    dev().setSampler(m.topTexture, s);
     std::vector<uint16_t> all = pack(0, 0, m.topW, m.topH);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, 0x822C /* GL_RG16 */, m.topW, m.topH, 0, 0x8227 /* GL_RG */,
-                   0x1403 /* GL_UNSIGNED_SHORT */, all.data());
+    dev().texImage(m.topTexture, 0, 0, Format::RG16, m.topW, m.topH, Pixels::RG16, all.data());
   } else {
     int w = m.topX1 - m.topX0 + 1, h = m.topZ1 - m.topZ0 + 1;
     std::vector<uint16_t> rect = pack(m.topX0, m.topZ0, w, h);
-    gl::BindTexture(gl::TEXTURE_2D, m.topTexture);
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, m.topX0, m.topZ0, w, h, 0x8227 /* GL_RG */, 0x1403, rect.data());
+    dev().texSubImage(m.topTexture, 0, m.topX0, m.topZ0, w, h, Pixels::RG16, rect.data());
   }
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-  gl::BindTexture(gl::TEXTURE_2D, 0);
   m.topX0 = 0, m.topZ0 = 0, m.topX1 = -1, m.topZ1 = -1;
 }
 
@@ -186,26 +180,19 @@ void surfaceMapUpload(SurfaceMap& m) {
       }
     return rect;
   };
+  using namespace render::gpu;
   if (!m.texture) {
-    gl::GenTextures(1, &m.texture);
-    gl::BindTexture(gl::TEXTURE_2D, m.texture);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
-    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+    m.texture = dev().createTexture(TexKind::Tex2D, 1);
+    SamplerDesc s;
+    s.wrapS = s.wrapT = Wrap::ClampToEdge;
+    dev().setSampler(m.texture, s);
     std::vector<uint8_t> all = rg(0, 0, m.w, m.h);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, 0x822B /* GL_RG8 */, m.w, m.h, 0, 0x8227 /* GL_RG */, gl::UNSIGNED_BYTE, all.data());
-    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+    dev().texImage(m.texture, 0, 0, Format::RG8, m.w, m.h, Pixels::RG8, all.data());
   } else {
     int w = m.dirtyX1 - m.dirtyX0 + 1, h = m.dirtyZ1 - m.dirtyZ0 + 1;
     std::vector<uint8_t> rect = rg(m.dirtyX0, m.dirtyZ0, w, h);
-    gl::BindTexture(gl::TEXTURE_2D, m.texture);
-    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, m.dirtyX0, m.dirtyZ0, w, h, 0x8227 /* GL_RG */, gl::UNSIGNED_BYTE, rect.data());
-    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+    dev().texSubImage(m.texture, 0, m.dirtyX0, m.dirtyZ0, w, h, Pixels::RG8, rect.data());
   }
-  gl::BindTexture(gl::TEXTURE_2D, 0);
   m.dirtyX0 = 0, m.dirtyZ0 = 0, m.dirtyX1 = -1, m.dirtyZ1 = -1;
 }
 

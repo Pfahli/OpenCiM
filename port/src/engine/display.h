@@ -21,7 +21,8 @@ class TextureObj;
 // window.init(), unless the host runs headless.
 class Display {
  public:
-  bool open(const platform::WindowDesc& desc, std::string* error);
+  // the window and its graphics device: Vulkan when asked and available, else OpenGL 3.3
+  bool open(const platform::WindowDesc& desc, bool vulkan, std::string* error);
   platform::Window& window() { return *window_; }
   render::Renderer2D& r2d() { return r2d_; }
   render::Renderer3D& r3d() { return r3d_; }
@@ -92,6 +93,7 @@ class Display {
     std::u16string text;
   };
   void drawFpsReadout(script::VM& vm);
+  void benchFrame(double renderCpuMs);  // REGS_BENCH frame-time measurement (display.cpp)
   void syncRenderSettings(script::VM& vm);  // antialiasing, anisotropy and vsync follow the settings (live)
   bool vsync_ = false, vsyncKnown_ = false;
   struct UpscaleJob;  // display.cpp

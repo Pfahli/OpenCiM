@@ -18,6 +18,8 @@
 #include "engine/effects.h"
 #include "engine/font.h"
 #include "engine/gui.h"
+#include "engine/hdr.h"
+#include "engine/temporal.h"
 #include "engine/host.h"
 #include "engine/input.h"
 #include "engine/interaction.h"
@@ -26,7 +28,7 @@
 #include "engine/settings.h"
 #include "engine/texture_upscale.h"
 #include "engine/ui_graphs.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "render/glsl.h"
 #include "render/image.h"
 #include "vfs/vfs.h"
@@ -141,13 +143,28 @@ void WindowObj::tick(VM& vm, float dt) {
   if (Display* d = display(); d && d->windowObject() == this) d->renderFrame(vm, this, fieldValues[u"video"].object());
 }
 
-bool Display::open(const platform::WindowDesc& desc, std::string* error) {
-  window_ = platform::createWindow();
-  if (!window_->create(desc, error)) return false;
-  auto proc = [](const char* n, void* u) { return static_cast<platform::Window*>(u)->glProc(n); };
-  if (const char* missing = gl::load(proc, window_.get())) {
-    if (error) *error = std::string("OpenGL function missing: ") + missing;
-    return false;
+bool Display::open(const platform::WindowDesc& desc, bool vulkan, std::string* error) {
+  // Vulkan first when chosen; any failure there opens OpenGL in a new window (docs/renderer/vulkan.md §7)
+  if (vulkan) {
+    platform::WindowDesc vd = desc;
+    vd.openGL = false;
+    window_ = platform::createWindow();
+    std::string why;
+    std::unique_ptr<render::gpu::Device> device;
+    if (window_->create(vd, &why)) device = render::gpu::createVulkanDevice(*window_, desc.vsync, &why);
+    if (device) {
+      render::gpu::setDevice(std::move(device));
+    } else {
+      LOG_WARN("display: Vulkan is not available (%s), using OpenGL 3.3", why.c_str());
+      window_.reset();
+    }
+  }
+  if (!window_) {
+    window_ = platform::createWindow();
+    if (!window_->create(desc, error)) return false;
+    auto device = render::gpu::createGlDevice(*window_, error);
+    if (!device) return false;
+    render::gpu::setDevice(std::move(device));
   }
   if (!r2d_.init(error) || !r3d_.init(error)) return false;
   LOG_INFO("display: %dx%d, %s", window_->width(), window_->height(), r2d_.info.c_str());
@@ -632,12 +649,60 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     std::vector<uint8_t> px = r2d_.readPixels();
     fn(px, r2d_.frameWidth(), r2d_.frameHeight());
   }
+  std::filesystem::path pqShot;
   if (!shot_.empty()) {
     if (saveScreenshot(shot_)) LOG_INFO("screenshot: %s", shot_.string().c_str());
     else LOG_ERROR("screenshot failed: %s", shot_.string().c_str());
+    // REGS_HDR_DUMP=1 (a check): in HDR, the encoded frame too (PQ code values as an image, <shot>-pq.png)
+    static const bool pqDump = std::getenv("REGS_HDR_DUMP") != nullptr;
+    if (pqDump && render::gpu::dev().hdrActive()) pqShot = shot_.parent_path() / (shot_.stem().string() + "-pq.png");
     shot_.clear();
   }
-  window_->swap();
+  hdrEncode(*this, vm, w, h);  // after the screenshot, which stays SDR
+  temporalFrameGenSubmit(*this, vm, w, h);  // FSR 3 frame generation: this frame's HUD-less view to the device
+  if (!pqShot.empty() && saveScreenshot(pqShot)) LOG_INFO("screenshot: %s", pqShot.string().c_str());
+  const auto beforePresent = std::chrono::steady_clock::now();
+  render::gpu::dev().present();
+  benchFrame(std::chrono::duration<double, std::milli>(beforePresent - frameStart).count());
+}
+
+// REGS_BENCH=<first frame>:<frames> (docs/renderer/vulkan.md §10): from the first frame on, the interval between two
+// presents (the whole game frame: simulation, scripts, rendering and waiting for the GPU) and the CPU time of the
+// render call before the present, then one summary line in the log. Run with vsync and the frame limit off.
+void Display::benchFrame(double renderCpuMs) {
+  static const char* spec = std::getenv("REGS_BENCH");
+  if (!spec) return;
+  static int first = 0, count = 0, frame = 0;
+  static bool parsed = false, done = false;
+  static std::vector<double> intervals, cpu, gpu;
+  static std::chrono::steady_clock::time_point last;
+  if (!parsed) {
+    parsed = true;
+    if (std::sscanf(spec, "%d:%d", &first, &count) != 2 || count <= 0) done = true;
+  }
+  auto now = std::chrono::steady_clock::now();
+  ++frame;
+  if (!done && frame > first) {
+    intervals.push_back(std::chrono::duration<double, std::milli>(now - last).count());
+    cpu.push_back(renderCpuMs);
+    if (double g = render::gpu::dev().gpuFrameMs(); g >= 0) gpu.push_back(g);
+    if (int(intervals.size()) >= count) {
+      done = true;
+      std::vector<double> s = intervals;
+      std::sort(s.begin(), s.end());
+      double sum = 0, cpuSum = 0;
+      for (double v : intervals) sum += v;
+      for (double v : cpu) cpuSum += v;
+      auto pct = [&](double p) { return s[std::min(s.size() - 1, size_t(p * double(s.size())))]; };
+      std::sort(gpu.begin(), gpu.end());
+      double gpuMedian = gpu.empty() ? -1 : gpu[gpu.size() / 2];
+      double gpuP95 = gpu.empty() ? -1 : gpu[std::min(gpu.size() - 1, size_t(0.95 * double(gpu.size())))];
+      LOG_INFO("bench: %s, %dx%d, %d frames: %.1f fps average, frame ms median %.2f, p95 %.2f, p99 %.2f, max %.2f; render cpu ms %.2f; gpu ms median %.2f, p95 %.2f",
+               render::gpu::dev().name(), r2d_.frameWidth(), r2d_.frameHeight(), count, 1000.0 * double(s.size()) / sum,
+               pct(0.5), pct(0.95), pct(0.99), s.back(), cpuSum / double(cpu.size()), gpuMedian, gpuP95);
+    }
+  }
+  last = now;
 }
 
 void Display::syncRenderSettings(VM& vm) {
@@ -654,11 +719,12 @@ void Display::syncRenderSettings(VM& vm) {
     bool vs = vm.truthy(field(vm, windowObj_.get(), u"vsync"));
     if (vs != vsync_) {
       if (vsyncKnown_) LOG_INFO("vsync: %s", vs ? "on" : "off");
-      window_->setVsync(vs);
+      render::gpu::dev().setVsync(vs);
       vsync_ = vs;
       vsyncKnown_ = true;
     }
   }
+  hdrSync(*this, vm);  // HDR output (engine/hdr.h): the device switches before the frame's back buffer begins
   float aniso = settingNumber(vm, u"anisotropy", r2d_.anisotropy);
   if (aniso != r2d_.anisotropy) {
     LOG_INFO("anisotropic filtering: %.0f -> %.0f", double(r2d_.anisotropy), double(aniso));
@@ -797,10 +863,7 @@ bool Display::saveScreenshot(const std::filesystem::path& file) {
 void Display::dumpTarget(const render::RenderTarget& rt, const std::filesystem::path& file) {
   // debugging aid (REGS_DUMP_TARGET=<file.png>): the target's pixels as stored (bottom row first)
   std::vector<uint8_t> px(size_t(rt.width) * size_t(rt.height) * 4);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, rt.fbo);
-  gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
-  gl::ReadPixels(0, 0, rt.width, rt.height, gl::RGBA, gl::UNSIGNED_BYTE, px.data());
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  render::gpu::dev().readPixels(rt.fbo, 0, 0, rt.width, rt.height, px.data());
   std::ofstream f(file, std::ios::binary);
   if (f) writePng(f, px.data(), rt.width, rt.height);
 }
@@ -858,9 +921,10 @@ void registerDisplayNatives(VM& vm) {
       desc.fullscreen = false;
     }
     desc.vsync = v.truthy(field(v, s, u"vsync"));
-    // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, the only one so far; others are planned
-    if (int engine = int(settingNumber(v, u"regsRenderer", 0)); engine != 0)
-      LOG_WARN("graphics engine %d is not available yet, using OpenGL 3.3", engine);
+    // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, 1 = Vulkan (falls back to OpenGL when it cannot start);
+    // REGS_RENDERER=gl|vulkan overrides the setting (test runs)
+    int engine = int(settingNumber(v, u"regsRenderer", 0));
+    if (const char* r = std::getenv("REGS_RENDERER")) engine = std::string(r) == "vulkan" ? 1 : 0;
     // the engine put MSAA into the window's pixel format without post-processing (and into the effect buffers with
     // it). Port: never into the pixel format, which cannot change once set; views without effects draw into a
     // multisampled target (msaaTarget), so the antialiasing setting applies while the game runs
@@ -868,7 +932,7 @@ void registerDisplayNatives(VM& vm) {
     auto d = std::make_unique<Display>();
     d->antialiasing = std::max(0, v.toInt(field(v, s, u"antialiasing")));
     std::string err;
-    if (!d->open(desc, &err)) {
+    if (!d->open(desc, engine == 1, &err)) {
       LOG_ERROR("cannot open the game window: %s", err.c_str());
       host().quit = true;
       return Value();

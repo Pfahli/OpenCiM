@@ -129,7 +129,10 @@ enum : GLenum {
   X(void, RenderbufferStorage, GLenum, GLenum, GLsizei, GLsizei)                                            \
   X(void, FramebufferRenderbuffer, GLenum, GLenum, GLenum, GLuint)                                          \
   X(GLenum, CheckFramebufferStatus, GLenum)                                                                 \
-  X(void, DeleteVertexArrays, GLsizei, const GLuint*)
+  X(void, DeleteVertexArrays, GLsizei, const GLuint*)                                                       \
+  X(void, GenQueries, GLsizei, GLuint*)                                                                     \
+  X(void, QueryCounter, GLuint, GLenum)                                                                     \
+  X(void, GetQueryObjectui64v, GLuint, GLenum, unsigned long long*)
 
 #define REGS_GL_DECLARE(ret, name, ...) using PFN_##name = ret(REGS_GLAPI*)(__VA_ARGS__); extern PFN_##name name;
 REGS_GL_FUNCS(REGS_GL_DECLARE)

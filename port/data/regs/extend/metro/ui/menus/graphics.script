@@ -1,7 +1,8 @@
 // ReGS extension of the game's graphics page (metro/ui/menus/graphics.script, used as installed). The part before
 // //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds
 // presets, the port's options (stored as regs* settings, or fpsLimit, which the game reads but never offered here),
-// more steps for shadows and antialiasing, the style effects, the graphics engine choice and the frame-rate readout.
+// more steps for shadows and antialiasing, the style effects, the graphics engine choice, the frame-rate readout and
+// the "Image quality" button between OK and Cancel (regs/ui/quality.script).
 // New options: a row in the middle column, a column in $regsPresets if it is a quality option, and a line in save().
 //@rename save regsBaseSave
 
@@ -165,19 +166,15 @@ function regsSetLensBlur() {
   $lensBlur = int($lensBlurSlider.$value);
 }
 
-// ---- graphics engine (left column): OpenGL 3.3 now; the others are listed until they exist ----
+// ---- graphics engine (left column): OpenGL 3.3 or Vulkan, chosen when the game starts (Display::open; Vulkan falls
+// back to OpenGL when it cannot start) ----
 
 regsLabel(60, 450, $regs.$regs_renderer_item);
 $regsRendererButtons = [];
 for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
-  with ($regsRendererButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsRenderer", 170 + $i * 78, 450, 76, 18, $regs.$regs_renderer_values[$i], macro($i) :: regsSetRenderer($0))) {
-    if ($i > 0) {
-      .enabled = false;   // planned
-      .visibility = 0.35;
-    }
-  }
+  $regsRendererButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsRenderer", 170 + $i * 78, 450, 76, 18, $regs.$regs_renderer_values[$i], macro($i) :: regsSetRenderer($0));
+  MAIN.$ui.setTooltip($regsRendererButtons[$i], $regs.$regs_renderer_hint, 0, -1);
 }
-MAIN.$ui.setTooltip($regsRendererButtons[1], $regs.$regs_renderer_planned, 0, -1);
 
 // ---- UI scale (left column, under the graphics engine): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
 // window opens or changes (Display::chooseUiScale, docs/ui/scaling.md). Unset: 2x on windows taller than 1800 px,
@@ -240,11 +237,10 @@ function regsSetTextureUpscale($value) {
 regsSetTextureUpscale($textureUpscale);
 
 function regsSetRenderer($index) {
-  if ($index > 0) return;
   $renderer = $index;
   MAIN.$ui.selectChoiceButton($regsRendererButtons[$renderer], "regsRenderer");
 }
-regsSetRenderer(0);
+regsSetRenderer($renderer < #$regsRendererButtons ? $renderer : 0);
 
 function regsCurrentPreset() {
   for ($i = 0; $i < #$regsPresets; ++$i) {
@@ -313,4 +309,12 @@ function save() {
   if ($regsNewScale || $regsOldDisplay[0] != $fullscreen || $regsOldDisplay[1] != $screenwidth || $regsOldDisplay[2] != $screenheight) {
     if (MAIN.$window.regsApplyDisplay($fullscreen, $screenwidth, $screenheight, true) == 2) MAIN.$main.regsRelayoutMenus();
   }
+}
+
+// ---- "Image quality" between OK and Cancel: the port's image options page (regs/ui/quality.script), over this one ----
+with ($regsQualityButton = MAIN.$ui.createButton($box.$content, 0, 0, 250, 32, $regs.$regs_quality_button, macro :: MAIN.$main.regsOpenQualityPage($box), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+  .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+  .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  MAIN.$ui.setTitleFont(current);
+  .setRect(int(($box.$content.width - .width) * 0.5), $box.$content.height - .height - 20, .width, .height);
 }

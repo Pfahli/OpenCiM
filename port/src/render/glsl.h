@@ -12,7 +12,16 @@ namespace regs::render {
 // the matrices, gl_FrontMaterial, gl_LightSource[], gl_FrontLightProduct[], gl_LightModel, gl_Fog) → regs_* inputs
 // and uniforms with the same members. Vertex inputs carry no locations; the program builder binds them.
 // With hooks, the registered shader hooks are added (below). Returns "" when the source uses another built-in.
-std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool hooks = false);
+// rayShadows (Vulkan with ray queries, docs/renderer/vulkan.md §9.3): the fragment stage's shadow2D lookups are
+// multiplied by a ray query toward the sun (uniforms regs_Scene, the frame's acceleration structure, and regs_SunPos,
+// the sun in world space with w = 1 while the rays are on); the shadow map then only holds what the rays leave out.
+// rays is a bit set: kRayShadows (true converts to it) and kRayReflections (§9.7): the fragment stage's textureCube
+// lookups (the game's environment-cube reflections on water and glass) trace a ray along the reflected direction; what
+// it hits is shaded from the device's hit table and bindless textures (regs_HitTable, regs_Images), a miss reads the
+// cube as before.
+constexpr unsigned kRayShadows = 1, kRayReflections = 2;
+std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool hooks = false,
+                             unsigned rays = 0);
 
 // Port shader hooks for mods (port/docs/mod-manager.md §4.3): GLSL functions
 //   void <function>(inout vec4 color, RegsSurface s)
@@ -39,6 +48,9 @@ void addShaderHook(const ShaderHook& h);
 const std::vector<ShaderHook>& shaderHooks();
 bool postHooksRegistered();
 bool shadowHooksRegistered();
+// a colour hook reads the environment cube (regs_EnvMap; the weather mod's puddles): with raytraced reflections those
+// lookups are traced too (§9.7), so the scene variants get the reflection programs
+bool hooksReadEnvMap();
 // the post program's fragment shader (GLSL 3.30, for regs/shaders/post.vertex)
 std::string postHookFragment();
 // regsShaderUniform(name, value): vec4 uniforms of the hooks, applied to every hooked program per pass

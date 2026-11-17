@@ -1,0 +1,22 @@
+// ReGS HDR: the 3D view's highlights above paper white (settings regsHdr*, docs/renderer/vulkan.md §9.6). The game
+// draws for SDR screens, so nothing in it is brighter than white. In linear light, from the knee up the brightest
+// channel is lifted on a curve that starts with the slope of the original (no visible seam) and puts SDR white at
+// custom0.x × paper white; values already above 1.0 (bloom, glows of lights, drawn into the float back buffer) carry
+// on with the curve's end slope and are rolled off into the peak by the encode. The hue stays (all channels scaled).
+// texture0 = the view (gamma 2.2, 1.0 = paper white)
+// custom0  = (SDR white in paper-white units, knee in linear light, 0, 0)
+uniform sampler2D texture0;
+uniform vec4 custom0;
+varying vec4 texCoord;
+
+void main(void) {
+  vec4 c = texture2D(texture0, texCoord.xy);
+  vec3 lin = pow(max(c.rgb, vec3(0.0)), vec3(2.2));
+  float m = max(lin.r, max(lin.g, lin.b));
+  float k = custom0.y, w = custom0.x;
+  float t = clamp((m - k) / (1.0 - k), 0.0, 1.0);
+  float f = min(m, 1.0) + (w - 1.0) * t * t;                      // up to 1.0: the original plus the lift
+  f += max(m - 1.0, 0.0) * (1.0 + 2.0 * (w - 1.0) / (1.0 - k));   // above 1.0: on with the end slope
+  lin *= f / max(m, 0.00001);
+  gl_FragColor = vec4(pow(lin, vec3(1.0 / 2.2)), c.a);
+}

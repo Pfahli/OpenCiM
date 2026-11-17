@@ -1,0 +1,25 @@
+// ReGS HDR: the frame to HDR10 (settings regsHdr*, docs/renderer/vulkan.md §9.6). The float back buffer holds gamma-2.2
+// values relative to paper white; out goes PQ (SMPTE ST 2084) of BT.2020 linear light, which the device copies onto the
+// 10-bit HDR10 swapchain. Above 75 % of the peak the light is rolled off softly so it never clips hard.
+// texture0 = the frame (gamma 2.2, 1.0 = paper white)
+// custom0  = (paper white in nits, peak in nits, 0, 0)
+uniform sampler2D texture0;
+uniform vec4 custom0;
+varying vec4 texCoord;
+
+void main(void) {
+  vec3 c = texture2D(texture0, texCoord.xy).rgb;
+  vec3 lin = pow(max(c, vec3(0.0)), vec3(2.2));
+  // BT.709 → BT.2020 primaries (both D65)
+  lin = vec3(dot(lin, vec3(0.6274, 0.3293, 0.0433)), dot(lin, vec3(0.0691, 0.9195, 0.0114)),
+             dot(lin, vec3(0.0164, 0.0880, 0.8956)));
+  vec3 nits = lin * custom0.x;
+  float p = custom0.y, k = 0.75 * p;
+  vec3 rolled = vec3(k) + vec3(p - k) * (vec3(1.0) - exp(-(nits - vec3(k)) / (p - k)));
+  nits = mix(nits, rolled, step(vec3(k), nits));
+  vec3 y = clamp(nits / 10000.0, 0.0, 1.0);
+  // PQ: m1 = 2610/16384, m2 = 2523/4096 × 128, c1 = 3424/4096, c2 = 2413/4096 × 32, c3 = 2392/4096 × 32
+  vec3 ym = pow(y, vec3(0.1593017578125));
+  vec3 e = pow((vec3(0.8359375) + 18.8515625 * ym) / (vec3(1.0) + 18.6875 * ym), vec3(78.84375));
+  gl_FragColor = vec4(e, 1.0);
+}

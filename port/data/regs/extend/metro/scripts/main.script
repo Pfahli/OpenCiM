@@ -502,8 +502,11 @@ function regsRelayoutMenus() {
 // Settings menu (main and pause menu): the port's entries "Mods" (regs/ui/mods.script, the mods' options) and "Game"
 // (regs/ui/game.script, autosave) above Back. The pages show while the machine stays in SettingsMenu (main.states is
 // not changed), so they close themselves (regsCloseModsPage, regsCloseGamePage) and the settings buttons come back.
+// "Image quality" (regs/ui/quality.script: TAA, render scale, upscaler, raytracing, HDR) is a button at the bottom of
+// the graphics page (owner's request 2026-11-17); it covers that page and hands it back when it closes.
 $regsModsPage = null;
 $regsGamePage = null;
+$regsQualityPage = null;
 function regsSettingsButton($regsSbText, $regsSbAction) {
   with (MAIN.$ui.createButton($menu.$buttonArea, 4, 0, 322, 32, $regsSbText, $regsSbAction, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
     .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
@@ -543,6 +546,25 @@ function regsCloseGamePage() {
   delete $regsGamePage;
   $regsGamePage = null;
   $menu.$menuArea.visible = true;
+}
+// $regsQpCover: the page it opens over (the graphics page's box), hidden meanwhile
+$regsQpCover = null;
+$regsQpMenuShown = false;
+function regsOpenQualityPage($regsQpFrom = null) {
+  if ($regsQualityPage) return;
+  $regsQpMenuShown = $menu.$menuArea.visible;
+  $menu.$menuArea.visible = false;
+  $regsQpCover = $regsQpFrom;
+  if ($regsQpCover) $regsQpCover.visible = false;
+  $regsQualityPage = load "/regs/ui/quality.script";
+}
+function regsCloseQualityPage() {
+  if (!$regsQualityPage) return;
+  delete $regsQualityPage;
+  $regsQualityPage = null;
+  if ($regsQpCover && !$regsQpCover.destroyed) $regsQpCover.visible = true;
+  $regsQpCover = null;
+  $menu.$menuArea.visible = $regsQpMenuShown;
 }
 
 // Port: map sizes XXL (1536) and XXXL (2048) after the original's four (owner's request 2026-11-07); the editor's map
