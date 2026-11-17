@@ -6,10 +6,13 @@ things the port adds. This page is the design; nothing is built yet (`playable-t
 
 ## 1. What it has to do
 
-* Find Cities in Motion: Steam registry key `HKCU\Software\Valve\Steam` → `SteamPath`, then every library in
-  `steamapps\libraryfolders.vdf`, app id 73010; then the GOG/retail registry keys; then a folder picker. Check the
-  archives the port needs (`regs-tool vfs <game> stats` already does this) and list the DLCs it finds. Without the game
-  it stops with "OpenCiM needs Cities in Motion" and a link to the Steam store page.
+* Find Cities in Motion, the player's own copy (owner's rule 2026-11-17, for the legal side: the game's files always
+  come from the player's installation, never from us). Either the installer detects it from Steam (registry key
+  `HKCU\Software\Valve\Steam` → `SteamPath`, then every library in `steamapps\libraryfolders.vdf`, app id 73010; then
+  the GOG/retail registry keys), or the player points it at the game folder. Check the archives the port needs
+  (`regs-tool vfs <game> stats` already does this) and list the DLCs it finds; a folder without them is refused.
+  Without the game it stops with "OpenCiM needs Cities in Motion" and a link to the Steam store page. The game's files
+  are only read, never copied, changed or uploaded.
 * Install per user without admin rights into `%LOCALAPPDATA%\Programs\OpenCiM` (a folder of the player's choice as an
   option): `regs.exe`, `regs-tool.exe`, `data\regs`, `data\mods`, licences, readme. Nothing goes into the game's folder,
   and saves and settings stay in `Documents\OpenCiM` (README, "Where data lives"), so an uninstall or update never
@@ -17,7 +20,9 @@ things the port adds. This page is the design; nothing is built yet (`playable-t
 * Store the game folder it found in a small `install.cfg` next to `regs.exe`, so the first start needs no search.
 * Start menu and optional desktop shortcut, an entry under Apps & features (`HKCU\...\Uninstall\OpenCiM`), an uninstaller
   that removes exactly what it installed (and asks before touching `Documents\OpenCiM`, default: keep).
-* Update in place: a newer installer finds the old install, keeps the chosen options and only replaces files.
+* Get the newest build online, and update or uninstall later (owner's request 2026-11-17, §3a): the setup program is
+  small, downloads the current release from the project's GitHub releases and, run again, offers UPDATE, REPAIR and
+  UNINSTALL.
 * Options page: shortcuts, "start OpenCiM when done", language (German/English, written to the first-start settings),
   and later the optional mods it ships with (weather) and the high-res texture generation (texture-upscaling branch),
   which would run as the last step.
@@ -52,8 +57,8 @@ to `regs.exe`:
   game's fonts once found), so pages look exactly like the game's menus and scale with DPI as the game's UI does.
 * The game search is the same code the port needs for its own first start (`playable-todo.md` §9, "Find the Steam
   install by itself"), written once in `engine/` and used by both.
-* The payload (the release folder) is a zip appended to the exe; extraction uses miniz (MIT, one file in
-  `third_party/`). Shortcuts through `IShellLinkW`, the uninstall entry through the registry; `opencim-setup.exe
+* The payload (the release folder) is a zip, downloaded at install time (§3a) or, for the offline installer, appended
+  to the exe; extraction uses miniz (MIT, one file in `third_party/`). Shortcuts through `IShellLinkW`, the uninstall entry through the registry; `opencim-setup.exe
   --uninstall` is copied into the install folder as the uninstaller.
 * Signed with the same certificate as `regs.exe` once there is one (unsigned self-extractors get SmartScreen warnings
   and antivirus false alarms; until then the zip release stays available as an alternative).
@@ -62,6 +67,40 @@ The alternative, **Inno Setup 6** with a fully custom-drawn wizard and a helper 
 into temp files before the wizard shows, gives the install mechanics (uninstall, upgrade, signing support) for free
 but looks like a skinned Windows wizard, not like the game, and the art extraction is a fragile extra step. Keep it as
 the fallback if the own program turns out to cost too much.
+
+## 3a. Newest build from GitHub, updates and uninstall
+
+Once the project is on GitHub (it has no remote yet), every release is a GitHub release with three files:
+`OpenCiM-<version>-win64.zip` (the install folder), `OpenCiM-<version>-win64.zip.sha256` and `release.json` (version,
+build number, date, minimum setup version, the feature list for the showcase, §5). There is a `stable` channel (GitHub
+releases) and later a `nightly` channel (pre-releases from `main`).
+
+* **Download:** the setup program asks `https://api.github.com/repos/<owner>/<repo>/releases/latest` (pre-releases for
+  nightly), picks the win64 zip, downloads it with WinHTTP (no extra library; system proxy settings, resume after a
+  dropped connection, progress on the showcase page's bar) and checks it against the `.sha256` before unpacking.
+  Without a network it says so and offers the offline installer (the same exe with the zip appended), which is
+  attached to each release too.
+* **Run again = maintenance:** the setup program copies itself into the install folder (`opencim-setup.exe`, also the
+  Apps & features "Modify/Uninstall" entry and a Start menu item). Started with an install present it opens the
+  maintenance page: the installed version and the newest one, then
+  * **UPDATE** (only when a newer release exists): downloads it, shows the showcase with only the features that are
+    new since the installed version (`release.json` of each release in between), replaces the files listed in the old
+    install's manifest, keeps options and the game folder;
+  * **REPAIR:** downloads the installed version again and puts back missing or changed files;
+  * **CHANGE GAME FOLDER:** the search or the folder picker again (another Steam library, a moved game);
+  * **UNINSTALL:** removes exactly the files in the manifest, the shortcuts and the registry entry; saves, maps and
+    settings in `Documents\OpenCiM` stay unless the player unticks "keep my saves and maps".
+* **Manifest:** `install.json` in the install folder lists every installed file with its hash, the version, the channel
+  and the game folder. Update and uninstall touch only those files, so mods or texture caches the player added to the
+  folder survive an update.
+* **Update check in the game:** `regs.exe` asks the same GitHub URL at most once a day in the background (an option on
+  the Game page, on by default, off for offline play) and shows "OpenCiM <version> is available" in the main menu's
+  version corner; clicking it starts `opencim-setup.exe --update` and quits the game. Nothing is downloaded without
+  the player's click.
+* **Self-update of the setup program:** when `release.json` asks for a newer setup version, the old one downloads the
+  new `opencim-setup.exe` first and hands over to it.
+* **Trust:** HTTPS only, hash check, later code signing of the setup program and `regs.exe`; the setup program never
+  runs anything it downloaded except the new setup program from the same release.
 
 ## 4. Pages
 
@@ -81,7 +120,9 @@ the main menu.
    a few.
 5. **Done.** PLAY (starts `regs.exe`), "What's new" (opens the release notes), CLOSE.
 
-The uninstaller uses the same window: one page with "keep my saves and maps" (on by default) and UNINSTALL.
+6. **Maintenance** (the setup program started with an install present, §3a): installed and newest version, the
+   game folder in use, and UPDATE, REPAIR, CHANGE GAME FOLDER, UNINSTALL; UNINSTALL asks once more with "keep my saves
+   and maps" (on by default).
 
 ## 5. The features to show
 
@@ -117,8 +158,10 @@ Screenshots of the game itself in the installer (what store pages do) are left o
 
 1. The shared game search in `engine/` (also for the port's own first start), with tests on Steam libraries in other
    folders and a missing game.
-2. `src/setup/` with the payload, install, shortcuts, uninstall entry and uninstaller, plain pages first.
+2. `src/setup/` with the payload, install, shortcuts, uninstall entry, manifest and maintenance page, plain pages
+   first; then the GitHub download, update, repair and the in-game update check (needs the GitHub repository).
 3. The game's menu look (panel, bars, fonts, background from the install) and the own fallback art.
 4. The showcase: slides, cross-fade, progress bar; then the rendered pictures (`--showcase`).
 5. The release script (`tools/make-release.ps1`): build, collect the files, licences (the port's own, miniaudio, miniz,
-   later Vulkan-Headers and glslang), zip, append to the setup exe, sign.
+   later Vulkan-Headers and glslang), zip, `.sha256`, `release.json`, the offline installer, sign; later a GitHub
+   Actions workflow that does the same and publishes the release (and the nightly pre-release from `main`).
