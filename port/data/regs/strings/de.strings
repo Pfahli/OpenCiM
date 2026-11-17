@@ -48,11 +48,12 @@ $regs_game_title = "Spiel";
 // Seite Bildqualität im Einstellungsmenü (regs/ui/quality.script): TAA und Renderauflösung
 $regs_quality_button = "Bildqualität";
 $regs_quality_title = "Bildqualität";
-$regs_q_perf_heading = "Schärfe und Leistung";
+$regs_q_perf_heading = "Auflösung und Kantenglättung";
 $regs_q_perf_hint1 = "Unter 100 %% wird die Stadt kleiner gezeichnet: schneller, weicher.";
-$regs_q_perf_hint2 = "AMD FSR 3.1 ersetzt TAA und glättet auch bei 100 %% die Kanten.";
-$regs_q_perf_hint3 = "Die Bildgenerierung fügt ein Bild zwischen zwei ein; sie braucht FSR 3.1.";
+$regs_q_perf_hint2 = "TAA gehört zu ReGS, die Bildgenerierung braucht AMD FSR 3.1.";
+$regs_q_perf_hint3 = "FSR 3.1 glättet die Kanten auch bei 100 %%.";
 $regs_q_req_heading = "Grafik-Engine";
+$regs_q_engine_now = "Läuft gerade: %0";
 $regs_q_req1 = "FSR 3.1, Bildgenerierung, Raytracing und HDR brauchen Vulkan";
 $regs_q_req2 = "(Grafikseite, nach einem Neustart). TAA und Auflösung gehen mit beiden.";
 $regs_q_rt_hint1 = "Braucht eine Grafikkarte mit Raytracing.";

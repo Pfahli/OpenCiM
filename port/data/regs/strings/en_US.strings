@@ -48,11 +48,12 @@ $regs_game_title = "Game";
 // the settings menu's Image quality page (regs/ui/quality.script): TAA and render scale (docs/renderer/vulkan.md §9)
 $regs_quality_button = "Image quality";
 $regs_quality_title = "Image quality";
-$regs_q_perf_heading = "Sharpness and performance";
+$regs_q_perf_heading = "Resolution and antialiasing";
 $regs_q_perf_hint1 = "Below 100 %% the city is drawn smaller and scaled up: faster, softer.";
-$regs_q_perf_hint2 = "AMD FSR 3.1 replaces TAA and also smooths edges at 100 %%.";
-$regs_q_perf_hint3 = "Frame generation adds a frame between two; it needs FSR 3.1.";
+$regs_q_perf_hint2 = "TAA belongs to ReGS; frame generation needs AMD FSR 3.1.";
+$regs_q_perf_hint3 = "FSR 3.1 also smooths edges at 100 %%.";
 $regs_q_req_heading = "Graphics engine";
+$regs_q_engine_now = "Running now: %0";
 $regs_q_req1 = "FSR 3.1, frame generation, raytracing and HDR need Vulkan";
 $regs_q_req2 = "(graphics page, after a restart). TAA and resolution work on both.";
 $regs_q_rt_hint1 = "Needs a graphics card with raytracing.";

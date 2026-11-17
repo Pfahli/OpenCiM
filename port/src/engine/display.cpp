@@ -723,7 +723,22 @@ void registerDisplayNatives(VM& vm) {
     addMethod(c, u"regsApplyDisplay", 3, 4);
     addMethod(c, u"regsUiScale", 0, 0);
     addMethod(c, u"regsSetRect", 5, 5);
+    addMethod(c, u"regsGraphicsCaps", 0, 0);
   }
+  // window.regsGraphicsCaps(): what the running graphics engine offers, for the Image quality page (which greys out
+  // what does not apply): 1 Vulkan, 2 FSR 3.1, 4 frame generation, 8 ray queries (shadows, occlusion), 16 raytraced
+  // reflections, 32 HDR10 output offered by the display
+  implement(vm, "gsWindow_OGL", u"regsGraphicsCaps", [](VM&, Object*, int, const Value*) {
+    if (!render::gpu::hasDevice()) return Value::integer(0);
+    render::gpu::Device& g = render::gpu::dev();
+    int bits = g.info().rfind("Vulkan", 0) == 0 ? 1 : 0;
+    if (g.fsrAvailable()) bits |= 2;
+    if (g.frameGenAvailable()) bits |= 4;
+    if (g.rayTracing()) bits |= 8;
+    if (g.rayReflections()) bits |= 16;
+    if (g.hdrAvailable()) bits |= 32;
+    return Value::integer(bits);
+  });
   // window.regsSetRect(control, left, top, width, height): placeControl, for HUD scripts that place a control again
   // when the desktop changes size (their extensions' onChangeRect handlers)
   implement(vm, "gsWindow_OGL", u"regsSetRect", [](VM& v, Object*, int, const Value* a) {
