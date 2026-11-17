@@ -191,11 +191,11 @@ function refresh() {
   setRow("hdrPeak", ($caps & 32) != 0 && $hdr == 1);
 }
 
-rule(500, 40, 1, 400);  // between the columns
+rule(500, 58, 1, 390);  // between the columns
 
 // ---- left: resolution and antialiasing, the engine ----
 $x = $colL;
-$y = 40;
+$y = 58;
 heading($x, $y, $regs.$regs_q_perf_heading);
 $y += 38;
 $rowL = rowLabel($x, $y, $regs.$regs_renderScale_label, false);
@@ -239,7 +239,7 @@ hint($x, $y, $regs.$regs_q_req2);
 
 // ---- right: raytracing, HDR ----
 $x = $colR;
-$y = 40;
+$y = 58;
 heading($x, $y, $regs.$regs_quality_rt_heading);
 $y += 38;
 $rowL = rowLabel($x, $y, $regs.$regs_rtShadows_label, false);

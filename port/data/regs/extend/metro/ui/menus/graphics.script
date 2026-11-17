@@ -130,17 +130,17 @@ function regsDropItem($list, $text, $action) {
   return $regsDdItem;
 }
 
-regsRule($regsColX[1] - 15, 40, 1, 330);
-regsRule($regsColX[2] - 15, 40, 1, 330);
+regsRule($regsColX[1] - 15, 58, 1, 330);
+regsRule($regsColX[2] - 15, 58, 1, 330);
 
 // ---- display ----
 $x = $regsColX[0];
-regsHeading($x, 40, $regs.$regs_g_display);
+regsHeading($x, 58, $regs.$regs_g_display);
 
 $resolutionArea.visible = false;  // the original lists stay as the place selectResolution fills
 $frequencyArea.visible = false;
-$resolutionItem.setRect($x, 78, 100, 18);
-$regsResolutionList = regsDropDown($x + 105, 78, 185);
+$resolutionItem.setRect($x, 96, 100, 18);
+$regsResolutionList = regsDropDown($x + 105, 96, 185);
 $regsPrevMode = null;
 foreach (display_modes()) {
   if (.width < 1024 || .height < 720 || .bits < 32) continue;
@@ -150,8 +150,8 @@ foreach (display_modes()) {
   if ($screenwidth == .width && $screenheight == .height && $screencolors == .bits) MAIN.$ui.selectDropListItem($regsModeItem);
 }
 
-$frequencyItem.setRect($x, 110, 100, 18);
-$regsFrequencyList = regsDropDown($x + 105, 110, 185);
+$frequencyItem.setRect($x, 128, 100, 18);
+$regsFrequencyList = regsDropDown($x + 105, 128, 185);
 $regsFrequencyList.visible = PLATFORM == "windows";
 // the frequencies of the chosen resolution (the original keeps its own list in step through selectResolution)
 function regsFillFrequencies() {
@@ -170,13 +170,13 @@ function regsPickResolution($mode) {
 }
 regsFillFrequencies();
 
-regsCheckRow($fullscreenButton, $fullscreenItem, $x, 142);
-regsCheckRow($vsyncButton, $vsyncItem, $x, 168);
+regsCheckRow($fullscreenButton, $fullscreenItem, $x, 160);
+regsCheckRow($vsyncButton, $vsyncItem, $x, 186);
 
-with ($regsFpsItem = regsLabel($x, 196, $regs.$regs_fpsLimit_item)) {
+with ($regsFpsItem = regsLabel($x, 214, $regs.$regs_fpsLimit_item)) {
   .setArg(0, macro :: $regs.$regs_fpsLimit_values[$fpsLimit]);
 }
-$fpsLimitSlider = regsSlider($x, 214, #$fpsValues, $fpsLimit);
+$fpsLimitSlider = regsSlider($x, 232, #$fpsValues, $fpsLimit);
 $fpsLimitSlider.$action = macro :: regsSetFpsLimit();
 function regsSetFpsLimit() {
   $fpsLimit = int($fpsLimitSlider.$value);
@@ -188,10 +188,10 @@ function regsSetFpsLimit() {
 $uiScaleValues = [1.0, 1.5, 2.0];
 $regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : MAIN.$window.regsUiScale());
 $uiScale = $regsUiScaleShown;
-with (regsLabel($x, 252, $regs.$regs_uiScale_item)) .setRect($x, 252, 100, 18);
+with (regsLabel($x, 270, $regs.$regs_uiScale_item)) .setRect($x, 270, 100, 18);
 $regsUiScaleButtons = [];
 for ($i = 0; $i < #$uiScaleValues; ++$i) {
-  $regsUiScaleButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsUiScale", $x + 105 + $i * 62, 252, 60, 18, $regs.$regs_uiScale_values[$i], macro($i) :: regsSetUiScale($0));
+  $regsUiScaleButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsUiScale", $x + 105 + $i * 62, 270, 60, 18, $regs.$regs_uiScale_values[$i], macro($i) :: regsSetUiScale($0));
   MAIN.$ui.setTooltip($regsUiScaleButtons[$i], $regs.$regs_uiScale_hint, 0, -1);
 }
 function regsSetUiScale($index) {
@@ -200,12 +200,12 @@ function regsSetUiScale($index) {
 }
 regsSetUiScale($uiScale);
 
-regsCheckRow($systemCursorButton, $systemCursorItem, $x, 286);
-regsCheckRow($framerateButton, $framerateItem, $x, 312);
+regsCheckRow($systemCursorButton, $systemCursorItem, $x, 304);
+regsCheckRow($framerateButton, $framerateItem, $x, 330);
 // the port's frame-rate readout (drawn by the engine, display.cpp)
 $showFps = $settings.$regsShowFps : false;
-$regsShowFpsButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 339, 16, 16, "", macro :: regsSetShowFps(!$showFps), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
-regsLabel($x + 20, 338, $regs.$regs_showFps_item);
+$regsShowFpsButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 357, 16, 16, "", macro :: regsSetShowFps(!$showFps), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel($x + 20, 356, $regs.$regs_showFps_item);
 function regsSetShowFps($value) {
   $showFps = $value;
   MAIN.$ui.selectChoiceButton($showFps ? $regsShowFpsButton : null, $regsShowFpsButton);
@@ -214,7 +214,7 @@ regsSetShowFps($showFps);
 
 // ---- quality ----
 $x = $regsColX[1];
-regsHeading($x, 40, $regs.$regs_g_quality);
+regsHeading($x, 58, $regs.$regs_g_quality);
 
 // presets: shadows step, antialiasing step, anisotropy step, HDR lighting, view distance, detail distance.
 // "Original" is the game's own defaults (metro/defaults/settings.script). The list's last entry, "Custom", is what it
@@ -226,13 +226,13 @@ $regsPresets = [
   [3, 2, 4, true, 1.5, 1.5],    // high
   [4, 3, 4, true, 2.5, 2.0]     // ultra
 ];
-with (regsLabel($x, 78, $regs.$regs_preset_label)) .setRect($x, 78, 125, 18);
-$regsPresetList = regsDropDown($x + 130, 78, 160);
+with (regsLabel($x, 96, $regs.$regs_preset_label)) .setRect($x, 96, 125, 18);
+$regsPresetList = regsDropDown($x + 130, 96, 160);
 for ($i = 0; $i < #$regsPresets; ++$i) regsDropItem($regsPresetList, $regs.$regs_preset_values[$i], macro($i) :: regsApplyPreset($0));
 regsDropItem($regsPresetList, $regs.$regs_preset_custom, macro :: regsUpdatePreset());
 
 // the original sliders, with more steps for shadows and antialiasing; every change re-checks the preset
-regsSliderRow($shadowsItem, $shadowsSlider, $x, 114);
+regsSliderRow($shadowsItem, $shadowsSlider, $x, 132);
 $shadowsSlider.$max = 4.99;
 $shadowsSlider.$action = regsSetShadows;
 $shadowsItem.setArg(0, macro :: $regs.$regs_shadows_values[$regsShadowStep]);
@@ -243,7 +243,7 @@ function regsSetShadows() {
   regsUpdatePreset();
 }
 
-regsSliderRow($antialiasItem, $antialiasSlider, $x, 166);
+regsSliderRow($antialiasItem, $antialiasSlider, $x, 184);
 $antialiasSlider.$action = regsSetAntialias;
 $antialiasItem.setArg(0, macro :: $regs.$regs_antialiasing_values[$regsAntialiasStep]);
 MAIN.$ui.setSliderPos($antialiasSlider, $regsAntialiasStep * 3.99 / 3.0);
@@ -253,7 +253,7 @@ function regsSetAntialias() {
   regsUpdatePreset();
 }
 
-regsSliderRow($anisotropyItem, $anisotropySlider, $x, 218);
+regsSliderRow($anisotropyItem, $anisotropySlider, $x, 236);
 MAIN.$ui.setSliderPos($anisotropySlider, $anisotropy * 4.99 / 4.0);
 $anisotropySlider.$action = regsSetAnisotropy;
 function regsSetAnisotropy() {
@@ -261,20 +261,20 @@ function regsSetAnisotropy() {
   regsUpdatePreset();
 }
 
-with (regsLabel($x, 270, $regs.$regs_viewDistance_item)) {
+with (regsLabel($x, 288, $regs.$regs_viewDistance_item)) {
   .setArg(0, macro :: int($viewDistance * 100.0 + 0.5));
 }
-$viewDistanceSlider = MAIN.$ui.createSlider($box.$content, $viewDistance, 1.0, 3.0, $x, 288, 215, 27);
+$viewDistanceSlider = MAIN.$ui.createSlider($box.$content, $viewDistance, 1.0, 3.0, $x, 306, 215, 27);
 $viewDistanceSlider.$action = regsSetViewDistance;
 function regsSetViewDistance() {
   $viewDistance = int($viewDistanceSlider.$value * 20.0 + 0.5) / 20.0;  // 5 % steps
   regsUpdatePreset();
 }
 
-with (regsLabel($x, 322, $regs.$regs_detailDistance_item)) {
+with (regsLabel($x, 340, $regs.$regs_detailDistance_item)) {
   .setArg(0, macro :: int($detailDistance * 100.0 + 0.5));
 }
-$detailDistanceSlider = MAIN.$ui.createSlider($box.$content, $detailDistance, 1.0, 3.0, $x, 340, 215, 27);
+$detailDistanceSlider = MAIN.$ui.createSlider($box.$content, $detailDistance, 1.0, 3.0, $x, 358, 215, 27);
 $detailDistanceSlider.$action = regsSetDetailDistance;
 function regsSetDetailDistance() {
   $detailDistance = int($detailDistanceSlider.$value * 20.0 + 0.5) / 20.0;
@@ -283,31 +283,31 @@ function regsSetDetailDistance() {
 
 // ---- effects and style ----
 $x = $regsColX[2];
-regsHeading($x, 40, $regs.$regs_g_effects);
+regsHeading($x, 58, $regs.$regs_g_effects);
 
-regsCheckRow($lightingButton, $lightingItem, $x, 78);
+regsCheckRow($lightingButton, $lightingItem, $x, 96);
 $lightingButton.$action = macro :: regsSetHDR(!$hdrLighting);
 function regsSetHDR($value) {
   setHDRlighting($value);
   regsUpdatePreset();
 }
-regsSliderRow($saturationItem, $saturationSlider, $x, 104);
+regsSliderRow($saturationItem, $saturationSlider, $x, 122);
 MAIN.$ui.setSliderPos($saturationSlider, $saturation);
 
 // style (not part of the presets): colour grade and lens blur after the scene
-with (regsLabel($x, 156, $regs.$regs_colorStyle_item)) {
+with (regsLabel($x, 174, $regs.$regs_colorStyle_item)) {
   .setArg(0, macro :: $regs.$regs_colorStyle_values[$colorStyle]);
 }
-$colorStyleSlider = regsSlider($x, 174, #$regs.$regs_colorStyle_values, $colorStyle);
+$colorStyleSlider = regsSlider($x, 192, #$regs.$regs_colorStyle_values, $colorStyle);
 $colorStyleSlider.$action = macro :: regsSetColorStyle();
 function regsSetColorStyle() {
   $colorStyle = int($colorStyleSlider.$value);
 }
 
-with (regsLabel($x, 208, $regs.$regs_lensBlur_item)) {
+with (regsLabel($x, 226, $regs.$regs_lensBlur_item)) {
   .setArg(0, macro :: $regs.$regs_lensBlur_values[$lensBlur]);
 }
-$lensBlurSlider = regsSlider($x, 226, #$regs.$regs_lensBlur_values, $lensBlur);
+$lensBlurSlider = regsSlider($x, 244, #$regs.$regs_lensBlur_values, $lensBlur);
 $lensBlurSlider.$action = macro :: regsSetLensBlur();
 function regsSetLensBlur() {
   $lensBlur = int($lensBlurSlider.$value);
@@ -316,8 +316,8 @@ function regsSetLensBlur() {
 // day and night (port option; the original keeps each location's fixed time of day): the cycle length in minutes
 // of normal game speed is $regsDayLength (settings.script only, default 12)
 $dayNight = $settings.$regsDayNight : true;  // on unless the player switched it off
-$regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 265, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
-regsLabel($x + 20, 264, $regs.$regs_dayNight_item);
+$regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 283, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel($x + 20, 282, $regs.$regs_dayNight_item);
 function regsSetDayNight($value) {
   $dayNight = $value;
   MAIN.$ui.selectChoiceButton($dayNight ? $regsDayNightButton : null, $regsDayNightButton);
