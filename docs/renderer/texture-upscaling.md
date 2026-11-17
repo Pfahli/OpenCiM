@@ -45,7 +45,7 @@ So the feature is worth most at high resolutions and in close-ups, which is wher
 
 | | Quality | Speed (all 5 300 textures) | Setup for a player | Licence |
 |---|---|---|---|---|
-| **AI upscalers run locally**: Real-ESRGAN (x4plus, animevideo-v3) as the ncnn-Vulkan build, other ESRGAN models, waifu2x, chaiNNer pipelines | best on photographic diffuse maps: invents plausible detail (brick, tile, grain); can also invent wrong detail, smear text and logos, and is unpredictable on atlases with hard part borders; useless or harmful on normal maps and masks (they must stay data) | a GPU job of the order of an hour or more (estimate from the published speeds: a few seconds per 512²→2048² image on a desktop GPU), minutes per texture on CPU | a separate download of the tool and its model weights (Real-ESRGAN Windows build ~45 MB); a Vulkan GPU | Real-ESRGAN code and its official weights BSD-3-Clause, the ncnn-Vulkan wrapper MIT, waifu2x MIT; community ESRGAN models each have their own licence, several are non-commercial (CC BY-NC-SA) and cannot be bundled; chaiNNer is GPL-3 |
+| **AI upscalers run locally**: Real-ESRGAN (x4plus, animevideo-v3) as the ncnn-Vulkan build, other ESRGAN models, waifu2x, chaiNNer pipelines | best on photographic diffuse maps: invents plausible detail (brick, tile, grain); can also invent wrong detail, smear text and logos, and is unpredictable on atlases with hard part borders; useless or harmful on normal maps and masks (they must stay data) | measured with x4plus: ~1 s per texture on an RTX 3080, so roughly an hour for the install's colour and UI textures (§8.1); minutes per texture on CPU | a separate download of the tool and its model weights (Real-ESRGAN Windows build ~45 MB); a Vulkan GPU | Real-ESRGAN code and its official weights BSD-3-Clause, the ncnn-Vulkan wrapper MIT, waifu2x MIT; community ESRGAN models each have their own licence, several are non-commercial (CC BY-NC-SA) and cannot be bundled; chaiNNer is GPL-3 |
 | **Classical filter offline** (chosen): Lanczos-3 with anti-ringing clamp, contrast-adaptive sharpening, per-kind handling | crisper edges and joints, no new detail; never invents anything; DXT block grain gets slightly more visible | 3 min with 11 threads on a 6-core i5-11600K (171–176 s measured for 5 071 textures, DXT compression included); in the game, with half the threads, about 6 min | none: built into regs.exe, made in the background the first time the option is on | the port's own code (CAS after AMD FidelityFX CAS, MIT) |
 | xBR / ScaleFX / HQx | made for pixel art: on photographic textures they posterise and draw false edges | fast | none | MIT / public domain |
 | **Runtime shader**: sharpening (CAS) or bicubic sampling per texture fetch | similar to the classical filter at best; sharpens the DXT noise at every pixel every frame; the mip chain stays blurry; every material shader (including the game's own combiner shaders and mod hooks) would need the change | costs every frame (one to four extra taps per texture sample) | none | own code |
@@ -132,6 +132,7 @@ regs-tool upscale-compare $game metro/objects/buildings/tenements/tenement01.dds
 * `REGS_FRAME_STATS=<from>:<to>` logs the frame times between two frames, the bytes of the uploaded file textures
   (and how many are upscaled) and the driver's video memory in use (NVIDIA `GL_NVX_gpu_memory_info`).
 * `regs-tool png-diff a.png b.png [x y w h]`: share of differing pixels, mean difference and mean colours.
+* `regs-tool ddspng <file.dds> <out.png> [level]`: one level of a DDS file on disk (a cache file) as PNG.
 * `regs-tool upscale-check $game <cache> [prefix]`: every cached texture's 2× level boxed back down against the
   source's level 0, per channel (UI colour weighted by alpha). It found the two bugs fixed before the first commit:
   colour bled under colourise masks (roofs and bus liveries lost their tint) and renormalised `_n` maps that are not
@@ -163,11 +164,31 @@ UI scale 2×, antialiasing 4×, anisotropic 8×, vsync off from frame 1460, fram
 Before/after crops (3840×2160 shown at 2×, off left, on right) were sent to the owner on 2026-11-17: market square
 roofs, palace facade, city block with parked cars, a park, the HUD. Not in the repository (they show game art).
 
+### 8.1 Real-ESRGAN tried (2026-11-17)
+
+With the owner's OK, `realesrgan-ncnn-vulkan-20220424-windows.zip` (v0.2.5.0, 45.5 MB, SHA-256 `abc02804…412802d`) was
+run through `--external` from a scratch folder (never in the repository) on the base game's 3D object and terrain
+textures (`metro/objects/`, `metro/graphics/`).
+
+* **realesrgan-x4plus** (4×, boxed down to 2×): 518 colour textures in about 9 minutes on the RTX 3080 (~1 s each;
+  the whole install's colour and UI textures would take roughly an hour). It removes the DXT block noise and draws
+  very clean edges (window frames, roof tiles), but it also wipes out the painted grime and grain the game's art
+  relies on: facades become smooth plaster, paving loses its texture, grass turns painterly. In the 4K views it
+  differs from the built-in filter by 1.9–5.9/255 on average (34–64 % of the pixels); whole-frame colours stay
+  within 1/255. A "remastered" look rather than a sharper original.
+* **realesr-animevideov3** (2×): every run ended in `VK_ERROR_DEVICE_LOST` on this machine (also with `-t 128`) and
+  wrote black images.
+* That broken run led to a safeguard in the generator: an external result whose colours differ from the built-in
+  result by more than 24/255 on average is rejected (logged, built-in used). It also caught three small UI previews
+  where x4plus shifted the colours.
+
+Decision unchanged: the built-in filter is the default and the only thing the game makes; AI stays an optional
+generator mode for players who like the cleaner look. The cache was restored to the built-in filter afterwards.
+
 ## 9. Later
 
-* Try Real-ESRGAN (animevideo-v3 2×, x4plus) through `--external` on the building and terrain textures and compare;
-  if it is clearly better, offer it as a choice with a one-click download (needs the owner's decision on fetching
-  third-party binaries).
+* An in-game choice "built-in / AI" would need the port to fetch or bundle Real-ESRGAN (BSD-3 code and weights, MIT
+  wrapper: bundling is allowed) and a fallback for GPUs where it fails like animevideov3 did here.
 * BC7 for the new level (both renderers), 4× for the 512² building atlases at 4K, a lighter cache by skipping DLC the
   player does not own or play.
 * The Vulkan backend needs the same `createTexture(img, reuse)` (re-specify a texture under the same handle) and the

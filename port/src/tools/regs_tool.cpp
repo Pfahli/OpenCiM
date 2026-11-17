@@ -46,6 +46,7 @@ int cmdUpscaleCompare(int argc, char** argv);   // texture_tools.cpp
 int cmdPngRoundtrip(int argc, char** argv);     // texture_tools.cpp
 int cmdPngDiff(int argc, char** argv);          // texture_tools.cpp
 int cmdUpscaleCheck(int argc, char** argv);     // texture_tools.cpp
+int cmdDdsPng(int argc, char** argv);           // texture_tools.cpp
 
 namespace {
 
@@ -826,6 +827,7 @@ int main(int argc, char** argv) {
     else if (cmd == "png-roundtrip") rc = cmdPngRoundtrip(argc, argv);
     else if (cmd == "png-diff") rc = cmdPngDiff(argc, argv);
     else if (cmd == "upscale-check") rc = cmdUpscaleCheck(argc, argv);
+    else if (cmd == "ddspng") rc = cmdDdsPng(argc, argv);
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

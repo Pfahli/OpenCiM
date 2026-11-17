@@ -242,3 +242,21 @@ int cmdUpscaleCheck(int argc, char** argv) {
     std::printf("  %6.2f %6.2f %6.2f %6.2f  %s\n", rows[i].d[0], rows[i].d[1], rows[i].d[2], rows[i].d[3], rows[i].path.c_str());
   return 0;
 }
+
+// ddspng <file.dds> <out.png> [level]: one level of a DDS file on disk (a cache file) as PNG
+int cmdDdsPng(int argc, char** argv) {
+  if (argc < 4) return 2;
+  FILE* f = _wfopen(widenArg(argv[2]).wstring().c_str(), L"rb");
+  if (!f) return 1;
+  std::vector<uint8_t> d;
+  uint8_t buf[65536];
+  for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) d.insert(d.end(), buf, buf + n);
+  std::fclose(f);
+  render::Image img;
+  std::vector<uint8_t> rgba;
+  int w = 0, h = 0;
+  if (!render::parseDds(d, img, nullptr) || !render::decodeRgba(img, argc > 4 ? std::atoi(argv[4]) : 0, rgba, w, h)) return 1;
+  for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;  // colour only
+  std::printf("%dx%d, %d levels\n", w, h, img.mipCount);
+  return writeBytes(widenArg(argv[3]), render::encodePng(rgba.data(), w, h)) ? 0 : 1;
+}

@@ -889,8 +889,22 @@ bool generate(const Vfs& vfs, const fs::path& root, const GenerateOptions& opt, 
         bool usedExt = false;
         if (ok && readFile(tmp / L"out" / (std::to_wstring(i) + L".png"), png) && decodePng(png, ext, ew, eh) && ew >= w2 / 2) {
           ext = fitTo(ext, ew, eh, w2, h2);
-          for (size_t k = 0; k < up.size(); k += 4) std::memcpy(&up[k], &ext[k], 3);  // RGB from the upscaler, alpha ours
-          usedExt = true;
+          // a broken run (a lost GPU device writes black images) must not end up in the cache: the result has to
+          // stay close to the built-in one on average (the upscalers add detail, they do not move colours)
+          double diff = 0;
+          size_t n = 0;
+          for (size_t k = 0; k < up.size(); k += 4)
+            if (up[k + 3] >= 128) {
+              for (int c = 0; c < 3; ++c) diff += std::abs(int(up[k + size_t(c)]) - int(ext[k + size_t(c)]));
+              n += 3;
+            }
+          if (n && diff / double(n) > 24.0) {
+            say("texture upscale: external result for " + j.path + " differs too much (" + std::to_string(int(diff / double(n))) +
+                "/255 on average), built-in used");
+          } else {
+            for (size_t k = 0; k < up.size(); k += 4) std::memcpy(&up[k], &ext[k], 3);  // RGB from the upscaler, alpha ours
+            usedExt = true;
+          }
         }
         if (!ok || !buildUpscaled(src, up, res) || !writeFile(cacheFile(root, j.path), writeDds(res, j.stamp, j.kind, usedExt))) {
           ++p.failed, ++p.done;
