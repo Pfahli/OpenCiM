@@ -8,7 +8,7 @@
 // near their edge. Every puddle mask fades to nothing at its surface's edge (found in the engine's surface map), and
 // roads and pavements draw from different noise, so no patch runs across a kerb.
 uniform vec4 weather_wet;   // x water film 0..1, y puddle amount 0..1, z rain now 0..1 (ripples), w heavy rain 0..1
-uniform vec4 weather_misc;  // x lightning flash 0..1, y debug view of the surface map
+uniform vec4 weather_misc;  // x lightning flash 0..1, y debug view of the surface map, z debug view of the reflections
 uniform vec4 weather_snow;  // x snow cover 0..1, y snowfall now 0..1, z thaw 0..1, w 1: read the snowplows' lanes
 
 float weather_hash(vec2 p) {
@@ -91,6 +91,7 @@ void weather_wet_surface(inout vec4 c, RegsSurface s) {
   weather_wet_apply(c, s);
   if (weather_misc.y < 0.5) c.rgb = min(c.rgb, dry * (1.0 + 2.0 * weather_misc.x));
   if (weather_snow.x > 0.001 && weather_misc.y < 0.5) weather_snow_apply(c, s, dry);
+  regs_HookOut.xy *= 1.0 - smoothstep(0.03, 0.3, weather_snow.x);  // snow on the ground: nothing mirrors
 }
 
 // ---- snow ----
@@ -301,6 +302,10 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
   float sheen = smoothstep(0.2, 1.0, weather_wet.y);
   float f0 = 0.04 + 0.96 * pow(1.0 - max(dot(-s.view, s.normal), 0.0), 5.0);
   c.rgb *= 1.0 + 0.8 * f0 * sheen * up * hard * k;
+  // for the reflections (reflect.glsl, a post hook): how much this pixel's film mirrors (x), its puddle (y) and the
+  // puddle's ripple tilt (zw, 0.5 = flat). The film mirrors once the ground is properly wet, the roads a little more
+  float film = up * hard * k * smoothstep(0.25, 0.9, wet) * (road ? 1.0 : 0.8);
+  regs_HookOut = vec4(film, 0.0, 0.5, 0.5);
   float light = 1.0 + 2.5 * weather_misc.x;                         // a lightning flash shows in the reflections
   vec3 overcast = regs_Fog.color.rgb;
   // puddles. The amount falls linearly while drying; the lanes and pavements follow its square (they dry first), the
@@ -319,10 +324,12 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
   if (p <= 0.0) return;
   vec3 nrm = vec3(0.0, 1.0, 0.0);
   float ripple = weather_wet.z * clamp(1.0 - s.dist / 300.0, 0.0, 1.0);  // tiny far away: they would only shimmer
+  vec2 slope = vec2(0.0);
   if (ripple > 0.01) {
-    vec2 slope = weather_ripples(s.pos.xz, s.time) * 0.25 * ripple * (1.0 + 0.6 * weather_wet.w);
+    slope = weather_ripples(s.pos.xz, s.time) * 0.25 * ripple * (1.0 + 0.6 * weather_wet.w);
     nrm = normalize(vec3(slope.x, 1.0, slope.y));
   }
+  regs_HookOut.yzw = vec3(p * keep, 0.5 + clamp(slope, -0.5, 0.5));
   vec3 rr = reflect(s.view, nrm);
   float fr = 0.08 + 0.92 * pow(1.0 - max(dot(-s.view, nrm), 0.0), 5.0);
   vec3 refl = mix(texture(regs_EnvMap, rr).rgb, overcast, 0.7) * 0.75 * light;  // mostly the grey sky of the rain

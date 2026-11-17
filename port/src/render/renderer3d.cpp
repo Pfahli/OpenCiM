@@ -424,8 +424,26 @@ bool Renderer3D::makeDepthTarget(RenderTarget& t, int w, int h) {
   return ok;
 }
 
-bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture, TargetFormat format) {
+bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture, TargetFormat format,
+                                 bool hookData) {
   if (!makeTarget(t, w, h, format, samples <= 0 && !depthTexture, true)) return false;
+  static const gl::GLenum both[2] = {gl::COLOR_ATTACHMENT0, gl::COLOR_ATTACHMENT1};
+  if (hookData) {  // the surface hooks' data: location 1 of every translated fragment shader (render/glsl.h)
+    gl::GenTextures(1, &t.hookData);
+    gl::BindTexture(gl::TEXTURE_2D, t.hookData);
+    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::RGBA, gl::UNSIGNED_BYTE, nullptr);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
+    gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT1, gl::TEXTURE_2D, t.hookData, 0);
+    gl::DrawBuffers(2, both);
+    bool ok = gl::CheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
+    gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+    if (!ok) return false;
+  }
   if (depthTexture) {  // a sampleable depth on the (resolve) framebuffer
     gl::GenTextures(1, &t.depthTex);
     gl::BindTexture(gl::TEXTURE_2D, t.depthTex);
@@ -453,18 +471,41 @@ bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, boo
   gl::BindFramebuffer(gl::FRAMEBUFFER, t.msFbo);
   gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::RENDERBUFFER, t.msColor);
   gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, t.msDepth);
+  if (t.hookData) {
+    gl::GenRenderbuffers(1, &t.msHookData);
+    gl::BindRenderbuffer(gl::RENDERBUFFER, t.msHookData);
+    gl::RenderbufferStorageMultisample(gl::RENDERBUFFER, samples, gl::RGBA8, w, h);
+    gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT1, gl::RENDERBUFFER, t.msHookData);
+    gl::DrawBuffers(2, both);
+  }
   bool ok = gl::CheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
   gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
   return ok;
 }
+
+namespace {
+// blits colour attachment 1 (the hooks' data) from the bound read to the bound draw framebuffer, then puts both
+// back to their usual buffers
+void blitAttachment1(int sx0, int sy0, int sx1, int sy1, int dx0, int dy0, int dx1, int dy1) {
+  static const gl::GLenum second[2] = {gl::NONE, gl::COLOR_ATTACHMENT1}, both[2] = {gl::COLOR_ATTACHMENT0, gl::COLOR_ATTACHMENT1};
+  gl::ReadBuffer(gl::COLOR_ATTACHMENT1);
+  gl::DrawBuffers(2, second);
+  gl::BlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+  gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
+  gl::DrawBuffers(2, both);
+}
+}  // namespace
 
 void Renderer3D::resolve(const RenderTarget& t) {
   if (!t.msFbo) return;
   gl::BindFramebuffer(gl::READ_FRAMEBUFFER, t.msFbo);
   gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, t.fbo);
   gl::Disable(gl::SCISSOR_TEST);
+  static const gl::GLenum first = gl::COLOR_ATTACHMENT0;
+  if (t.hookData) gl::DrawBuffers(1, &first);  // the colour into attachment 0 only
   gl::BlitFramebuffer(0, 0, t.width, t.height, 0, 0, t.width, t.height,
                       gl::COLOR_BUFFER_BIT | (t.depthTex ? gl::DEPTH_BUFFER_BIT : 0), gl::NEAREST);
+  if (t.hookData && t.msHookData) blitAttachment1(0, 0, t.width, t.height, 0, 0, t.width, t.height);
   gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
 }
 
@@ -486,6 +527,15 @@ void Renderer3D::blitDepth(const RenderTarget& src, const RenderTarget& dst, int
   gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
 }
 
+void Renderer3D::blitHookData(const RenderTarget& src, const RenderTarget& dst, int w, int h) {
+  if (!src.hookData || !dst.hookData) return;
+  gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src.msFbo ? src.msFbo : src.fbo);
+  gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, dst.fbo);
+  gl::Disable(gl::SCISSOR_TEST);
+  blitAttachment1(0, 0, w, h, 0, 0, w, h);
+  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+}
+
 void Renderer3D::readRed(uint32_t texture, int w, int h, std::vector<float>& out) {
   out.assign(size_t(w) * size_t(h), 0.0f);
   gl::BindTexture(gl::TEXTURE_2D, texture);
@@ -498,6 +548,8 @@ void Renderer3D::destroyTarget(RenderTarget& t) {
   if (t.msFbo) gl::DeleteFramebuffers(1, &t.msFbo);
   if (t.msColor) gl::DeleteRenderbuffers(1, &t.msColor);
   if (t.msDepth) gl::DeleteRenderbuffers(1, &t.msDepth);
+  if (t.msHookData) gl::DeleteRenderbuffers(1, &t.msHookData);
+  if (t.hookData) gl::DeleteTextures(1, &t.hookData);
   if (t.fbo) gl::DeleteFramebuffers(1, &t.fbo);
   if (t.depthTex) gl::DeleteTextures(1, &t.depthTex);
   if (t.depth && t.depthTexture) gl::DeleteTextures(1, &t.depth);
@@ -574,6 +626,10 @@ void Renderer3D::begin(const RenderTarget* t, int x, int y, int w, int h, uint32
   gl::ClearDepth(1.0);
   gl::DepthMask(1);
   gl::Clear(gl::DEPTH_BUFFER_BIT | (clearColor ? gl::COLOR_BUFFER_BIT : 0));
+  if (t && t->hookData) {  // the hooks' data starts at 0 (nothing to tell) whatever the clear colour
+    static const float zero[4] = {0, 0, 0, 0};
+    gl::ClearBufferfv(gl::COLOR, 1, zero);
+  }
   gl::Enable(gl::DEPTH_TEST);
   gl::DepthFunc(gl::LEQUAL);
   gl::Enable(gl::CULL_FACE);
@@ -657,8 +713,16 @@ uint32_t Renderer3D::buildPostHookProgram(const std::string& vs110, std::string*
 void Renderer3D::postHookState(const SceneView& v, uint32_t prog) {
   gl::UseProgram(prog);
   hookState(v, prog);
-  Mat4 inv = inverse(v.proj * v.view);
+  Mat4 vp = v.proj * v.view, inv = inverse(vp);
   gl::UniformMatrix4fv(gl::GetUniformLocation(prog, "regs_PostInvViewProj"), 1, 0, inv.m);
+  gl::UniformMatrix4fv(gl::GetUniformLocation(prog, "regs_PostViewProj"), 1, 0, vp.m);
+  // the scene's fog (regs_Fog), so a post hook can tell the colour of the hazy sky and how fogged a point is
+  const ProgramLocs& l = locs(prog);
+  gl::Uniform4fv(l.fogColor, 1, v.fogColor);
+  gl::Uniform1f(l.fogStart, v.fog ? v.fogStart : 1e30f);
+  gl::Uniform1f(l.fogEnd, v.fog ? v.fogEnd : 1e30f);
+  gl::Uniform1f(l.fogScale, v.fog && v.fogEnd > v.fogStart ? 1.0f / (v.fogEnd - v.fogStart) : 0.0f);
+  gl::Uniform1f(l.fogDensity, 1);
 }
 
 uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, std::string* error) {
@@ -994,10 +1058,19 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   const DrawItem* bound = nullptr;
   gl::GLenum blendSrc = gl::SRC_ALPHA, blendDst = gl::ONE_MINUS_SRC_ALPHA;
   // opaque: no alpha test; alpha-tested: GREATER 0.2 with depth writes; blended and decals: GREATER 0.001 without
+  // the hooks' data (attachment 1 of a scene target made with it): opaque and cut-out draws write theirs; of the
+  // blended draws only walkable ground does (a blended road or pavement layer), the rest (decals on it, glass,
+  // route strips) leave the ground's data under them
+  bool dataMasked = false, blendedQueue = false;
+  auto maskData = [&](bool masked) {
+    if (masked != dataMasked) gl::ColorMaski(1, !masked, !masked, !masked, !masked), dataMasked = masked;
+  };
   auto run = [&](const std::vector<Q>& q, float ref, bool depthWrite) {
     gl::DepthMask(depthWrite);
     for (const Q& e : q) {
       const GpuMaterial& m = materialOf(*e.it, *e.p);
+      if (blendedQueue && !shadowPass)
+        maskData(m.surfaceClass != kSurfaceRoad && m.surfaceClass != kSurfacePavement && m.surfaceClass != kSurfacePlatform);
       if (!shadowPass) {
         // polygon offset (interfaces-3d.md material state): blended and decal (−2,−2), a depth offset d gives (2d, 2d)
         float off = (m.flags & (kMatAlphaBlend | kMatDecal)) ? -2.0f : 0.0f;
@@ -1054,8 +1127,11 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     gl::BlendFunc(blendSrc = gl::SRC_ALPHA, blendDst = gl::ONE_MINUS_SRC_ALPHA);
   }
   run(tested, 0.2f, true);
+  blendedQueue = true;
   run(blended, 0.001f, shadowPass);
+  if (!shadowPass) maskData(true);  // particles (rain, leaves, glows) keep the data under them
   if (v.particles && !v.particles->sprites.empty()) drawParticles(v, *v.particles);
+  maskData(false);
   gl::Disable(gl::BLEND);
   if (blendSrc != gl::SRC_ALPHA || blendDst != gl::ONE_MINUS_SRC_ALPHA) gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
   gl::DepthMask(1);

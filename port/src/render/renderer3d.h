@@ -100,6 +100,9 @@ struct RenderTarget {
   uint32_t msFbo = 0, msColor = 0, msDepth = 0;
   int samples = 0;
   uint32_t depthTex = 0;  // sampleable depth of fbo (scene targets made with a depth texture)
+  // the surface hooks' data (render/glsl.h regs_HookOut): a second colour attachment, RGBA8, on scene targets made
+  // with it (the mods' post hooks read it); msHookData its multisample buffer
+  uint32_t hookData = 0, msHookData = 0;
 };
 
 enum class TargetFormat { Rgba8, Rgba16f };
@@ -216,13 +219,16 @@ class Renderer3D {
   bool makeDepthTarget(RenderTarget& t, int w, int h);
   // An RGBA16F (or the given format) scene target with depth, multisampled with the given samples (0 = none),
   // resolved into a texture.
+  // hookData: also the surface hooks' data attachment (cleared to 0 by begin(), resolved with the colour)
   bool makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture = false,
-                       TargetFormat format = TargetFormat::Rgba16f);
+                       TargetFormat format = TargetFormat::Rgba16f, bool hookData = false);
   void resolve(const RenderTarget& t);  // multisample → texture (NEAREST blit, depth too); no-op without MSAA
   // resolves t and copies its bottom-left w×h colour into the back-buffer rect (x, y top-left origin)
   void blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH);
   // copies the depth of src (its multisample buffer when it has one) into dst's depth, bottom-left w×h
   void blitDepth(const RenderTarget& src, const RenderTarget& dst, int w, int h);
+  // the same for the surface hooks' data (both targets made with hookData; else nothing)
+  void blitHookData(const RenderTarget& src, const RenderTarget& dst, int w, int h);
   void destroyTarget(RenderTarget& t);
   // A post-effect pass into the bound target and viewport: a quad drawn with a combiner program (attributes
   // POSITION and TEXCOORD0 as a vec4 per corner, corners TL, TR, BR, BL), textures on units 0..n−1 and the custom0
