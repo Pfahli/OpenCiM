@@ -17,7 +17,7 @@
 
 #include "core/log.h"
 #include "core/text.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "engine/display.h"
 #include "engine/grid.h"
 #include "engine/grid_render.h"
@@ -329,15 +329,12 @@ void updateLampMap(Display& d, GridObj* grid, LampCache& lc) {
   RenderTarget* lm = lightMap(d);
   if (!lm) return;
   d.r2d().flushAll();
-  gl::BindTexture(gl::TEXTURE_2D, lm->color);
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
+  using render::gpu::Pixels;
   if (full) {
     std::vector<uint8_t> zero(size_t(kLightMapSide) * kLightMapSide * 4, 0);
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, kLightMapSide, kLightMapSide, kLightMapSide, gl::BGRA, gl::UNSIGNED_BYTE,
-                      zero.data());
+    render::gpu::dev().texSubImage(lm->color, 0, 0, kLightMapSide, kLightMapSide, kLightMapSide, Pixels::BGRA8, zero.data());
   }
-  gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, kLightMapSide, lc.w, lc.h, gl::BGRA, gl::UNSIGNED_BYTE, lc.px.data());
-  gl::BindTexture(gl::TEXTURE_2D, 0);
+  render::gpu::dev().texSubImage(lm->color, 0, 0, kLightMapSide, lc.w, lc.h, Pixels::BGRA8, lc.px.data());
   lc.texture = lm->color;  // not owned: marks the lamp map as uploaded
   LOG_INFO("night lights: %zu lamp heads, lamp map %dx%d (%s %dx%d texels) in %lld ms", lc.heads.size(), lc.w, lc.h,
            full ? "all" : "area", x1 - x0 + 1, z1 - z0 + 1,

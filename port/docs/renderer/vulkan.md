@@ -165,7 +165,7 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
 | # | Step | Status |
 |---|---|---|
 | 1 | This plan | done |
-| 2 | `gpu::Device` with the GL implementation; every GL call outside `gpu_gl.cpp` moved behind it; screenshots of the menu, the editor and a Vienna save identical before and after | |
+| 2 | `gpu::Device` with the GL implementation; every GL call outside `gpu_gl.cpp` moved behind it; screenshots of the menu and a Vienna save identical before and after | done (2026-11-17): static pixels identical; only moving vehicles, people, trees and the build string differ between runs |
 | 3a | Vulkan device: loader, instance, device, swapchain, offscreen back buffer, present; clear colour on screen; fallback to GL on failure | |
 | 3b | glslang in the build; programs, uniforms, textures, buffers: the 2D GUI (main menu readable) | |
 | 3c | 3D: meshes, the default shader and the combiner variants, render targets (the menu's trams, terrain, objects) | |

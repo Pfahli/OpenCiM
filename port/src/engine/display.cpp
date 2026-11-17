@@ -22,7 +22,7 @@
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "engine/ui_graphs.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "render/glsl.h"
 #include "render/image.h"
 #include "vfs/vfs.h"
@@ -140,11 +140,9 @@ void WindowObj::tick(VM& vm, float dt) {
 bool Display::open(const platform::WindowDesc& desc, std::string* error) {
   window_ = platform::createWindow();
   if (!window_->create(desc, error)) return false;
-  auto proc = [](const char* n, void* u) { return static_cast<platform::Window*>(u)->glProc(n); };
-  if (const char* missing = gl::load(proc, window_.get())) {
-    if (error) *error = std::string("OpenGL function missing: ") + missing;
-    return false;
-  }
+  auto device = render::gpu::createGlDevice(*window_, error);
+  if (!device) return false;
+  render::gpu::setDevice(std::move(device));
   if (!r2d_.init(error) || !r3d_.init(error)) return false;
   LOG_INFO("display: %dx%d, %s", window_->width(), window_->height(), r2d_.info.c_str());
   if (int dpi = window_->dpi()) LOG_INFO("display: %d dpi (%d %%), per-monitor DPI aware", dpi, dpi * 100 / 96);
@@ -480,7 +478,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     else LOG_ERROR("screenshot failed: %s", shot_.string().c_str());
     shot_.clear();
   }
-  window_->swap();
+  render::gpu::dev().present();
 }
 
 void Display::syncRenderSettings(VM& vm) {
@@ -497,7 +495,7 @@ void Display::syncRenderSettings(VM& vm) {
     bool vs = vm.truthy(field(vm, windowObj_.get(), u"vsync"));
     if (vs != vsync_) {
       if (vsyncKnown_) LOG_INFO("vsync: %s", vs ? "on" : "off");
-      window_->setVsync(vs);
+      render::gpu::dev().setVsync(vs);
       vsync_ = vs;
       vsyncKnown_ = true;
     }
@@ -639,10 +637,7 @@ bool Display::saveScreenshot(const std::filesystem::path& file) {
 void Display::dumpTarget(const render::RenderTarget& rt, const std::filesystem::path& file) {
   // debugging aid (REGS_DUMP_TARGET=<file.png>): the target's pixels as stored (bottom row first)
   std::vector<uint8_t> px(size_t(rt.width) * size_t(rt.height) * 4);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, rt.fbo);
-  gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
-  gl::ReadPixels(0, 0, rt.width, rt.height, gl::RGBA, gl::UNSIGNED_BYTE, px.data());
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  render::gpu::dev().readPixels(rt.fbo, 0, 0, rt.width, rt.height, px.data());
   std::ofstream f(file, std::ios::binary);
   if (f) writePng(f, px.data(), rt.width, rt.height);
 }

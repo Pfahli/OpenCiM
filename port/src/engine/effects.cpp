@@ -14,7 +14,7 @@
 #include "engine/display.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "render/glsl.h"
 #include "vfs/vfs.h"
 
@@ -22,6 +22,7 @@ namespace regs::engine {
 
 using namespace regs::script;
 using namespace regs::render;
+using gpu::dev;
 
 namespace {
 
@@ -47,11 +48,10 @@ float fieldFloat(VM& vm, Object* o, const char16_t* name, float def) {
 }
 
 void clearTarget(const RenderTarget& t) {
-  gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
-  gl::Disable(gl::SCISSOR_TEST);
-  gl::ClearColor(0, 0, 0, 0);
-  gl::Clear(gl::COLOR_BUFFER_BIT);
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  dev().bindFramebuffer(t.fbo);
+  dev().scissorTest(false);
+  dev().clear(true, false, 0, 0, 0, 0);
+  dev().bindFramebuffer(0);
 }
 
 bool setup(Display& d, VM& vm, BloomState& s) {
@@ -202,9 +202,9 @@ void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int 
     }
   }
   if (post && s.post && ensureTarget(d, s.postOut, w, h, 0)) {
-    gl::Disable(gl::SCISSOR_TEST);
-    gl::BindFramebuffer(gl::FRAMEBUFFER, s.postOut.fbo);
-    gl::Viewport(0, 0, w, h);
+    dev().scissorTest(false);
+    dev().bindFramebuffer(s.postOut.fbo);
+    dev().viewport(0, 0, w, h);
     r.postHookState(*post, s.post);
     const float texel[4] = {1.0f / float(w), 1.0f / float(h), 0, 0};
     const uint32_t in[2] = {image, s.input.depthTex};
@@ -217,23 +217,23 @@ void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int 
     bool tilt = blur == 3;
     const float lens[4] = {nearZ, farZ, std::max(focus, 1.0f), kLensBlurStrength[blur]}, band[4] = {0.5f, 0.10f, 0.35f, 0};
     uint32_t prog = tilt ? s.tilt : s.dof;
-    gl::Disable(gl::SCISSOR_TEST);
-    gl::BindFramebuffer(gl::FRAMEBUFFER, s.blurA.fbo);
-    gl::Viewport(0, 0, w, h);
+    dev().scissorTest(false);
+    dev().bindFramebuffer(s.blurA.fbo);
+    dev().viewport(0, 0, w, h);
     const uint32_t first[2] = {image, s.input.depthTex}, second[2] = {s.blurA.color, s.input.depthTex};
     r.drawQuad(prog, first, tilt ? 1 : 2, ch, uv, nullptr, tilt ? band : lens);
-    gl::BindFramebuffer(gl::FRAMEBUFFER, s.blurB.fbo);
+    dev().bindFramebuffer(s.blurB.fbo);
     r.drawQuad(prog, second, tilt ? 1 : 2, cv, uv, nullptr, tilt ? band : lens);
     image = s.blurB.color;
   }
   const float* st = kColorStyles[colorStyle(vm)];
   const float c0[4] = {st[0], st[1], st[2], st[3]}, c1[4] = {st[4], st[5], st[6], 0};
-  gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-  gl::Viewport(x, backH - y - h, w, h);
-  gl::Enable(gl::SCISSOR_TEST);
-  gl::Scissor(x, backH - y - h, w, h);
+  dev().bindFramebuffer(0);
+  dev().viewport(x, backH - y - h, w, h);
+  dev().scissorTest(true);
+  dev().scissor(x, backH - y - h, w, h);
   r.drawQuad(s.grade, &image, 1, c0, uv, nullptr, c1);
-  gl::Viewport(0, 0, backW, backH);
+  dev().viewport(0, 0, backW, backH);
 }
 
 void styleTakeDepth(Display& d, const RenderTarget& scene, int w, int h) {
@@ -505,9 +505,9 @@ void bloomFinish(Display& d, VM& vm, Object* bloom, int x, int y, int w, int h, 
     }
   };
   auto into = [&](const RenderTarget& t) {
-    gl::BindFramebuffer(gl::FRAMEBUFFER, t.fbo);
-    gl::Disable(gl::SCISSOR_TEST);
-    gl::Viewport(0, 0, t.width, t.height);
+    dev().bindFramebuffer(t.fbo);
+    dev().scissorTest(false);
+    dev().viewport(0, 0, t.width, t.height);
   };
   float uv[4][4];
   // pass 1: (mean of 4 taps)² of the scene into A0
@@ -538,11 +538,11 @@ void bloomFinish(Display& d, VM& vm, Object* bloom, int x, int y, int w, int h, 
   const uint32_t levels[4] = {s.a[0].color, s.a[1].color, s.a[2].color, s.a[3].color};
   r.drawQuad(s.add, levels, 4, nullptr, uv, rect);
   // pass 11: composite into the back-buffer viewport rect (or the bottom-left of the given target)
-  gl::BindFramebuffer(gl::FRAMEBUFFER, out ? out->fbo : 0);
+  dev().bindFramebuffer(out ? out->fbo : 0);
   int oy = out ? 0 : backH - y - h, ox = out ? 0 : x;
-  gl::Viewport(ox, oy, w, h);
-  gl::Enable(gl::SCISSOR_TEST);
-  gl::Scissor(ox, oy, w, h);
+  dev().viewport(ox, oy, w, h);
+  dev().scissorTest(true);
+  dev().scissor(ox, oy, w, h);
   float e = fieldFloat(vm, bloom, u"scale", 0.5f);
   if (e == -1.0f) e = s.measured;
   float saturation = fieldFloat(vm, bloom, u"saturation", 1.0f);
@@ -551,7 +551,7 @@ void bloomFinish(Display& d, VM& vm, Object* bloom, int x, int y, int w, int h, 
   const float composite[4][4] = {{0, tt, 0, by}, {st, tt, bx, by}, {st, 0, bx, 0}, {0, 0, 0, 0}};
   const uint32_t inputs[2] = {s.scene.color, s.b[0].color};
   r.drawQuad(s.final, inputs, 2, c11, composite);
-  gl::Viewport(0, 0, backW, backH);
+  dev().viewport(0, 0, backW, backH);
 }
 
 // ---- live graphics settings (port) ----

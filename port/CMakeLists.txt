@@ -41,6 +41,7 @@ add_library(regs_engine STATIC
   src/engine/font.cpp
   src/engine/input.cpp
   src/render/gl.cpp
+  src/render/gpu_gl.cpp
   src/render/image.cpp
   src/render/renderer2d.cpp
   src/render/renderer3d.cpp

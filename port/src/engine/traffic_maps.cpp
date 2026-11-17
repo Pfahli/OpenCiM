@@ -13,7 +13,7 @@
 #include "engine/sim.h"
 #include "engine/sim_graph.h"
 #include "engine/sim_state.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "render/glsl.h"
 
 namespace regs::engine {
@@ -151,21 +151,18 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
            t.listW, t.listH, t.listIds.size(), maxCount, cut, kListMax);
 }
 
-void upload(uint32_t& tex, int w, int h, uint32_t format, uint32_t layout, const uint8_t* data, bool linear) {
+// a data texture without mipmaps, clamped, nearest or linear; created on first use, then (re)defined with the data
+void upload(uint32_t& tex, int w, int h, render::gpu::Format format, render::gpu::Pixels layout, const void* data,
+            bool linear) {
+  using namespace render::gpu;
   if (!tex) {
-    gl::GenTextures(1, &tex);
-    gl::BindTexture(gl::TEXTURE_2D, tex);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, linear ? gl::LINEAR : gl::NEAREST);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, linear ? gl::LINEAR : gl::NEAREST);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
-    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
-  } else {
-    gl::BindTexture(gl::TEXTURE_2D, tex);
+    tex = dev().createTexture(TexKind::Tex2D, 1);
+    SamplerDesc s;
+    s.minFilter = s.magFilter = linear ? Filter::Linear : Filter::Nearest;
+    s.wrapS = s.wrapT = Wrap::ClampToEdge;
+    dev().setSampler(tex, s);
   }
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-  gl::TexImage2D(gl::TEXTURE_2D, 0, int(format), w, h, 0, layout, gl::UNSIGNED_BYTE, data);
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-  gl::BindTexture(gl::TEXTURE_2D, 0);
+  dev().texImage(tex, 0, 0, format, w, h, layout, data);
 }
 
 // ---- footprints ----
@@ -473,7 +470,6 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& laneTraffic, float rect[4], float 
         if (i < smooth.size()) values[l * 4] = 1.0f - std::exp(-smooth[i] / 4.0f);
         if (i < t.lanePlow.size()) values[l * 4 + 1] = t.lanePlow[i], values[l * 4 + 2] = t.laneHeap[i];
       }
-      gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
       if (full) {
         // one RGBA32F texture, 1024 texels wide (a texture unit fewer for the shader hooks): the lanes' rows (values,
         // curve, curve), then the lists (4 lane numbers per texel), then the cells (2 per texel: the list's first
@@ -503,24 +499,13 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& laneTraffic, float rect[4], float 
           b[0] = n.p1.x - n.f1.x * L, b[1] = n.p1.z - n.f1.z * L, b[2] = n.p1.x, b[3] = n.p1.z;
         }
         for (int r = 0; r < rows; ++r) std::copy_n(&values[size_t(r) * 256 * 4], 256 * 4, &all[size_t(r) * 1024 * 4]);
-        if (!t.laneTrafficTexture) {
-          gl::GenTextures(1, &t.laneTrafficTexture);
-          gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
-          gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
-        } else {
-          gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
-        }
-        gl::TexImage2D(gl::TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, 1024, rows + listRows + cellRows, 0, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, all.data());
+        upload(t.laneTrafficTexture, 1024, rows + listRows + cellRows, render::gpu::Format::RGBA32F,
+               render::gpu::Pixels::RGBA32F, all.data(), false);
         t.laneTrafficRows = rows;
         t.laneCurvesDirty = false;
       } else {
-        gl::BindTexture(gl::TEXTURE_2D, t.laneTrafficTexture);
-        gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, 256, rows, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, values.data());
+        render::gpu::dev().texSubImage(t.laneTrafficTexture, 0, 0, 0, 256, rows, render::gpu::Pixels::RGBA32F, values.data());
       }
-      gl::BindTexture(gl::TEXTURE_2D, 0);
       t.laneTrafficDirty = false;
     }
     for (const auto& [cell, v] : t.trodden) {
@@ -566,7 +551,7 @@ bool gridFootprints(GridObj* grid, uint32_t& atlas, float rect[4]) {
   if (create) {
     const int w = std::max(kAtlasSize, 2 * t.tilesX), h = kAtlasSize + t.tilesZ;
     std::vector<uint8_t> zero(size_t(w) * size_t(h), 0);
-    upload(t.footAtlasTexture, w, h, 0x8229 /* GL_R8 */, gl::RED, zero.data(), false);
+    upload(t.footAtlasTexture, w, h, render::gpu::Format::R8, render::gpu::Pixels::R8, zero.data(), false);
     t.indexX0 = 0, t.indexZ0 = 0, t.indexX1 = t.tilesX - 1, t.indexZ1 = t.tilesZ - 1;
     t.atlasAllDirty = true;
   }
@@ -579,18 +564,14 @@ bool gridFootprints(GridObj* grid, uint32_t& atlas, float rect[4]) {
         rectData[(size_t(z) * size_t(w) + size_t(x)) * 2] = uint8_t(v & 0xFF);
         rectData[(size_t(z) * size_t(w) + size_t(x)) * 2 + 1] = uint8_t(v >> 8);
       }
-    gl::BindTexture(gl::TEXTURE_2D, t.footAtlasTexture);
-    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 2 * t.indexX0, kAtlasSize + t.indexZ0, 2 * w, h, gl::RED, gl::UNSIGNED_BYTE,
-                      rectData.data());
+    render::gpu::dev().texSubImage(t.footAtlasTexture, 0, 2 * t.indexX0, kAtlasSize + t.indexZ0, 2 * w, h,
+                                   render::gpu::Pixels::R8, rectData.data());
     t.indexX0 = 0, t.indexZ0 = 0, t.indexX1 = -1, t.indexZ1 = -1;
   }
-  gl::BindTexture(gl::TEXTURE_2D, t.footAtlasTexture);
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
   int dirty = 0;
   for (uint8_t d : t.slotDirty) dirty += d;
   if (t.atlasAllDirty || dirty > kSlots / 4) {
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, kAtlasSize, kAtlasSize, gl::RED, gl::UNSIGNED_BYTE, t.atlas.data());
+    render::gpu::dev().texSubImage(t.footAtlasTexture, 0, 0, 0, kAtlasSize, kAtlasSize, render::gpu::Pixels::R8, t.atlas.data());
     std::fill(t.slotDirty.begin(), t.slotDirty.end(), uint8_t(0));
     t.atlasAllDirty = false;
   } else if (dirty > 0) {
@@ -601,11 +582,9 @@ bool gridFootprints(GridObj* grid, uint32_t& atlas, float rect[4]) {
       int bx = (slot % kAtlasTiles) * kFootTile, bz = (slot / kAtlasTiles) * kFootTile;
       for (int z = 0; z < kFootTile; ++z)
         std::copy_n(&t.atlas[size_t(bz + z) * kAtlasSize + size_t(bx)], kFootTile, &tile[size_t(z) * kFootTile]);
-      gl::TexSubImage2D(gl::TEXTURE_2D, 0, bx, bz, kFootTile, kFootTile, gl::RED, gl::UNSIGNED_BYTE, tile.data());
+      render::gpu::dev().texSubImage(t.footAtlasTexture, 0, bx, bz, kFootTile, kFootTile, render::gpu::Pixels::R8, tile.data());
     }
   }
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 4);
-  gl::BindTexture(gl::TEXTURE_2D, 0);
   atlas = t.footAtlasTexture;
   rect[0] = t.originX;
   rect[1] = t.originZ;

@@ -26,7 +26,7 @@
 #include "engine/night_lights.h"
 #include "engine/shaders.h"
 #include "platform/window.h"
-#include "render/gl.h"
+#include "render/gpu.h"
 #include "render/image.h"
 #include "render/mesh.h"
 #include "render/renderer3d.h"
@@ -255,11 +255,12 @@ int cmdShaders(int argc, char** argv) {
     std::fprintf(stderr, "no OpenGL context: %s\n", err.c_str());
     return 1;
   }
-  auto proc = [](const char* n, void* u) { return static_cast<platform::Window*>(u)->glProc(n); };
-  if (const char* missing = gl::load(proc, win.get())) {
-    std::fprintf(stderr, "missing %s\n", missing);
+  auto device = render::gpu::createGlDevice(*win, &err);
+  if (!device) {
+    std::fprintf(stderr, "%s\n", err.c_str());
     return 1;
   }
+  render::gpu::setDevice(std::move(device));
   render::Renderer3D r3d;
   if (!r3d.init(&err)) {
     std::fprintf(stderr, "renderer: %s\n", err.c_str());

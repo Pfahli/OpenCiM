@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
-#include "render/gl.h"
+#include "render/gpu.h"
 
 namespace regs::render {
 
@@ -53,138 +53,82 @@ void main() {
 }
 )";
 
-uint32_t compile(gl::GLenum type, const char* src, std::string* error) {
-  uint32_t s = gl::CreateShader(type);
-  gl::ShaderSource(s, 1, &src, nullptr);
-  gl::CompileShader(s);
-  int ok = 0;
-  gl::GetShaderiv(s, gl::COMPILE_STATUS, &ok);
-  if (!ok) {
-    char log[2048];
-    gl::GetShaderInfoLog(s, sizeof log, nullptr, log);
-    if (error) *error = log;
-    return 0;
-  }
-  return s;
-}
-
 }  // namespace
 
-Renderer2D::~Renderer2D() = default;  // GL objects die with the context
+Renderer2D::~Renderer2D() = default;  // GPU objects die with the device
 
 bool Renderer2D::init(std::string* error) {
-  uint32_t vs = compile(gl::VERTEX_SHADER, kVertex, error), fs = compile(gl::FRAGMENT_SHADER, kFragment, error);
-  if (!vs || !fs) return false;
-  program_ = gl::CreateProgram();
-  gl::AttachShader(program_, vs);
-  gl::AttachShader(program_, fs);
-  gl::LinkProgram(program_);
-  int ok = 0;
-  gl::GetProgramiv(program_, gl::LINK_STATUS, &ok);
-  gl::DeleteShader(vs);
-  gl::DeleteShader(fs);
-  if (!ok) {
-    char log[2048];
-    gl::GetProgramInfoLog(program_, sizeof log, nullptr, log);
-    if (error) *error = log;
-    return false;
-  }
-  uMatrix_ = gl::GetUniformLocation(program_, "uMatrix");
-  uTextured_ = gl::GetUniformLocation(program_, "uTextured");
-  uTex_ = gl::GetUniformLocation(program_, "uTex");
-  uSharp_ = gl::GetUniformLocation(program_, "uSharp");
-  gl::GenVertexArrays(1, &vao_);
-  gl::BindVertexArray(vao_);
-  gl::GenBuffers(1, &vbo_);
-  gl::BindBuffer(gl::ARRAY_BUFFER, vbo_);
-  gl::EnableVertexAttribArray(0);
-  gl::EnableVertexAttribArray(1);
-  gl::EnableVertexAttribArray(2);
-  gl::VertexAttribPointer(0, 2, gl::FLOAT, 0, sizeof(GuiVertex), reinterpret_cast<void*>(offsetof(GuiVertex, x)));
-  gl::VertexAttribPointer(1, 2, gl::FLOAT, 0, sizeof(GuiVertex), reinterpret_cast<void*>(offsetof(GuiVertex, u)));
-  gl::VertexAttribPointer(2, 4, gl::UNSIGNED_BYTE, 1, sizeof(GuiVertex), reinterpret_cast<void*>(offsetof(GuiVertex, rgba)));
-  const auto* ver = reinterpret_cast<const char*>(gl::GetString(gl::VERSION));
-  const auto* ren = reinterpret_cast<const char*>(gl::GetString(gl::RENDERER));
-  gl::GLint units = 0;
-  gl::GetIntegerv(0x8872 /* GL_MAX_TEXTURE_IMAGE_UNITS */, &units);
-  info = std::string("OpenGL ") + (ver ? ver : "?") + " / " + (ren ? ren : "?") + " / " + std::to_string(units) +
-         " texture units" + (units < 16 ? " (fewer than the 16 the port needs)" : "");
+  gpu::Device& d = gpu::dev();
+  program_ = d.createProgram(kVertex, kFragment, {}, error);
+  if (!program_) return false;
+  uMatrix_ = d.uniformLocation(program_, "uMatrix");
+  uTextured_ = d.uniformLocation(program_, "uTextured");
+  uTex_ = d.uniformLocation(program_, "uTex");
+  uSharp_ = d.uniformLocation(program_, "uSharp");
+  vbo_ = d.createBuffer();
+  const gpu::VertexAttrib attrs[3] = {
+      {0, 2, gpu::AttribType::Float, vbo_, int(sizeof(GuiVertex)), offsetof(GuiVertex, x)},
+      {1, 2, gpu::AttribType::Float, vbo_, int(sizeof(GuiVertex)), offsetof(GuiVertex, u)},
+      {2, 4, gpu::AttribType::UByteNorm, vbo_, int(sizeof(GuiVertex)), offsetof(GuiVertex, rgba)}};
+  vao_ = d.createVertexInput(attrs, 3, 0);
+  info = d.info();
   return true;
 }
 
 uint32_t Renderer2D::createTexture(const Image& img) {
   flush();  // binding a texture below must not disturb a pending batch
-  uint32_t t = 0;
-  gl::GenTextures(1, &t);
-  gl::GLenum target = img.cube ? gl::TEXTURE_CUBE_MAP : gl::TEXTURE_2D;
-  gl::BindTexture(target, t);
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+  gpu::Device& d = gpu::dev();
   int faces = img.cube ? 6 : 1, mips = img.mipCount;
+  uint32_t t = d.createTexture(img.cube ? gpu::TexKind::Cube : gpu::TexKind::Tex2D, mips);
   for (int f = 0; f < faces; ++f) {
     // DDS cube faces come in GL order: +X, -X, +Y, -Y, +Z, -Z
-    gl::GLenum face = img.cube ? gl::GLenum(gl::TEXTURE_CUBE_MAP_POSITIVE_X + f) : gl::TEXTURE_2D;
     for (int m = 0; m < mips; ++m) {
       size_t li = size_t(f * mips + m);
       if (li >= img.levels.size()) break;
       int w = std::max(1, img.width >> m), h = std::max(1, img.height >> m);
       const auto& lv = img.levels[li];
       switch (img.format) {
-        case Image::Format::DXT1: gl::CompressedTexImage2D(face, m, gl::COMPRESSED_RGBA_S3TC_DXT1, w, h, 0, int(lv.size()), lv.data()); break;
-        case Image::Format::DXT3: gl::CompressedTexImage2D(face, m, gl::COMPRESSED_RGBA_S3TC_DXT3, w, h, 0, int(lv.size()), lv.data()); break;
-        case Image::Format::DXT5: gl::CompressedTexImage2D(face, m, gl::COMPRESSED_RGBA_S3TC_DXT5, w, h, 0, int(lv.size()), lv.data()); break;
-        case Image::Format::BGR8: gl::TexImage2D(face, m, gl::RGB8, w, h, 0, gl::BGR, gl::UNSIGNED_BYTE, lv.data()); break;
-        default: gl::TexImage2D(face, m, gl::RGBA8, w, h, 0, gl::BGRA, gl::UNSIGNED_BYTE, lv.data()); break;
+        case Image::Format::DXT1: d.texImage(t, f, m, gpu::Format::DXT1, w, h, gpu::Pixels::Compressed, lv.data(), lv.size()); break;
+        case Image::Format::DXT3: d.texImage(t, f, m, gpu::Format::DXT3, w, h, gpu::Pixels::Compressed, lv.data(), lv.size()); break;
+        case Image::Format::DXT5: d.texImage(t, f, m, gpu::Format::DXT5, w, h, gpu::Pixels::Compressed, lv.data(), lv.size()); break;
+        case Image::Format::BGR8: d.texImage(t, f, m, gpu::Format::RGB8, w, h, gpu::Pixels::BGR8, lv.data()); break;
+        default: d.texImage(t, f, m, gpu::Format::RGBA8, w, h, gpu::Pixels::BGRA8, lv.data()); break;
       }
     }
   }
-  gl::TexParameteri(target, gl::TEXTURE_MAX_LEVEL, mips - 1);
-  gl::TexParameteri(target, gl::TEXTURE_MIN_FILTER, mips > 1 ? gl::LINEAR_MIPMAP_LINEAR : gl::LINEAR);
-  gl::TexParameteri(target, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+  gpu::SamplerDesc s;
+  s.maxLevel = mips - 1;
+  s.minFilter = mips > 1 ? gpu::Filter::LinearMipLinear : gpu::Filter::Linear;
+  s.magFilter = gpu::Filter::Linear;
+  s.wrapS = s.wrapT = s.wrapR = img.cube ? gpu::Wrap::ClampToEdge : gpu::Wrap::Repeat;
+  d.setSampler(t, s);
   if (!img.cube && mips > 1) {
     mipTextures_.push_back(t);
     if (anisotropy > 1) applyAnisotropy(t);
-  }
-  gl::GLint wrap = img.cube ? gl::CLAMP_TO_EDGE : gl::REPEAT;
-  gl::TexParameteri(target, gl::TEXTURE_WRAP_S, wrap);
-  gl::TexParameteri(target, gl::TEXTURE_WRAP_T, wrap);
-  if (img.cube) {
-    gl::TexParameteri(target, gl::TEXTURE_WRAP_R, wrap);
-    gl::Enable(gl::TEXTURE_CUBE_MAP_SEAMLESS);
   }
   return t;
 }
 
 uint32_t Renderer2D::createTextureBGRA(const uint8_t* bgra, int w, int h) {
   flush();
-  uint32_t t = 0;
-  gl::GenTextures(1, &t);
-  gl::BindTexture(gl::TEXTURE_2D, t);
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-  gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::BGRA, gl::UNSIGNED_BYTE, bgra);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAX_LEVEL, 0);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT);
-  gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT);
+  gpu::Device& d = gpu::dev();
+  uint32_t t = d.createTexture(gpu::TexKind::Tex2D, 1);
+  d.texImage(t, 0, 0, gpu::Format::RGBA8, w, h, gpu::Pixels::BGRA8, bgra);
+  gpu::SamplerDesc s;
+  s.maxLevel = 0;
+  d.setSampler(t, s);
   return t;
 }
 
 void Renderer2D::updateTextureBGRA(uint32_t tex, const uint8_t* bgra, int w, int h) {
   flush();
-  gl::BindTexture(gl::TEXTURE_2D, tex);
-  gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-  gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::BGRA, gl::UNSIGNED_BYTE, bgra);
+  gpu::dev().texSubImage(tex, 0, 0, 0, w, h, gpu::Pixels::BGRA8, bgra);
 }
 
 void Renderer2D::applyAnisotropy(uint32_t tex) {
   // gsVideo_OGL clamps it to GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT; 1 = plain trilinear
-  if (!maxAnisotropy_) {
-    gl::GLint maxAniso = 1;
-    gl::GetIntegerv(0x84FF, &maxAniso);
-    maxAnisotropy_ = std::max(1, maxAniso);
-  }
-  gl::BindTexture(gl::TEXTURE_2D, tex);
-  gl::TexParameterf(gl::TEXTURE_2D, gl::TEXTURE_MAX_ANISOTROPY, std::clamp(anisotropy, 1.0f, float(maxAnisotropy_)));
+  if (!maxAnisotropy_) maxAnisotropy_ = std::max(1, int(gpu::dev().maxAnisotropy()));
+  gpu::dev().setAnisotropy(tex, std::clamp(anisotropy, 1.0f, float(maxAnisotropy_)));
 }
 
 void Renderer2D::setAnisotropy(float a) {
@@ -192,49 +136,46 @@ void Renderer2D::setAnisotropy(float a) {
   flush();
   anisotropy = a;
   for (uint32_t t : mipTextures_) applyAnisotropy(t);
-  gl::BindTexture(gl::TEXTURE_2D, 0);
 }
 
 void Renderer2D::destroyTexture(uint32_t tex) {
   if (!tex) return;
   if (tex == batchTex_) flush();
   std::erase(mipTextures_, tex);
-  gl::DeleteTextures(1, &tex);
+  gpu::dev().destroyTexture(tex);
 }
 
 void Renderer2D::beginFrame(int width, int height, uint32_t clearArgb) {
+  gpu::Device& d = gpu::dev();
   fw_ = width;
   fh_ = height;
   batch_.clear();
-  gl::Viewport(0, 0, width, height);
-  gl::Disable(gl::SCISSOR_TEST);
-  gl::ClearColor(float(clearArgb >> 16 & 0xFF) / 255, float(clearArgb >> 8 & 0xFF) / 255, float(clearArgb & 0xFF) / 255, 1);
-  gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-  gl::Disable(gl::DEPTH_TEST);
-  gl::Disable(gl::CULL_FACE);
-  gl::Enable(gl::BLEND);
-  gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-  gl::UseProgram(program_);
-  gl::Uniform1i(uTex_, 0);
-  gl::Uniform1f(uSharp_, sharpScale > 1 ? sharpScale : 0.0f);
-  gl::ActiveTexture(gl::TEXTURE0);
-  gl::BindVertexArray(vao_);
-  gl::BindBuffer(gl::ARRAY_BUFFER, vbo_);
+  d.beginFrame(width, height);
+  d.viewport(0, 0, width, height);
+  d.scissorTest(false);
+  d.clear(true, true, float(clearArgb >> 16 & 0xFF) / 255, float(clearArgb >> 8 & 0xFF) / 255, float(clearArgb & 0xFF) / 255, 1);
+  d.depthTest(false);
+  d.cull(false);
+  d.blend(true);
+  d.blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
+  d.useProgram(program_);
+  d.uniform1i(uTex_, 0);
+  d.uniform1f(uSharp_, sharpScale > 1 ? sharpScale : 0.0f);
+  d.bindVertexInput(vao_);
   setProjection(0, 0, float(width), float(height), float(width), float(height));
 }
 
 void Renderer2D::endFrame() { flush(); }
 
 void Renderer2D::resume() {
-  gl::Disable(gl::DEPTH_TEST);
-  gl::Disable(gl::CULL_FACE);
-  gl::Enable(gl::BLEND);
-  gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-  gl::UseProgram(program_);
-  gl::Uniform1i(uTex_, 0);
-  gl::ActiveTexture(gl::TEXTURE0);
-  gl::BindVertexArray(vao_);
-  gl::BindBuffer(gl::ARRAY_BUFFER, vbo_);
+  gpu::Device& d = gpu::dev();
+  d.depthTest(false);
+  d.cull(false);
+  d.blend(true);
+  d.blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
+  d.useProgram(program_);
+  d.uniform1i(uTex_, 0);
+  d.bindVertexInput(vao_);
   setProjection(proj_[0], proj_[1], proj_[2], proj_[3], proj_[4], proj_[5]);
   setScissor(scissor_[0], scissor_[1], scissor_[2], scissor_[3]);
 }
@@ -243,73 +184,37 @@ void Renderer2D::setProjection(float px, float py, float pw, float ph, float uni
   flush();
   const float saved[6] = {px, py, pw, ph, unitsW, unitsH};
   std::copy(saved, saved + 6, proj_);
-  gl::Viewport(int(px), int(float(fh_) - py - ph), int(pw), int(ph));
+  gpu::dev().viewport(int(px), int(float(fh_) - py - ph), int(pw), int(ph));
   // ortho(0, unitsW, unitsH, 0): column-major
   const float m[16] = {2 / unitsW, 0, 0, 0, 0, -2 / unitsH, 0, 0, 0, 0, 1, 0, -1, 1, 0, 1};
   std::copy(m, m + 16, mvp_);
-  gl::UniformMatrix4fv(uMatrix_, 1, 0, m);
+  gpu::dev().uniformMatrix4fv(uMatrix_, 1, m);
 }
 
 uint32_t Renderer2D::buildProgram(const std::string& vs, const std::string& fs, std::string* error) {
-  auto compileStage = [&](gl::GLenum type, const std::string& src) -> uint32_t {
-    uint32_t s = gl::CreateShader(type);
-    const char* p = src.c_str();
-    gl::ShaderSource(s, 1, &p, nullptr);
-    gl::CompileShader(s);
-    int ok = 0;
-    gl::GetShaderiv(s, gl::COMPILE_STATUS, &ok);
-    if (!ok) {
-      char log[2048];
-      gl::GetShaderInfoLog(s, sizeof log, nullptr, log);
-      if (error) *error = log;
-      gl::DeleteShader(s);
-      return 0;
-    }
-    return s;
-  };
-  uint32_t v = compileStage(gl::VERTEX_SHADER, vs), f = v ? compileStage(gl::FRAGMENT_SHADER, fs) : 0;
-  if (!v || !f) return 0;
-  uint32_t prog = gl::CreateProgram();
-  gl::AttachShader(prog, v);
-  gl::AttachShader(prog, f);
   // GUI vertices: position, uv, colour at the slots of the 2D vertex array
-  gl::BindAttribLocation(prog, 0, "regs_Vertex");
-  gl::BindAttribLocation(prog, 1, "regs_MultiTexCoord0");
-  gl::BindAttribLocation(prog, 2, "regs_Color");
-  gl::LinkProgram(prog);
-  gl::DeleteShader(v);
-  gl::DeleteShader(f);
-  int ok = 0;
-  gl::GetProgramiv(prog, gl::LINK_STATUS, &ok);
-  if (!ok) {
-    char log[2048];
-    gl::GetProgramInfoLog(prog, sizeof log, nullptr, log);
-    if (error) *error = log;
-    return 0;
-  }
-  return prog;
+  return gpu::dev().createProgram(vs, fs, {{0, "regs_Vertex"}, {1, "regs_MultiTexCoord0"}, {2, "regs_Color"}}, error);
 }
 
 void Renderer2D::drawWithProgram(uint32_t prog, const uint32_t* textures, int textureCount, Prim prim, const GuiVertex* v,
                                  size_t n, const float* custom0) {
   flush();
-  gl::UseProgram(prog);
-  gl::UniformMatrix4fv(gl::GetUniformLocation(prog, "regs_ModelViewProjectionMatrix"), 1, 0, mvp_);
-  if (custom0) gl::Uniform4fv(gl::GetUniformLocation(prog, "custom0"), 1, custom0);
-  if (int loc = gl::GetUniformLocation(prog, "timer"); loc >= 0) gl::Uniform1f(loc, timer);
+  gpu::Device& d = gpu::dev();
+  d.useProgram(prog);
+  d.uniformMatrix4fv(d.uniformLocation(prog, "regs_ModelViewProjectionMatrix"), 1, mvp_);
+  if (custom0) d.uniform4fv(d.uniformLocation(prog, "custom0"), 1, custom0);
+  if (int loc = d.uniformLocation(prog, "timer"); loc >= 0) d.uniform1f(loc, timer);
   for (int i = 0; i < textureCount; ++i) {
     char name[16];
     std::snprintf(name, sizeof name, "texture%d", i);
-    gl::Uniform1i(gl::GetUniformLocation(prog, name), i);
-    gl::ActiveTexture(gl::TEXTURE0 + gl::GLenum(i));
-    gl::BindTexture(gl::TEXTURE_2D, textures[i]);
+    d.uniform1i(d.uniformLocation(prog, name), i);
+    d.bindTexture(i, textures[i]);
   }
-  gl::ActiveTexture(gl::TEXTURE0);
   uint32_t keepTex = batchTex_;
   draw(textures && textureCount ? textures[0] : 0, prim, v, n);
   flushWith(false);
   batchTex_ = keepTex;
-  gl::UseProgram(program_);
+  d.useProgram(program_);
 }
 
 void Renderer2D::setScissor(int x, int y, int w, int h) {
@@ -319,11 +224,11 @@ void Renderer2D::setScissor(int x, int y, int w, int h) {
   scissor_[2] = w;
   scissor_[3] = h;
   if (w < 0 || h < 0) {
-    gl::Disable(gl::SCISSOR_TEST);
+    gpu::dev().scissorTest(false);
     return;
   }
-  gl::Enable(gl::SCISSOR_TEST);
-  gl::Scissor(x, fh_ - y - h, std::max(0, w), std::max(0, h));
+  gpu::dev().scissorTest(true);
+  gpu::dev().scissor(x, fh_ - y - h, std::max(0, w), std::max(0, h));
 }
 
 void Renderer2D::wideLine(const GuiVertex& a, const GuiVertex& b) {
@@ -385,26 +290,22 @@ void Renderer2D::flush() { flushWith(true); }
 
 void Renderer2D::flushWith(bool ownProgram) {
   if (batch_.empty()) return;
+  gpu::Device& d = gpu::dev();
   size_t bytes = batch_.size() * sizeof(GuiVertex);
-  if (bytes > vboSize_) {
-    vboSize_ = std::max(bytes, size_t(1) << 20);
-    gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(vboSize_), nullptr, gl::STREAM_DRAW);
-  } else {
-    gl::BufferData(gl::ARRAY_BUFFER, gl::GLsizeiptr(vboSize_), nullptr, gl::STREAM_DRAW);  // orphan
-  }
-  gl::BufferSubData(gl::ARRAY_BUFFER, 0, gl::GLsizeiptr(bytes), batch_.data());
+  if (bytes > vboSize_) vboSize_ = std::max(bytes, size_t(1) << 20);
+  d.bufferData(vbo_, vboSize_, nullptr, true);  // orphan
+  d.bufferSubData(vbo_, 0, bytes, batch_.data());
   if (ownProgram) {  // a material program binds its own textures and has no such uniform
-    gl::Uniform1i(uTextured_, batchTex_ != 0);
-    if (batchTex_) gl::BindTexture(gl::TEXTURE_2D, batchTex_);
+    d.uniform1i(uTextured_, batchTex_ != 0);
+    if (batchTex_) d.bindTexture(0, batchTex_);
   }
-  gl::DrawArrays(lines_ ? gl::LINES : gl::TRIANGLES, 0, gl::GLsizei(batch_.size()));
+  d.drawArrays(lines_ ? gpu::Prim::Lines : gpu::Prim::Triangles, 0, int(batch_.size()));
   batch_.clear();
 }
 
 std::vector<uint8_t> Renderer2D::readPixels() const {
   std::vector<uint8_t> px(size_t(fw_) * size_t(fh_) * 4), out(px.size());
-  gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
-  gl::ReadPixels(0, 0, fw_, fh_, gl::RGBA, gl::UNSIGNED_BYTE, px.data());
+  gpu::dev().readPixels(0, 0, 0, fw_, fh_, px.data());
   size_t row = size_t(fw_) * 4;
   for (int y = 0; y < fh_; ++y) std::copy_n(px.data() + size_t(fh_ - 1 - y) * row, row, out.data() + size_t(y) * row);
   return out;
