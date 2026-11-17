@@ -1,5 +1,8 @@
 // ReGS strings (English, the fallback for every language without its own file)
-$regs_preset_item = "Graphics preset: %0";
+$regs_preset_label = "Graphics preset";
+$regs_g_display = "Display";
+$regs_g_quality = "Quality";
+$regs_g_effects = "Effects and style";
 $regs_preset_values = ["Low", "Medium", "Original", "High", "Ultra"];
 $regs_preset_custom = "Custom";
 $regs_viewDistance_item = "View distance: %0%%";

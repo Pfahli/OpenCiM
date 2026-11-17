@@ -1,9 +1,10 @@
 // ReGS extension of the game's graphics page (metro/ui/menus/graphics.script, used as installed). The part before
-// //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds
-// presets, the port's options (stored as regs* settings, or fpsLimit, which the game reads but never offered here),
-// more steps for shadows and antialiasing, the style effects, the frame-rate readout and
-// the "Image quality" button above OK and Cancel (regs/ui/quality.script).
-// New options: a row in the middle column, a column in $regsPresets if it is a quality option, and a line in save().
+// //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It lays the
+// page out in three columns (display, quality, effects and style) with drop-down lists for resolution, frequency and
+// the presets, and adds the port's options (stored as regs* settings, or fpsLimit, which the game reads but never
+// offered here), more steps for shadows and antialiasing, the style effects, the frame-rate readout and the "Image
+// quality" button above OK and Cancel (regs/ui/quality.script).
+// New options: a row in a column, a column in $regsPresets if it is a quality option, and a line in save().
 //@rename save regsBaseSave
 
 if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
@@ -41,9 +42,18 @@ $fpsLimit = regsStepOf($fpsValues, $settings.$fpsLimit : 0.0);
 $colorStyle = int($settings.$regsColorStyle : 0);
 $lensBlur = int($settings.$regsLensBlur : 0);
 
+// ---- the layout (owner's request 2026-11-18): three columns with headings, like the Image quality page.
+// Display: resolution and frequency (drop-down lists), fullscreen, vsync, frame-rate limit, UI scale, cursor and
+// readouts. Quality: the preset (a drop-down list with "Custom"), shadows, antialiasing, anisotropy, distances.
+// Effects and style: HDR lighting and saturation, colour style, lens blur, day and night. The original page's own
+// controls are moved (its variables, setters and save() stay in charge); its resolution and frequency lists are hidden
+// behind the drop-down lists, which call its selectResolution / selectFrequency.
+$regsColX = [30, 355, 680];
+$regsColW = 290;
+
 function regsLabel($x, $y, $text) {
   with ($label = new_control($box.$content)) {
-    .setRect($x, $y, 240, 18);
+    .setRect($x, $y, $regsColW, 18);
     MAIN.$ui.setTextFont(current);
     .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
     .text = $text;
@@ -53,12 +63,176 @@ function regsLabel($x, $y, $text) {
   return $label;
 }
 
-function regsSlider($x, $y, $steps, $step) {
-  return MAIN.$ui.createSlider($box.$content, $step * ($steps - 0.01) / ($steps - 1), 0.0, $steps - 0.01, $x, $y, 210, 27);
+function regsRule($x, $y, $w, $h) {
+  with ($regsRuleCtl = new_control($box.$content)) {
+    .setRect($x, $y, $w, $h);
+    .background = 0x40FFFFFF;
+    .visible = true;
+    .canActivate = false;
+  }
 }
 
-// ---- the original sliders with more steps ----
+function regsHeading($x, $y, $text) {
+  with ($regsHeadingCtl = new_control($box.$content)) {  // the title font first, then the text (as on Image quality)
+    .setRect($x, $y, $regsColW, 18);
+    MAIN.$ui.setTitleFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  regsRule($x, $y + 22, $regsColW, 1);
+}
 
+function regsSlider($x, $y, $steps, $step) {
+  return MAIN.$ui.createSlider($box.$content, $step * ($steps - 0.01) / ($steps - 1), 0.0, $steps - 0.01, $x, $y, 215, 27);
+}
+
+// a checkbox row: the original's button and label at a new place
+function regsCheckRow($button, $item, $x, $y) {
+  $button.setRect($x, $y + 1, 16, 16);
+  $item.setRect($x + 20, $y, $regsColW - 20, 18);
+}
+
+// a slider row: its label (with the value) over the slider
+function regsSliderRow($item, $slider, $x, $y) {
+  $item.setRect($x, $y, $regsColW, 18);
+  $slider.setRect($x, $y + 18, 215, 27);
+}
+
+// a drop-down list in the look of the Image quality page: a dark field, the game's createDropList, its small arrow
+function regsDropDown($x, $y, $w) {
+  with ($regsDdField = new_control($box.$content)) {
+    .setRect($x, $y - 3, $w, 24);
+    .background = 0xFF0E0B09;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($regsDd = MAIN.$ui.createDropList($box.$content, $x, $y - 3, $w, 24)) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .$list.background = 0xFF1A1512;
+    .$items = [];
+  }
+  with ($regsDdArrow = new_control($regsDd)) {
+    .setRect($w - 21, 4, 16, 16);
+    .setImage("/metro/ui/down-small.dds");
+    .visible = true;
+    .canActivate = false;
+  }
+  return $regsDd;
+}
+
+function regsDropItem($list, $text, $action) {
+  with ($regsDdItem = MAIN.$ui.addDropListItem($list, "  " + $text, $action)) {
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+  }
+  $list.$items[] = $regsDdItem;
+  return $regsDdItem;
+}
+
+regsRule($regsColX[1] - 15, 40, 1, 330);
+regsRule($regsColX[2] - 15, 40, 1, 330);
+
+// ---- display ----
+$x = $regsColX[0];
+regsHeading($x, 40, $regs.$regs_g_display);
+
+$resolutionArea.visible = false;  // the original lists stay as the place selectResolution fills
+$frequencyArea.visible = false;
+$resolutionItem.setRect($x, 78, 100, 18);
+$regsResolutionList = regsDropDown($x + 105, 78, 185);
+$regsPrevMode = null;
+foreach (display_modes()) {
+  if (.width < 1024 || .height < 720 || .bits < 32) continue;
+  if ($regsPrevMode) if ($regsPrevMode.width == .width && $regsPrevMode.height == .height && $regsPrevMode.bits == .bits) continue;
+  $regsPrevMode = current;
+  $regsModeItem = regsDropItem($regsResolutionList, escapePattern(expandPattern($strings.$menu_resolution_pattern, .width, .height, .bits)), macro(current) :: regsPickResolution($0));
+  if ($screenwidth == .width && $screenheight == .height && $screencolors == .bits) MAIN.$ui.selectDropListItem($regsModeItem);
+}
+
+$frequencyItem.setRect($x, 110, 100, 18);
+$regsFrequencyList = regsDropDown($x + 105, 110, 185);
+$regsFrequencyList.visible = PLATFORM == "windows";
+// the frequencies of the chosen resolution (the original keeps its own list in step through selectResolution)
+function regsFillFrequencies() {
+  $regsFrequencyList.$list.clear();
+  $regsFrequencyList.$items = [];
+  $regsFrequencyList.$selected = null;
+  foreach (display_modes()) {
+    if (.width != $screenwidth || .height != $screenheight || .bits != $screencolors) continue;
+    $regsFreqItem = regsDropItem($regsFrequencyList, escapePattern(expandPattern($strings.$menu_frequency_pattern, .freq)), macro(current.freq) :: selectFrequency($0));
+    if ($frequency == .freq) MAIN.$ui.selectDropListItem($regsFreqItem);
+  }
+}
+function regsPickResolution($mode) {
+  selectResolution($mode);
+  regsFillFrequencies();
+}
+regsFillFrequencies();
+
+regsCheckRow($fullscreenButton, $fullscreenItem, $x, 142);
+regsCheckRow($vsyncButton, $vsyncItem, $x, 168);
+
+with ($regsFpsItem = regsLabel($x, 196, $regs.$regs_fpsLimit_item)) {
+  .setArg(0, macro :: $regs.$regs_fpsLimit_values[$fpsLimit]);
+}
+$fpsLimitSlider = regsSlider($x, 214, #$fpsValues, $fpsLimit);
+$fpsLimitSlider.$action = macro :: regsSetFpsLimit();
+function regsSetFpsLimit() {
+  $fpsLimit = int($fpsLimitSlider.$value);
+}
+
+// UI scale: $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the window opens or changes (Display::chooseUiScale,
+// docs/ui/scaling.md). Unset: 2x on windows taller than 1800 px, else 1x (the page shows the scale in use); the
+// setting is written only when the player picks another value.
+$uiScaleValues = [1.0, 1.5, 2.0];
+$regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : MAIN.$window.regsUiScale());
+$uiScale = $regsUiScaleShown;
+with (regsLabel($x, 252, $regs.$regs_uiScale_item)) .setRect($x, 252, 100, 18);
+$regsUiScaleButtons = [];
+for ($i = 0; $i < #$uiScaleValues; ++$i) {
+  $regsUiScaleButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsUiScale", $x + 105 + $i * 62, 252, 60, 18, $regs.$regs_uiScale_values[$i], macro($i) :: regsSetUiScale($0));
+  MAIN.$ui.setTooltip($regsUiScaleButtons[$i], $regs.$regs_uiScale_hint, 0, -1);
+}
+function regsSetUiScale($index) {
+  $uiScale = $index;
+  MAIN.$ui.selectChoiceButton($regsUiScaleButtons[$uiScale], "regsUiScale");
+}
+regsSetUiScale($uiScale);
+
+regsCheckRow($systemCursorButton, $systemCursorItem, $x, 286);
+regsCheckRow($framerateButton, $framerateItem, $x, 312);
+// the port's frame-rate readout (drawn by the engine, display.cpp)
+$showFps = $settings.$regsShowFps : false;
+$regsShowFpsButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 339, 16, 16, "", macro :: regsSetShowFps(!$showFps), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel($x + 20, 338, $regs.$regs_showFps_item);
+function regsSetShowFps($value) {
+  $showFps = $value;
+  MAIN.$ui.selectChoiceButton($showFps ? $regsShowFpsButton : null, $regsShowFpsButton);
+}
+regsSetShowFps($showFps);
+
+// ---- quality ----
+$x = $regsColX[1];
+regsHeading($x, 40, $regs.$regs_g_quality);
+
+// presets: shadows step, antialiasing step, anisotropy step, HDR lighting, view distance, detail distance.
+// "Original" is the game's own defaults (metro/defaults/settings.script). The list's last entry, "Custom", is what it
+// shows whenever the values match no preset; picking it changes nothing.
+$regsPresets = [
+  [1, 0, 1, false, 1.0, 1.0],   // low
+  [2, 1, 2, true, 1.0, 1.0],    // medium
+  [2, 2, 3, true, 1.0, 1.0],    // original
+  [3, 2, 4, true, 1.5, 1.5],    // high
+  [4, 3, 4, true, 2.5, 2.0]     // ultra
+];
+with (regsLabel($x, 78, $regs.$regs_preset_label)) .setRect($x, 78, 125, 18);
+$regsPresetList = regsDropDown($x + 130, 78, 160);
+for ($i = 0; $i < #$regsPresets; ++$i) regsDropItem($regsPresetList, $regs.$regs_preset_values[$i], macro($i) :: regsApplyPreset($0));
+regsDropItem($regsPresetList, $regs.$regs_preset_custom, macro :: regsUpdatePreset());
+
+// the original sliders, with more steps for shadows and antialiasing; every change re-checks the preset
+regsSliderRow($shadowsItem, $shadowsSlider, $x, 114);
 $shadowsSlider.$max = 4.99;
 $shadowsSlider.$action = regsSetShadows;
 $shadowsItem.setArg(0, macro :: $regs.$regs_shadows_values[$regsShadowStep]);
@@ -69,6 +243,7 @@ function regsSetShadows() {
   regsUpdatePreset();
 }
 
+regsSliderRow($antialiasItem, $antialiasSlider, $x, 166);
 $antialiasSlider.$action = regsSetAntialias;
 $antialiasItem.setArg(0, macro :: $regs.$regs_antialiasing_values[$regsAntialiasStep]);
 MAIN.$ui.setSliderPos($antialiasSlider, $regsAntialiasStep * 3.99 / 3.0);
@@ -78,133 +253,78 @@ function regsSetAntialias() {
   regsUpdatePreset();
 }
 
+regsSliderRow($anisotropyItem, $anisotropySlider, $x, 218);
+MAIN.$ui.setSliderPos($anisotropySlider, $anisotropy * 4.99 / 4.0);
 $anisotropySlider.$action = regsSetAnisotropy;
 function regsSetAnisotropy() {
   setAnisotropy();
   regsUpdatePreset();
 }
 
-$lightingButton.$action = macro :: regsSetHDR(!$hdrLighting);
-function regsSetHDR($value) {
-  setHDRlighting($value);
-  regsUpdatePreset();
-}
-
-// ---- middle column: presets, distances, frame rate, style ----
-
-// presets: shadows step, antialiasing step, anisotropy step, HDR lighting, view distance, detail distance.
-// "Original" is the game's own defaults (metro/defaults/settings.script).
-$regsPresets = [
-  [1, 0, 1, false, 1.0, 1.0],   // low
-  [2, 1, 2, true, 1.0, 1.0],    // medium
-  [2, 2, 3, true, 1.0, 1.0],    // original
-  [3, 2, 4, true, 1.5, 1.5],    // high
-  [4, 3, 4, true, 2.5, 2.0]     // ultra
-];
-
-$regsPresetName = "";
-with ($regsPresetItem = regsLabel(300, 60, $regs.$regs_preset_item)) {
-  .setArg(0, macro :: $regsPresetName);
-}
-with ($regsPresetArea = new_control($box.$content)) {
-  .setRect(300, 78, 210, 5 * 18 + 4);
-  .setBorder(0xFF777777, 2);
-  .visible = true;
-  .canActivate = false;
-}
-$regsPresetButtons = [];
-for ($i = 0; $i < #$regsPresets; ++$i) {
-  $regsPresetButtons[$i] = MAIN.$ui.createChoiceButton($regsPresetArea, $regsPresetArea, 2, 2 + $i * 18, 206, 18, $regs.$regs_preset_values[$i], macro($i) :: regsApplyPreset($0));
-}
-
-with (regsLabel(300, 180, $regs.$regs_viewDistance_item)) {
+with (regsLabel($x, 270, $regs.$regs_viewDistance_item)) {
   .setArg(0, macro :: int($viewDistance * 100.0 + 0.5));
 }
-$viewDistanceSlider = MAIN.$ui.createSlider($box.$content, $viewDistance, 1.0, 3.0, 300, 198, 210, 27);
+$viewDistanceSlider = MAIN.$ui.createSlider($box.$content, $viewDistance, 1.0, 3.0, $x, 288, 215, 27);
 $viewDistanceSlider.$action = regsSetViewDistance;
 function regsSetViewDistance() {
   $viewDistance = int($viewDistanceSlider.$value * 20.0 + 0.5) / 20.0;  // 5 % steps
   regsUpdatePreset();
 }
 
-with (regsLabel(300, 230, $regs.$regs_detailDistance_item)) {
+with (regsLabel($x, 322, $regs.$regs_detailDistance_item)) {
   .setArg(0, macro :: int($detailDistance * 100.0 + 0.5));
 }
-$detailDistanceSlider = MAIN.$ui.createSlider($box.$content, $detailDistance, 1.0, 3.0, 300, 248, 210, 27);
+$detailDistanceSlider = MAIN.$ui.createSlider($box.$content, $detailDistance, 1.0, 3.0, $x, 340, 215, 27);
 $detailDistanceSlider.$action = regsSetDetailDistance;
 function regsSetDetailDistance() {
   $detailDistance = int($detailDistanceSlider.$value * 20.0 + 0.5) / 20.0;
   regsUpdatePreset();
 }
 
-with (regsLabel(300, 280, $regs.$regs_fpsLimit_item)) {
-  .setArg(0, macro :: $regs.$regs_fpsLimit_values[$fpsLimit]);
+// ---- effects and style ----
+$x = $regsColX[2];
+regsHeading($x, 40, $regs.$regs_g_effects);
+
+regsCheckRow($lightingButton, $lightingItem, $x, 78);
+$lightingButton.$action = macro :: regsSetHDR(!$hdrLighting);
+function regsSetHDR($value) {
+  setHDRlighting($value);
+  regsUpdatePreset();
 }
-$fpsLimitSlider = regsSlider(300, 298, #$fpsValues, $fpsLimit);
-$fpsLimitSlider.$action = macro :: regsSetFpsLimit();
-function regsSetFpsLimit() {
-  $fpsLimit = int($fpsLimitSlider.$value);
-}
+regsSliderRow($saturationItem, $saturationSlider, $x, 104);
+MAIN.$ui.setSliderPos($saturationSlider, $saturation);
 
 // style (not part of the presets): colour grade and lens blur after the scene
-with (regsLabel(300, 330, $regs.$regs_colorStyle_item)) {
+with (regsLabel($x, 156, $regs.$regs_colorStyle_item)) {
   .setArg(0, macro :: $regs.$regs_colorStyle_values[$colorStyle]);
 }
-$colorStyleSlider = regsSlider(300, 348, #$regs.$regs_colorStyle_values, $colorStyle);
+$colorStyleSlider = regsSlider($x, 174, #$regs.$regs_colorStyle_values, $colorStyle);
 $colorStyleSlider.$action = macro :: regsSetColorStyle();
 function regsSetColorStyle() {
   $colorStyle = int($colorStyleSlider.$value);
 }
 
-with (regsLabel(300, 380, $regs.$regs_lensBlur_item)) {
+with (regsLabel($x, 208, $regs.$regs_lensBlur_item)) {
   .setArg(0, macro :: $regs.$regs_lensBlur_values[$lensBlur]);
 }
-$lensBlurSlider = regsSlider(300, 398, #$regs.$regs_lensBlur_values, $lensBlur);
+$lensBlurSlider = regsSlider($x, 226, #$regs.$regs_lensBlur_values, $lensBlur);
 $lensBlurSlider.$action = macro :: regsSetLensBlur();
 function regsSetLensBlur() {
   $lensBlur = int($lensBlurSlider.$value);
 }
 
-// ---- UI scale (left column, under the sliders; the graphics engine moved to the Image quality page): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
-// window opens or changes (Display::chooseUiScale, docs/ui/scaling.md). Unset: 2x on windows taller than 1800 px,
-// else 1x (the page shows the scale in use); the setting is written only when the player picks another value.
-$uiScaleValues = [1.0, 1.5, 2.0];
-$regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : MAIN.$window.regsUiScale());
-$uiScale = $regsUiScaleShown;
-regsLabel(60, 450, $regs.$regs_uiScale_item);
-$regsUiScaleButtons = [];
-for ($i = 0; $i < #$uiScaleValues; ++$i) {
-  $regsUiScaleButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsUiScale", 170 + $i * 78, 450, 76, 18, $regs.$regs_uiScale_values[$i], macro($i) :: regsSetUiScale($0));
-  MAIN.$ui.setTooltip($regsUiScaleButtons[$i], $regs.$regs_uiScale_hint, 0, -1);
-}
-function regsSetUiScale($index) {
-  $uiScale = $index;
-  MAIN.$ui.selectChoiceButton($regsUiScaleButtons[$uiScale], "regsUiScale");
-}
-regsSetUiScale($uiScale);
-
-// ---- right column, under the refresh rates: the port's frame-rate readout (drawn by the engine, display.cpp) ----
-
-$showFps = $settings.$regsShowFps : false;
-$regsShowFpsButton = MAIN.$ui.createChoiceButton($box.$content, "self", int($box.$content.width * 0.5) + 40, 451, 16, 16, "", macro :: regsSetShowFps(!$showFps), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
-regsLabel(int($box.$content.width * 0.5) + 60, 450, $regs.$regs_showFps_item);
-function regsSetShowFps($value) {
-  $showFps = $value;
-  MAIN.$ui.selectChoiceButton($showFps ? $regsShowFpsButton : null, $regsShowFpsButton);
-}
-regsSetShowFps($showFps);
-
 // day and night (port option; the original keeps each location's fixed time of day): the cycle length in minutes
 // of normal game speed is $regsDayLength (settings.script only, default 12)
 $dayNight = $settings.$regsDayNight : true;  // on unless the player switched it off
-$regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", int($box.$content.width * 0.5) + 40, 473, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
-regsLabel(int($box.$content.width * 0.5) + 60, 472, $regs.$regs_dayNight_item);
+$regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 265, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel($x + 20, 264, $regs.$regs_dayNight_item);
 function regsSetDayNight($value) {
   $dayNight = $value;
   MAIN.$ui.selectChoiceButton($dayNight ? $regsDayNightButton : null, $regsDayNightButton);
 }
 regsSetDayNight($dayNight);
 
+// ---- presets ----
 
 function regsCurrentPreset() {
   for ($i = 0; $i < #$regsPresets; ++$i) {
@@ -214,11 +334,10 @@ function regsCurrentPreset() {
   return -1;
 }
 
-// highlights the matching preset (none for custom values) and names it in the label
+// the list shows the matching preset, or "Custom" once the values match none
 function regsUpdatePreset() {
-  $i = regsCurrentPreset();
-  MAIN.$ui.selectChoiceButton($i >= 0 ? $regsPresetButtons[$i] : null, $regsPresetArea);
-  $regsPresetName = $i >= 0 ? $regs.$regs_preset_values[$i] : $regs.$regs_preset_custom;
+  $regsPresetIndex = regsCurrentPreset();
+  MAIN.$ui.selectDropListItem($regsPresetList.$items[$regsPresetIndex >= 0 ? $regsPresetIndex : #$regsPresets]);
 }
 
 function regsApplyPreset($index) {
@@ -236,6 +355,7 @@ function regsApplyPreset($index) {
   MAIN.$ui.setSliderPos($anisotropySlider, $anisotropy * 4.99 / 4.0);
   MAIN.$ui.setSliderPos($viewDistanceSlider, $viewDistance);
   MAIN.$ui.setSliderPos($detailDistanceSlider, $detailDistance);
+  $anisotropyItem.setArg(0, $strings.$menu_anisotropy_values[$anisotropy]);
   regsUpdatePreset();
 }
 regsUpdatePreset();
@@ -274,10 +394,7 @@ function save() {
 }
 
 // ---- "Image quality" in its own row above OK and Cancel: the port's image options page (regs/ui/quality.script),
-// opened over this one. The page grows by one button row (the frame follows its rect), OK and Cancel move down.
-$box.setRect($box.left, $box.top - 22, $box.width, $box.height + 44);
-$okButton.setRect(40, $box.$content.height - $okButton.height - 20, $okButton.width, $okButton.height);
-$backButton.setRect($box.$content.width - $backButton.width - 40, $box.$content.height - $backButton.height - 20, $backButton.width, $backButton.height);
+// opened over this one
 with ($regsQualityButton = MAIN.$ui.createButton($box.$content, 0, 0, 322, 32, $regs.$regs_quality_button, macro :: MAIN.$main.regsOpenQualityPage($box), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
   .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
   .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
