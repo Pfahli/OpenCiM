@@ -356,9 +356,23 @@ class VkDeviceImpl final : public Device {
       h = uint32_t(framebuffers_.size());
       framebuffers_.emplace_back();
     }
-    framebuffers_[h] = {true, color & ~kRenderbufferBit, depth & ~kRenderbufferBit};
+    framebuffers_[h] = {true, color & ~kRenderbufferBit, depth & ~kRenderbufferBit, 0};
     return h;
   }
+  // ---- the second colour attachment (the mods' surface hook data; render/gpu.h) ----
+  bool hasColor1() const override { return true; }
+  bool attachColor1(uint32_t fb, uint32_t color) override {
+    if (!fb || fb >= framebuffers_.size() || !framebuffers_[fb].used || !framebuffers_[fb].color) return false;
+    Tex* c1 = texture(color & ~kRenderbufferBit);
+    const Tex& c0 = textures_[framebuffers_[fb].color];
+    if (!c1 || !c1->image || c1->w != c0.w || c1->h != c0.h || c1->samples != c0.samples || isDepth(c1->format)) return false;
+    if (renderingFb_ == int(fb)) endRendering();
+    framebuffers_[fb].color1 = color & ~kRenderbufferBit;
+    return true;
+  }
+  void blitColor1(uint32_t src, uint32_t dst, int w, int h) override;
+  void clearColor1() override;
+  void colorMask1(bool write) override { st_.mask1 = write; }
   void destroyFramebuffer(uint32_t fb) override {
     if (fb == 0 || fb >= framebuffers_.size()) return;
     if (renderingFb_ == int(fb)) endRendering();
@@ -542,6 +556,7 @@ class VkDeviceImpl final : public Device {
   struct Fb {
     bool used = false;
     uint32_t color = 0, depth = 0;  // texture table indices (renderbuffer bit cleared)
+    uint32_t color1 = 0;            // the surface hooks' data (attachColor1), location 1 of the translated shaders
   };
   struct Buf {
     bool used = false, stream = false;
@@ -578,6 +593,7 @@ class VkDeviceImpl final : public Device {
     std::vector<int> inputs;
     std::unordered_map<std::string, int> locations;
     bool bindless = false;    // set 1 = the bindless set (raytraced reflections)
+    bool writesData = false;  // writes location 1 (regs_HookData, the translated shaders): the second attachment
     int hitTableOffset = -1;  // regs_HitTable in the block: the device writes the hit table's address there
   };
   struct Frame {
@@ -604,6 +620,7 @@ class VkDeviceImpl final : public Device {
     Compare depthFunc = Compare::Less;
     Face cullFace = Face::Back;
     float polyFactor = 0, polyUnits = 0;
+    bool mask1 = true;  // colorMask1: writes to the second attachment
   };
   struct PipeKey {
     uint32_t program;
@@ -611,6 +628,8 @@ class VkDeviceImpl final : public Device {
     uint8_t prim, blendOn, src, dst;
     VkFormat color, depth;
     int samples;
+    VkFormat color1;  // the second attachment's format (VK_FORMAT_UNDEFINED: none)
+    int mask1;        // its writes: on when the program writes it and colorMask1 allows
     bool operator==(const PipeKey& o) const { return std::memcmp(this, &o, sizeof *this) == 0; }
   };
   struct PipeHash {
@@ -2074,6 +2093,7 @@ uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& f
     p.blockBinding = sp.blockBinding;
     p.inputs = std::move(sp.inputs);
     p.bindless = sp.bindless;
+    p.writesData = fs.find("regs_HookData") != std::string::npos;
     if (p.bindless && !bindlessLayout_) {
       if (error) *error = "the program reads the bindless set, which this device has not";
       vkDestroyShaderModule(dev_, p.vs, nullptr);
@@ -2219,18 +2239,21 @@ void VkDeviceImpl::ensureRendering() {
   int w, h, samples;
   VkFormat cf, df;
   fbExtent(boundFb_, w, h, cf, df, samples);
-  VkRenderingAttachmentInfo ca{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+  VkRenderingAttachmentInfo ca[2] = {{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}, {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}};
   VkRenderingAttachmentInfo da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
   VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
   ri.renderArea = {{0, 0}, {uint32_t(w), uint32_t(h)}};
   ri.layerCount = 1;
   if (f.color) {
-    ca.imageView = textures_[f.color].view;
-    ca.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    ca.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &ca;
+    const uint32_t att[2] = {f.color, f.color1};
+    ri.colorAttachmentCount = f.color1 ? 2 : 1;
+    for (uint32_t i = 0; i < ri.colorAttachmentCount; ++i) {
+      ca[i].imageView = textures_[att[i]].view;
+      ca[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+      ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+      ca[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    }
+    ri.pColorAttachments = ca;
   }
   if (f.depth) {
     da.imageView = textures_[f.depth].view;
@@ -2294,6 +2317,10 @@ VkPipeline VkDeviceImpl::pipelineFor(Prim prim) {
   key.src = st_.blendOn ? uint8_t(st_.src) : 0;
   key.dst = st_.blendOn ? uint8_t(st_.dst) : 0;
   key.samples = samples;
+  if (const Fb& fbo = framebuffers_[boundFb_]; fbo.color && fbo.color1) {
+    key.color1 = textures_[fbo.color1].vkFormat;
+    key.mask1 = p.writesData && st_.mask1 ? 1 : 0;
+  }
   auto it = pipelines_.find(key);
   if (it != pipelines_.end()) return it->second;
 
@@ -2340,15 +2367,20 @@ VkPipeline VkDeviceImpl::pipelineFor(Prim prim) {
   VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
   ms.rasterizationSamples = VkSampleCountFlagBits(samples);
   VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-  VkPipelineColorBlendAttachmentState cba{};
-  cba.blendEnable = key.blendOn;
-  cba.srcColorBlendFactor = cba.srcAlphaBlendFactor = vkBlend(st_.src);
-  cba.dstColorBlendFactor = cba.dstAlphaBlendFactor = vkBlend(st_.dst);
-  cba.colorBlendOp = cba.alphaBlendOp = VK_BLEND_OP_ADD;
-  cba.colorWriteMask = 0xF;
+  // one blend for both attachments, as GL applies it; the second's writes per key.mask1
+  VkPipelineColorBlendAttachmentState cba[2] = {};
+  for (VkPipelineColorBlendAttachmentState& b : cba) {
+    b.blendEnable = key.blendOn;
+    b.srcColorBlendFactor = b.srcAlphaBlendFactor = vkBlend(st_.src);
+    b.dstColorBlendFactor = b.dstAlphaBlendFactor = vkBlend(st_.dst);
+    b.colorBlendOp = b.alphaBlendOp = VK_BLEND_OP_ADD;
+    b.colorWriteMask = 0xF;
+  }
+  cba[1].colorWriteMask = key.mask1 ? 0xF : 0;
+  const VkFormat colorFormats[2] = {key.color, key.color1};
   VkPipelineColorBlendStateCreateInfo cbs{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  cbs.attachmentCount = key.color != VK_FORMAT_UNDEFINED ? 1 : 0;
-  cbs.pAttachments = &cba;
+  cbs.attachmentCount = key.color == VK_FORMAT_UNDEFINED ? 0 : key.color1 != VK_FORMAT_UNDEFINED ? 2 : 1;
+  cbs.pAttachments = cba;
   const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE,
                                 VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
                                 VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
@@ -2358,7 +2390,7 @@ VkPipeline VkDeviceImpl::pipelineFor(Prim prim) {
   dys.pDynamicStates = dyn;
   VkPipelineRenderingCreateInfo prci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
   prci.colorAttachmentCount = cbs.attachmentCount;
-  prci.pColorAttachmentFormats = &key.color;
+  prci.pColorAttachmentFormats = colorFormats;
   prci.depthAttachmentFormat = key.depth;
   VkPipelineShaderStageCreateInfo stages[2] = {
       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, p.vs, "main", nullptr},
@@ -2594,6 +2626,55 @@ void VkDeviceImpl::readPixels(uint32_t fb, int x, int y, int w, int h, uint8_t* 
       std::memcpy(rgba + i * 4, ptr + i * 4, 4);
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the second colour attachment: the mods' surface hook data (render/gpu.h; GL: GlDevice in gpu_gl.cpp)
+
+// attachment 1 of src onto attachment 1 of dst, bottom-left w×h: a resolve from a multisampled source, else a copy
+void VkDeviceImpl::blitColor1(uint32_t src, uint32_t dst, int w, int h) {
+  if (src >= framebuffers_.size() || dst >= framebuffers_.size()) return;
+  const Fb& s = framebuffers_[src];
+  const Fb& d = framebuffers_[dst];
+  if (!s.color1 || !d.color1 || w <= 0 || h <= 0) return;
+  Tex& a = textures_[s.color1];
+  Tex& b = textures_[d.color1];
+  if (!a.image || !b.image || b.samples != 1) return;
+  w = std::min({w, a.w, b.w});
+  h = std::min({h, a.h, b.h});
+  endRendering();
+  const VkImageSubresourceLayers sub{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  if (a.samples > 1) {
+    VkImageResolve r{sub, {0, 0, 0}, sub, {0, 0, 0}, {uint32_t(w), uint32_t(h), 1}};
+    vkCmdResolveImage(cmd(), a.image, VK_IMAGE_LAYOUT_GENERAL, b.image, VK_IMAGE_LAYOUT_GENERAL, 1, &r);
+  } else if (a.vkFormat == b.vkFormat) {
+    VkImageCopy c{sub, {0, 0, 0}, sub, {0, 0, 0}, {uint32_t(w), uint32_t(h), 1}};
+    vkCmdCopyImage(cmd(), a.image, VK_IMAGE_LAYOUT_GENERAL, b.image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+  } else {
+    VkImageBlit r{sub, {{0, 0, 0}, {w, h, 1}}, sub, {{0, 0, 0}, {w, h, 1}}};
+    vkCmdBlitImage(cmd(), a.image, VK_IMAGE_LAYOUT_GENERAL, b.image, VK_IMAGE_LAYOUT_GENERAL, 1, &r, VK_FILTER_NEAREST);
+  }
+  fullBarrier(cmd());
+}
+
+// the bound framebuffer's attachment 1 to 0 (the scissor applies, as for GL's glClearBufferfv)
+void VkDeviceImpl::clearColor1() {
+  const Fb& f = framebuffers_[boundFb_];
+  if (!f.color || !f.color1) return;
+  ensureRendering();
+  int w, h, samples;
+  VkFormat cf, df;
+  fbExtent(boundFb_, w, h, cf, df, samples);
+  int x0 = 0, y0 = 0, x1 = w, y1 = h;
+  if (st_.scissorOn) {
+    x0 = std::clamp(st_.sc[0], 0, w), y0 = std::clamp(st_.sc[1], 0, h);
+    x1 = std::clamp(st_.sc[0] + st_.sc[2], 0, w), y1 = std::clamp(st_.sc[1] + st_.sc[3], 0, h);
+  }
+  if (x1 <= x0 || y1 <= y0) return;
+  VkClearAttachment att{VK_IMAGE_ASPECT_COLOR_BIT, 1, {}};
+  att.clearValue.color = {{0, 0, 0, 0}};
+  VkClearRect rect{{{x0, y0}, {uint32_t(x1 - x0), uint32_t(y1 - y0)}}, 0, 1};
+  vkCmdClearAttachments(cmd(), 1, &att, 1, &rect);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
