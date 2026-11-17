@@ -56,6 +56,13 @@ class Display {
   // GL texture for a script texture, uploaded from its file on first use (0 when it cannot be loaded).
   uint32_t texture(script::VM& vm, TextureObj* t);
 
+  // Upscaled textures (setting regsTextureUpscale, docs/renderer/texture-upscaling.md): while on, textures come from
+  // the cache below the OpenCiM folder when it holds them; missing ones are made by a background thread and swapped
+  // in as they appear. Off: every texture is uploaded again from its original file. Percent of the background run,
+  // or -1 when none runs.
+  int textureUpscaleProgress() const;
+  ~Display();
+
   // Draws every viewport of the video object and presents the frame.
   void renderFrame(script::VM& vm, script::Object* window, script::Object* video);
   // The gsWindow_OGL object that opened the display, and the last mouse position in client pixels.
@@ -87,6 +94,13 @@ class Display {
   void drawFpsReadout(script::VM& vm);
   void syncRenderSettings(script::VM& vm);  // antialiasing, anisotropy and vsync follow the settings (live)
   bool vsync_ = false, vsyncKnown_ = false;
+  struct UpscaleJob;  // display.cpp
+  void syncTextureUpscale(script::VM& vm);
+  bool loadTextureImage(script::VM& vm, TextureObj* t, render::Image& img, std::string* err);
+  std::unique_ptr<UpscaleJob> upscaleJob_;
+  bool upscaleOn_ = false;
+  std::chrono::steady_clock::time_point upscalePoll_;
+  std::map<uint32_t, size_t> textureBytes_;  // bytes of each uploaded file texture (REGS_FRAME_STATS)
   void dropGuiTargets();  // render-target textures are made again at the new UI scale
   FpsReadout fps_;
   bool uiFilterSharp_ = true;  // scaled GUI textures: sharp bilinear (default) or plain bilinear (REGS_UI_FILTER=linear)

@@ -39,7 +39,9 @@ loading screen's Spielen button presses itself; `data/regs/extend/metro/scripts/
 
 OpenCiM keeps all player data in its own folder, `Documents\OpenCiM`: `settings.script`, `controls.keys`, the game
 state `state.gs` (trophies, unlocked scenarios), `saves\*.gs`, user maps `maps\<name>.{grid,timeline,dds,scenario}`
-and the game's log `log_metro.txt`. The Documents folder is found as the original finds it (`SHGetSpecialFolderPathW`,
+and the game's log `log_metro.txt`; with "Sharper textures" on (graphics page) also `texture-cache\x2\`, the
+textures upscaled on this machine from the install (`../docs/renderer/texture-upscaling.md`; a cache, safe to delete).
+The Documents folder is found as the original finds it (`SHGetSpecialFolderPathW`,
 `engine/platform_win32.cpp`). The game's `metro/config.script` asks for `<documents>\Cities In Motion`; the port's
 `init_userdata` answers with `<documents>\OpenCiM` instead (`engine/user_folders.cpp`), so the scripts are used as
 installed. On the first start the folder is created and filled with the game's defaults (`metro/defaults`, as the

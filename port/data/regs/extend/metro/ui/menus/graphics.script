@@ -219,6 +219,26 @@ function regsSetDayNight($value) {
 }
 regsSetDayNight($dayNight);
 
+// sharper textures (port option, docs/renderer/texture-upscaling.md): textures upscaled 2x on this PC from the
+// player's own install, cached in OpenCiM\texture-cache; switched live on OK (engine/display.cpp). Missing ones are
+// made in the background; a line in the middle column shows how far that is
+$textureUpscale = $settings.$regsTextureUpscale : false;
+$regsTextureUpscaleButton = MAIN.$ui.createChoiceButton($box.$content, "self", int($box.$content.width * 0.5) + 40, 495, 16, 16, "", macro :: regsSetTextureUpscale(!$textureUpscale), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+MAIN.$ui.setTooltip(regsLabel(int($box.$content.width * 0.5) + 60, 494, $regs.$regs_textureUpscale_item), $regs.$regs_textureUpscale_hint, 0, -1);
+function regsTextureUpscaleStatus() {
+  $p = MAIN.$window.regsTextureUpscaleProgress();
+  if ($p < 0) return "";
+  return $regs.$regs_textureUpscale_progress + " " + string($p) + " %";
+}
+with (regsLabel(300, 428, "%0")) {  // middle column, under the lens blur slider
+  .setArg(0, macro :: regsTextureUpscaleStatus());
+}
+function regsSetTextureUpscale($value) {
+  $textureUpscale = $value;
+  MAIN.$ui.selectChoiceButton($textureUpscale ? $regsTextureUpscaleButton : null, $regsTextureUpscaleButton);
+}
+regsSetTextureUpscale($textureUpscale);
+
 function regsSetRenderer($index) {
   if ($index > 0) return;
   $renderer = $index;
@@ -278,7 +298,8 @@ function save() {
   $settings.$regsRenderer = $renderer;
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
   $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
-  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps", "regsDayNight");
+  $settings.$regsTextureUpscale = $textureUpscale; // read every frame (engine/display.cpp)
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps", "regsDayNight", "regsTextureUpscale");
   $regsNewScale = $uiScale != $regsUiScaleShown;
   if ($regsNewScale) {
     $settings.$regsUiScale = $uiScaleValues[$uiScale];

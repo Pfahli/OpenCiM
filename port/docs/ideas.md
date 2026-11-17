@@ -9,6 +9,10 @@ it is, what already exists, and the open decisions. Order is not priority.
   lists the engine choice (`$regsRenderer`, Vulkan shown as planned). Base: the renderer contract in `docs/renderer/`.
 * **High-resolution textures.** Replacement texture packs, loaded like ReGS mods (`docs/mod-manager.md`) without
   touching the game files.
+  * **Done (branch claude/texture-upscale-bcb6d4, `../docs/renderer/texture-upscaling.md`):** "Sharper textures (2x
+    upscaled)" on the graphics page: every texture of the player's install upscaled 2× on their machine (built-in
+    filter, made once in the background, cached in `OpenCiM\texture-cache`), switched live. An AI upscaler such as
+    Real-ESRGAN can be plugged into the generator (`regs-tool upscale-textures --external`); not shipped.
 * **Style options.** Colour styles, distance lens blur and tilt-shift exist (graphics page). More can follow.
 * **Night lights for the day/night option.** The base game's buildings, lamps and vehicles have no lights (only the
   New York and Tokyo DLC assets carry illumination maps, `docs/renderer/sky-and-night.md`), so the port's night is
