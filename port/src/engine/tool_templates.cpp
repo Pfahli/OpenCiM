@@ -43,7 +43,7 @@ using namespace regs::script;
 namespace {
 
 constexpr int kModeSelectArea = 0x40, kModePlaceTemplate = 0x41;
-constexpr uint32_t kGroundFlags = 0x203F;  // ground style, pavement, field, water
+constexpr uint32_t kGroundFlags = 0x20BF;  // ground style, pavement, field, water, the port's sand (0x0080)
 // a template saved without its terrain: every height holds this mark, and placing it leaves the ground as it is
 constexpr int16_t kNoTerrain = INT16_MIN;
 
@@ -345,7 +345,7 @@ void upPlace(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
     made[i] = idx;
     g.items[size_t(idx)].variation = it.variation;
     g.items[size_t(idx)].yaw = it.yaw;  // port: off the grid
-    g.items[size_t(idx)].offX = it.offX, g.items[size_t(idx)].offZ = it.offZ;
+    g.items[size_t(idx)].offX = it.offX, g.items[size_t(idx)].offZ = it.offZ, g.items[size_t(idx)].scale = it.scale;
     if (i < tp.names.size() && !tp.names[i].empty()) {
       if (g.names.size() <= size_t(idx)) g.names.resize(size_t(idx) + 1);
       g.names[size_t(idx)] = tp.names[i];

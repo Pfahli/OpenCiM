@@ -75,11 +75,17 @@ bool Renderer2D::init(std::string* error) {
   return true;
 }
 
-uint32_t Renderer2D::createTexture(const Image& img) {
+uint32_t Renderer2D::createTexture(const Image& img, uint32_t reuse) {
   flush();  // binding a texture below must not disturb a pending batch
   gpu::Device& d = gpu::dev();
   int faces = img.cube ? 6 : 1, mips = img.mipCount;
-  uint32_t t = d.createTexture(img.cube ? gpu::TexKind::Cube : gpu::TexKind::Tex2D, mips);
+  uint32_t t = reuse;
+  if (!t) {
+    t = d.createTexture(img.cube ? gpu::TexKind::Cube : gpu::TexKind::Tex2D, mips);
+  } else {  // the same handle with new contents (texture upscaling swaps loaded textures live)
+    std::erase(mipTextures_, t);  // listed again below when it still has mipmaps
+    d.redefineTexture(t, mips);
+  }
   for (int f = 0; f < faces; ++f) {
     // DDS cube faces come in GL order: +X, -X, +Y, -Y, +Z, -Z
     for (int m = 0; m < mips; ++m) {
@@ -105,6 +111,45 @@ uint32_t Renderer2D::createTexture(const Image& img) {
   if (!img.cube && mips > 1) {
     mipTextures_.push_back(t);
     if (anisotropy > 1) applyAnisotropy(t);
+  }
+  return t;
+}
+
+int Renderer2D::videoMemoryInUseMB() { return gpu::dev().videoMemoryInUseMB(); }
+
+uint32_t Renderer2D::createTextureMipmapped(const uint8_t* px, int w, int h, bool rgba, bool clamp, uint32_t reuse) {
+  Image img;
+  img.width = w, img.height = h;
+  std::vector<uint8_t> level(px, px + size_t(w) * size_t(h) * 4);
+  if (rgba)
+    for (size_t i = 0; i < level.size(); i += 4) std::swap(level[i], level[i + 2]);
+  img.levels.push_back(std::move(level));
+  while (w > 1 || h > 1) {  // box filter, edges repeated
+    int nw = std::max(1, w / 2), nh = std::max(1, h / 2);
+    const std::vector<uint8_t>& src = img.levels.back();
+    std::vector<uint8_t> dst(size_t(nw) * size_t(nh) * 4);
+    for (int y = 0; y < nh; ++y)
+      for (int x = 0; x < nw; ++x)
+        for (int c = 0; c < 4; ++c) {
+          int sum = 0;
+          for (int dy = 0; dy < 2; ++dy)
+            for (int dx = 0; dx < 2; ++dx)
+              sum += src[(size_t(std::min(h - 1, 2 * y + dy)) * size_t(w) + size_t(std::min(w - 1, 2 * x + dx))) * 4 + size_t(c)];
+          dst[(size_t(y) * size_t(nw) + size_t(x)) * 4 + size_t(c)] = uint8_t((sum + 2) / 4);
+        }
+    img.levels.push_back(std::move(dst));
+    w = nw, h = nh;
+  }
+  img.mipCount = int(img.levels.size());
+  uint32_t t = createTexture(img, reuse);
+  if (clamp) {
+    gpu::SamplerDesc s;
+    s.maxLevel = img.mipCount - 1;
+    s.minFilter = img.mipCount > 1 ? gpu::Filter::LinearMipLinear : gpu::Filter::Linear;
+    s.magFilter = gpu::Filter::Linear;
+    s.wrapS = s.wrapT = s.wrapR = gpu::Wrap::ClampToEdge;
+    gpu::dev().setSampler(t, s);
+    if (anisotropy > 1 && img.mipCount > 1) applyAnisotropy(t);
   }
   return t;
 }

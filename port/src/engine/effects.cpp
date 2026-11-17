@@ -147,10 +147,12 @@ uint32_t postProgram(Display& d, VM& vm, const char* fragment) {
   return p;
 }
 
-bool ensureTarget(Display& d, RenderTarget& t, int w, int h, int samples, bool depthTexture = false) {
-  if (t.fbo && t.width == w && t.height == h && t.samples == samples && (t.depthTex != 0) == depthTexture) return true;
+bool ensureTarget(Display& d, RenderTarget& t, int w, int h, int samples, bool depthTexture = false, bool hookData = false) {
+  if (t.fbo && t.width == w && t.height == h && t.samples == samples && (t.depthTex != 0) == depthTexture &&
+      (t.hookData != 0) == hookData)
+    return true;
   d.r3d().destroyTarget(t);
-  bool ok = d.r3d().makeSceneTarget(t, w, h, samples, depthTexture);
+  bool ok = d.r3d().makeSceneTarget(t, w, h, samples, depthTexture, render::TargetFormat::Rgba16f, hookData);
   if (!ok) d.r3d().destroyTarget(t);
   return ok;
 }
@@ -179,7 +181,8 @@ const RenderTarget* styleTarget(Display& d, VM& vm, int w, int h, int samples) {
     }
   }
   for (int n = std::max(0, samples); n >= 0; n -= 2) {  // MSAA steps down by 2 like the engine's targets
-    if (ensureTarget(d, s.input, w, h, n, true)) return &s.input;  // with a depth texture for the distance blur
+    // with a depth texture for the distance blur, and the surface hooks' data while the mods have post hooks
+    if (ensureTarget(d, s.input, w, h, n, true, render::postHooksRegistered())) return &s.input;
     if (n == 0) break;
   }
   s.failed = true;
@@ -209,8 +212,8 @@ void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int 
     dev().viewport(0, 0, w, h);
     r.postHookState(*post, s.post);
     const float texel[4] = {1.0f / float(w), 1.0f / float(h), 0, 0};
-    const uint32_t in[2] = {image, s.input.depthTex};
-    r.drawQuad(s.post, in, 2, texel, uv);
+    const uint32_t in[3] = {image, s.input.depthTex, s.input.hookData};
+    r.drawQuad(s.post, in, 3, texel, uv);
     image = s.postOut.color;
   }
   if (int blur = lensBlur(vm); blur > 0 && ensureTarget(d, s.blurA, w, h, 0) && ensureTarget(d, s.blurB, w, h, 0)) {
@@ -241,6 +244,7 @@ void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int 
 void styleTakeDepth(Display& d, const RenderTarget& scene, int w, int h) {
   StyleState& s = styleState();
   if (s.input.depthTex) d.r3d().blitDepth(scene, s.input, w, h);
+  d.r3d().blitHookData(scene, s.input, w, h);
 }
 
 // ---- shadows (docs/renderer/shadows.md) ----
@@ -474,7 +478,8 @@ const RenderTarget* bloomSceneTarget(Display& d, VM& vm, Object* bloom, int w, i
     s.requested = d.antialiasing;
     bool ok = false;
     for (int samples = d.antialiasing; samples >= 0 && !ok; samples -= 2) {
-      ok = d.r3d().makeSceneTarget(s.scene, nw, nh, samples);
+      // with the surface hooks' data while the mods have post hooks (styleTakeDepth copies it on)
+      ok = d.r3d().makeSceneTarget(s.scene, nw, nh, samples, false, render::TargetFormat::Rgba16f, render::postHooksRegistered());
       if (!ok) d.r3d().destroyTarget(s.scene);
       else s.samples = samples;
       if (samples == 0) break;

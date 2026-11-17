@@ -2312,6 +2312,48 @@ void stepCitizens(VM& vm, SimState& s, float dt) {
   stepAnimals(vm, s, dt);
   for (Character& ch : s.characters)
     if (ch.alive && ch.animal != 1) stepCharacter(s, ch, dt);
+  // REGS_DEBUG_VISITS (2026-11-16): every 30 grid-seconds the share of the items the port carries (kItemPortHidden: the
+  // OSM import's visitors at sights and in its procedural buildings) in the pools and in the citizens' homes, jobs and
+  // trips
+  static const bool debugVisits = std::getenv("REGS_DEBUG_VISITS") != nullptr;
+  static float visitsClock = 0;
+  if (debugVisits && (visitsClock += dt) >= 30.0f) {
+    visitsClock = 0;
+    const GridData& g = *s.grid->data;
+    auto carried = [&](int i) { return i >= 0 && size_t(i) < g.items.size() && (g.items[size_t(i)].flags & kItemPortHidden); };
+    size_t visit = 0, visitC = 0, homes = 0, homesC = 0, work = 0, workC = 0;
+    for (const auto& p : s.visitPlaces) {
+      visit += p.size();
+      for (int i : p) visitC += carried(i);
+    }
+    for (const auto& p : s.freeHomes) {
+      homes += p.size();
+      for (int i : p) homesC += carried(i);
+    }
+    for (const auto& p : s.freeWork) {
+      work += p.size();
+      for (int i : p) workC += carried(i);
+    }
+    int alive = 0, livesC = 0, worksC = 0, tripsC = 0, visitsC = 0, visitsAll = 0;
+    for (const Citizen& c : s.citizens) {
+      if (!c.alive) continue;
+      ++alive;
+      livesC += carried(c.home), worksC += carried(c.work), tripsC += carried(c.target) || carried(c.start);
+      for (int t : {c.target, c.start}) visitsC += carried(t) && t != c.home && t != c.work;  // (a visit there, going or planned)
+      for (int t : {c.target, c.start}) visitsAll += t >= 0 && t != c.home && t != c.work;
+    }
+    LOG_INFO("visits: pool %zu/%zu h %zu/%zu j %zu/%zu; %d ppl home %d job %d trip %d visit %d/%d",
+             visitC, visit, homesC, homes, workC, work, alive, livesC, worksC, tripsC, visitsC, visitsAll);
+    {
+      std::string t;
+      for (int k = 0; k < 13; ++k) {
+        size_t cc = 0;
+        for (int i : s.visitPlaces[k]) cc += carried(i);
+        t += " " + std::to_string(k) + ":" + std::to_string(cc) + "/" + std::to_string(s.visitPlaces[k].size());
+      }
+      LOG_INFO("visits: types%s", t.c_str());
+    }
+  }
 }
 
 void carArrived(VM& vm, SimState& s, int mover, bool stuck) {

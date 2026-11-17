@@ -317,6 +317,11 @@ after an add/remove byte), renames `0x070810D0`. Game saves carry the section wi
 | `railway=tram` along a road | `ends |= 4` on that road's curves |
 | a node shared by 3+ ways | a junction: end the curves exactly at that node; merge arms closer than 30° |
 
+The OSM import does this (engine/osm.cpp, namespace `streets`, since 2026-11-08); it adds all its curves at once
+(`addCurvesBulk`: one redraw, the junctions levelled once) and records each for undo. `findCurveJunctions` takes an
+optional list of points (only the junctions there) and groups the ends in an x-sorted window, so maps with
+thousands of curves stay quick to edit and undo.
+
 A polyline becomes a chain of cubic Béziers, one per segment, with tangents from the neighbouring points
 (Catmull-Rom: `d = normalize(p[i+1] − p[i−1])`, handles a = b = segment length / 3); drop points that would make a
 bend tighter than the kind's minimum radius.

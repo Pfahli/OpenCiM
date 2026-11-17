@@ -39,7 +39,9 @@ loading screen's Spielen button presses itself; `data/regs/extend/metro/scripts/
 
 OpenCiM keeps all player data in its own folder, `Documents\OpenCiM`: `settings.script`, `controls.keys`, the game
 state `state.gs` (trophies, unlocked scenarios), `saves\*.gs`, user maps `maps\<name>.{grid,timeline,dds,scenario}`
-and the game's log `log_metro.txt`. The Documents folder is found as the original finds it (`SHGetSpecialFolderPathW`,
+and the game's log `log_metro.txt`; with "Sharper textures" on (graphics page) also `texture-cache\x2\`, the
+textures upscaled on this machine from the install (`../docs/renderer/texture-upscaling.md`; a cache, safe to delete).
+The Documents folder is found as the original finds it (`SHGetSpecialFolderPathW`,
 `engine/platform_win32.cpp`). The game's `metro/config.script` asks for `<documents>\Cities In Motion`; the port's
 `init_userdata` answers with `<documents>\OpenCiM` instead (`engine/user_folders.cpp`), so the scripts are used as
 installed. On the first start the folder is created and filled with the game's defaults (`metro/defaults`, as the
@@ -80,7 +82,7 @@ original does (for comparisons). `--frames <n>` quits after n frames and `--scre
 saves the last one (used for checks). `--at <frame>:<action>` injects input for screenshot checks: `move:x,y`,
 `click:left|right|middle`, `down:…`/`up:…`, `key:<VK>` (press and release), `keydown:<VK>`/`keyup:<VK>` (hold), `text:<chars>` (typed into edit controls),
 `shot:<file.png>`, `vsync:on|off` (e.g. off after a frame-timed load, for frame-time measurements), `wheel:<notches>`
-(mouse wheel at the mouse position, negative zooms out), `cam:x,z` (the game camera over a world point through
+(mouse wheel at the mouse position, negative zooms out), `hwheel:<notches>` (sideways wheel), `gesture:zoom,<f>|turn,<rad>|pan,<dx>,<dy>|end` (a two-finger gesture, docs/camera.md), `tilt:`/`zoom:`/`dir:` (the game camera), `cam:x,z` (the game camera over a world point through
 `MAIN.$gameUI.setCameraPos`; clamped to the map, so `cam:0,99999` shows the south edge). Loading the save
 `Cim2` and entering the game, for example:
 
@@ -179,6 +181,7 @@ The game's graphics page is extended this way (`data/regs/extend/metro/ui/menus/
 | Colour style | `$regsColorStyle` | Original, Vibrant, Warm, Cool, Cinematic, Monochrome (`grade.fragment`) | at once |
 | Lens blur | `$regsLensBlur` | off; light / strong by distance from the camera target (thin lens on the depth buffer, `dof.fragment`: zoomed in, the distance blurs); tilt-shift (`tiltshift.fragment`) | at once |
 | UI scale | `$regsUiScale` | 1× (default), 1.5×, 2×: menus, HUD, panels, text, tooltips, pins and the cursor grow; the map, the corner preview, the shop's 3D previews and the minimap's map keep the window's full resolution. Text and images drawn 1:1 by the scripts stay sharp (exact 2×2 texels at 2×, near-sharp at 1.5×). Unset: 2× on windows taller than 1800 px. A scale needs a window of at least 1024 × 720 × the scale, else the next smaller one is used. How it works: [docs/ui/scaling.md](../docs/ui/scaling.md); `REGS_UI_FILTER=linear` compares with plain bilinear | on OK: the GUI is laid out again for the new size and the page opens again (scaling.md §6) |
+| Sharper textures (2x upscaled), High Res UI | `$regsTextureUpscale` | off / on: every texture of the install gets a 2× version made once on this machine (`texture-cache\x2`, made in the background, progress shown on the page): the 3D world, and the UI art for UI scale 1.5×/2× (icons, cursor, panels, portraits, loading and main-menu pictures). Off is exactly the original. An AI upscaler can make the UI or all colour textures instead (`regs-tool upscale-textures --external`, not shipped). How it works: [docs/renderer/texture-upscaling.md](../docs/renderer/texture-upscaling.md); `REGS_TEXTURE_UPSCALE=0\|1` overrides it | at once (loaded textures are swapped live) |
 | Graphics engine | `$regsRenderer` | OpenGL 3.3 (default) or Vulkan 1.3 (`docs/renderer/vulkan.md`; falls back to OpenGL when Vulkan cannot start; `REGS_RENDERER=gl\|vulkan` overrides it for test runs). Settings > Graphics > Advanced settings | after a restart |
 | Temporal antialiasing | `$regsTaa` | off (default) / on: the map view drawn with a sub-pixel jitter and resolved over frames (depth reprojection, neighbourhood clipping, sharpening; `taa.fragment`). Settings > Graphics > Advanced settings; both graphics engines | at once |
 | Raytraced shadows | `$regsRtShadows` | off (default) / on: sun shadows by ray queries (Vulkan on a GPU with VK_KHR_ray_query, with the game's shadows on); foliage, blended and skinned casters stay in the shadow map. `REGS_RT_SHADOWS=0\|1` for tests. Settings > Graphics > Advanced settings | at once |

@@ -40,6 +40,7 @@ add_library(regs_engine STATIC
   src/engine/gui_relayout.cpp
   src/engine/font.cpp
   src/engine/input.cpp
+  src/engine/camera_input.cpp
   src/render/gl.cpp
   src/render/gpu_gl.cpp
   src/render/image.cpp
@@ -61,12 +62,16 @@ add_library(regs_engine STATIC
   src/engine/skinning.cpp
   src/engine/sky.cpp
   src/engine/night_lights.cpp
+  src/engine/texture_upscale.cpp
+  src/engine/traffic_lights.cpp
   src/engine/interaction.cpp
   src/engine/tools.cpp
   src/engine/tool_objects.cpp
   src/engine/tool_templates.cpp
+  src/engine/osm.cpp
   src/engine/tool_curves.cpp
   src/engine/curve_roads.cpp
+  src/engine/proc_buildings.cpp
   src/engine/tool_terrain.cpp
   src/engine/tool_tracks.cpp
   src/engine/grid_save.cpp
@@ -95,6 +100,7 @@ add_library(regs_engine STATIC
   src/engine/user_folders.cpp
   src/engine/debug_economy.cpp
   src/platform/window_win32.cpp
+  src/platform/touchpad_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp
 )
@@ -260,7 +266,7 @@ else()
   target_sources(regs_engine PRIVATE src/render/gpu_vk_stub.cpp)
 endif()
 
-add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/crash_win32.cpp)
+add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/texture_tools.cpp src/tools/crash_win32.cpp)
 target_include_directories(regs-tool PRIVATE third_party/miniaudio)
 target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
 
@@ -284,6 +290,6 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32)
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
-  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32)
+  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid)
 endif()
 

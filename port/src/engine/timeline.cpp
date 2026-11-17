@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -19,6 +20,7 @@
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/paint_edges.h"
+#include "engine/proc_buildings.h"
 #include "engine/grid.h"
 #include "engine/grid_edit.h"
 #include "engine/interaction.h"
@@ -46,7 +48,10 @@ constexpr uint32_t kTimeline = 0x07080000, kDay = 0x07081000, kGroup = 0x0708101
                    kRegsPaintEdges = 0x070810C0,
                    // port: a curved road renamed: the curve as curveActionBytes (add 1) with its new name; the curve with
                    // the same ends and handles takes the name
-                   kRegsCurveName = 0x070810D0;
+                   kRegsCurveName = 0x070810D0,
+                   // port: a procedural building added (engine/proc_buildings.h procBuildingBytes), kept in Action::raw
+                   // (0x070810D0 on the map-editor branch until main's curve names took it)
+                   kRegsProcBuilding = 0x070810E0;
 constexpr uint32_t kFlagLockGround = 0x8, kFlagOptional = 0x200000, kFlagHidden = 0x400000, kFlagAutoChild = 0x2000000,
                    kFlagConflict = 0x10000000, kFlagDemolishMark = 0x20000000, kPreview = 0x500000;
 
@@ -70,7 +75,7 @@ struct Action {
   uint16_t on = 0;
   std::string text;                  // name (UTF-8, as the network's name table)
   uint32_t variation = 0;            // variation
-  float turn[3] = {0, 0, 0};         // port: kRegsTurn (yaw, offX, offZ)
+  float turn[4] = {0, 0, 0, 1};      // port: kRegsTurn (yaw, offX, offZ, scale; older records end before the scale)
   std::vector<uint8_t> raw;          // unknown tags, kept as read (body)
 };
 
@@ -167,7 +172,7 @@ void readActions(const Reader& r, size_t at, size_t end, std::vector<Action>& ou
         break;
       case kRegsTurn:
         a.obj = readRef(r, body);
-        for (int k = 0; k < 3 && body + 48 + size_t(k) * 4 <= stop; ++k) std::memcpy(&a.turn[k], r.d.data() + body + 44 + k * 4, 4);
+        for (int k = 0; k < 4 && body + 48 + size_t(k) * 4 <= stop; ++k) std::memcpy(&a.turn[k], r.d.data() + body + 44 + k * 4, 4);
         break;
       default: a.raw.assign(r.d.begin() + std::ptrdiff_t(body), r.d.begin() + std::ptrdiff_t(stop)); break;
     }
@@ -554,6 +559,7 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       GridData::Item& it = g.items[size_t(i)];
       bool ok = std::isfinite(a.turn[0]) && std::fabs(a.turn[1]) < 3 && std::fabs(a.turn[2]) < 3;
       it.yaw = ok ? a.turn[0] : 0.0f, it.offX = ok ? a.turn[1] : 0.0f, it.offZ = ok ? a.turn[2] : 0.0f;
+      it.scale = std::isfinite(a.turn[3]) && a.turn[3] >= 0.1f && a.turn[3] <= 10.0f ? a.turn[3] : 1.0f;
       gridEditItemChanged(ap.grid, uint32_t(i));
       break;
     }
@@ -568,7 +574,8 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
           if (cx < 0 || cz < 0 || cx >= g.width || cz >= g.length) continue;
           size_t k = 8 + (size_t(z) * size_t(w) + size_t(x)) * 4, c = size_t(cz) * size_t(g.width) + size_t(cx);
           g.height[c] = rd(k);
-          g.flags[c] = uint16_t((g.flags[c] & ~0x203Fu) | (uint16_t(rd(k + 2)) & 0x203Fu));
+          // (0x0080: the port's sand, OSM beaches; the game never sets it)
+          g.flags[c] = uint16_t((g.flags[c] & ~0x20BFu) | (uint16_t(rd(k + 2)) & 0x20BFu));
         }
       gridEditCellsChanged(ap.grid, x0 - 1, z0 - 1, x0 + w, z0 + l, true);
       break;
@@ -584,6 +591,17 @@ void applyAction(Apply& ap, const Action& a, bool preview) {
       bool add = true;
       if (preview || !curveFromActionBytes(a.raw, c, add)) break;
       applyCurveEdit(ap.vm, ap.grid, c, add);
+      break;
+    }
+    case kRegsProcBuilding: {
+      GridData::ProcBuilding b;
+      if (preview || !procBuildingFromBytes(a.raw, b)) break;
+      bool known = false;  // (a replay over the map that has it already, as curves: applyCurveEdit)
+      for (const GridData::ProcBuilding& k : g.procBuildings)
+        known = known || (k.outline == b.outline && k.y == b.y && k.height == b.height && k.style == b.style);
+      if (known) break;
+      g.procBuildings.push_back(std::move(b));
+      ++ap.grid->procVersion;
       break;
     }
     case kRegsCurveName: {
@@ -751,9 +769,48 @@ void timelineRecordCreate(VM& vm, Object* s, GridObj* grid, uint32_t item) {
     Action t;
     t.tag = kRegsTurn;
     t.obj = refOf(grid, item, kFlagAutoChild);
-    t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ;
+    t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ, t.turn[3] = it.scale;
     recordAction(vm, s, std::move(t));
   }
+}
+
+void timelineRecordCreateMany(VM& vm, Object* s, GridObj* grid, const std::vector<int>& items) {
+  // (the same actions as timelineRecordCreate one by one, which puts each at the front: in one insert, newest first.
+  // One by one took hours for the OSM import of a 2048 × 2048 map, every insert moving all actions before it)
+  if (!s || !grid || !grid->data) return;
+  const GridData& g = *grid->data;
+  std::vector<Action> batch;
+  batch.reserve(items.size() * 2);
+  for (int i : items) {
+    if (i < 0 || size_t(i) >= g.items.size() || g.items[size_t(i)].removed) continue;
+    const uint32_t item = uint32_t(i);
+    const GridData::Item& it = g.items[item];
+    Action a;
+    a.tag = kCreate;
+    a.obj = refOf(grid, item, 0x42000000);
+    if (it.parent && it.parent <= g.items.size()) a.parent = refOf(grid, it.parent - 1, kFlagAutoChild);
+    batch.push_back(std::move(a));
+    if (it.variation) {
+      Action v;
+      v.tag = kVariation;
+      v.obj = refOf(grid, item, kFlagAutoChild);
+      v.variation = it.variation;
+      batch.push_back(std::move(v));
+    }
+    if (itemOffGrid(it)) {
+      Action t;
+      t.tag = kRegsTurn;
+      t.obj = refOf(grid, item, kFlagAutoChild);
+      t.turn[0] = it.yaw, t.turn[1] = it.offX, t.turn[2] = it.offZ, t.turn[3] = it.scale;
+      batch.push_back(std::move(t));
+    }
+  }
+  if (batch.empty()) return;
+  Recording& rec = g_recording[s];
+  rec.brushOpen = false;
+  std::vector<Action>& c = recordContainer(vm, s, rec);
+  c.insert(c.begin(), std::make_move_iterator(batch.rbegin()), std::make_move_iterator(batch.rend()));
+  if (!rec.groupOpen) vm.fireEvent(s, u"onChange", {});
 }
 
 void timelineRecordDelete(VM& vm, Object* s, GridObj* grid, uint32_t item) {
@@ -826,6 +883,14 @@ void timelineRecordCurve(VM& vm, Object* s, const CurveRoad& c, bool add) {
   Action a;
   a.tag = kRegsCurve;
   a.raw = curveActionBytes(c, add);
+  recordAction(vm, s, std::move(a));
+}
+
+void timelineRecordProcBuilding(VM& vm, Object* s, const GridData::ProcBuilding& b) {
+  if (!s) return;
+  Action a;
+  a.tag = kRegsProcBuilding;
+  a.raw = procBuildingBytes(b);
   recordAction(vm, s, std::move(a));
 }
 

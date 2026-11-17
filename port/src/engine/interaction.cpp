@@ -266,7 +266,7 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
           if (it.type >= st.templates.size() || !st.templates[it.type].object) continue;
           const PickTemplate& tp = st.templates[it.type];
           uint32_t f = it.flags | tp.flags;
-          if (f & (kFlagTemp | kFlagHidden)) continue;
+          if (f & (kFlagTemp | kFlagHidden | kItemPortHidden)) continue;
           if (planeY != kNoPlane && !(f & kFlagTunnel)) continue;
           if (!itemVisible(g, st, i, viewMode)) continue;
           if (tp.type == kTypeMarker || tp.type == kTypeSpawnPoint) {

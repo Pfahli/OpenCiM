@@ -231,6 +231,274 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   their own file format .cimtpl (GS10 package with template.grid, template.dds, template.info listing the DLCs of its
   objects) with export (Explorer) and import (drop into the folder), the missing-DLC check before placing, and the
   DLCs a template needs loaded when placing it. Still no rotation.
+- [~] OpenStreetMap import for a new map (owner's request 2026-11-07; engine/osm.cpp, regs/ui/osmwindow.script): the
+  new-map dialog has "Aus OpenStreetMap …" (a window with Esri satellite / OSM map tiles, Nominatim search, start
+  view at the chosen location's city, the area as a rectangle of the map size × a scale 1-15, options terrain,
+  water, trees, streets, buildings, satellite picture); the import runs when the new map stands, with a progress
+  window, as one timeline group (one undo). Done: downloads with disk cache (tiles, Overpass answers for a week),
+  terrain from AWS Terrarium heights, sea (coastline flood), lakes and rivers, trees (woods closed: a big tree in every cell, a second
+  one in most, bushes as undergrowth, turned and shifted freely; scrub mostly bushes; orchards fruit trees in rows; parks, tree rows, single trees; owner 2026-11-08: no stones or grass tufts), road
+  kinds from the tags (avenue for tree-lined or divided roads with a tree row, large for multi-lane/12 m+/primary/
+  secondary, small, footpaths for pedestrian streets; divided roads merged to one centre line, the side streets
+  following onto it; carriageways without a partner one-way small roads; roundabouts one-way rings). Since
+  2026-11-08 the streets are curves (the curve tools of building-tools.md, owner's request): one Bézier per
+  simplified leg, Catmull-Rom tangents, junctions at shared OSM nodes, legs shorter than their junctions need
+  merged, arms spread to 32°, too tight bends made junctions; ways leaving the map end on two grid blocks (the edge
+  piece, then a straight piece the curve starts on); water cuts ways (streams up to 40 m: a causeway across), bridges crossing streets without a shared
+  node are left out, footpaths keep off roads; the ground beside the streets levelled 3 units wide (hills).
+  REGS_OSM_GRID=1 builds the old block-grid network instead. Buildings fitted to footprints by category (wall-to-wall ones as the city houses / corner houses in rows), turned to
+  the footprint's angle (yaw and offX/offZ of the free turn; REGS_OSM_NOTURN=1 off).
+  2026-11-13 (owner's test runs, Bruchsal): road kinds from the real lane count (lanes 2-3 small, 4+ large), one kind
+  per named street, kind changes as junction pieces; roundabouts rebuilt as the game's roundabouts (radius for their
+  arms); bridges as the curve tool's bridge curves (OSM bridges and legs over water, decks clear of what they cross);
+  short tunnels (underpasses up to 80 m) on the ground with a bridge for the track over them; railways (rail,
+  light_rail, no sidings) as railway curves, parallel tracks closer than 4.5 cells merged into one double track;
+  stations (railway=station/halt) as the game's railway-station beside the line; buildings lined up along their
+  street (angle, front, building line), rows of wall-to-wall buildings as city houses edge to edge per street side,
+  corner houses only at street corners and of the type whose corner faces the crossing street (research of the
+  original maps: city houses front on model -Z, corner houses 01/02/05/06 also +X, 03/04 and small-townbuilding04
+  also -X); rounded river banks except at buildings.
+  2026-11-14: blocks of row houses (placeBlock): wall-to-wall buildings form a block, each building goes to the side
+  along the street in front of it (curve and side, cut where the street bends > 12°), each side a straight row on the
+  median building line, outer block corners (sides 60-120° apart) get a corner house both rows run up to, rows filled
+  edge to edge with one house family per block (leftover taken by wider houses). Furnishing (a stage between buildings
+  and trees): OSM street furniture nodes (fountain, bench, waste_basket, bicycle_parking, telephone, post_box,
+  toilets, clock, street_lamp, memorial/monument, artwork, kiosk, playground) at their points facing the street;
+  squares a fountain (large one from 150 cells) with benches facing it, litter bins, flower beds, old lamps along the
+  edge with trees between; market places with market stands; car parks in asphalt (pavement paint 0) with rows of
+  parking-space props across the long side (bay, aisle, two bays back to back, …), no parking lanes
+  (parking=lane/street_side); street lamps along the curves where OSM has none (small streets one side every 28 m,
+  wide roads both sides staggered with the arm lamp, footpaths the old lantern); yards behind the rows (free ground
+  closed within 6000 cells, else 6 cells deep) with bushes along the houses, trees and residents' props. Signs in the
+  building lists (grocerysign) are no buildings any more; no paint bands along pedestrian streets / service roads
+  (the saw-tooth strips). REGS_DEBUG_OSM=1 logs what the furnishing placed.
+  Templates from the game's own maps (owner 2026-11-14): at the first import the official maps (berlin, amsterdam,
+  helsinki, vienna, cologne, leipzig, munich, ulm, london, paris, stpetersburg; read from the install, nothing copied
+  into the port) give square templates (pavement patches with furniture) and yard templates (open ground mostly
+  closed by houses, with garden things): ~1100 and ~100, 0.8 s. An OSM square or a closed yard takes the best-covering
+  one (IoU ≥ 0.5 / 0.4, turned to its main axis in 90° steps) and its furniture where it lands on free cells; else the
+  furnishing above. Culverted / covered rivers (tunnel=*, covered=yes, layer < 0) are no open water.
+  REGS_DEBUG_TOPDOWN=x,z,height puts the camera straight above world (x, z) for screenshots.
+  2026-11-14 later: tracks run to the map edge (no margin), stretches of OSM tracks running beside another only part
+  of their way are kept (joined to the merged line), spurs up to 120 cells and loose pieces up to 400 cells that end in
+  the open are dropped (pruneTracks; REGS_DEBUG_OSM_RAILS=<png> draws OSM's railways and the track curves). Stations
+  built like Berlin's: platform pieces in two rows by the line, the railway-station behind them with its back to the
+  line, an island platform to a parallel line 5.5-14 cells away, platform lamps and benches. Track cells are marked
+  apart (used 7): no street furniture on tracks. Yard templates take paved ground too and bring their pavement
+  paint; yards get a band of pavement along the houses' backs.
+  Exact edges (paint_edges.h, main 43b7c9c): car parks (asphalt 0), squares and market places (paving stones 2) are
+  painted with paintArea from their OSM rings at the terrain stage (timelineRecordPaintEdges after the patch); the
+  yards' pavement too: a turned rectangle 2.2 cells deep behind each row, and the yard templates' paved cells traced
+  to outlines, turned onto the yard and painted with paintAreaCells on the yard's own cells (Painter in osm.cpp); the traced
+  outlines lose their stair steps (corners within 0.75 cells of their neighbours' line). Pedestrian streets get a 6 m
+  band of paving stones with exact edges (a rectangle per leg, an octagon per bend; buildings may stand on it).
+  Squares, market places and car parks are dry (water under them dropped). Street trams: railway=tram ways (not in
+  tunnels) give the road curves along which 60 % of the samples lie within the carriageway the tram tracks (ends 0x4);
+  tested in Karlsruhe (most of its centre's trams run in the tunnel now).
+  Level crossings (owner 2026-11-15, osm.cpp cutLevelCrossings / placeLevelCrossings): where a railway curve crosses a
+  small road, the game's track_double_cross_small (barriers, lights, bell; the road along its local x, the track along
+  z) is turned freely onto the track (orient + yaw, offX/offZ); the track ends on its two track sides, the road is cut
+  off and joined to its road sides by connector curves that bend it square to the track; with no room (a junction right
+  by the track) a free end becomes a stub and a junction moves off the track (as near as the junction's own trim
+  allows, findCurveJunctions on the moved curves). The piece's own levelling (it sets and locks its 4 × 4 cells'
+  corners at its pavement height) is undone around the turned piece. Where no piece fits (larger roads, tram streets,
+  flatter than 30°, junctions on both sides) the rails are let into the road: the track's stretch under the roads is a
+  curve with bridge = 3 (2 is a tunnel), drawn as the street tram strip at the road's height (terrain.cpp), its lanes those of the
+  double track. Tested in Münzesheim (a piece) and Unteröwisheim (rails in the road between two junctions); REGS_DEBUG_OSM
+  logs each crossing, REGS_DEBUG_TOPDOWN=x,z,h,d,y looks at it from d units south.
+  Trams on their own bed (owner 2026-11-15, osm.cpp tramBeds): the tram ways are merged into double tracks (both
+  directions' tracks closer than 6 m, mergeTracks with the tram kind) and cut where they run along a street (within its
+  half width and half a cell: street trams as before); the stretches off the streets (10 cells and longer) become curves
+  of kind 9 (curve_roads.h curveIsTramBed; 8 is the ramp): drawn as the railway's double track (ballast, sleepers, bumper), their lanes
+  the tram piece's (tram_small_basic, tram_small_deadend at a free end), so the player's trams can run on them; in the
+  roads' join class, so a bed meets its street at a junction (the street gets the junction point; a bed's end within 9
+  cells of a street is joined to it too), where the trams run on between the bed and the street's tracks. Tested at
+  Durlacher Tor, Karlsruhe (9 beds, 9 ends joined).
+  The import window has a checkbox for the tram tracks (owner 2026-11-15, flag 128): off, neither street trams nor
+  tram beds are laid.
+  The satellite picture on the ground (owner 2026-11-07; terrain.cpp collectGroundOverlay): after an import with the
+  picture, a button with a satellite above the minimap's own two (editor.script extension; icon drawn by
+  tools/make-satellite-icon.ps1) lays it on the ground or takes it away: one mesh over the cells whose ground is drawn
+  (not under the cover of items and curves), just over the terrain and under the streets' asphalt, unlit and three
+  quarters opaque. It belongs to the map it was imported onto (GridObj::generation) and is not saved.
+  Generated places (owner 2026-11-15: templates for common structures with variables like their size; osm.cpp
+  buildMarket, buildPlayground, buildPitch, buildAllotments, buildSeating, buildTerrace): laid out in the place's minimum
+  rectangle and scaled to it, a prop only where its turned footprint lies inside and its cells are free.
+  - Markets (amenity=marketplace areas, squares whose name holds "markt"/"market"/"march", squares with a marketplace
+    point): rows of stands back to back with 3-cell aisles, cross aisles, tables with parasols, baskets, signs at the
+    aisles' ends, a big tent at one end of large ones; OSM's fountains and monuments keep 4.5 cells free. A marketplace
+    point on no square gets a small market (14 × 10 cells).
+  - Playgrounds (leisure=playground areas, points: 8 × 8 cells): merry-go-round from 150 cells, sandboxes, pairs of swings,
+    a sand pile, each farthest from the others; benches facing in, litter bins, bushes and trees along the edge.
+  - Pitches (leisure=pitch by sport): tennis courts and basketball fields side by side, their players over every other; a
+    football pitch only as the game's whole field.
+  - Allotments (landuse=allotments): rows of plots 7 × 9 cells behind painted paths, each with a shed, a tree, flower
+    beds, sometimes a gnome or a swing, hedges between the plots.
+  - Beer gardens (amenity=biergarten; a point gets 10 × 8 cells beside it) and outdoor seating areas: tables in a grid,
+    trees (beer gardens, with their sign toward the street) or parasols.
+  - Terraces before cafes, restaurants, pubs and fast food (OSM's outdoor_seating, else cafes always, restaurants and
+    pubs every other one): from the place toward its street, on the first free ground two tables deep, a row of tables
+    (parasols between a cafe's, flower pots or a pub's sign at the ends).
+  - Single props: vending machines, taxi ranks, recycling containers, shelters, picnic tables.
+  - Fuller places (owner: places looked empty): markets get a second pass of stands on a lattice in the room the rows
+    left; every other square gets its free paving filled (fillSquare: a lattice of 4.5 cells, about one thing per 20
+    cells: trees, benches facing the middle, flower beds, bins, lanterns, bike stands by the edge, now and then an
+    advertising pillar, a phone box or a kiosk).
+  - Footpaths without grass beneath them (owner): the footpath texture is a gravel path on grass covering the piece's
+    whole width; the footpath curves and their junctions are drawn in a mesh of their own with a copy of the footpath
+    material whose grass is transparent (alpha from blue against the brighter of red and green: grass and its mix at the edge are low in blue; terrain.cpp keyedFootpathTexture),
+    so the ground around the gravel shows, paving or grass. (A first try left footpaths over paving out altogether; the
+    owner missed them.) A footpath over paving or asphalt for half its length or more (and a junction most of whose
+    arms are) is drawn as the same path in light concrete slabs with a darker kerb (owner: nicer on asphalt).
+  - Beaches (natural=beach, leisure=beach_resort, not private): the ground ramps from just above the water line at the
+    water to the land's own height at the beach's landward edge (by the share of the way across, squared: low and flat in
+    front, the rise at the back, no cliff); the water before it is shallow and deepens over 10 cells; the strip between
+    OSM's beach outline and the water joins the beach. Its cells are sand: cell flag 0x0080 (the game never sets it; the
+    timeline patches and templates carry it, mask 0x20BF), which terrain.cpp turns into a sea-floor weight over 1 and the
+    terrain shader's port patch (shaders.cpp, terrain/maps.fragment) into the sea floor brightened to dry sand. Parasols
+    in loose rows two cells and more from the water, a beach bar (kiosk, tables), bins and a toilet along the edge,
+    motorboats off the shore. Seen at Warnemuende. The game has no deck chairs or towels.
+  Patchy ground fixed (owner 2026-11-15): a footprint no single template fits on its free cells is filled with as
+  many buildings of its kind as fit (fillFootprint: the own kind first, the largest first, on the footprint convex hull,
+  facing the street or turned along it); what stays empty is kept from the yards (used 8), so yard paint no longer
+  covers missing buildings. Karlsruhe Marktplatz: 579 buildings instead of 479 (the town hall was left out). Yards are
+  paved with one paving (stones, 2) instead of the templates mix. REGS_DEBUG_OSM_PAINT=x,z,r logs the paint areas and
+  the buildings left out around a point.
+  Grass slivers between paved areas close (a plain ground cell with paving within 2 cells on two opposite sides takes
+  their paving), after the OSM paint and again after the yards' paving (Painter::closeGaps).
+  Pockets (owner 2026-11-15: random grass patches in weird shapes; Painter::fillPockets): a 4-connected region of plain
+  ground (painted areas' border cells and uncovered street margins included) up to 900 cells, not at the map's edge,
+  whose border is three quarters paving, buildings or streets and under a tenth OSM green (parks, gardens, lawns,
+  meadows, cemeteries, playgrounds, pitches, woods: ImportData::green), is paved with its neighbours' paving.
+  Karlsruhe Marktplatz: 947 pockets, 9200 cells. REGS_DEBUG_OSM_POCKETS / REGS_DEBUG_OSM_CELLS log why one stays.
+  Procedural buildings (owner 2026-11-15: custom shaped buildings with windows, doors and roofs, big halls;
+  engine/proc_buildings.*): a footprint from 300 cells (REGS_OSM_PROC_MIN) on free ground becomes a building of the
+  port's own: walls raised from the outline (a relation's convex hull), facades repeating per floor and bay (halls:
+  corrugated sheets with a window band and roller doors; houses: plaster or brick with framed windows, front doors with
+  steps), doors on the walls facing the nearest street, a flat roof with a parapet and air conditioning boxes (halls:
+  metal roof with skylight strips) or a tiled gabled roof on a four-cornered house up to 15 cells wide. The textures
+  are drawn by the port (no game files). Stored as GridData::ProcBuilding in map.grid section 0x07F30000 and as the
+  timeline action 0x070810E0 (undo, the day switch; a replay skips a building the map has). Karlsruhe Marktplatz: 10
+  (the town hall in plaster, three halls), Bruchsal 6. Since 2026-11-15 (owner: more interesting roofs, windows and doors
+  with depth that light up by night): windows and doors sit in recesses (reveals, mullions, sills, a step, a lamp and a
+  lit fanlight by a front door, roller doors with a lamp on halls); two thirds of the panes light up warm at dusk in three
+  groups one after another (emission from night01, night_lights.h vehicleNight01). Flat roofs: gravel with tar seams,
+  drains and moss, glazed skylights (lit at night), solar panels in rows tilted south, a stair house with a door, air
+  conditioners with a fan grille, vent pipes; halls: glazed roof lanterns with glazing bars; gabled roofs: framed roof
+  windows, brick chimneys. Types and variety (owner 2026-11-15: warehouses only in industrial areas, offices and modern
+  shops in town, different facades): halls only for industry, farms and railways; workplaces become office blocks
+  (spandrels with ribbon windows or cladding with single windows, a glazed lobby), commercial buildings shops (lit shop
+  windows and a coloured fascia sign below; a low one from 700 cells a big store with a glass entrance and its sign), a
+  third of the big town houses a business house with shops below, a third of those from four levels an office. Houses:
+  4 plaster tints, 3 brick colours, cross / tall / wide / paired windows, cornices, white or dark frames. Solar panels on
+  45 % of flat roofs, half the halls, 40 % of gabled roofs (south slope); roof textures and panel rows follow the
+  building; the walls reach 12 units into the ground (no floating wing on a slope). Not yet: shadows, picking and the bulldozer, jobs
+  and homes in the simulation; a reload of a saved map with them not yet seen (the section is written: checked in the
+  autosave).
+  Railings by the water (owner 2026-11-15; osm.cpp riverRailings): the game's street railing every 6 units at the outer
+  edge of a street's or footpath's pavement where water lies within 4.5 units beyond it (not on bridges or in junctions).
+  Since then: the garden fence (a low wall with stone pillars, the owner's pick; two cells a piece, joined; the fence
+  models run along their model z, the street railings along x, so fences are turned by armFront), also where the ground beside the road lies 1.5
+  units and more under it (cliffs); REGS_OSM_RAILING picks another template. Streets by the water no longer dip: the
+  bank lowering stops at streets and paved areas (a quay wall), and a street point near water takes the elevation
+  data's height of the dry cells around it.
+  Footpaths lie 0.12 under their level with a polygon offset of -3 (0.2 down clipped into unlevelled ground).
+  2026-11-16 (owner's requests): paved areas (car parks, squares, market places, service areas) get rounded corners
+  (roundCorners, 4 m) and keep their cut border cells: the grass-sliver closing (terrain stage and Painter::closeGaps)
+  only fills gaps between two different areas (Apply::paintOwner), and street margins the street covers only partly
+  count as ground. Car parks: a concrete driveway to the nearest street when they do not reach it, and the parking sign
+  at the pavement beside it (parkingAccess). Fences: OSM's barrier=fence/wall/hedge (fence_type picks wooden, chain
+  link, iron, split rail; walls brick, hedges the hedge; short ones first, 12000 pieces at most) and fences between the
+  yards of neighbouring row houses (two joins in three, one kind a row) — placeFences / fenceLine (the fence models run
+  along their model z at their cell's −x edge). Junctions (junctionSigns): traffic lights where OSM maps
+  traffic_signals or two large roads cross; stop / give-way from OSM, give-way on small streets meeting large roads;
+  direction signs before large junctions; old signposts at footpath junctions in parks. Sign models seen in the game
+  (REGS_OSM_SIGNTEST=x,z lays them out): sign01 give way, 08 stop, 07 limit 100, 04 no stopping, 05 motorway;
+  traffic-lights02's arm reaches along its front, so only traffic-lights01 is used. OSM points: town signs
+  (traffic_sign=city_limit), advertising columns, bollards. Advertising (placeAds): posters and wall ads on the side
+  walls of houses by gaps along the streets in town, billboards along large roads, advertising columns at junction
+  corners. Standalone McDonald's / Burger King / KFC (brand, wikidata or name; a building or a point in it, at most
+  three times the restaurant's size) become the game's fast food restaurant. The import holds the simulation's
+  rebuilds back until it ends (gridEditHoldSimulation): on 2048 × 2048 each slice's rebuild took up to 80 s.
+  2048 × 2048 (Bruchsal) now completes: 185,580 objects, 7,733 buildings, 134,799 trees; the timeline gets the objects
+  in one insert (timelineRecordCreateMany; one by one took hours), the simulation's one rebuild at the end takes
+  ~130 s (the game stands still meanwhile). Rendering such a map is slow (well under 10 fps seen, with a second window).
+  Working traffic lights (engine/traffic_lights.cpp): traffic-lights01 near side at the stop line on the right-hand
+  pavement (the zebra lies 0.17-2.88 inside the mouth), lenses on its model +x facing the oncoming traffic; lamp
+  positions from the texture's red / amber / green texels on the lens side; a 40 s cycle (green 16, amber 3, red 20,
+  red-amber 1), the cross direction half a cycle later, green waves along each junction's main axis at 12 units/s;
+  glow sprites by day and night, at night a small pool on the street via night_lights' extraNightLights (the light map
+  is monochrome: warm for red/amber). Decoration only: vehicles do not stop. One-way signs (traffic-sign09, the blue
+  arrow panel, found by its UVs) at the start of one-way streets facing the junction. Restaurant tables on the
+  pavement where the house stands at it. In Europe none of the Tokyo / US packages' own buildings (foreignToEurope);
+  open land behind houses gets trees and bushes only, no garden things.
+  Open (seen in the 2026-11-16 screenshots): the Schloss became rows of terraced houses with blank gable walls; the
+  Schlossgarten's basins are dry rock pits ringed by hedges; OSM fence pieces stand alone on lawns where what they
+  enclosed is missing; the Siemens roundabout not checked (the geocoder found another stretch of the street).
+  Screenshot runs: the scratchpad place.ps1 imports a place, copies its autosave to maps/a1 and starts it as a sandbox
+  (Neues Spiel → Sandbox → the map → Start) by day, at night (REGS_DEBUG_TIME=22), in rain (REGS_TEST_WEATHER=heavy,
+  REGS_TEST_GROUND=puddles) and snow (=snow, =snow, REGS_TEST_SEASON=350); the weather mod must be enabled in the
+  stand-in documents' mods/mods.json.
+  2026-11-16 later (owner): procedural palaces (style 5), castles (6) and churches (7) in engine/proc_buildings.cpp.
+  Palaces: building=palace, historic=castle with castle_type palace/stately/manor, "Schloss …" names, buildings in a
+  historic=castle area, and wings touching a palace (up to three steps); rusticated ground floor, tall windows with
+  sandstone surrounds and lintels, pilasters, string course and cornice, a slate mansard (the outline inset 3.4/2.6/1.8,
+  insetPolygon) with dormers, a lantern with a copper dome over the top's widest point on big ones. Castles
+  (building=castle, defensive castle types, "Burg …"): rubble stone, few deep windows, battlements, round towers with
+  conical roofs (slate or red tiles) at up to six outer corners. Churches (building=church/cathedral/chapel/basilica or a
+  christian place of worship): type from building:architecture, else start_date, else gothic for cathedrals and by id;
+  the main axis from the outline, the tower at the wider end (apse narrower) with the portal; romanesque pyramid roof,
+  gothic octagonal spire and buttresses (twin towers on big ones), baroque onion dome, modern free-standing bell tower;
+  chapels a ridge turret; stained glass glows at night. Photo textures (CC0, Poly Haven) in data/regs/textures/proc
+  (tools/make-proc-textures.mjs, CREDITS.txt), loaded by collectProcBuildings over the drawn stand-ins; the red roof tile
+  photo also replaces the houses' drawn tiles. Small still water (ponds, basins, fountains under 250 / 900 cells) whose
+  shore lies over 2 m above the lowest land became pits down to the map's one water level: now paving with a fountain.
+  Offices: a third kind, curtain walls of reflecting glass (kProcCurtain: a painted sky and street, strong specular);
+  entrances with a canopy on two columns, some with a revolving door. Shops: striped awnings (red / green) over the shop
+  windows on two in three.
+  Not checked yet: a castle and the gothic / baroque / modern churches in a screenshot (Bruchsal: palace, wing and the
+  romanesque Hofkirche checked).
+  2026-11-16 evening (owner): passages through procedural buildings (ProcBuilding::passages, bit 7 of the record's roof
+  byte): where a road or footpath crosses a footprint (in through one wall, out through another or into a junction
+  inside; its middle at least 0.6 of its half width from the walls; not one that ends inside, a path to a door) the
+  osm import cuts it into straight pieces (cells under them neither block nor are taken); the mesh is clipped against
+  each piece's box (anything under y1: every style's walls, windows, buttresses, towers) and lined with side walls and
+  a ceiling. Clear 3.2 over footpaths, 4.5 over roads, 1.2 under the eaves at least. Castle and church pieces from 8
+  cells (gatehouses, small wings: Cochem's gate passage). Castle battlements finer: a 0.3 parapet standing out on
+  corbels, merlons 0.6 wide with caps every 1.5. Statues sized (GridData::Item::scale, drawn only; saved in the item
+  turn section, bit 30, and the timeline's turn record): OSM's height where given (4 of 414 cached statues), else a
+  usual height by kind (figure 3.8 m, bust 2.4, obelisk / stele 4.5, stone 1.5, sculpture 3, monument 5.5): the game's
+  statues are 11–12 m at the import's scale. Open: passages are boxes (no arch), and only procedural buildings get
+  them (row houses of game models leave the way's cells free instead).
+  Later that evening: passages arched; castles in greyed Tower of London rubble (London package), real deep windows,
+  stone slab wall walks; the near plane follows the camera's distance (engine.script's fixed 30 cut close models).
+  The map data: the whole area downloaded once and kept by the area (a changed query needs no server;
+  REGS_OSM_KEEP_CACHE keeps it for ever), servers overpass-api.de, overpass.openstreetmap.fr, overpass.kumi.systems,
+  maps.mail.ru, private.coffee. People (owner: "an invisible pavilion" that draws people, at sights and in buildings
+  by size): game items with GridData kItemPortHidden (0x80000 in Item::flags: not drawn, picked, on the minimap, no
+  ground work or conflicts; the simulation counts their places): sculpture01 (30 leisure, no cover) at OSM sights
+  (tourism museum/attraction/viewpoint/gallery/zoo/theme_park/aquarium, historic castle/ruins/...; weight 1-3 plus
+  size), inside procedural buildings by floor area (castles/palaces/churches sculptures, shops market stands, offices
+  office blocks, houses apartment houses; sculptures one per 900 m² of footprint, at most 5, a sight inside at most 3 more).
+  Checked in a sandbox game (REGS_DEBUG_VISITS logs the pools and trips every 30 grid-seconds): on the Bruchsal palace
+  map 18 sculptures hold 29 % of the leisure places and about 14 % of the visiting citizens head there; 240 live in
+  carried homes. The grid file keeps the bit (it dropped it at first). The timeline does not (undo, redo show them).
+  Start flags: --osm <place or lat,lon> [--osm-size n] [--osm-scale f] [--osm-name name] [--osm-options list]
+  [--osm-save] (REGS_START=osm:..., main.script extension; a taken name gets -2, -3: the empty map would open it).
+  Smooth shorelines (owner 2026-11-15: the Saalbach's edges looked jagged; ImportData::shoreSd / waterDraw): per corner the
+  signed distance to the true water shape (river lines with their width, water areas by scanline crossings, the sea by
+  the coast); the corners of water cells take their height from it (the water line −0x140 on the true shore, deep at
+  once inside, a little above it outside), so the terrain cuts the water plane along the true shore inside the cells
+  instead of along their staircase; cells the true shape covers well are drawn as water too (planning keeps the old
+  mask). Open: steep channel walls show the cliff texture.
+  Statues (owner 2026-11-15: many wrongly placed): only memorials and artworks of a figure type become statues (statue,
+  bust, obelisk / stele / war memorial, sculpture, stone, each its own model; historic=monument a rider statue);
+  Stolpersteine, plaques, ghost bikes, murals, graffiti and untyped ones are left out (Karlsruhe: about 100 of them had
+  become statues). A statue stands on free ground or paving at its point or up to 3 cells off, never on a street's
+  pavement, facing the nearest street.
+  Open: tram stops on beds
+  (the stop tool takes curves with street tracks only); tram bridges (a bed on a bridge has no deck yet); a tram branch
+  off a bed (a merged track's kept stretch overlaps the bed instead of a switch).
 - [ ] Open: express interchanges (bridges and tunnels: done 2026-11-08) (rename of curved roads: done 2026-11-14) (curves:
   tunnels, abutments, map-edge ends, express ramps with entries and exits: done 2026-11-15);
   `removeRedundantActions` (time bar button) is a no-op; "Speichern & Spielen" not tried yet.
@@ -250,7 +518,9 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   depth change nothing with borderless fullscreen). New window sizes lay the GUI out again and reopen the page
   (`docs/ui/scaling.md` §6, `engine/gui_relayout.cpp`). Open: the debug timebar's year/month/day bars (editor, only
   with `$debug`) keep their proportions only approximately; Alt-Tab behaviour of fullscreen.
-- [ ] Crash reports, a release build and package without any game files, licence and readme.
+- [ ] Crash reports, a release build and package without any game files, licence and readme. Installer design (owner's
+  request 2026-11-17): `docs/installer.md` (own setup program in the game's menu style, art read from the install, a
+  feature showcase while installing); mockup on the canvas "OpenCiM Installer".
 - [ ] Performance on the largest maps at speed 10 with all systems running; loading time.
 
 ## 10. Parity pass (milestone 8)

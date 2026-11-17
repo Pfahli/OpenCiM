@@ -356,7 +356,7 @@ int gridMountObject(VM& vm, GridObj* grid, uint32_t temp) {
   if (copy < 0) return -1;
   g.items[size_t(copy)].variation = it.variation;
   g.items[size_t(copy)].yaw = it.yaw;  // port: off the grid
-  g.items[size_t(copy)].offX = it.offX, g.items[size_t(copy)].offZ = it.offZ;
+  g.items[size_t(copy)].offX = it.offX, g.items[size_t(copy)].offZ = it.offZ, g.items[size_t(copy)].scale = it.scale;
   if (!name.empty()) {
     if (g.names.size() <= size_t(copy)) g.names.resize(size_t(copy) + 1);
     g.names[size_t(copy)] = name;

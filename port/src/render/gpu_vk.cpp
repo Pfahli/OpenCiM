@@ -329,6 +329,9 @@ class VkDeviceImpl final : public Device {
   }
   void readTextureRed(uint32_t tex, int w, int h, float* out) override;
   void destroyTexture(uint32_t tex) override { releaseTexture(tex); }
+  void redefineTexture(uint32_t tex, int levels) override {
+    if (Tex* t = texture(tex)) t->levelsHint = std::max(1, levels), freeImage(*t);  // level 0's texImage makes it anew
+  }
 
   // ---- renderbuffers ----
   uint32_t createRenderbuffer(Format f, int w, int h, int samples) override {

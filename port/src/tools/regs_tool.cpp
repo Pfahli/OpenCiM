@@ -41,6 +41,12 @@ namespace fs = std::filesystem;
 int cmdCut(int argc, char** argv);      // mod_assets.cpp
 int cmdSoftDot(int argc, char** argv);  // mod_assets.cpp
 int cmdLeaf(int argc, char** argv);     // mod_assets.cpp
+int cmdUpscaleTextures(int argc, char** argv);  // texture_tools.cpp
+int cmdUpscaleCompare(int argc, char** argv);   // texture_tools.cpp
+int cmdPngRoundtrip(int argc, char** argv);     // texture_tools.cpp
+int cmdPngDiff(int argc, char** argv);          // texture_tools.cpp
+int cmdUpscaleCheck(int argc, char** argv);     // texture_tools.cpp
+int cmdDdsPng(int argc, char** argv);           // texture_tools.cpp
 
 namespace {
 
@@ -822,6 +828,12 @@ int main(int argc, char** argv) {
     else if (cmd == "windowmask") rc = cmdWindowMask(argc, argv);
     else if (cmd == "lamps") rc = cmdLamps(argc, argv);
     else if (cmd == "vehiclelamps") rc = cmdVehicleLamps(argc, argv);
+    else if (cmd == "upscale-textures") rc = cmdUpscaleTextures(argc, argv);
+    else if (cmd == "upscale-compare") rc = cmdUpscaleCompare(argc, argv);
+    else if (cmd == "png-roundtrip") rc = cmdPngRoundtrip(argc, argv);
+    else if (cmd == "png-diff") rc = cmdPngDiff(argc, argv);
+    else if (cmd == "upscale-check") rc = cmdUpscaleCheck(argc, argv);
+    else if (cmd == "ddspng") rc = cmdDdsPng(argc, argv);
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

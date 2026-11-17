@@ -64,6 +64,11 @@ struct EditState {
   std::vector<uint32_t> added, removed;
   std::set<uint32_t> changed;
   Rect cells, heightCells;
+  // gridEditHoldSimulation: what the simulation has not been told yet
+  bool holdSim = false;
+  std::vector<uint32_t> heldAdded, heldRemoved;
+  Rect heldHeights;
+  bool heldCurves = false;
 };
 
 std::unordered_map<const GridObj*, EditState> g_edits;
@@ -209,7 +214,7 @@ int32_t rampY(int32_t y, int sx, int sz, int orient, uint32_t flags, uint32_t di
 void levelGround(EditState& st, GridData& g, uint32_t index) {
   const GridData::Item& it = g.items[index];
   GridItemShape s = shapeOf(st, it);
-  if ((s.flags & 0x500000) || s.type == kTypeMarker) return;
+  if ((s.flags & (0x500000 | kItemPortHidden)) || s.type == kTypeMarker) return;  // (port: a carried item, kItemPortHidden, leaves the ground)
   uint32_t cc = s.flags, parentFlags = 0;
   if (it.parent && it.parent <= g.items.size()) parentFlags = shapeOf(st, g.items[it.parent - 1]).flags;
   if (it.parent && s.type >= 10 && s.type <= 12) cc = (cc | 0xC000) & parentFlags;
@@ -307,6 +312,20 @@ void gridEditEnd(VM& vm, GridObj* grid) {
     return out;
   };
   std::vector<uint32_t> simAdded = real(added), simRemoved = real(removed);
+  if (st.holdSim) {  // (gridEditHoldSimulation: kept for later; the curves stay dirty)
+    std::set<uint32_t> gone(simRemoved.begin(), simRemoved.end());
+    std::vector<uint32_t> kept;
+    for (uint32_t i : st.heldAdded)
+      if (gone.count(i)) gone.erase(i);  // (added and removed while held: the simulation never sees it)
+      else kept.push_back(i);
+    st.heldAdded.swap(kept);
+    for (uint32_t i : simRemoved)
+      if (gone.count(i)) st.heldRemoved.push_back(i);
+    st.heldAdded.insert(st.heldAdded.end(), simAdded.begin(), simAdded.end());
+    if (!heights.empty()) st.heldHeights.add(heights.x0, heights.z0, heights.x1, heights.z1);
+    for (uint32_t i : removed) gridItemControllerRemoved(vm, grid, i);
+    return;
+  }
   if (!simAdded.empty() || !simRemoved.empty()) simItemsChanged(vm, grid, simAdded, simRemoved);
   if (!heights.empty()) simTerrainChanged(vm, grid, heights.x0, heights.z0, heights.x1, heights.z1);
   if (grid->curvesDirty) {  // port curved roads: their lanes and pavements after the items' (engine/curve_roads.h)
@@ -316,6 +335,31 @@ void gridEditEnd(VM& vm, GridObj* grid) {
     simCurvesChanged(vm, grid, rects);
   }
   for (uint32_t i : removed) gridItemControllerRemoved(vm, grid, i);
+}
+
+void gridEditHoldSimulation(VM& vm, GridObj* grid, bool hold) {
+  EditState& st = state(vm, grid);
+  if (hold || !st.holdSim) {
+    st.holdSim = hold;
+    return;
+  }
+  st.holdSim = false;
+  if (!grid->data) return;
+  GridData& g = *grid->data;
+  std::vector<uint32_t> added, removed;
+  added.swap(st.heldAdded), removed.swap(st.heldRemoved);
+  // (still there and not removed since)
+  added.erase(std::remove_if(added.begin(), added.end(), [&](uint32_t i) { return i >= g.items.size() || g.items[i].removed; }), added.end());
+  const Rect heights = st.heldHeights;
+  st.heldHeights = Rect{};
+  if (!added.empty() || !removed.empty()) simItemsChanged(vm, grid, added, removed);
+  if (!heights.empty()) simTerrainChanged(vm, grid, heights.x0, heights.z0, heights.x1, heights.z1);
+  if (grid->curvesDirty) {
+    grid->curvesDirty = false;
+    std::vector<std::array<int, 4>> rects;
+    rects.swap(grid->curveRects);
+    simCurvesChanged(vm, grid, rects);
+  }
 }
 
 int gridEditAddItem(VM& vm, GridObj* grid, const std::string& templateName, int x, int y, int z, int orient,
@@ -605,6 +649,7 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
   if ((sa.flags & 0x500000) == 0x500000 && (sb.flags & kFlagOptional) && sb.type != kTypeTree) return false;
   if ((sb.flags & 0x500000) == 0x500000 && (sa.flags & kFlagOptional) && sa.type != kTypeTree) return false;
   if ((sa.flags & 0x500000) == kFlagHidden || (sb.flags & 0x500000) == kFlagHidden) return false;
+  if ((sa.flags | sb.flags) & kItemPortHidden) return false;  // (port: a carried item conflicts with nothing)
   auto tram = [](int t) { return t >= 10 && t <= 12; };
   // the layer of each: cover, block, bridge, tunnel; a tram track on a road is on its road's layer
   uint32_t la = sa.flags & 0x1c004, lb = sb.flags & 0x1c004;

@@ -149,9 +149,18 @@ translation. Hooks are fixed at start-up, before any program is built.
 * `"post": true`: a post hook, `void <function>(inout vec3 color, RegsPost p)`, run per screen pixel on the finished
   map view (after bloom, before the port's colour styles and lens blur) while the scene's `regsPostHooks` is set.
   `RegsPost`: `uv` (0..1, bottom left), `pos` (world), `view`, `dist`, `depth` (0..1), `sky` (1 where nothing was
-  drawn), `time`, `texel` (one pixel in uv). `vec3 regs_postColor(uv)`, `float regs_postDepth(uv)` and
-  `vec3 regs_postWorld(uv)` read the scene anywhere; the surface hooks' files, uniforms and the engine's maps and
-  helpers below are there too (`render/glsl.cpp` `postHookFragment`, `engine/effects.cpp` `styleFinish`).
+  drawn), `time`, `texel` (one pixel in uv). `vec3 regs_postColor(uv)`, `float regs_postDepth(uv)`,
+  `vec3 regs_postWorld(uv)` and `vec4 regs_postData(uv)` read the scene anywhere, `vec3 regs_postProject(world)`
+  gives a world point's image coordinate (xy) and depth (z, < 0 behind the camera), so a hook can follow a ray
+  across the image (the weather mod's reflections); `regs_Fog` is the scene's fog; the surface hooks' files,
+  uniforms and the engine's maps and helpers below are there too (`render/glsl.cpp` `postHookFragment`,
+  `engine/effects.cpp` `styleFinish`).
+* Hook data: a surface hook may set the global `vec4 regs_HookOut` (0..1, 0 by default) to tell the post hooks
+  something about its pixel; it goes to a second colour attachment (RGBA8, location 1 of every translated fragment
+  shader) of the scene target, resolved with the colour, and `regs_postData(uv)` reads it. Opaque and cut-out draws
+  write theirs (0 where no hook set it: cars, people, foliage); of the blended draws only walkable ground (classes
+  3-5) does, decals, glass, route strips and particles leave the data under them. One vec4 for all mods: the weather
+  mod's wet ground uses it (film, puddle, ripple tilt). Allocated only while a post hook is registered.
 
 * `RegsSurface`: `pos` (world, from the interpolated clip position: correct for terrain, merged items and skinned
   meshes alike), `normal` (world, from screen derivatives, facing the eye), `view` (unit, eye → point), `dist`,
@@ -193,7 +202,8 @@ translation. Hooks are fixed at start-up, before any program is built.
 
 Cost (RTX 3080, 1600×900, the weather mod in rain): within the frame-time noise of the other test windows; the hook
 returns at once for class 0 and when the mod's wetness is 0. The seasons hook (class 9 only) and the heat post hook
-(only on hot days) keep the game at 60 fps as well.
+(only on hot days) keep the game at 60 fps as well, and so do the reflections in rain (a screen-space ray of 22
+steps on wet ground pixels; 58-59 fps in the test window against 59 without, the slowest frame of the readout 33-38 fps against 51).
 
 ## 5. Manager UI
 

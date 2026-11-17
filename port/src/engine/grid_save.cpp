@@ -13,6 +13,7 @@
 #include "engine/api.h"
 #include "engine/curve_roads.h"
 #include "engine/paint_edges.h"
+#include "engine/proc_buildings.h"
 #include "engine/grid.h"
 #include "vfs/vfs.h"
 
@@ -83,7 +84,7 @@ void writeNetwork(const GridData& g, std::vector<uint8_t>& out) {
     put16(out, uint16_t(it.y));
     put16(out, uint16_t(it.z));
     put32(out, it.parent && it.parent <= refs.size() ? refs[it.parent - 1] : 0);
-    put32(out, (it.flags & 0x72500000u) | (it.variation & 0xFFu));
+    put32(out, (it.flags & (0x72500000u | kItemPortHidden)) | (it.variation & 0xFFu));  // (port: and the carried items' bit)
   }
   endChunk(out, items);
   size_t names = beginChunk(out, 0x07020310);
@@ -111,16 +112,19 @@ void writeItemTurns(const GridData& g, std::vector<uint8_t>& out) {
     std::memcpy(&a, &f, 4);
     put32(body, a);
   };
+  bool sizes = false;  // (the sizes, bit 30, only when an item has one)
+  for (size_t i = 0; i < g.items.size(); ++i) sizes = sizes || (refs[i] && g.items[i].scale != 1);
   for (size_t i = 0; i < g.items.size(); ++i)
     if (refs[i] && itemOffGrid(g.items[i])) {
       put32(body, refs[i]);
       putF(g.items[i].yaw);
       putF(g.items[i].offX);
       putF(g.items[i].offZ);
+      if (sizes) putF(g.items[i].scale);
       ++count;
     }
   if (!count) return;
-  putU32(body, 0, count | 0x80000000u);
+  putU32(body, 0, count | 0x80000000u | (sizes ? 0x40000000u : 0u));
   put32(out, kItemTurnSectionTag);
   put32(out, uint32_t(body.size()));
   out.insert(out.end(), body.begin(), body.end());
@@ -173,6 +177,7 @@ void registerSaveNatives(VM& vm) {
       else if (tag == kCurveSectionTag && g->data) writeCurveSection(*g->data, out);  // port: curved roads
       else if (tag == kItemTurnSectionTag && g->data) writeItemTurns(*g->data, out);  // port: free item turns
       else if (tag == kPaintEdgeSectionTag && g->data) writePaintEdgeSection(*g->data, out);  // port: paint edges
+      else if (tag == kProcBuildingSectionTag && g->data) writeProcBuildingSection(*g->data, out);  // port: procedural buildings
       else if (g_sectionWriter && g_sectionWriter(v, g, tag, chunk)) out.insert(out.end(), chunk.begin(), chunk.end());
       else out.insert(out.end(), src.begin() + std::ptrdiff_t(p), src.begin() + std::ptrdiff_t(end));
       seen.push_back(tag);
@@ -188,6 +193,7 @@ void registerSaveNatives(VM& vm) {
       writeCurveSection(*g->data, out);
     if (g->data && std::find(seen.begin(), seen.end(), kItemTurnSectionTag) == seen.end()) writeItemTurns(*g->data, out);
     if (g->data && std::find(seen.begin(), seen.end(), kPaintEdgeSectionTag) == seen.end()) writePaintEdgeSection(*g->data, out);
+    if (g->data && std::find(seen.begin(), seen.end(), kProcBuildingSectionTag) == seen.end()) writeProcBuildingSection(*g->data, out);
     putU32(out, 4, uint32_t(out.size() - 8));
     return Value::boolean(v.vfs().write(path, out));
   });

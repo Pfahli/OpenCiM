@@ -62,6 +62,7 @@ $testDay = $clock.date;   // REGS_TEST_WEATHER=snowmelt: the day the test snowfa
 $mode = getenv("REGS_TEST_WEATHER");
 $debug = getenv("REGS_DEBUG_WEATHER") != "";
 $debugMap = getenv("REGS_DEBUG_WEATHER") == "2" || getenv("REGS_DEBUG_WEATHER") == "3";   // the ground shader shows the surface map and edges (3: the lane map)
+$debugReflect = getenv("REGS_DEBUG_WEATHER") == "4";  // the reflections show what they know: film red, puddle green, a hit blue
 $holdFlash = getenv("REGS_DEBUG_WEATHER") == "flash";  // each flash held at its peak for 3 s (screenshots only)
 if ($mode == "storm") $flashWait = 3.0;
 // the test dialog (F9 in the game, scripts/testdialog.script): a forced weather ("" = the schedule, or one of clear,
@@ -486,7 +487,8 @@ function updateSeasons($dt, $date, $hour) {
   placeLeaves($doy, $dt);
   regsShaderUniform("seasons_time", quat($doy, $seasonsShown, $debugSeasons == "1" ? 1.0 : 0.0, 0.0));
   regsShaderUniform("weather_hot", quat($heat, $debugSeasons == "2" ? 1.0 : 0.0, 0.0, 0.0));
-  $scene.regsPostHooks = ($heat > 0.002 || $debugSeasons == "2") ? 1.0 : 0.0;   // the shimmer's screen pass only when it shows
+  // the screen pass (the heat shimmer, the reflections in wet ground) only while either shows
+  $scene.regsPostHooks = ($heat > 0.002 || $wet > 0.005 || $puddles > 0.005 || $debugSeasons == "2" || $debugReflect) ? 1.0 : 0.0;
 }
 
 // ---- sounds: CC0 recordings from freesound.org (sounds/LICENSES.txt); the loops are cut seamless by the build ----
@@ -776,7 +778,7 @@ function frame($dt) {
   if (MAIN.$ambience : false) MAIN.$ambience.$ambienceVolume = 0.2 * (1.0 - 0.35 * $snowShown);
   // the ground shader hook (shaders/wet.glsl)
   regsShaderUniform("weather_wet", quat($wet, $puddles, $rain, $heavy));
-  regsShaderUniform("weather_misc", quat($flash, $debugMap ? (getenv("REGS_DEBUG_WEATHER") == "3" ? 2.0 : 1.0) : 0.0, 0.0, 0.0));
+  regsShaderUniform("weather_misc", quat($flash, $debugMap ? (getenv("REGS_DEBUG_WEATHER") == "3" ? 2.0 : 1.0) : 0.0, $debugReflect ? 1.0 : 0.0, 0.0));
   regsShaderUniform("weather_snow", quat($snowShown, $snowFall, $thaw, $snowShown >= 0.1 ? 1.0 : 0.0));
   // footprints in the snow (the engine's footprint map): on while snow lies; new snow fills them in (in about ten
   // minutes of heavy snowfall), thaw faster; off (and cleared) once the cover is gone
@@ -871,6 +873,7 @@ event MAIN.$player.keyDown::["F9"]() {
   toggleTestDialog();
 }
 if (getenv("REGS_TEST_WEATHER_DIALOG") != "") toggleTestDialog();   // open from the start (screenshot tests)
+if (getenv("REGS_TEST_GROUND") != "") setGround(getenv("REGS_TEST_GROUND"));   // dry, wet, puddles or snow at once (screenshot tests)
 
 echo "weather: on (" + ($mode != "" ? "REGS_TEST_WEATHER=" + $mode : "seed " + string($seed)) + ")";
 if ($debug) logPlan($clock.date);

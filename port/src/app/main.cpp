@@ -55,8 +55,25 @@ int usage() {
                "  --mods <dir>  user mods folder and its mods.json (tests; default <documents>\\OpenCiM\\mods)\n"
                "  --no-mods     mount no mod (safe mode)\n"
                "  --frames      quit after n frames (tests)\n"
-               "  --screenshot  save the last frame before quitting\n");
+               "  --screenshot  save the last frame before quitting\n"
+               "  --osm <place> skip the menus: a new map in the editor with an OpenStreetMap import of the place (a\n"
+               "                name to search, the first hit, or \"lat,lon\")\n"
+               "  --osm-size <cells>  its size (default 512)\n"
+               "  --osm-scale <f>     metres scale of the area (1 1.5 2 3 4 5 6 8 10 15; default 1)\n"
+               "  --osm-name <name>   the map's file name (default osm-import)\n"
+               "  --osm-options <list> what to import, of terrain,water,trees,streets,trams,buildings,satellite\n"
+               "                (default all)\n"
+               "  --osm-save    save the imported map under its name (userdata maps) when the import is done\n");
   return 2;
+}
+
+// a start flag as the environment variable the scripts read (main.script extension: REGS_START and friends)
+void setStartEnv(const char* name, const std::string& value) {
+#if defined(_WIN32)
+  _putenv_s(name, value.c_str());
+#else
+  setenv(name, value.c_str(), 1);
+#endif
 }
 
 }  // namespace
@@ -79,11 +96,21 @@ int main(int argc, char** argv) {
     else if (a == "--data" && i + 1 < argc) data = widen(argv[++i]);
     else if (a == "--print-paths") printPaths = true;
     else if (a == "--windowed") engine::host().forceWindowed = true;
+    else if (a == "--size" && i + 1 < argc) {  // --size WxH: the window's client size (screenshots, e.g. 3840x2160)
+      std::sscanf(argv[++i], "%dx%d", &engine::host().forceWidth, &engine::host().forceHeight);
+      engine::host().forceWindowed = true;
+    }
     else if (a == "--community-addons") engine::host().communityAddons = true;
     else if (a == "--mods" && i + 1 < argc) engine::host().modsDir = fs::absolute(widen(argv[++i]));
     else if (a == "--no-mods") engine::host().noMods = true;
     else if (a == "--frames" && i + 1 < argc) maxFrames = std::atoll(argv[++i]);
     else if (a == "--screenshot" && i + 1 < argc) screenshot = widen(argv[++i]);
+    else if (a == "--osm" && i + 1 < argc) setStartEnv("REGS_START", std::string("osm:") + argv[++i]);
+    else if (a == "--osm-size" && i + 1 < argc) setStartEnv("REGS_OSM_SIZE", argv[++i]);
+    else if (a == "--osm-scale" && i + 1 < argc) setStartEnv("REGS_OSM_SCALE", argv[++i]);
+    else if (a == "--osm-name" && i + 1 < argc) setStartEnv("REGS_OSM_NAME", argv[++i]);
+    else if (a == "--osm-options" && i + 1 < argc) setStartEnv("REGS_OSM_OPTIONS", argv[++i]);
+    else if (a == "--osm-save") setStartEnv("REGS_OSM_SAVE", "1");
     else if (a == "--at" && i + 1 < argc) {
       std::string v = argv[++i];
       size_t c1 = v.find(':'), c2 = v.find(':', c1 + 1);
@@ -172,6 +199,20 @@ int main(int argc, char** argv) {
         } else if (sc.action == "wheel") {  // wheel:<notches> at the mouse position, positive away from the user
           e.type = T::MouseWheel;
           e.wheel = float(std::atof(sc.arg.c_str()));
+        } else if (sc.action == "hwheel") {  // hwheel:<notches>, the sideways wheel (positive to the right)
+          e.type = T::MouseHWheel;
+          e.wheel = float(std::atof(sc.arg.c_str()));
+        } else if (sc.action == "gesture") {
+          // gesture:zoom,<factor> | turn,<radians> | pan,<dx>,<dy> | end: a two-finger gesture at the mouse position
+          char kind[16] = {};
+          float a = 0, b = 0;
+          std::sscanf(sc.arg.c_str(), "%15[a-z],%f,%f", kind, &a, &b);
+          e.type = T::Gesture;
+          const std::string k = kind;
+          e.gesture = k == "zoom" ? 1 : k == "turn" ? 2 : k == "pan" ? 3 : 4;
+          e.value = a;
+          e.dx = a;
+          e.dy = b;
         } else if (sc.action == "text") {  // typed characters (edit controls)
           for (unsigned char ch : sc.arg) {
             platform::InputEvent c;
@@ -208,6 +249,9 @@ int main(int argc, char** argv) {
             }
           } catch (...) {
           }
+          continue;
+        } else if (sc.action == "ui") {  // ui:off draws the scene only (screenshots without the interface), ui:on back
+          engine::host().hideGui = sc.arg == "off";
           continue;
         } else if (sc.action == "vsync") {  // vsync:off after a frame-timed load, for frame-time measurements
           d->window().setVsync(sc.arg == "on");

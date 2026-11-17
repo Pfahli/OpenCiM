@@ -35,6 +35,9 @@ struct GridData {
     // port: a shift in world units off the footprint's centre (|x|, |z| ≤ half a cell: an object snapped to a turned
     // neighbour's grid), saved and drawn with yaw
     float offX = 0, offZ = 0;
+    // port: a uniform size factor on the template's model (2026-11-16, owner: statues sized as OSM has them), drawn only
+    // (the cells stay the template's); saved with yaw (bit 30 of the section's count)
+    float scale = 1;
   };
   std::vector<std::string> types;
   std::vector<Item> items;
@@ -65,6 +68,10 @@ struct GridData {
     // 1: a bridge (2026-11-13, the OSM import's bridge=yes ways): the deck at the curve's own heights over the ground or
     // water, which stay as they are (no levelling, no cover), drawn with the kind's bridge span and pillars; saved in
     // the second byte of the kind in section 0x07F00000 and the timeline bytes
+    // 2: a tunnel (main, the curve tool's tunnels)
+    // 3 on a track (2026-11-15, the OSM import's level crossings without the crossing piece; 2 until main's tunnels): its
+    // rails let into the road it crosses, drawn as the street tram strip at the road's height (no bed); like a bridge it
+    // leaves the ground alone
     uint8_t bridge = 0;
     // the street name (2026-11-14: the map editor's rename tool over curves; findNames offers it for stop names), UTF-8,
     // empty when unnamed; saved after the stops (format 3)
@@ -88,6 +95,25 @@ struct GridData {
     float l[2][3] = {{0, 0, 0}, {0, 0, 0}};
   };
   std::map<uint32_t, PaintEdge> paintEdges;
+  // port: procedural buildings (engine/proc_buildings.h, owner's request 2026-11-15): a footprint outline raised to walls
+  // with a roof, the port's own textures
+  struct ProcBuilding {
+    std::vector<std::pair<float, float>> outline;  // world x, z: a simple polygon (either winding)
+    float y = 0;                                   // the ground floor's level (world)
+    float height = 8;                              // the eaves over y
+    float roofHeight = 0;                          // a gabled roof's ridge over the eaves (0: from the width)
+    uint8_t roof = 0;                              // 0 flat with a parapet, 1 gabled (four corners only)
+    uint8_t style = 0;                             // 0 hall, 1 plaster, 2 brick
+    float frontX = 0, frontZ = 0;                  // toward the street (doors on the walls facing it); 0, 0 unknown
+    // passages through it (2026-11-16, owner: roads and footpaths through buildings get tunnels): a straight run from
+    // (x0, z0) to (x1, z1), half as wide as `half`, clear from y0 (the way's level) to y1; the building is cut away there
+    // and lined (side walls, a ceiling)
+    struct Passage {
+      float x0 = 0, z0 = 0, x1 = 0, z1 = 0, half = 2, y0 = 0, y1 = 3;
+    };
+    std::vector<Passage> passages;
+  };
+  std::vector<ProcBuilding> procBuildings;
 };
 using CurveRoad = GridData::CurveRoad;
 using PaintEdge = GridData::PaintEdge;
@@ -117,10 +143,16 @@ inline void itemTurn(const GridData::Item& it, float& c, float& s) {
 }
 
 // port: placed off the grid: turned freely or shifted (GridData::Item::yaw, offX, offZ)
-inline bool itemOffGrid(const GridData::Item& it) { return it.yaw != 0 || it.offX != 0 || it.offZ != 0; }
+// port: an item carried by a procedural building or standing in for a sight (2026-11-16, owner: an invisible pavilion
+// that draws people): its homes, jobs and visitors count, it is not drawn, picked or shown on the minimap. A bit of
+// Item::flags the game leaves unused, saved with them
+constexpr uint32_t kItemPortHidden = 0x80000;
 
-// port: the items' free turns and shifts in map.grid: u32 count (bit 31: with the shifts), then per item off the grid its
-// 1-based saved index (savedItemRefs), the angle and (bit 31) offX, offZ as floats
+inline bool itemOffGrid(const GridData::Item& it) { return it.yaw != 0 || it.offX != 0 || it.offZ != 0 || it.scale != 1; }
+
+// port: the items' free turns and shifts in map.grid: u32 count (bit 31: with the shifts, bit 30: with the sizes), then
+// per item off the grid its 1-based saved index (savedItemRefs), the angle, (bit 31) offX, offZ and (bit 30) the scale
+// as floats
 constexpr uint32_t kItemTurnSectionTag = 0x07F10000;
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);
@@ -161,6 +193,7 @@ class GridObj : public script::Object {
   uint64_t itemsVersion = 0;  // bumped after each batch of live map edits (engine/grid_edit.h)
   // port curved roads: bumped when GridData::curves or the tool's preview curve changed (the renderer rebuilds)
   uint64_t curvesVersion = 0;
+  uint64_t procVersion = 0;  // port: bumped when GridData::procBuildings changed (the renderer rebuilds)
   bool hasCurvePreview = false;
   GridData::CurveRoad curvePreview;
   bool curvePreviewBad = false;  // drawn red-tinted: the ends do not fit

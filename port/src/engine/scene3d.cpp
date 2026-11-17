@@ -19,6 +19,7 @@
 #include "engine/grid.h"
 #include "engine/gui.h"
 #include "engine/night_lights.h"
+#include "engine/traffic_lights.h"
 #include "engine/particles.h"
 #include "engine/settings.h"
 #include "engine/shaders.h"
@@ -162,6 +163,17 @@ void cameraView(VM& vm, Object* cam, Vec3& eye, Vec3& look, Vec3& up) {
   eye = p + rotEngine(q, off);
   look = p + rotEngine(q, Vec3{off.x, off.y, std::min(off.z - 1.0f, 0.0f)});
   up = rotEngine(q, Vec3{0, 1, 0});
+  // screenshots: REGS_DEBUG_TOPDOWN=x,z,height puts the floating camera straight above world (x, z), north up; a
+  // fourth number d looks at it from d units south instead (at the ground height y, a fifth number; a sixth turns the
+  // eye that many degrees from the south toward the east)
+  if (floating)
+    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) {
+      float x = 0, z = 0, h = 200, d = 0, y = 0, az = 0;
+      int n = std::sscanf(td, "%f,%f,%f,%f,%f,%f", &x, &z, &h, &d, &y, &az);
+      const float ar = az * 0.017453293f;
+      if (n >= 4 && d != 0) eye = {x + d * std::sin(ar), y + h, z + d * std::cos(ar)}, look = {x, y, z}, up = {0, 1, 0};
+      else if (n >= 2) eye = {x, h, z}, look = {x, 0, z}, up = {0, 0, -1};
+    }
 }
 
 // gsSun::move (0x100964c0, scene-basics.md §4): direction from the clock's time of day, light 20000 units away;
@@ -547,6 +559,14 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     v.emissionScale = skyEmissionScale(sky);  // port day/night cycle (engine/sky.cpp)
   }
   applyAtmosphere(atmosphereOf(vm, scene), v);  // the port's atmosphere fields of the scene (mods: weather)
+  // the debug camera (REGS_DEBUG_TOPDOWN) high up: the fog starts where the game camera's would, behind the eye's
+  // distance to its point (installer shots, 2026-11-17: 1000 units up the town was all fog colour)
+  if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td && v.fog) {
+    const float dx = eye.x - look.x, dy = eye.y - look.y, dz = eye.z - look.z;
+    const float away = std::sqrt(dx * dx + dy * dy + dz * dz);
+    v.fogStart += away;
+    v.fogEnd += away * 1.5f;
+  }
   if (!grids.empty() && !shaderHooks().empty()) {  // the mods' shader hooks run in map views (render/glsl.h)
     v.hooks = true;
     auto* env = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/envmap.dds").get());
@@ -567,6 +587,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   {
     float t = std::tan(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
     { auto ts_ = std::chrono::steady_clock::now(); collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles); gPhaseSeconds[4] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+    // (working traffic lights, by day too: engine/traffic_lights.h; before the night lights, which take their pools)
+    addTrafficLights(d, vm, grids, v, particles);
     { auto ts_ = std::chrono::steady_clock::now(); addNightLights(d, vm, grids, sky, v, particles, items); gPhaseSeconds[5] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
     if (!particles.sprites.empty()) v.particles = &particles;
   }
@@ -743,6 +765,18 @@ void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ) 
   }
   if (cn != -1 && cn >= nearZ) nearZ = cn;
   if (cf != -1) farZ = std::min(cf, farZ);
+  // port (owner 2026-11-16: "the 3D models clip into the camera very early"): the main camera's script sets its near
+  // plane to 30 (engine.script), which cuts away whatever comes within 30 units: towers and trees when zoomed in or
+  // tilted toward them. The near plane follows the camera's distance to its point instead, a tenth of it, 1 to 30
+  // (depth precision stays: 0.01 at 300 units with a near plane of 1); the debug camera's own eye takes 1
+  if (isFloatingCamera(vm, cam) && cam->fieldValues.count(u"<offset>")) {
+    const Vec3 off = vec3Of(cam->fieldValues[u"<offset>"]);
+    float want = std::clamp(std::sqrt(off.x * off.x + off.y * off.y + off.z * off.z) * 0.1f, 1.0f, 30.0f);
+    // the debug camera also sees far (installer shots from high up, 2026-11-17: the viewport's far plane left a
+    // camera 1000 units up looking at nothing)
+    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) want = 2.0f, farZ = std::max(farZ, 8000.0f);
+    nearZ = std::min(nearZ, want);
+  }
 }
 
 uint32_t combinerProgram(Display& d, VM& vm, const std::string& shader, uint32_t matFlags, uint32_t env) {

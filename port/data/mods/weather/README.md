@@ -34,9 +34,20 @@ It takes effect at the next start. To turn it off, remove the id (or start with 
   * puddles grow from the standing water: first and most in a strip along the kerb on the carriageway side (the
     gutter), a few small ones in the lanes and on pavements and squares, never across a kerb (each surface has its
     own noise and every puddle fades out at its surface's edge, found in the engine's surface map); still water with
-    the grey sky in it and rain ripples; they dry from their edges, the gutter's last;
+    the grey sky in it and rain ripples; they dry from their edges, the gutter's last; never much darker than the wet
+    ground around them (at night, in a lamp's pool or a headlight beam, they stay soft instead of black holes);
   * a subtle sheen that comes with the standing water;
-  * the whole ground effect never ends up brighter than the dry ground (except in a lightning flash).
+  * the ground effect itself never ends up brighter than the dry ground (except in a lightning flash);
+  * reflections (`shaders/reflect.glsl`, a post hook while the ground is wet): once roads, pavements and platforms
+    are properly wet they mirror the street like a real wet road. The mirrored ray is followed across the image
+    (screen-space reflections): facades, vehicles, trams, lamps and trees show in the ground, blurred and stretched
+    along their upright on the film, sharp in the puddles (tilted by the ripples); where the ray finds nothing the film
+    mirrors a touch of the grey sky. Only wet walkable ground mirrors (the surface hook tells the post hook per pixel
+    through the engine's hook data: cars, people, trees, walls and grass never do); the roads a little more than the
+    pavements; a dark reflection (a wall in shade) only darkens a little, so the small puddles never read as stains;
+    everything fades out far away, near the image's edges and over long rays, so nothing pops in or out. Snow cover
+    ends it. With the game's steep camera most rays go to the sky, so the reflections show best zoomed in and next to
+    buildings and vehicles.
 * **Spray.** A soft, low, stretched mist behind moving vehicles while the roads are wet (`gsGrid.regsVehicleEmitters`),
   more behind fast vehicles, stronger in heavy rain.
 * **Thunderstorms.** Lightning: one soft flash of sun and ambient (never a white-out), 10-60 real seconds apart and
@@ -63,6 +74,7 @@ in a rainy street (BonnyOrbit). The build cuts seamless loops from them (`regs-t
 | `scripts/weather.script` | schedule, rain, light, ground model, spray, storm, sounds; an empty `updateERA` (game.script calls it on every game script at each new year) |
 | `shaders/wet.glsl` | the ground: wet film, puddles, ripples, sheen; snow |
 | `shaders/seasons.glsl` | the foliage of deciduous trees and bushes through the year (also in the shadow passes) |
+| `shaders/reflect.glsl` | reflections in wet ground (a post hook, only while the ground is wet) |
 | `shaders/heat.glsl` | the heat shimmer (a post hook, only on hot days) |
 | `scripts/testdialog.script` | the test dialog (F9 in the game) |
 | `sounds/*.mp3`, `sounds/LICENSES.txt` | the CC0 recordings |
@@ -100,7 +112,8 @@ page the dialog's weather does nothing (the state line says so). `REGS_TEST_WEAT
   bare trees, spring green or falling leaves; the summer look within seconds), Enable day/night cycle, Slow traffic in
   snow and heavy rain.
 * `REGS_DEBUG_WEATHER=1`: the scheduled and shown intensity, wetness, water and puddles every game hour; `=2`: the
-  ground shows the surface map (roads blue, pavements yellow, platforms magenta, grass green, edges red); `=flash`:
+  ground shows the surface map (roads blue, pavements yellow, platforms magenta, grass green, edges red); `=4`: what
+  the reflections know (film red, puddle green, where the mirrored ray meets something blue); `=flash`:
   each flash held at its peak for 3 s (screenshots only).
 
 ## Snow (winter)
@@ -117,7 +130,9 @@ page the dialog's weather does nothing (the state line says so). `REGS_TEST_WEAT
   straight edges on the cards), the green showing between.
 * **Streets:** the engine's lane traffic decides how much snow stays: quiet lanes white with faint tyre tracks, busy
   lanes grey slush with dark tracks at the wheels (along the lanes, following curves); banks of snow along the kerbs on
-  both sides, brighter, melting last; the thaw clears roads first, then pavements, then grass and roofs.
+  both sides, brighter, melting last; the thaw clears roads first, then pavements, then grass and roofs. While it
+  snows the kerb's snow (banks, little hills, windrows) comes after the surfaces next to it: grass from a dusting,
+  pavements from a quarter of the cover, the banks from about 40 %, never a white line on bare ground.
 * **Snowplows:** while snow lies and it is not thawing, 6 plows (the base game's SUV in orange with a blade, push
   arms and a flashing amber beacon the engine builds) take long trips through the city; the lane behind a plow is
   bare dark asphalt with a low rim at the strip's edge, filling in again with new snow (about 10 minutes of heavy
@@ -176,6 +191,7 @@ Requirements and decisions: `port/docs/weather-mod.md` (construction-tools).
 | Snowplows: cleared lanes, kerb windrows; 18-bit lane numbers (all lanes on large maps) | done | this commit |
 | Traffic slowdown in snow and heavy rain, ticker, options page | done | 3648968 |
 | Seasons: autumn colours, falling and lying leaves, bare winter trees, spring green, heat shimmer | done | this commit |
+| Reflections in wet ground (screen space; hook data from the surface hook) | done | this commit |
 | Falling streaks and flakes skipped under shelter | open | - |
 | Sleet around freezing | open | - |
 

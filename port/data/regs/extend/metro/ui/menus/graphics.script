@@ -324,6 +324,26 @@ function regsSetDayNight($value) {
 }
 regsSetDayNight($dayNight);
 
+// sharper textures (port option, docs/renderer/texture-upscaling.md): textures upscaled 2x on this PC from the
+// player's own install, cached in OpenCiM	exture-cache; switched live on OK (engine/display.cpp). Missing ones are
+// made in the background; the line under it shows how far that is
+$textureUpscale = $settings.$regsTextureUpscale : false;
+$regsTextureUpscaleButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 309, 16, 16, "", macro :: regsSetTextureUpscale(!$textureUpscale), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+MAIN.$ui.setTooltip(regsLabel($x + 20, 308, $regs.$regs_textureUpscale_item), $regs.$regs_textureUpscale_hint, 0, -1);
+function regsTextureUpscaleStatus() {
+  $p = MAIN.$window.regsTextureUpscaleProgress();
+  if ($p < 0) return "";
+  return $regs.$regs_textureUpscale_progress + " " + string($p) + " %";
+}
+with (regsLabel($x + 20, 330, "%0")) {
+  .setArg(0, macro :: regsTextureUpscaleStatus());
+}
+function regsSetTextureUpscale($value) {
+  $textureUpscale = $value;
+  MAIN.$ui.selectChoiceButton($textureUpscale ? $regsTextureUpscaleButton : null, $regsTextureUpscaleButton);
+}
+regsSetTextureUpscale($textureUpscale);
+
 // ---- presets ----
 
 function regsCurrentPreset() {
@@ -377,7 +397,8 @@ function save() {
   $settings.$regsLensBlur = $lensBlur;
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
   $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
-  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsShowFps", "regsDayNight");
+  $settings.$regsTextureUpscale = $textureUpscale; // read every frame (engine/display.cpp)
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsShowFps", "regsDayNight", "regsTextureUpscale");
   $regsNewScale = $uiScale != $regsUiScaleShown;
   if ($regsNewScale) {
     $settings.$regsUiScale = $uiScaleValues[$uiScale];

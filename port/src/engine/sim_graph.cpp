@@ -849,7 +849,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   auto keep = [](const PathRecord& p) { return !(p.flags & (kPathStart | kPathEnd)); };
   auto bentNodes = [&](const CurveRoad& c, float t0, float t1) {
     const CurveProfile& pf = curveProfile(c.kind);
-    const bool track = curveIsTrack(c.kind);  // tracks keep their dead end's START / END paths (trains turn there)
+    const bool track = curveIsTrack(c.kind) || curveIsTramBed(c.kind);  // tracks keep their dead end's START / END paths (trains turn there)
     const float kept = curveLength(c) - t0 - t1;
     CurvePieces cp = curvePieces(c, kept);
     std::vector<CurveSample> shape = curveShape(c);
@@ -921,17 +921,21 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
         }
       }
     };
-    lay(pathsOf(templateObject(pf.straight)));
-    if (c.ends & 4) lay(pathsOf(templateObject(pf.tram)));
-    ObjectObj* dead = templateObject(pf.deadend);
+    // a tram bed (curve kind 8): drawn as the double track, its lanes the tram piece's and the tram dead end's
+    const bool bed = curveIsTramBed(c.kind);
+    if (!bed) lay(pathsOf(templateObject(pf.straight)));
+    if ((c.ends & 4) || bed) lay(pathsOf(templateObject(pf.tram)));
+    ObjectObj* dead = templateObject(bed ? "tram_small_deadend" : pf.deadend);
     PathSetObj* dp = pathsOf(dead);
     if (!dp) return;
-    bool openPlusX = ((uint32_t(fieldInt(dead, u"connections", 0x40 << pf.shift, vm)) >> pf.shift) & 0x40) != 0;
+    const int shift = bed ? 0 : pf.shift;
+    bool openPlusX = ((uint32_t(fieldInt(dead, u"connections", 0x40 << shift, vm)) >> shift) & 0x40) != 0;
     CurveEnds free = curveFreeEnds(g, c);
     for (int end = 0; end < 2; ++end) {
       if (!(end ? free.free1 : free.free0)) continue;
       Vec3 o, ax, az, up{0, 1, 0};
       curveCapFrame(c, end, openPlusX, o, ax, az);
+      if (bed) o = o - ax * (openPlusX ? -1.5f : 1.5f);  // the tram dead end (2 cells) centred 3 units beyond the end
       for (const auto& [name, p] : dp->paths) {
         if (!track && !keep(p)) continue;
         LaneNode n;

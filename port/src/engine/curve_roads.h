@@ -42,13 +42,19 @@ struct CurveProfile {
   float capOffset;       // the dead-end piece's centre beyond a free end
   const char* pillar;    // elevated tracks: the pillar template set under every joint of their pieces ("" none)
 };
-constexpr int kCurveKinds = 9;
+constexpr int kCurveKinds = 10;
 // tracks (owner's request 2026-11-08): 4 metro on the ground, 5 elevated metro, 6 the editor's railway (double track);
 // bent like the road kinds, joined smoothly to their own kind only (no junctions), never under tram tracks or stops
 inline bool curveIsTrack(int kind) { return kind >= 4 && kind <= 6; }
 inline bool curveIsElevated(int kind) { return kind == 5; }
-// which curve ends may meet: roads of all kinds, footpaths, and each track kind on its own
-inline int curveJoinClass(int kind) { return kind >= 3 && kind != 8 ? kind : 0; }
+// 9: a tram track on its own bed (2026-11-15, the OSM import's railway=tram off the streets; kind 8 until main's ramp
+// took it): drawn as the railway's double track (its ballast bed, sleepers and rails at ±1.5, the bumper at a free end),
+// its lanes the tram piece's (tram_small_basic, tram_small_deadend: trams of the player's lines run on it); no car lanes
+// and no pavement, but joined to the roads like a road kind: it meets streets at junctions (the trams run on between it
+// and their tracked arms)
+inline bool curveIsTramBed(int kind) { return kind == 9; }
+// which curve ends may meet: roads of all kinds (ramps and tram beds too), footpaths, and each track kind on its own
+inline int curveJoinClass(int kind) { return kind >= 3 && kind != 8 && kind != 9 ? kind : 0; }
 // 8: the express road's ramp (2026-11-15, road_ramp_basic: 6 wide, one lane on its centre line used both ways as in the
 // game); joins roads at junctions like a road, and an express road at an entry or exit (RampPort below)
 inline bool curveIsRamp(int kind) { return kind == 8; }
@@ -63,7 +69,7 @@ inline float curveAcross(const GridData::CurveRoad& c, float side) {
 // 7: the express road (2026-11-13), bent like the avenue; joined smoothly to express roads only, no pedestrians on it
 inline bool curveIsExpress(int kind) { return kind == 7; }
 // kinds whose ends only join smoothly (no junction pieces): tracks and express roads
-inline bool curveNoJunctions(int kind) { return kind >= 4 && kind != 8; }
+inline bool curveNoJunctions(int kind) { return kind >= 4 && kind != 8 && kind != 9; }
 const CurveProfile& curveProfile(int kind);
 // a bridge curve's span template bent along it and its pillar, per kind ("" none)
 const char* curveBridgePiece(int kind);
@@ -170,7 +176,8 @@ struct CurveJunction {
   float radius = 0;
   std::vector<CurveArm> arms;  // counter-clockwise (by the angle of mouth − centre)
 };
-std::vector<CurveJunction> findCurveJunctions(const GridData& g);
+// near: only the junctions at those points (within 1 unit; the same ones the whole search finds there)
+std::vector<CurveJunction> findCurveJunctions(const GridData& g, const std::vector<render::Vec3>* near = nullptr);
 // a curve cut in two at arc length s (exactly the same road); end flags and stops go with their halves. Returns the
 // cut point.
 render::Vec3 splitCurve(const CurveRoad& c, float s, CurveRoad& first, CurveRoad& second);

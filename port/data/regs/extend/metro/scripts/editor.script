@@ -86,7 +86,8 @@ $regsAutosaveThread = thread :: {
   loop {
     wait $regsAutosaveSeconds;
     while (regsToolBusy(MAIN.$player)) wait 5.0;
-    if (MAIN.$settings.$regsEditorAutosave : true) {
+    // (not while the OpenStreetMap import builds the new map)
+    if ((MAIN.$settings.$regsEditorAutosave : true) && !(MAIN.$regsOsmBusy : false)) {
       MAIN.$ui.regsShowSaveIcon(2.4);   // the blinking disk in the top right corner, drawn before the save starts
       skip_frame;
       MAIN.$regsQuietStatus = true;
@@ -301,6 +302,44 @@ foreach ([["/metro/ui/menus/save.dds", regsSaveTemplateTool, $regsRs.$regs_templ
 }
 delete $regsRs;
 
+// OpenStreetMap import (port/src/engine/osm.cpp, regs/ui/osmwindow.script): a new map whose dialog chose an area
+// (MAIN.$regsOsmPending) gets it built once the editor stands
+if (MAIN.$regsOsmPending : false) {
+  thread :: {
+    skip_frame;
+    skip_frame;
+    $regsOsm = load "/regs/ui/osmwindow.script";
+    $regsOsmOk = $regsOsm.runImport();
+    delete $regsOsm;
+    // the start flag --osm-save (REGS_OSM_SAVE, 2026-11-16): the imported map saved under its name, ready to play
+    if ($regsOsmOk && getenv("REGS_OSM_SAVE") != "") {
+      $regsName = changeFileExt(extractFileName(MAIN.$gridFileName), "");
+      if ($regsName == "") $regsName = "osm-import";
+      regsWriteMap("userdata/maps/"+$regsName);
+    }
+  };
+}
+// the map as the editor saves it (grid, timeline, minimap picture, scenario) to <out> (no extension)
+function regsWriteMap($out) {
+  echo "Save map \""+$out+"\"";
+  MAIN.$player.resetTool();
+  MAIN.$grid.saveToFile($out+".grid");
+  $day = MAIN.$timeline.currentDay;
+  MAIN.$timeline.currentDay = 0;
+  MAIN.$timeline.saveToFile($out+".timeline");
+  MAIN.$timeline.currentDay = $day;
+  MAIN.$minimap.$texture.saveToFile($out+".dds");
+  $s = load "/metro/scenarios/location.scenario";
+  $s.$locationSetup = MAIN.$gridLocation;
+  $s.$currentDate = MAIN.$gridStartingDate;
+  $s.$cellSize = MAIN.$gridCellSize;
+  $s.$cityDescriptionShort = MAIN.$gridDescription;
+  $s.$regsPackages = MAIN.$main.regsRequiredPackages();
+  $s.$regsSelectedPackages = MAIN.$regsSelectedPackages : [];
+  $s.exportVariablesTo($out+".scenario", "locationSetup", "currentDate", "cellSize", "cityDescriptionShort", "regsPackages",
+                       "regsSelectedPackages");
+  delete $s;
+}
 // ---- curved roads (owner's request 2026-11-07; engine/tool_curves.cpp, like the road tool of Cities: Skylines) ----
 // All in the traffic menu (owner's wish 2026-11-08: no separate panels):
 // * the alley, small-road, large-road and avenue tabs get the curve tool's shapes after their own buttons: straight (at
@@ -521,5 +560,40 @@ $regsTurnThread = thread :: {
       delete $regsTurnInfo;
       $regsTurnInfo = null;
     }
+  }
+};
+
+// ---- the OpenStreetMap import's satellite picture on the ground (engine/osm.h GroundOverlay, terrain.cpp
+// collectGroundOverlay; owner's request 2026-11-07: editor only, a map button by the minimap) ----
+// A button above the minimap's own two, there once the map has a picture (it belongs to the map it was imported onto
+// and is not saved); it lays the picture on the ground or takes it away. Icon: tools/make-satellite-icon.ps1.
+$regsSatStrings = regsStringsNow();
+$regsSatIcons = MAIN.$minimap.$icons;
+$regsSatBox = MAIN.$ui.createHudElement($regsSatIcons.left, $regsSatIcons.top - 49, 52, 59, 2);
+$regsSatBox.$content.setRect(1, 10, $regsSatBox.width, 49);
+$regsSatButton = MAIN.$ui.createChoiceButton($regsSatBox.$content, "self", 0, 0, 46, 49, "", regsSatToggle,
+                                             "/regs/ui/minimap/satellite.dds", "/regs/ui/minimap/satellite_se.dds",
+                                             "/regs/ui/minimap/satellite_ho.dds");
+$regsSatButton.setCropRect(8.0 / 64.0, 8.0 / 64.0, 46.0 / 64.0, 49.0 / 64.0);
+MAIN.$ui.unselectChoiceButton($regsSatButton, $regsSatButton);
+MAIN.$ui.setTooltip($regsSatButton, $regsSatStrings.$regs_osm_overlay, 1, 0);
+$regsSatBox.visible = false;
+
+function regsSatUpdate() {
+  $regsSatState = regsOsmOverlay();  // 0 none for this map, 1 hidden, 2 shown
+  $regsSatBox.visible = $regsSatState > 0;
+  if ($regsSatState == 2) MAIN.$ui.selectChoiceButton($regsSatButton, $regsSatButton);
+  else MAIN.$ui.unselectChoiceButton($regsSatButton, $regsSatButton);
+}
+
+function regsSatToggle() {
+  regsOsmShowOverlay(regsOsmOverlay() != 2);
+  regsSatUpdate();
+}
+
+$regsSatThread = thread :: {
+  loop {
+    wait 0.5;
+    regsSatUpdate();
   }
 };

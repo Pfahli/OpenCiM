@@ -32,6 +32,21 @@ it is, what already exists, and the open decisions. Order is not priority.
   §9.3-9.5.
 * **High-resolution textures.** Replacement texture packs, loaded like ReGS mods (`docs/mod-manager.md`) without
   touching the game files.
+  * **Done (branch claude/texture-upscale-bcb6d4, `../docs/renderer/texture-upscaling.md`):** "Sharper textures (2x
+    upscaled)" on the graphics page: every texture of the player's install upscaled 2× on their machine (built-in
+    filter, made once in the background, cached in `OpenCiM\texture-cache`), switched live. An AI upscaler such as
+    Real-ESRGAN can be plugged into the generator (`regs-tool upscale-textures --external`); not shipped.
+* **High Res UI.** Sharp interface art at UI scale 1.5× and 2× (4K screens): icons, toolbar and menu buttons, the
+  cursor, panels, portraits, city seals, company logos, and the full-screen art of the loading screens and the main
+  menu, each with a 2× version so the scaled UI shows real detail instead of enlarged texels.
+  * **Done (branch claude/texture-upscale-bcb6d4, `../docs/renderer/texture-upscaling.md` §8.3):** part of "Sharper
+    textures": the built-in filter makes the 2× UI art on the player's machine, the 2048-wide loading and menu art
+    included; at UI scale 1 the GPU still shows the original texels. With waifu2x (MIT) the generator can make the UI
+    art instead (`--external-ui-only`), which removes the block noise of the loading pictures and draws cleaner icon
+    outlines; tried on the owner's machine, not shipped.
+  * Owner's decision (2026-11-17): no separate switch, High Res UI stays part of "Sharper textures".
+  * Open: shipping or fetching waifu2x for the UI (the player's GPU, ~2 minutes for all UI art, its runs fail now and
+    then and are retried).
 * **Style options.** Colour styles, distance lens blur and tilt-shift exist (graphics page). More can follow.
 * **Night lights for the day/night option.** The base game's buildings, lamps and vehicles have no lights (only the
   New York and Tokyo DLC assets carry illumination maps, `docs/renderer/sky-and-night.md`), so the port's night is
