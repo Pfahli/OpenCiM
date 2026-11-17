@@ -1451,6 +1451,8 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     return true;
   };
   float reach = std::min(kCullDistance * viewScale, farZ), freeDistance = kFreeDistance * viewScale;
+  if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td)  // the debug camera high up sees the whole map
+    reach = farZ, freeDistance = std::max(freeDistance, farZ * 1.5f);
   // a division's terrain and items of one LOD are built together and shown only together: terrain without its items
   // has holes where the items cover it (fixGrid), which showed as glitches at the screen edges while panning
   auto build = [&](GridDivision& dv, int index, int lod) {

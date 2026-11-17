@@ -534,6 +534,14 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     v.emissionScale = skyEmissionScale(sky);  // port day/night cycle (engine/sky.cpp)
   }
   applyAtmosphere(atmosphereOf(vm, scene), v);  // the port's atmosphere fields of the scene (mods: weather)
+  // the debug camera (REGS_DEBUG_TOPDOWN) high up: the fog starts where the game camera's would, behind the eye's
+  // distance to its point (installer shots, 2026-11-17: 1000 units up the town was all fog colour)
+  if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td && v.fog) {
+    const float dx = eye.x - look.x, dy = eye.y - look.y, dz = eye.z - look.z;
+    const float away = std::sqrt(dx * dx + dy * dy + dz * dz);
+    v.fogStart += away;
+    v.fogEnd += away * 1.5f;
+  }
   if (!grids.empty() && !shaderHooks().empty()) {  // the mods' shader hooks run in map views (render/glsl.h)
     v.hooks = true;
     auto* env = dynamic_cast<TextureObj*>(getTexture(vm, u"textures/envmap.dds").get());
@@ -682,7 +690,9 @@ void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ) 
   if (isFloatingCamera(vm, cam) && cam->fieldValues.count(u"<offset>")) {
     const Vec3 off = vec3Of(cam->fieldValues[u"<offset>"]);
     float want = std::clamp(std::sqrt(off.x * off.x + off.y * off.y + off.z * off.z) * 0.1f, 1.0f, 30.0f);
-    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) want = 1.0f;
+    // the debug camera also sees far (installer shots from high up, 2026-11-17: the viewport's far plane left a
+    // camera 1000 units up looking at nothing)
+    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) want = 2.0f, farZ = std::max(farZ, 8000.0f);
     nearZ = std::min(nearZ, want);
   }
 }
