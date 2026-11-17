@@ -1,4 +1,4 @@
-// ReGS Image quality page (settings menu > Image quality; opened by the main.script extension, regsOpenQualityPage):
+// ReGS Image quality page (graphics page > Image quality button; opened by the main.script extension, regsOpenQualityPage):
 // the port's image options beyond the original graphics page (docs/renderer/vulkan.md §9). The engine reads them every
 // frame (engine/temporal.cpp), so they apply as soon as OK stores them.
 //   $settings.$regsTaa           0 off, 1 temporal antialiasing

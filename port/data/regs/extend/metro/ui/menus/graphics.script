@@ -1,7 +1,8 @@
 // ReGS extension of the game's graphics page (metro/ui/menus/graphics.script, used as installed). The part before
 // //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds
 // presets, the port's options (stored as regs* settings, or fpsLimit, which the game reads but never offered here),
-// more steps for shadows and antialiasing, the style effects, the graphics engine choice and the frame-rate readout.
+// more steps for shadows and antialiasing, the style effects, the graphics engine choice, the frame-rate readout and
+// the "Image quality" button between OK and Cancel (regs/ui/quality.script).
 // New options: a row in the middle column, a column in $regsPresets if it is a quality option, and a line in save().
 //@rename save regsBaseSave
 
@@ -287,4 +288,12 @@ function save() {
   if ($regsNewScale || $regsOldDisplay[0] != $fullscreen || $regsOldDisplay[1] != $screenwidth || $regsOldDisplay[2] != $screenheight) {
     if (MAIN.$window.regsApplyDisplay($fullscreen, $screenwidth, $screenheight, true) == 2) MAIN.$main.regsRelayoutMenus();
   }
+}
+
+// ---- "Image quality" between OK and Cancel: the port's image options page (regs/ui/quality.script), over this one ----
+with ($regsQualityButton = MAIN.$ui.createButton($box.$content, 0, 0, 250, 32, $regs.$regs_quality_button, macro :: MAIN.$main.regsOpenQualityPage($box), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+  .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
+  .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
+  MAIN.$ui.setTitleFont(current);
+  .setRect(int(($box.$content.width - .width) * 0.5), $box.$content.height - .height - 20, .width, .height);
 }
