@@ -250,12 +250,17 @@ int cmdShaders(int argc, char** argv) {
   platform::WindowDesc desc;
   desc.width = desc.height = 64;
   desc.visible = false;
+  // REGS_RENDERER=vulkan: the variants go through the Vulkan device (glslang to SPIR-V and pipeline layouts)
+  const char* renderer = std::getenv("REGS_RENDERER");
+  const bool vulkan = renderer && std::string(renderer) == "vulkan";
+  desc.openGL = !vulkan;
   std::string err;
   if (!win->create(desc, &err)) {
-    std::fprintf(stderr, "no OpenGL context: %s\n", err.c_str());
+    std::fprintf(stderr, "no window: %s\n", err.c_str());
     return 1;
   }
-  auto device = render::gpu::createGlDevice(*win, &err);
+  auto device = vulkan ? render::gpu::createVulkanDevice(*win, false, &err) : render::gpu::createGlDevice(*win, &err);
+  if (device) std::printf("device: %s\n", device->info().c_str());
   if (!device) {
     std::fprintf(stderr, "%s\n", err.c_str());
     return 1;

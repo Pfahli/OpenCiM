@@ -167,11 +167,17 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
 | 1 | This plan | done |
 | 2 | `gpu::Device` with the GL implementation; every GL call outside `gpu_gl.cpp` moved behind it; screenshots of the menu and a Vienna save identical before and after | done (2026-11-17): static pixels identical; only moving vehicles, people, trees and the build string differ between runs |
 | 3a | Vulkan device: loader, instance, device, swapchain, offscreen back buffer, present; clear colour on screen; fallback to GL on failure | done (2026-11-17, `render/gpu_vk.cpp`): the Vienna save loads under Vulkan (every texture and mesh uploaded), the 3D view's clear colour reaches the screen and the screenshot; without Vulkan-Headers in the build `REGS_RENDERER=vulkan` falls back to OpenGL with the reason in the log. Textures, buffers, targets, blits, readback, pipelines and descriptors are written but unexercised until shaders compile |
-| 3b | glslang in the build; programs, uniforms, textures, buffers: the 2D GUI (main menu readable) | waiting for the owner's OK to fetch Vulkan-Headers and glslang into `third_party/`; `render/vk_shader.cpp` is written against glslang's API but not compiled yet |
-| 3c | 3D: meshes, the default shader and the combiner variants, render targets (the menu's trams, terrain, objects) | |
-| 3d | water, shadows (depth targets, compare samplers), MSAA, bloom and the post effects, particles, night lights, the mods' hooks | |
-| 3e | parity check on the Vienna save; SPIR-V and pipeline caches | |
-| 4 | Raytracing and DLSS: follow-up plan (§9) | |
+| 3b | glslang in the build; programs, uniforms, textures, buffers: the 2D GUI (main menu readable) | done (2026-11-17): Vulkan-Headers and glslang in `third_party/` (owner's OK; `third_party/README.md` has the licences). The main menu matches OpenGL except its animated spot |
+| 3c | 3D: meshes, the default shader and the combiner variants, render targets (the menu's trams, terrain, objects) | done: the Vienna save and the map editor match OpenGL; `regs-tool shaders` with `REGS_RENDERER=vulkan` compiles the same 3 700 of 3 814 variants as OpenGL (the same 114 terrain/water variants fail in both, with flag sets the game never uses) |
+| 3d | water, shadows (depth targets, compare samplers), MSAA, bloom and the post effects, particles, night lights, the mods' hooks | checked against OpenGL: shadows, 4× MSAA, bloom with auto-exposure, colour style, lens blur (distance), night lights at 22:00. Not yet checked side by side: water close up, particles, tilt-shift, the mods' shader hooks (weather mod) |
+| 3e | parity check on the Vienna save; SPIR-V and pipeline caches | parity: remaining differences are 1-8 levels of texture-filtering noise (the drivers' anisotropic sampling), in about half the pixels. Caches not done (each start compiles the programs again, a few seconds) |
+| 4 | Beyond parity: TAA, upscaling, raytracing, frame generation, DLSS (§9) | §9 |
+
+How the Vulkan picture was brought to parity (for whoever touches `vk_shader.cpp`): the game's combiner shaders
+declare their varyings section by section, in a different order per stage, so glslang's automatic locations
+mismatched them (flat untextured surfaces); varyings now get locations matched by name. Struct-array uniforms need
+`EShReflectionStrictArraySuffix` to be found as `regs_LightSource[0].position`. Post effects sample depth textures
+with a plain `sampler2D`, so depth textures may be bound to non-shadow samplers.
 
 ### Building and testing the Vulkan device today
 
@@ -181,6 +187,74 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
 * Run with `REGS_RENDERER=vulkan` (test script: `-Env @{REGS_RENDERER='vulkan'}`); `REGS_VK_VALIDATION=1` turns the
   Khronos validation layer on when the Vulkan SDK is installed.
 
-## 9. After parity: raytracing and DLSS
+## 9. Beyond parity: TAA, upscaling, raytracing, frame generation, DLSS
 
-To be written once the Vulkan picture matches OpenGL (§8 step 4).
+Scope added by the owner on 2026-11-17 ("Also add features like Raytracing, Lossless Scaling etc"). Order: (1) motion
+vectors and TAA, (2) our own upscaler and FSR, (3) raytraced shadows and ambient occlusion, (4) frame generation,
+(5) DLSS. Each effect is its own graphics option with a raster fallback. Vendor SDKs (FSR, DLSS/Streamline, XeSS)
+need the owner's OK before any download; nothing from them is committed unless its licence allows it.
+
+What is backend-neutral and what is not: steps 1, 2 (own upscalers) and 4 (own interpolation) are post passes over
+the scene's colour and depth, written against `gpu::Device`, so they run under OpenGL and Vulkan alike. Raytracing,
+FSR 2/3 and DLSS need Vulkan (the vendor libraries have no OpenGL path; ray queries need acceleration structures).
+
+### 9.1 Motion vectors, jittered camera, TAA
+
+* **Jitter:** the game view's projection gets a sub-pixel offset each frame (Halton 2,3 over 8 frames, in clip space
+  `2·offset / size` added to the projection's third column). Only the game's 3D view; GUI views, render-to-texture
+  views and shadow maps stay unjittered.
+* **Motion vectors, phase 1 (camera):** reprojection from depth: the world position of each pixel (inverse
+  view-projection of this frame, without jitter) projected with last frame's view-projection gives where the pixel
+  was. Exact for everything that does not move by itself (terrain, buildings, roads: most of a city).
+* **Motion vectors, phase 2 (objects):** vehicles, people and animated parts need their own: each `DrawItem` keeps
+  last frame's world matrix (and bone palette), and the combiner programs get a second output with the screen-space
+  velocity, added by the translator like the shader hooks. Needed for frame generation and DLSS; TAA copes with
+  phase 1 plus neighbourhood clamping.
+* **TAA resolve:** an RGBA16F history at output size; per pixel: reproject the history, clamp it to the current
+  frame's 3×3 neighbourhood (variance clipping in YCoCg), blend about 10 % of the new frame, a light sharpen; history
+  rejected where the reprojected position leaves the screen. Runs before bloom/styles so they see the clean image.
+  Option "Antialiasing: TAA" next to the MSAA choices (TAA replaces MSAA when chosen).
+
+### 9.2 Upscaling ("render scale")
+
+* Option "Render scale" 100 / 85 / 77 / 67 / 50 %: the 3D view renders into a smaller scene target; the GUI always
+  at full size.
+* **Own temporal upscaler (TAAU):** the TAA history is at output size and is fed with the jittered low-resolution
+  frames (each new sample lands in the output pixel it covers, weighted by distance): the best quality without any
+  SDK. Option value "Upscaler: temporal".
+* **Own spatial upscaler:** for when temporal is off: edge-directed upsampling (a Lanczos-like kernel steered by the
+  local gradient) and contrast-adaptive sharpening. Written here; AMD's FSR 1 shaders (MIT) are an alternative that
+  would be copied with their licence.
+* **AMD FSR 2/3 upscaler** (FidelityFX SDK, MIT, has a Vulkan backend): takes the same inputs (colour, depth, motion
+  vectors, jitter, exposure). Needs the owner's OK for the download. Vulkan only.
+
+### 9.3 Raytraced shadows and ambient occlusion (Vulkan only)
+
+* Device features: `VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, `bufferDeviceAddress`; vertex and index
+  buffers get the acceleration-structure input usage. The RTX 3080 has all of them; other GPUs fall back to raster.
+* **Acceleration structures:** one BLAS per uploaded `GpuMesh` (static: built once at upload; skinned people and
+  animated vehicle parts: a BLAS per frame or a static pose); a TLAS rebuilt each frame from the same `DrawItem` list
+  `Renderer3D::draw` gets, culled to the shadow light's reach. Alpha-tested foliage and fences need the texture's
+  alpha in the ray query's candidate loop (material and uv data reached through buffer device addresses).
+* **Shadows:** the combiner's `shadow_output` component reads the shadow map today; with the option on, a ray query
+  toward the sun (jittered over the sun disc for soft edges, cleaned up by TAA) replaces the lookup. No resolution
+  limit, no acne, no trapezoid warp. Option "Shadows: raytraced" next to the existing shadow quality.
+* **Ambient occlusion:** a full-screen pass: world position and normal from depth, a few short rays (2-4 m) per pixel,
+  a depth-aware blur, multiplied into the ambient term (the scene has no AO today). Option "Ambient occlusion: off /
+  raytraced".
+* Later: reflections on water and glass (ray queries in the water shader and for windows), then global illumination.
+
+### 9.4 Frame generation
+
+* **Own interpolation:** with full motion vectors (9.1 phase 2) a generated frame between two rendered ones: each
+  pixel warped halfway along its motion, holes filled from the frame that sees them (depth decides), the GUI drawn
+  fresh on top of every presented frame (it is cheap and must not smear). Doubles the presented frame rate at the
+  cost of a frame of latency. Option "Frame generation: off / on".
+* **AMD FSR 3 frame generation** (FidelityFX SDK, MIT, Vulkan): an alternative with its own optical flow; owner's OK
+  needed. NVIDIA DLSS Frame Generation needs an RTX 40 card, so it is not an option on the RTX 3080.
+
+### 9.5 DLSS
+
+* NVIDIA DLSS Super Resolution through the Streamline SDK (or the NGX DLSS SDK). Same inputs as FSR 2 (9.2). The
+  runtime DLL (`nvngx_dlss.dll`) may be shipped under NVIDIA's DLSS licence terms; the SDK download and the licence need
+  the owner's OK first. Vulkan only, RTX cards only; other cards keep the other upscalers.

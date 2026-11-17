@@ -592,7 +592,8 @@ class VkDeviceImpl final : public Device {
   }
   VkFormat vkFormatOf(Format f) const;
   VkImageAspectFlags aspectOf(const Tex& t) const { return isDepth(t.format) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT; }
-  VkSampler samplerFor(Tex& t);
+  // the texture's sampler; depth comparison follows the shader's sampler type (sampler2DShadow or not)
+  VkSampler samplerFor(Tex& t, bool shadow);
   void upload(Tex& t, int face, int level, int x, int y, int w, int h, Pixels p, const void* data, size_t bytes);
 
   // frames, commands, rings
@@ -1280,15 +1281,17 @@ void VkDeviceImpl::upload(Tex& t, int face, int level, int x, int y, int w, int 
   if (ringBytes > (256ull << 20)) submitAndWait();
 }
 
-VkSampler VkDeviceImpl::samplerFor(Tex& t) {
-  if (t.vkSampler) return t.vkSampler;
-  const SamplerDesc& s = t.sampler;
+VkSampler VkDeviceImpl::samplerFor(Tex& t, bool shadow) {
+  const bool own = shadow == t.sampler.compareLEqual;  // t.vkSampler caches the texture's own compare state
+  if (own && t.vkSampler) return t.vkSampler;
+  SamplerDesc s = t.sampler;
+  s.compareLEqual = shadow;
   float aniso = std::min(t.aniso, maxAniso_);
   std::string key = std::to_string(int(s.minFilter)) + "," + std::to_string(int(s.magFilter)) + "," + std::to_string(int(s.wrapS)) +
                     "," + std::to_string(int(s.wrapT)) + "," + std::to_string(int(s.wrapR)) + "," + std::to_string(s.maxLevel) + "," +
                     std::to_string(s.borderWhite) + "," + std::to_string(s.compareLEqual) + "," + std::to_string(aniso);
   auto it = samplers_.find(key);
-  if (it != samplers_.end()) return t.vkSampler = it->second;
+  if (it != samplers_.end()) return own ? (t.vkSampler = it->second) : it->second;
   VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   sci.magFilter = s.magFilter == Filter::Nearest || s.magFilter == Filter::NearestMipNearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
   sci.minFilter = s.minFilter == Filter::Nearest || s.minFilter == Filter::NearestMipNearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
@@ -1308,7 +1311,7 @@ VkSampler VkDeviceImpl::samplerFor(Tex& t) {
   VkSampler smp = VK_NULL_HANDLE;
   vkCreateSampler(dev_, &sci, nullptr, &smp);
   samplers_[key] = smp;
-  return t.vkSampler = smp;
+  return own ? (t.vkSampler = smp) : smp;
 }
 
 void VkDeviceImpl::readTextureRed(uint32_t tex, int w, int h, float* out) {
@@ -1815,9 +1818,10 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     int unit = p.samplerUnit[i];
     uint32_t th = unit >= 0 && unit < kUnits ? units_[size_t(unit)].first : 0;
     Tex* t = texture(th);
-    bool fits = t && t->image && t->cube == u.cube && isDepth(t->format) == u.shadow && t->samples == 1;
+    // a shadow sampler needs a depth texture; a plain sampler reads colour or depth (the post effects read depth)
+    bool fits = t && t->image && t->cube == u.cube && (!u.shadow || isDepth(t->format)) && t->samples == 1;
     if (!fits) t = &textures_[u.cube ? dummyCube_ : u.shadow ? dummyShadow_ : dummy2D_];
-    images.push_back({samplerFor(*t), t->view, VK_IMAGE_LAYOUT_GENERAL});
+    images.push_back({samplerFor(*t, u.shadow), t->view, VK_IMAGE_LAYOUT_GENERAL});
     VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     w.dstBinding = uint32_t(u.binding);
     w.descriptorCount = 1;
