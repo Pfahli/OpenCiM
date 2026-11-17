@@ -21,8 +21,8 @@ it is, what already exists, and the open decisions. Order is not priority.
     included; at UI scale 1 the GPU still shows the original texels. With waifu2x (MIT) the generator can make the UI
     art instead (`--external-ui-only`), which removes the block noise of the loading pictures and draws cleaner icon
     outlines; tried on the owner's machine, not shipped.
-  * Open: a separate "High Res UI" switch next to "Sharper textures" (the cache files already record which are UI
-    art); shipping or fetching waifu2x for the UI (the player's GPU, ~2 minutes for all UI art, its runs fail now and
+  * Owner's decision (2026-11-17): no separate switch, High Res UI stays part of "Sharper textures".
+  * Open: shipping or fetching waifu2x for the UI (the player's GPU, ~2 minutes for all UI art, its runs fail now and
     then and are retried).
 * **Style options.** Colour styles, distance lens blur and tilt-shift exist (graphics page). More can follow.
 * **Night lights for the day/night option.** The base game's buildings, lamps and vehicles have no lights (only the
