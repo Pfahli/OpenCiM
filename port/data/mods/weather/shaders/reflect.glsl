@@ -70,7 +70,13 @@ void weather_reflect(inout vec3 c, RegsPost p) {
   // world's upright there (the streak of a wet road) and a third of that across
   float rough = mix(0.035, 0.01, smoothstep(0.1, 0.6, pud));
   vec3 hp = p.pos + r * travel;
-  vec2 up = regs_postProject(hp + vec3(0.0, rough * travel, 0.0)).xy - uv;
+  // how high the mirrored point stands above the wet ground: like on a real wet road the mirror image is clear right
+  // at the ground (kerbs, wheels, the bottoms of facades) and blurs and fades with height (upper floors, roofs). The
+  // blur grows with the height on top of the ray's length; the film's image is gone at about 9 m, a puddle's at 20 m
+  float height = max(hp.y - p.pos.y, 0.0);
+  float spread = rough * travel * (1.0 + min(height / 6.0, 2.0));
+  float fadeFilm = 1.0 - smoothstep(1.0, 9.0, height), fadePud = 1.0 - smoothstep(3.0, 20.0, height);
+  vec2 up = regs_postProject(hp + vec3(0.0, spread, 0.0)).xy - uv;
   float len = length(up);
   vec2 along = len > 1e-6 ? up : vec2(0.0, p.texel.y);
   vec2 across = vec2(-along.y * p.texel.x / p.texel.y, along.x * p.texel.y / p.texel.x) * 0.33;  // square in pixels
@@ -90,9 +96,11 @@ void weather_reflect(inout vec3 c, RegsPost p) {
   float sure = smoothstep(0.0, 0.08, edge) * (1.0 - smoothstep(30.0, 60.0, travel));
   // the film faintly (more at a glancing view), what was hit or the sky; water gives back a little less than it gets
   // a dark reflection (a wall in shade) only darkens a little, else the small puddles read as stains
+  // what fades with height turns into the faint sky a ray over the roofs gets, so the fade has no edge
   vec3 before = c;
-  c = mix(c, mix(sky, seen, sure) * 0.85, clamp(filmAmount * mix(0.35, 1.0, sure), 0.0, 0.9));
+  float sureFilm = sure * fadeFilm;
+  c = mix(c, mix(sky, seen, sureFilm) * 0.85, clamp(filmAmount * mix(0.35, 1.0, sureFilm), 0.0, 0.9));
   // a puddle strongly, what was hit (the sky in it is wet.glsl's)
-  c = mix(c, seen * 0.85, clamp(pud * (0.45 + 0.4 * fres) * sure * near, 0.0, 0.9));
+  c = mix(c, seen * 0.85, clamp(pud * (0.45 + 0.4 * fres) * sure * fadePud * near, 0.0, 0.9));
   c = max(c, before * 0.88);
 }

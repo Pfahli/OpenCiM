@@ -42,7 +42,10 @@ It takes effect at the next start. To turn it off, remove the id (or start with 
     are properly wet they mirror the street like a real wet road. The mirrored ray is followed across the image
     (screen-space reflections): facades, vehicles, trams, lamps and trees show in the ground, blurred and stretched
     along their upright on the film, sharp in the puddles (tilted by the ripples); where the ray finds nothing the film
-    mirrors a touch of the grey sky. Only wet walkable ground mirrors (the surface hook tells the post hook per pixel
+    mirrors a touch of the grey sky. As on a real wet road the mirror image is clear right at the ground and blurs
+    and fades with the height of what it shows (the hit's height above the wet spot): kerbs, wheels and the bottoms of
+    facades stay clear, upper floors and roofs fade out (on the film from 1 m to about 9 m, in the puddles from 3 m to
+    about 20 m) into the same faint sky a ray over the roofs gets, so the fade has no edge. Only wet walkable ground mirrors (the surface hook tells the post hook per pixel
     through the engine's hook data: cars, people, trees, walls and grass never do); the roads a little more than the
     pavements; a dark reflection (a wall in shade) only darkens a little, so the small puddles never read as stains;
     everything fades out far away, near the image's edges and over long rays, so nothing pops in or out. Snow cover
