@@ -342,7 +342,7 @@ has to be built for the HDR swapchain from the start). Settings on the Image qua
 ### 9.7 Raytraced reflections (Vulkan only)
 
 Owner's order 2026-11-17: water, puddles and glass after FSR. Status: water and glass done (setting
-`$regsRtReflections`, Image quality page; `REGS_RT_REFLECTIONS=0|1`); wet streets and puddles not yet.
+`$regsRtReflections`, Image quality page; `REGS_RT_REFLECTIONS=0|1`); the weather mod's puddles traced too.
 
 * **Where:** the game reflects with an environment cube on water (`metro/shaders/water/water.fragment`) and on every
   material with the reflection flag (`shaders/default/reflection.fragment`, masked by the specular map: window glass),
@@ -361,13 +361,19 @@ Owner's order 2026-11-17: water, puddles and glass after FSR. Status: water and 
 * **Device:** descriptor indexing features (Vulkan 1.2) when ray queries are on; `REGS_VK_NO_BINDLESS` switches it off.
   Programs that read `regs_Images` get a two-set pipeline layout; the device writes the hit table's address into
   `regs_HitTable` before each draw and binds the bindless set.
+* **Puddles:** the weather mod's hook (`data/mods/weather/shaders/wet.glsl`) reflects in its puddles with
+  `texture(regs_EnvMap, dir)`. When a colour hook reads `regs_EnvMap` (`hooksReadEnvMap`), the road, pavement and
+  platform materials get the reflection variant and the translator routes those lookups through `regs_reflectCube` as
+  well; the mod's own mix (mostly the overcast sky, darker than the wet ground) is unchanged, so buildings show in the
+  puddles only faintly. Routing every material that way made the GPU fault (black or garbled frames, not found which
+  material class; the narrower routing is also cheaper), so keep it to those three surface classes.
 * **Check:** `REGS_RT_REFL_DEBUG=1` (a constant colour instead: the programs draw), `=2` (green where a ray hits),
   `=3` (the hit record's colour).
 * **Seen on Vienna:** bridges and piers mirror in the Danube; the far banks show at grazing angles. The base game's old
   facades barely use the reflection flag, so glass shows where modern buildings carry it.
 * **Open:** foliage is not in the ray scene (alpha-tested cut-outs need an any-hit test; the same holds for the shadow
-  rays), lit windows and lamps at night are not in the hit shading yet (the night-light masks), wet streets and
-  puddles (they need the weather mod's wetness on road and pavement surfaces), performance not measured yet.
+  rays), lit windows and lamps at night are not in the hit shading yet (the night-light masks), a wet-film sheen on
+  wet streets (the mod has no lookup there), performance not measured yet.
 
 ## 10. Benchmarks
 

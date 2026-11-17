@@ -48,6 +48,9 @@ void addShaderHook(const ShaderHook& h);
 const std::vector<ShaderHook>& shaderHooks();
 bool postHooksRegistered();
 bool shadowHooksRegistered();
+// a colour hook reads the environment cube (regs_EnvMap; the weather mod's puddles): with raytraced reflections those
+// lookups are traced too (§9.7), so the scene variants get the reflection programs
+bool hooksReadEnvMap();
 // the post program's fragment shader (GLSL 3.30, for regs/shaders/post.vertex)
 std::string postHookFragment();
 // regsShaderUniform(name, value): vec4 uniforms of the hooks, applied to every hooked program per pass

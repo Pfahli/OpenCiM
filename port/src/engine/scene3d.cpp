@@ -224,7 +224,10 @@ GpuMaterial gpuMaterial(Display& d, VM& vm, const MaterialDef& m) {
 
 // the variant of a combiner (empty path: the default shader) for (material flags, mesh flags, environment flags),
 // compiled on first use
-uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags = 0) {
+// surfaceClass: the material's (renderer3d.h kSurface*); the mods' puddles get traced reflections on roads, pavements
+// and platforms only (-1: unknown, none)
+uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags = 0,
+                    int surfaceClass = -1) {
   static const bool off = std::getenv("REGS_NO_COMBINER") != nullptr;  // debugging: the built-in shader only
   if (off) return 0;
   ShaderCombiner* c = getCombiner(vm, utf8ToUtf16(shader));
@@ -235,7 +238,10 @@ uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flag
   if (!v || v->failed) return 0;
   unsigned rays = 0;
   if ((env & kEnvRayShadows) && (env & kEnvShadowMap)) rays |= render::kRayShadows;
-  if ((env & kEnvRayReflections) && v->fragment.find("textureCube") != std::string::npos) rays |= render::kRayReflections;
+  const bool puddleSurface = surfaceClass == kSurfaceRoad || surfaceClass == kSurfacePavement || surfaceClass == kSurfacePlatform;
+  if ((env & kEnvRayReflections) &&
+      (v->fragment.find("textureCube") != std::string::npos || (puddleSurface && render::hooksReadEnvMap())))
+    rays |= render::kRayReflections;
   if (rays) {
     if (!v->programRays[rays] && !v->raysFailed[rays]) {
       std::string err;
@@ -265,7 +271,7 @@ void assignPrograms(Display& d, VM& vm, std::vector<DrawItem>& items, uint32_t e
     if (auto* mats = const_cast<std::vector<GpuMaterial>*>(it.materials);
         mats && std::find(seen.begin(), seen.end(), mats) == seen.end() && (seen.push_back(mats), true))
       for (GpuMaterial& m : *mats)
-        if (!m.hasProgramFor(env)) m.setProgram(env, programFor(d, vm, m.shader, m.flags, env, m.meshFlags));
+        if (!m.hasProgramFor(env)) m.setProgram(env, programFor(d, vm, m.shader, m.flags, env, m.meshFlags, m.surfaceClass));
 }
 
 // collects the drawable objects, suns, grids and the sky (fog) of a scene subtree

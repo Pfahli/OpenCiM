@@ -524,11 +524,17 @@ static std::string replaceWord(const std::string& s, const std::string& from, co
   return out;
 }
 
+static std::string replaceAll(std::string s, const std::string& from, const std::string& to) {
+  for (size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size())) s.replace(at, from.size(), to);
+  return s;
+}
+
 std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool withHooks,
                              unsigned rayBits) {
   withHooks = withHooks && !hooks().empty();
   const bool rayShadows = (rayBits & kRayShadows) != 0;
-  const bool reflections = fragment && (rayBits & kRayReflections) && src.find("textureCube") != std::string::npos;
+  const bool hookEnv = withHooks && hooksReadEnvMap();
+  const bool reflections = fragment && (rayBits & kRayReflections) && (src.find("textureCube") != std::string::npos || hookEnv);
   std::string why;
   std::string s = renameIdentifiers(reflections ? replaceWord(src, "textureCube", "regs_reflectCube") : src, fragment,
                                     fragment ? "regs_main" : "regs_vmain", &why);
@@ -591,7 +597,8 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
           "vec4 regs_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c) * regs_sunVisible()); }\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
     if (withHooks)
-      s += hookFragmentCode() +
+      s += (reflections && hookEnv ? replaceAll(hookFragmentCode(), "texture(regs_EnvMap,", "regs_reflectCube(regs_EnvMap,")
+                                   : hookFragmentCode()) +
            "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_HookOn > 0.5) regs_hooks(regs_FragColor);\n"
            "  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
     else
@@ -603,6 +610,12 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
 bool postHooksRegistered() {
   for (const ShaderHook& h : hooks())
     if (h.post) return true;
+  return false;
+}
+
+bool hooksReadEnvMap() {
+  for (const ShaderHook& h : hooks())
+    if (!h.post && h.code.find("regs_EnvMap") != std::string::npos) return true;
   return false;
 }
 
