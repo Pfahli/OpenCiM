@@ -34,7 +34,8 @@ It takes effect at the next start. To turn it off, remove the id (or start with 
   * puddles grow from the standing water: first and most in a strip along the kerb on the carriageway side (the
     gutter), a few small ones in the lanes and on pavements and squares, never across a kerb (each surface has its
     own noise and every puddle fades out at its surface's edge, found in the engine's surface map); still water with
-    the grey sky in it and rain ripples; they dry from their edges, the gutter's last;
+    the grey sky in it and rain ripples; they dry from their edges, the gutter's last; never much darker than the wet
+    ground around them (at night, in a lamp's pool or a headlight beam, they stay soft instead of black holes);
   * a subtle sheen that comes with the standing water;
   * the ground effect itself never ends up brighter than the dry ground (except in a lightning flash);
   * reflections (`shaders/reflect.glsl`, a post hook while the ground is wet): once roads, pavements and platforms
