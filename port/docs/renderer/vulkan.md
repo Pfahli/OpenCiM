@@ -166,12 +166,20 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
 |---|---|---|
 | 1 | This plan | done |
 | 2 | `gpu::Device` with the GL implementation; every GL call outside `gpu_gl.cpp` moved behind it; screenshots of the menu and a Vienna save identical before and after | done (2026-11-17): static pixels identical; only moving vehicles, people, trees and the build string differ between runs |
-| 3a | Vulkan device: loader, instance, device, swapchain, offscreen back buffer, present; clear colour on screen; fallback to GL on failure | |
-| 3b | glslang in the build; programs, uniforms, textures, buffers: the 2D GUI (main menu readable) | |
+| 3a | Vulkan device: loader, instance, device, swapchain, offscreen back buffer, present; clear colour on screen; fallback to GL on failure | done (2026-11-17, `render/gpu_vk.cpp`): the Vienna save loads under Vulkan (every texture and mesh uploaded), the 3D view's clear colour reaches the screen and the screenshot; without Vulkan-Headers in the build `REGS_RENDERER=vulkan` falls back to OpenGL with the reason in the log. Textures, buffers, targets, blits, readback, pipelines and descriptors are written but unexercised until shaders compile |
+| 3b | glslang in the build; programs, uniforms, textures, buffers: the 2D GUI (main menu readable) | waiting for the owner's OK to fetch Vulkan-Headers and glslang into `third_party/`; `render/vk_shader.cpp` is written against glslang's API but not compiled yet |
 | 3c | 3D: meshes, the default shader and the combiner variants, render targets (the menu's trams, terrain, objects) | |
 | 3d | water, shadows (depth targets, compare samplers), MSAA, bloom and the post effects, particles, night lights, the mods' hooks | |
 | 3e | parity check on the Vienna save; SPIR-V and pipeline caches | |
 | 4 | Raytracing and DLSS: follow-up plan (§9) | |
+
+### Building and testing the Vulkan device today
+
+* The default build has no Vulkan code (`gpu_vk_stub.cpp`) until `third_party/vulkan-headers` exists. To compile the
+  device against another copy of the headers without vendoring it, configure a separate tree with
+  `-DREGS_VULKAN_HEADERS=<dir containing vulkan/vulkan.h>` (e.g. `build\x64-Release-vk`).
+* Run with `REGS_RENDERER=vulkan` (test script: `-Env @{REGS_RENDERER='vulkan'}`); `REGS_VK_VALIDATION=1` turns the
+  Khronos validation layer on when the Vulkan SDK is installed.
 
 ## 9. After parity: raytracing and DLSS
 
