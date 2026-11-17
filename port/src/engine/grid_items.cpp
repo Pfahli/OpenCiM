@@ -268,7 +268,7 @@ int bucketOf(const GridData& g, const TerrainCache& tc, uint32_t i) {
   if (ti < 0 || it.removed) return -1;
   const GridTemplate& tp = tc.templates[size_t(ti)];
   uint32_t flags = it.flags | tp.flags;
-  if ((flags & kFlagHidden) || tp.type == kTypeMarker || tp.type == kTypeSpawnPoint) return -1;
+  if ((flags & (kFlagHidden | kItemPortHidden)) || tp.type == kTypeMarker || tp.type == kTypeSpawnPoint) return -1;
   if (g.curveAnchors.count(i)) return -1;  // port: a curve stop's anchor, drawn bent by the curve renderer
   return itemDivision(g, tc, i);
 }
@@ -351,7 +351,7 @@ void fixGridCover(VM& vm, GridData& g, const TerrainCache& tc, uint32_t viewMode
     if (ti < 0 || it.removed) continue;
     const GridTemplate& tp = tc.templates[size_t(ti)];
     uint32_t flags = it.flags | tp.flags, cc = flags;
-    if ((flags & 0x500000) || tp.type == kTypeMarker) continue;  // gsGridItem::fixGrid() L:0x08185a40: not temporary or hidden
+    if ((flags & (0x500000 | kItemPortHidden)) || tp.type == kTypeMarker) continue;  // gsGridItem::fixGrid() L:0x08185a40: not temporary or hidden (port: nor carried, kItemPortHidden)
     if (it.yaw != 0) continue;  // port: a freely turned item leaves the cells as they are (its square would show)
     if (it.parent && it.parent <= g.items.size() && tp.type >= 10 && tp.type <= 12) {  // tram tracks follow the road
       const GridData::Item& p = g.items[it.parent - 1];
@@ -425,7 +425,7 @@ void fixGridCoverArea(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
     if (it.x > x1 || it.z > z1 || it.x + f.sx <= x0 || it.z + f.sz <= z0) continue;
     if (it.x < 0 || it.z < 0 || it.x + f.sx > g.width || it.z + f.sz > g.length) continue;
     uint32_t flags = it.flags | tp.flags, cc = flags;
-    if ((flags & 0x500000) || tp.type == kTypeMarker) continue;  // as fixGridCover
+    if ((flags & (0x500000 | kItemPortHidden)) || tp.type == kTypeMarker) continue;  // as fixGridCover
     if (it.yaw != 0) continue;  // port: as fixGridCover
     if (it.parent && it.parent <= g.items.size() && tp.type >= 10 && tp.type <= 12) {  // tram tracks follow the road
       const GridData::Item& p = g.items[it.parent - 1];
@@ -539,7 +539,7 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
         const float* p = &mesh->positions[size_t(v) * 3];
         const float* nn = &mesh->normals[size_t(v) * 3];
         float px, pz, nx, nz, wx, wz;
-        bakeDir(p[0] * bx, p[2] * bz, px, pz);
+        bakeDir(p[0] * bx * it.scale, p[2] * bz * it.scale, px, pz);  // (port: the item's size, Item::scale)
         Vec3 nrm;
         if (tp.vertexGeneration && (mesh->colors[v] & 0x00FFFFFF) == 0) {
           nrm = normalize(Vec3{px, p[1], pz});  // foliage: spherical normals in the baked template space (§1.5)
@@ -548,7 +548,7 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
           nrm = {nx, nn[1], nz};
         }
         place(px, pz, wx, wz);
-        gr.positions.insert(gr.positions.end(), {wx + T.x, p[1] + T.y, wz + T.z});
+        gr.positions.insert(gr.positions.end(), {wx + T.x, p[1] * it.scale + T.y, wz + T.z});
         place(nrm.x, nrm.z, nx, nz);
         gr.normals.insert(gr.normals.end(), {nx, nrm.y, nz});
         gr.uv0.insert(gr.uv0.end(), {mesh->uv0[size_t(v) * 2], mesh->uv0[size_t(v) * 2 + 1]});
@@ -623,8 +623,9 @@ Mat4 itemPlacement(const GridData& g, const TerrainCache& tc, uint32_t item, int
   Mat4 place, bake, scale;
   place.at(0, 0) = c, place.at(0, 2) = s, place.at(2, 0) = -s, place.at(2, 2) = c;
   bake.at(0, 0) = cb, bake.at(0, 2) = sb, bake.at(2, 0) = -sb, bake.at(2, 2) = cb;
-  scale.at(0, 0) = tp.bake ? tp.bakeScaleX : 1.0f;
-  scale.at(2, 2) = tp.bake ? tp.bakeScaleZ : 1.0f;
+  scale.at(0, 0) = (tp.bake ? tp.bakeScaleX : 1.0f) * it.scale;
+  scale.at(1, 1) = it.scale;  // (port: the item's size, Item::scale)
+  scale.at(2, 2) = (tp.bake ? tp.bakeScaleZ : 1.0f) * it.scale;
   Vec3 T{(2.0f * float(it.x - x0) + float(sx - n)) * cs * 0.5f, float(y) * cs / 256.0f,
          (2.0f * float(it.z - z0) + float(sz - n)) * cs * 0.5f};
   T.x += it.offX, T.z += it.offZ;  // port: snapped off the grid
@@ -640,7 +641,7 @@ void collectSkinnedItems(Display& d, VM& vm, const GridData& g, const TerrainCac
   for (uint32_t i : tc.divisionItems[size_t(division)]) {
     const GridData::Item& it = g.items[i];
     int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
-    if (ti < 0 || it.removed || !tc.templates[size_t(ti)].skinned) continue;
+    if (ti < 0 || it.removed || !tc.templates[size_t(ti)].skinned || (it.flags & kItemPortHidden)) continue;
     if (view != 0xFE && !gridItemVisible(g, tc, i, view)) continue;
     const GridTemplate& tp = tc.templates[size_t(ti)];
     uint32_t flags = it.flags | tp.flags;
@@ -771,7 +772,7 @@ void buildHighlightOverlay(const GridData& g, const GridObj& grid, const Terrain
   }
   for (uint32_t i : grid.highlightItems) {
     if (i >= g.items.size() || g.items[i].removed || !(g.items[i].flags & 0x100)) continue;
-    if (g.items[i].flags & kFlagHidden) continue;  // hidden items (gave way to a tool's preview) are not drawn at all
+    if (g.items[i].flags & (kFlagHidden | kItemPortHidden)) continue;  // hidden items (gave way to a tool's preview) are not drawn at all
     if (g.curveAnchors.count(i)) continue;  // port: curve stop anchors
     const GridData::Item& it = g.items[i];
     int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;

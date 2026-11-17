@@ -1,9 +1,9 @@
 // Terrain of a loaded map, after gsGridDivision::update (L:0x08166080 = W:0x100d6ab0), docs/renderer/terrain.md.
-// The grid is cut into n×n-cell divisions (n = 1 << bucketShift); each is one mesh centred on the division, built in
+// The grid is cut into nÃ—n-cell divisions (n = 1 << bucketShift); each is one mesh centred on the division, built in
 // two LODs (lod 0: a 4-triangle fan per cell, lod 1: 2 triangles per cell) with one part per material group. Water
 // quads, the map-edge walls, the water-edge curtain and the items' foundation walls are LAYER groups, so both LODs carry
 // them. The underground view (docs/renderer/underground.md) builds tunnel divisions as an earth plane with inward walls.
-// The data layer draws the stops' catchment circles over the layerable parts (dataMaterial, terrain.md §5.2).
+// The data layer draws the stops' catchment circles over the layerable parts (dataMaterial, terrain.md Â§5.2).
 #include "engine/terrain.h"
 
 #include <algorithm>
@@ -26,7 +26,12 @@
 #include "engine/scene3d.h"
 #include "engine/sim.h"
 #include "engine/surface_map.h"
+#include "engine/osm.h"
+#include "engine/proc_buildings.h"
+#include "render/gl.h"
 #include "render/glsl.h"
+#include "render/image.h"
+#include "vfs/vfs.h"
 
 namespace regs::engine {
 
@@ -41,7 +46,7 @@ namespace {
 constexpr int kTerrain = 0, kYard = 1, kField = 9, kWater = 17, kEdge = 18, kEarth = 19, kBase = 20, kWaterEdge = 21,
               kGroupCount = 22;
 constexpr int kWaterLevel = -0x140, kEdgeBottom = -0x2000, kEarthLevel = -0x800;
-// mesh LOD bands for D = 800 (interfaces-3d §1.3); meshes are freed beyond kFreeDistance
+// mesh LOD bands for D = 800 (interfaces-3d Â§1.3); meshes are freed beyond kFreeDistance
 constexpr float kLod0Distance = 266.4f, kCullDistance = 880.0f, kFreeDistance = 1000.0f;
 // division meshes are built on demand (the port's streaming; the original keeps divisions around each camera): those
 // in view (or casting into it) at once, up to kVisibleBuildsPerFrame, else the nearest kItemBuildsPerFrame per frame,
@@ -61,10 +66,10 @@ struct Builder {
   const GridData& g;
   int n, dx, dz;  // division size and first cell
   float cs;
-  std::vector<Corner> corners;  // (n+1)², row-major in z
+  std::vector<Corner> corners;  // (n+1)Â², row-major in z
   MeshData out;
   // the division's view mode (divisionViewMode) and, for a tunnel division of the underground view, the sides that
-  // face a division without tunnels (north z−, south z+, west x−, east x+): they get inward walls (§8.1 of terrain.md)
+  // face a division without tunnels (north zâˆ’, south z+, west xâˆ’, east x+): they get inward walls (Â§8.1 of terrain.md)
   uint32_t view = 0xFE;
   bool inner[4] = {false, false, false, false};
   // the division's items (TerrainCache::divisionItems) for the foundation walls
@@ -78,11 +83,11 @@ struct Builder {
   uint16_t f(int x, int z) const { return g.flags[size_t(cell(x, z))]; }
 
   uint32_t override(int x, int z) const { return g.normals.empty() ? 0 : g.normals[size_t(cell(x, z))]; }
-  static Vec3 decode(uint32_t o) {  // packed 0x00XXYYZZ, component = byte/127 − 1
+  static Vec3 decode(uint32_t o) {  // packed 0x00XXYYZZ, component = byte/127 âˆ’ 1
     return {float(o >> 16 & 0xFF) / 127.0f - 1.0f, float(o >> 8 & 0xFF) / 127.0f - 1.0f, float(o & 0xFF) / 127.0f - 1.0f};
   }
 
-  // createVertex for corner (gx, gz) (§3); "covered" = a cell around it carries an item normal override
+  // createVertex for corner (gx, gz) (Â§3); "covered" = a cell around it carries an item normal override
   Corner makeCorner(int gx, int gz) const {
     Corner c;
     int x = std::clamp(gx, 0, W() - 1), z = std::clamp(gz, 0, L() - 1);
@@ -121,6 +126,15 @@ struct Builder {
     } else if (!covered) {  // sea-floor weight: any cell around is water
       for (int k = 0; k < 4; ++k)
         if (qok[k] && (f(qx[k], qz[k]) & 0x2000)) c.s = 1.0f;
+      // port (the OSM import's beaches, 2026-11-15): sand cells (0x0080, a bit the game never sets) show dry sand: a
+      // sea-floor weight over 1 (2 Ã— the share of the corner's cells that are sand), which the terrain shader's port
+      // patch (shaders.cpp) turns into the sea floor brightened; the real sea floor keeps weights up to 1
+      if (!(fc & 0x28)) {
+        int sand = 0, all = 0;
+        for (int k = 0; k < 4; ++k)
+          if (qok[k]) ++all, sand += (f(qx[k], qz[k]) & 0x80) ? 1 : 0;
+        if (all && sand) c.s = std::max(c.s, 2.0f * float(sand) / float(all));
+      }
     }
     c.t = covered ? 0.0f : std::clamp(4.0f - 4.2f * c.normal.y, 0.0f, 1.0f);
     return c;
@@ -138,7 +152,7 @@ struct Builder {
     return i;
   }
 
-  // corners absent from a cell's fan: both quadrants touching them are covered (§4); order TL, TR, BL, BR
+  // corners absent from a cell's fan: both quadrants touching them are covered (Â§4); order TL, TR, BL, BR
   static void absentCorners(uint16_t fc, bool out[4]) {
     out[0] = (fc & 0x900) == 0x900;
     out[1] = (fc & 0x300) == 0x300;
@@ -156,7 +170,7 @@ struct Builder {
     return col;
   }
 
-  // centre vertex of cell (lx, lz) (createVertex(gsIndexedMesh const&, …), §3.1)
+  // centre vertex of cell (lx, lz) (createVertex(gsIndexedMesh const&, â€¦), Â§3.1)
   Corner centre(int lx, int lz) const {
     int x = dx + lx, z = dz + lz;
     const Corner* q[4] = {&corner(lx, lz), &corner(lx + 1, lz), &corner(lx, lz + 1), &corner(lx + 1, lz + 1)};
@@ -199,7 +213,7 @@ struct Builder {
   }
 
   int groupOf(uint16_t fc, int group) const {
-    if (group == kEarth) return 1;  // without bit 0x20 every cell is terrain, drawn in earthMaterial (§6, :1232)
+    if (group == kEarth) return 1;  // without bit 0x20 every cell is terrain, drawn in earthMaterial (Â§6, :1232)
     if (group == kTerrain) return (fc & 0x40) || !(fc & 0x28);
     if (group < kField) return (fc & 0x48) == 8 && (fc & 7) == group - kYard;
     return (fc & 0x60) == 0x20 && (fc & 7) == group - kField;
@@ -231,7 +245,7 @@ struct Builder {
       p.u = a.u + (b.u - a.u) * t, p.v = a.v + (b.v - a.v) * t;
       return p;
     };
-    // Sutherland–Hodgman against one line: keeps the positive side (pos) or the negative one
+    // Sutherlandâ€“Hodgman against one line: keeps the positive side (pos) or the negative one
     auto clip = [&](const std::vector<P>& in, const float* l, bool pos) {
       std::vector<P> res;
       const size_t m = in.size();
@@ -277,7 +291,7 @@ struct Builder {
   void surfaceGroup(int group, int lod) {
     size_t firstIndex = out.indices.size();
     std::vector<int32_t> map(size_t((n + 1) * (n + 1)), -1);
-    // the earth terrain takes uv0 · 0.5 (L:0x08166080.c:2360-2370)
+    // the earth terrain takes uv0 Â· 0.5 (L:0x08166080.c:2360-2370)
     const float uvScale = group == kEarth ? 0.5f : 1.0f;
     auto scaled = [&](Corner c) {
       c.u *= uvScale;
@@ -315,7 +329,7 @@ struct Builder {
           out.indices.insert(out.indices.end(), {tl, bl, tr, tr, bl, br});
           continue;
         }
-        // the fan around the centre, one triangle per uncovered quadrant: N, W, E, S (§4)
+        // the fan around the centre, one triangle per uncovered quadrant: N, W, E, S (Â§4)
         bool absent[4];
         absentCorners(fc, absent);
         uint32_t k[4];
@@ -340,7 +354,7 @@ struct Builder {
     out.submeshes.push_back(s);
   }
 
-  // water quads at the fixed level, alpha = depth below the surface (§7.1)
+  // water quads at the fixed level, alpha = depth below the surface (Â§7.1)
   void water() {
     size_t firstIndex = out.indices.size();
     std::vector<int32_t> map(size_t((n + 1) * (n + 1)), -1);
@@ -368,8 +382,8 @@ struct Builder {
     finishGroup(kWater, firstIndex);
   }
 
-  // the underground earth plane (createEarthVertex, L:0x08166080.c:2375-2470, W: y −0x800): a flat square per cell at
-  // y = −0x800 (−8 cells) over the whole division, normal +y, uv (gx, gz)·cs/64, colour 0xff808080, earthMaterial
+  // the underground earth plane (createEarthVertex, L:0x08166080.c:2375-2470, W: y âˆ’0x800): a flat square per cell at
+  // y = âˆ’0x800 (âˆ’8 cells) over the whole division, normal +y, uv (gx, gz)Â·cs/64, colour 0xff808080, earthMaterial
   void earthPlane() {
     size_t firstIndex = out.indices.size();
     std::vector<int32_t> map(size_t((n + 1) * (n + 1)), -1);
@@ -394,8 +408,8 @@ struct Builder {
     finishGroup(kEarth, firstIndex);
   }
 
-  // outward-facing walls from the terrain down to −96 m on the map's border sides (§8.1). A tunnel division of the
-  // underground view clamps their top to −0x800 and adds inward-facing walls from the terrain down on its sides
+  // outward-facing walls from the terrain down to âˆ’96 m on the map's border sides (Â§8.1). A tunnel division of the
+  // underground view clamps their top to âˆ’0x800 and adds inward-facing walls from the terrain down on its sides
   // towards divisions without tunnels (L:0x08166080.c:309-345, 4250-4537)
   void edges() {
     size_t firstIndex = out.indices.size();
@@ -440,8 +454,8 @@ struct Builder {
     finishGroup(kEdge, firstIndex);
   }
 
-  // the water-edge curtain (§7.3, L:0x08166080.c:4684-4979): on the map's border sides, a vertical face per water cell
-  // along the side from the sea floor (min(h, −0x140) at each corner) up to the water level, normal outward, colour
+  // the water-edge curtain (Â§7.3, L:0x08166080.c:4684-4979): on the map's border sides, a vertical face per water cell
+  // along the side from the sea floor (min(h, âˆ’0x140) at each corner) up to the water level, normal outward, colour
   // 0xff808080, uv0.x = 1 on the top row only (waterEdge.vertex waves it); waterEdgeMaterial is blended and two-sided.
   // Normal view only (the underground view has no water bit).
   void waterEdges() {
@@ -494,11 +508,11 @@ struct Builder {
     finishGroup(kWaterEdge, firstIndex);
   }
 
-  // foundation walls (§8.3, L:0x08166080.c:3737-4249; createBaseVertex L:0x08165b90): every visible ENABLE_BASE item of
+  // foundation walls (Â§8.3, L:0x08166080.c:3737-4249; createBaseVertex L:0x08165b90): every visible ENABLE_BASE item of
   // the division whose ground is not flat at its height (gsGridItem::fixY's flag 0x800, L:0x08187760.c:37-109) gets
   // strips along its footprint, at each perimeter grid point from the ground (clamped cell height) up to the item's y:
   // the four diagonal cuts (item diagonals nibbles 0..3), then the straight sides between them. Normals face away from
-  // the item when it stands above the ground and towards it when it is sunk; uv (u along the side, v = −y/1024)
+  // the item when it stands above the ground and towards it when it is sunk; uv (u along the side, v = âˆ’y/1024)
   void baseWalls() {
     if (!tc || index < 0 || size_t(index) >= tc->divisionItems.size()) return;
     size_t firstIndex = out.indices.size();
@@ -514,7 +528,7 @@ struct Builder {
       if (!gridItemVisible(g, *tc, i, view)) continue;
       ItemFootprint fp = itemFootprint(tp.width, tp.length, tp.diagonals, it.orient);
       const int x0 = it.x, z0 = it.z, sx = fp.sx, sz = fp.sz, y = it.y + heightShift;
-      // fixY: inside the map, the min and max of the footprint's (sx+1)·(sz+1) points against y
+      // fixY: inside the map, the min and max of the footprint's (sx+1)Â·(sz+1) points against y
       if (x0 < 0 || z0 < 0 || x0 + sx > W() || z0 + sz > L()) continue;
       int mx = std::min(sx, W() - x0 - 1), mz = std::min(sz, L() - z0 - 1), lo = 0x7fff, hi = -0x8000;
       for (int z = 0; z <= mz; ++z)
@@ -570,7 +584,7 @@ struct Builder {
     corners.resize(size_t((n + 1) * (n + 1)));
     for (int lz = 0; lz <= n; ++lz)
       for (int lx = 0; lx <= n; ++lx) corners[size_t(lz * (n + 1) + lx)] = makeCorner(dx + lx, dz + lz);
-    // view bits (§6): 2 = the terrain surface (yards and fields only with 0x20, else all earth), else the
+    // view bits (Â§6): 2 = the terrain surface (yards and fields only with 0x20, else all earth), else the
     // underground earth plane; 4 = water. Port: the plane in both LODs (the original builds it in lod 0 only).
     if (view & 2) {
       if (view & 0x20)
@@ -738,7 +752,7 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
     for (int r = 0; r < tc.rows; ++r)
       for (int c = 0; c < tc.cols; ++c) {
         GridDivision& dv = tc.divisions[size_t(r * tc.cols + c)];
-        // mesh position (§1): ((DX − ((W−n)>>1))·cs, 0, (DZ − ((L−n)>>1))·cs)
+        // mesh position (Â§1): ((DX âˆ’ ((Wâˆ’n)>>1))Â·cs, 0, (DZ âˆ’ ((Lâˆ’n)>>1))Â·cs)
         Vec3 p{(c * tc.n - ((g.width - tc.n) >> 1)) * cs, 0, (r * tc.n - ((g.length - tc.n) >> 1)) * cs};
         dv.world = translation(p);
         dv.center = p;
@@ -752,7 +766,7 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
                                          : group >= kField && group < kWater ? kSurfaceField
                                          : group == kWater ? kSurfaceWater : kSurfaceOther;
     }
-    // the tool highlights (terrain.md §5: positiveMaterial / negativeMaterial, selection.shader decals)
+    // the tool highlights (terrain.md Â§5: positiveMaterial / negativeMaterial, selection.shader decals)
     // and the data layer of the catchment circles (dataMaterial, selection/data.shader decal)
     for (const char16_t* key : {u"positiveMaterial", u"negativeMaterial", u"dataMaterial"}) {
       Object* m = nullptr;
@@ -785,6 +799,161 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
 // port curved roads (engine/curve_roads.h): every curve in one world-space mesh of the small road's own materials
 // (road_small_basic: asphalt, markings, walkways), rebuilt when they change, and the curve tool's preview tinted green
 // (fits) or red; the surface map learns their asphalt and pavements for the mods' shader hooks
+// port: the OSM import's satellite picture on the ground (engine/osm.h GroundOverlay; owner's request 2026-11-07: in
+// the editor, shown with a map button by the minimap): one mesh over the cells whose ground is drawn (not those under
+// the cover of items and curves), 0.03 units over the terrain and pulled forward a little (polygon offset), so the
+// ground shows it and the streets' asphalt (0.05 over the ground levelled under it) and all else on the ground cover
+// it; the picture unlit (emission only) and three quarters opaque. Rebuilt with a new picture, a map load, map edits
+// (items, curves) or changed heights (checked every 30 frames while shown).
+void collectGroundOverlay(Display& d, GridObj* grid, std::vector<DrawItem>& items) {
+  struct State {
+    uint32_t texture = 0;
+    uint64_t version = ~0ull, generation = ~0ull, heights = 0, items = ~0ull, curves = ~0ull;
+    GpuMesh mesh;
+    bool built = false;
+    int frames = 0;
+    std::vector<GpuMaterial> materials;
+  };
+  static State st;
+  const GroundOverlay& o = groundOverlay();
+  const GridData& g = *grid->data;
+  if (!o.visible || o.bgra.empty() || o.generation != grid->generation || g.height.empty()) return;
+  auto hashHeights = [&]() {
+    uint64_t h = 1469598103934665603ull;
+    for (int16_t v : g.height) h = (h ^ uint16_t(v)) * 1099511628211ull;
+    return h;
+  };
+  bool rebuild = !st.built || st.version != o.version || st.generation != grid->generation || st.items != grid->itemsVersion ||
+                 st.curves != grid->curvesVersion;
+  if (!rebuild && ++st.frames >= 30) {
+    st.frames = 0;
+    rebuild = hashHeights() != st.heights;
+  }
+  if (rebuild) {
+    if (st.version != o.version || !st.texture) {  // the picture
+      st.texture = d.r2d().createTextureMipmapped(o.bgra.data(), o.width, o.height, false, true, st.texture);
+      GpuMaterial m;
+      m.flags = kMatDiffuseMap | kMatAlphaBlend | kMatNoShadow;
+      m.textures = {st.texture};
+      for (int k = 0; k < 3; ++k) m.ambient[k] = m.diffuse[k] = 0, m.emission[k] = 1;
+      m.ambient[3] = m.diffuse[3] = 1;
+      m.depthOffset = -0.3f;
+      m.surfaceClass = kSurfaceOverlay;
+      st.materials = {m};
+    }
+    if (st.built) d.r3d().destroy(st.mesh);
+    st.built = false;
+    const int W = g.width, L = g.length;
+    const float cs = g.cellSize;
+    MeshData m;
+    m.positions.reserve(size_t(W + 1) * size_t(L + 1) * 3);
+    for (int z = 0; z <= L; ++z)
+      for (int x = 0; x <= W; ++x) {
+        const int hx = std::min(x, W - 1), hz = std::min(z, L - 1);
+        m.positions.insert(m.positions.end(), {(float(x) - W * 0.5f) * cs, float(g.height[size_t(hz) * size_t(W) + size_t(hx)]) * cs / 256.0f + 0.03f,
+                                               (float(z) - L * 0.5f) * cs});
+        m.normals.insert(m.normals.end(), {0.0f, 1.0f, 0.0f});
+        m.uv0.insert(m.uv0.end(), {float(x) / float(W), float(z) / float(L)});
+      }
+    for (int z = 0; z < L; ++z)
+      for (int x = 0; x < W; ++x) {
+        const size_t ci = size_t(z) * size_t(W) + size_t(x);
+        if ((g.flags[ci] & 0x0F00) || (ci < g.curveCover.size() && g.curveCover[ci])) continue;  // no ground drawn there
+        const uint32_t a = uint32_t(z * (W + 1) + x), b = a + 1, c = a + uint32_t(W + 1), e = c + 1;
+        m.indices.insert(m.indices.end(), {a, c, b, b, c, e});
+      }
+    Submesh sm;
+    sm.vertexCount = uint32_t(m.vertexCount());
+    sm.indexCount = uint32_t(m.indices.size());
+    m.submeshes = {sm};
+    m.radius = 1e6f;
+    st.mesh = d.r3d().upload(m);
+    st.built = true;
+    st.version = o.version, st.generation = grid->generation, st.heights = hashHeights(), st.frames = 0;
+    st.items = grid->itemsVersion, st.curves = grid->curvesVersion;
+  }
+  DrawItem it;
+  it.mesh = &st.mesh;
+  it.materials = &st.materials;
+  it.alpha = o.opacity;
+  it.surfaceClass = kSurfaceOverlay;
+  items.push_back(it);
+}
+
+// the footpath texture with its grass made transparent (owner 2026-11-15: footpaths without grass beneath them, the
+// ground around them showing); the gravel stays.
+// 0 when the texture cannot be read
+// paved: 1 the same path in light concrete slabs with a darker kerb along its edge (on asphalt and paving; owner
+// 2026-11-15: footpaths on asphalt should look nicer), 0 the gravel
+uint32_t keyedFootpathTexture(VM& vm, int paved = 0) {
+  static uint32_t tex[2] = {0, 0};
+  static bool tried = false;
+  if (tried) return tex[paved & 1];
+  tried = true;
+  std::vector<uint8_t> file;
+  if (!vm.vfs().read("metro/objects/alleys/footpath.dds", file)) return 0;
+  Image img;
+  std::string err;
+  std::vector<uint8_t> rgba;
+  int w = 0, h = 0;
+  if (!parseDds(file, img, &err) || !decodeRgba(img, 0, rgba, w, h)) return 0;
+  // grass and the grass-dirt mix at the path edge are low in blue (grass ~ 49 63 16, edge ~ 63 55 30, gravel ~ 74 66 49):
+  // alpha by blue against the brighter of red and green, 0 below 0.40, 1 above 0.62 (smooth); a key on green leading
+  // left a dark olive rim (owner 2026-11-15: "still green edges")
+  for (size_t i = 0; i + 3 < rgba.size(); i += 4) {
+    const float r = rgba[i], gr = rgba[i + 1], b = rgba[i + 2];
+    const float t = std::clamp((b / std::max({r, gr, 1.0f}) - 0.40f) / 0.22f, 0.0f, 1.0f);
+    rgba[i + 3] = uint8_t(255.0f * t * t * (3.0f - 2.0f * t));
+  }
+  // the paved one: the gravel path's outline smoothed (its alpha blurred over 7 texels, cut at a half: a clean edge
+  // instead of the gravel's fraying, owner 2026-11-15), slabs about 0.4 units with joints, a narrow kerb line inside
+  // the edge
+  std::vector<float> soft(size_t(w) * size_t(h));
+  for (size_t i = 0; i < soft.size(); ++i) soft[i] = rgba[i * 4 + 3] / 255.0f;
+  {
+    const int R = 7;
+    std::vector<float> tmp(soft.size());
+    for (int pass = 0; pass < 2; ++pass) {
+      for (int y = 0; y < h; ++y)  // along x (wrapping: the texture repeats)
+        for (int x = 0; x < w; ++x) {
+          float acc = 0;
+          for (int k = -R; k <= R; ++k) acc += soft[size_t(y) * size_t(w) + size_t((x + k + w) % w)];
+          tmp[size_t(y) * size_t(w) + size_t(x)] = acc / float(2 * R + 1);
+        }
+      for (int y = 0; y < h; ++y)  // along y
+        for (int x = 0; x < w; ++x) {
+          float acc = 0;
+          for (int k = -R; k <= R; ++k) acc += tmp[size_t((y + k + h) % h) * size_t(w) + size_t(x)];
+          soft[size_t(y) * size_t(w) + size_t(x)] = acc / float(2 * R + 1);
+        }
+    }
+  }
+  std::vector<uint8_t> slabs(rgba);
+  auto hash = [](uint32_t v) {
+    v ^= v >> 16, v *= 0x7feb352d, v ^= v >> 15, v *= 0x846ca68b, v ^= v >> 16;
+    return v;
+  };
+  const int cell = std::max(4, w / 32);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      uint8_t* q = slabs.data() + (size_t(y) * size_t(w) + size_t(x)) * 4;
+      const float a = soft[size_t(y) * size_t(w) + size_t(x)];
+      const int sx = (x + ((y / cell) & 1) * cell / 2) / cell, sy = y / cell;  // a running bond
+      const bool joint = (x + ((y / cell) & 1) * cell / 2) % cell == 0 || y % cell == 0;
+      const float shade = 0.92f + 0.08f * float(hash(uint32_t(sx) * 92821u ^ uint32_t(sy) * 68917u) & 255) / 255.0f;
+      float r = 0.63f * shade, g = 0.62f * shade, b = 0.59f * shade;
+      if (joint) r *= 0.78f, g *= 0.78f, b *= 0.78f;
+      if (a < 0.58f) r = g = 0.50f, b = 0.49f;  // the kerb line along the edge
+      q[0] = uint8_t(r * 255), q[1] = uint8_t(g * 255), q[2] = uint8_t(b * 255);
+      const float e = std::clamp((a - 0.46f) / 0.04f, 0.0f, 1.0f);  // the edge, cut at a half
+      q[3] = uint8_t(255.0f * e);
+    }
+  for (int k = 0; k < 2; ++k) {
+    tex[k] = display()->r2d().createTextureMipmapped((k ? slabs : rgba).data(), w, h, true);
+  }
+  return tex[paved & 1];
+}
+
 void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vector<DrawItem>& items) {
   GridData& g = *grid->data;
   if (g.curves.empty() && !grid->hasCurvePreview && !tc.curvesBuilt && !tc.curvePreviewBuilt) return;
@@ -792,7 +961,8 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
     tc.curvesVersion = grid->curvesVersion;
     if (tc.curvesBuilt) d.r3d().destroy(tc.curves);
     if (tc.curvePreviewBuilt) d.r3d().destroy(tc.curvePreview);
-    tc.curvesBuilt = tc.curvePreviewBuilt = false;
+    if (tc.pathsBuilt) d.r3d().destroy(tc.paths);
+    tc.curvesBuilt = tc.curvePreviewBuilt = tc.pathsBuilt = false;
     // a template's first material in tc.materials and its object (its type joins the map when none of its items is
     // there yet: a map with curves but no small road or tram track)
     auto templateOf = [&](const std::string& name, ObjectObj** object) {
@@ -833,7 +1003,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       LOG_WARN("curved roads: no template road_small_basic, not drawn");
     } else {
       bool tram = false;
-      for (const CurveRoad& c : g.curves) tram = tram || (c.ends & 4);
+      for (const CurveRoad& c : g.curves) tram = tram || (c.ends & 4) || curveIsTramBed(c.kind);
       if (grid->hasCurvePreview) tram = tram || (grid->curvePreview.ends & 4);
       int tramBase = tram ? templateOf("tram_small_basic", nullptr) : -1;
       auto upload = [&](MeshData& m, GpuMesh& out, bool& built) {
@@ -859,8 +1029,22 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (kept <= 0.05f) return;
         CurvePieces cp = curvePieces(c, kept);
         std::vector<CurveSample> shape = curveShape(c);
-        // first / last: another piece at that end (a bridge's abutment, a tunnel's portal), turned round (side −1) when
-        // its −x side faces the curve's end
+        // a footpath's end at a junction (trimmed) lower than the junction's node rises to the node's height at the
+        // mouth, easing back over 3 units: the junction's fill never goes under its node (curve_roads.cpp,
+        // buildFootpathJunction), and a step between the two cast a dark line across the path (2026-11-16)
+        if (c.kind == 3 && (t0 > 0 || t1 > 0) && shape.size() >= 2) {
+          const float L = shape.back().s, B = 3.0f;
+          const float lift0 = t0 > 0 ? std::max(0.0f, c.y0 - curveAt(shape, t0).p.y) : 0.0f;
+          const float lift1 = t1 > 0 ? std::max(0.0f, c.y1 - curveAt(shape, L - t1).p.y) : 0.0f;
+          auto fade = [&](float d) {
+            const float x = std::clamp(d / B, 0.0f, 1.0f);
+            return 1.0f - x * x * (3.0f - 2.0f * x);
+          };
+          if (lift0 > 0 || lift1 > 0)
+            for (CurveSample& k : shape) k.p.y += std::max(lift0 * fade(k.s - t0), lift1 * fade(L - t1 - k.s));
+        }
+        // first / last: another piece at that end (a bridge's abutment, a tunnel's portal), turned round (side âˆ’1) when
+        // its âˆ’x side faces the curve's end
         struct EndPiece {
           const char* name = nullptr;
           float side = 1.0f;
@@ -903,7 +1087,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         };
         const size_t before = m.positions.size();
         {
-          // a bridge's ends on land (not on another bridge curve) take the kind's end span: the abutment on its −x side
+          // a bridge's ends on land (not on another bridge curve) take the kind's end span: the abutment on its âˆ’x side
           // (bridge_*_end, as the game's bridge tool puts at a bridge's ends)
           EndPiece first, last;
           if (straight && c.bridge == 1) {
@@ -949,7 +1133,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
             LOG_INFO("curves:   s %4.1f cell %d,%d road %.1f ground top %.1f flags %04x", s, kx, kz, k.p.y, float(top) * g.cellSize / 256.0f, fl);
           }
         }
-        if (c.ends & 4) pieces(pf.tram);
+        if ((c.ends & 4) && !curveIsTramBed(c.kind)) pieces(pf.tram);  // (a tram bed's tram piece: its lanes only)
         if (straight && c.bridge == 1 && curveBridgePillar(c.kind)[0]) {  // a bridge: its pillar under every 24 units (between the ends),
                                                          // its foot 8 cells under the deck as the span's own parts
           ObjectObj* po = nullptr;
@@ -1005,6 +1189,21 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         if (c.ends & 4) deadEnd(curveTramDeadend(c.kind), false);
       };
       auto curveMesh = [&](const CurveRoad& c, MeshData& m, float t0, float t1, bool noCaps = false) {
+        if (c.bridge == 3 && curveIsTrack(c.kind)) {  // a level crossing's rails let into the road (OSM import; 2 until
+                                                      // main's tunnels took it): the street tram strip just over the
+                                                      // asphalt, no bed
+          ObjectObj* o = nullptr;
+          int b = templateOf("tram_small_basic", &o);
+          const float kept = curveLength(c) - t0 - t1;
+          if (b < 0 || !o || !o->data || kept <= 0.05f) return;
+          CurvePieces cp = curvePieces(c, kept);
+          std::vector<CurveSample> shape = curveShape(c);
+          const MeshData& sm = slicedOf(o->data.get());
+          for (int i = 0; i < cp.count; ++i)
+            appendBentMesh(sm, b, shape, t0 + (float(i) + 0.5f) * curveProfile(c.kind).piece * cp.stretch, 1.0f, 0.0f, m,
+                           cp.stretch, -0.18f);
+          return;
+        }
         if (c.bridge == 2 && curveTunnelPiece(c.kind)[0]) {  // a tunnel: the tube bent along it, portals at its open ends
           bentRoad(c, m, t0, t1, curveTunnelPiece(c.kind));
           return;
@@ -1044,12 +1243,32 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         buildCurveMesh(c, noCaps ? CurveEnds{} : curveFreeEnds(g, c), base, base + 1, base + 2, m, tramBase, t0, t1, meet0, meet1);
         stops();
       };
-      MeshData all;
+      MeshData all, paths;  // paths: the footpaths (their own transparent-grass material)
       std::vector<CurveJunction> junctions = findCurveJunctions(g);
+      const bool keyed = keyedFootpathTexture(vm) != 0;
+      // a footpath over paving or asphalt for half its length or more: the paved look (material 1 of tc.pathMaterials)
+      std::vector<char> pavedPath(g.curves.size(), 0);
+      for (size_t i = 0; i < g.curves.size(); ++i) {
+        const CurveRoad& c = g.curves[i];
+        if (c.kind != 3) continue;
+        int on = 0, n = 0;
+        for (const CurveSample& sm : sampleCurve(c, 1.5f)) {
+          const int x = int(std::floor(sm.p.x / g.cellSize + g.width * 0.5f)), z = int(std::floor(sm.p.z / g.cellSize + g.length * 0.5f));
+          if (x < 0 || z < 0 || x >= g.width || z >= g.length) continue;
+          ++n;
+          const uint16_t f = g.flags[size_t(z) * size_t(g.width) + size_t(x)];
+          if ((f & 0x48) == 0x8 || g.paintEdges.count(paintEdgeKey(x, z))) ++on;
+        }
+        pavedPath[i] = n && on * 2 >= n;
+      }
       for (size_t i = 0; i < g.curves.size(); ++i) {
         float t0, t1;
         curveTrims(junctions, int(i), t0, t1);
-        curveMesh(g.curves[i], all, t0, t1);
+        const bool path = keyed && g.curves[i].kind == 3;
+        const size_t before = paths.submeshes.size();
+        curveMesh(g.curves[i], path ? paths : all, t0, t1);
+        if (path)
+          for (size_t k = before; k < paths.submeshes.size(); ++k) paths.submeshes[k].material = pavedPath[i] ? 1 : 0;
       }
       // junctions: roads fill with the small road's asphalt (one texture for all road kinds) and its pavement, footpaths
       // with the footpath; the fill's texture plane is fitted to the template's own mesh once
@@ -1066,7 +1285,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
         int fb = -1;
         if (j.kind == 3) {
           const PlanarUV& uv = fillOf(curveProfile(3).straight, 0, fb);
-          buildJunctionMesh(j, fb, uv, -1, all);
+          const size_t before = paths.submeshes.size();
+          buildJunctionMesh(j, fb, uv, -1, keyed ? paths : all);
+          int paved = 0;  // the junction: paved when most of its arms are
+          for (const CurveArm& arm : j.arms) paved += pavedPath[size_t(arm.curve)] ? 1 : -1;
+          if (keyed)
+            for (size_t k = before; k < paths.submeshes.size(); ++k) paths.submeshes[k].material = paved > 0 ? 1 : 0;
         } else {
           const PlanarUV& uv = fillOf("road_small_basic", 0, fb);
           buildJunctionMesh(j, fb, uv, base + 2, all, base + 1, tramBase);
@@ -1074,6 +1298,22 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
       }
       if (tc.surfaceMap && all.vertexCount()) surfaceMapPaint(*tc.surfaceMap, all, Mat4(), tc.materials, true);
       upload(all, tc.curves, tc.curvesBuilt);
+      if (paths.vertexCount()) {  // every footpath part with the footpath material copy (one material, index 0)
+        int fp = templateOf(curveProfile(3).straight, nullptr);
+        if (fp >= 0 && size_t(fp) < tc.materials.size()) {
+          GpuMaterial m = tc.materials[size_t(fp)];
+          m.flags |= kMatAlphaTest;
+          GpuMaterial mp = m;
+          if (!m.textures.empty()) m.textures[0] = keyedFootpathTexture(vm, 0), mp.textures[0] = keyedFootpathTexture(vm, 1);
+          m.depthOffset = mp.depthOffset = -3.0f;
+          tc.pathMaterials = {m, mp};
+          // (owner 2026-11-15: the paths stood too high) 0.12 down, 0.13 over the ground levelled under them, pulled
+          // forward (0.2 down clipped into ground the levelling had not reached)
+          for (size_t v = 1; v < paths.positions.size(); v += 3) paths.positions[v] -= 0.12f;
+          if (tc.surfaceMap) surfaceMapPaint(*tc.surfaceMap, paths, Mat4(), tc.pathMaterials, true);
+          upload(paths, tc.paths, tc.pathsBuilt);
+        }
+      }
       if (grid->hasCurvePreview) {
         MeshData p;
         bool ring = !grid->curvePreviewMore.empty();
@@ -1091,6 +1331,12 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
     DrawItem it;
     it.mesh = &tc.curves;
     it.materials = &tc.materials;
+    items.push_back(it);
+  }
+  if (tc.pathsBuilt && !tc.paths.parts.empty()) {
+    DrawItem it;
+    it.mesh = &tc.paths;
+    it.materials = &tc.pathMaterials;
     items.push_back(it);
   }
   if (grid->hasCurvePreview && tc.curvePreviewBuilt && !tc.curvePreview.parts.empty()) {
@@ -1189,6 +1435,8 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     return true;
   };
   float reach = std::min(kCullDistance * viewScale, farZ), freeDistance = kFreeDistance * viewScale;
+  if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td)  // the debug camera high up sees the whole map
+    reach = farZ, freeDistance = std::max(freeDistance, farZ * 1.5f);
   // a division's terrain and items of one LOD are built together and shown only together: terrain without its items
   // has holes where the items cover it (fixGrid), which showed as glitches at the screen edges while panning
   auto build = [&](GridDivision& dv, int index, int lod) {
@@ -1272,7 +1520,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       int lod = dist < kLod0Distance * detailScale ? 0 : 1;
       auto complete = [&](int k) { return dv.terrainBuilt[k] && dv.itemsBuilt[k]; };
       // bounds before the meshes exist: the division square from below the ground up to tall buildings (generous);
-      // casters are taken with the radius doubled (shadows.md §4.3); slightly outside the view is built ahead
+      // casters are taken with the radius doubled (shadows.md Â§4.3); slightly outside the view is built ahead
       Vec3 gc = dv.center + Vec3{0, 20.0f, 0};
       float gr = dv.radius + 60.0f;
       bool near = visible(gc, 2.0f * gr), ahead = visible(gc, gr + kPrefetchMargin * viewScale);
@@ -1329,6 +1577,8 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     items.push_back(it);
   }
   collectCurves(d, vm, grid, tc, items);  // port curved roads
+  collectGroundOverlay(d, grid, items);    // port OSM import: the satellite picture on the ground
+  collectProcBuildings(d, vm, grid, items);  // port: procedural buildings
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
   for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame

@@ -47,6 +47,9 @@ class Renderer2D {
   float anisotropy = 0;
   void setAnisotropy(float a);
   uint32_t createTextureBGRA(const uint8_t* bgra, int w, int h);
+  // A generated 8-bit picture (rows top first, 4 bytes a texel; rgba: R G B A order, else B G R A) with a box-filtered
+  // mip chain made here, trilinear and anisotropic like the game's textures; clamp: edges clamped instead of repeated
+  uint32_t createTextureMipmapped(const uint8_t* px, int w, int h, bool rgba, bool clamp = false, uint32_t reuse = 0);
   void destroyTexture(uint32_t tex);
 
   // Frame: the back buffer size in pixels; clears to 'argb' every frame (the engine cleared only on demand).

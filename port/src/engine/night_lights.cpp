@@ -634,6 +634,13 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
       if (on <= 0 || edge < t.radius) continue;
       splats.push_back({t.pos, {1, 0, 0}, {0, 0, 1}, 0.0f, t.radius, 0.0f, 0.75f * on, t.pos.y - 0.6f, 1.0f});
     }
+  // the other parts' round lights (extraNightLights: the traffic lights' glow on the street)
+  for (const ExtraNightLight& e : extraNightLights()) {
+    float edge = std::min({e.pos.x - ox, ox + kCarMapSize - e.pos.x, e.pos.z - oz, oz + kCarMapSize - e.pos.z});
+    float on = smooth(0.1f, 0.4f, night01);
+    if (on <= 0 || edge < e.radius) continue;
+    splats.push_back({e.pos, {1, 0, 0}, {0, 0, 1}, 0.0f, e.radius, 0.0f, e.gain * on, e.pos.y, e.warm});
+  }
   if (splats.empty() || st.failed) return;
   if (!st.program) {
     std::string err;
@@ -682,6 +689,11 @@ void addVehicleLights(Display& d, VM& vm, GridObj* grid, const LampCache& lc, Sc
 }
 
 }  // namespace
+
+std::vector<ExtraNightLight>& extraNightLights() {
+  static std::vector<ExtraNightLight> v;
+  return v;
+}
 
 // ---- windows ----
 

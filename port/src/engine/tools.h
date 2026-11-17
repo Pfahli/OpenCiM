@@ -130,6 +130,17 @@ void registerCurveTool(script::VM& vm);
 
 // softenArea(cx, cz, r, 1) (L:0x0818cfb0): one pass of the 5-tap mean over the unlocked corners of a disc (tool_tracks)
 void toolSoftenArea(GridObj* grid, int cx, int cz, int r);
+// port (OpenStreetMap import): one drag of the road tool from block (x0, z0) to block (x1, z1) without the mouse, as
+// editMode (kGridModeLayRoad / kGridModeLayAlley) and toolMode (the road kind) would lay it; committed only when the
+// whole drag has templates and no conflicts. The player's tool fields are restored afterwards.
+bool toolLayRoad(script::VM& vm, ControlObj* player, GridObj* grid, int editMode, int toolMode, int x0, int z0, int x1,
+                 int z1);
+// port (OpenStreetMap import): a whole road network at once. blocks: block corner (multiples of 4 cells) → connection
+// mask, one byte per road kind (small, large, avenue, express; the 8 direction bits as the road tool's); neighbours
+// must carry the matching opposite bits. Masks without a game piece lose connections (on both sides) until one fits.
+// The pieces without conflicts are added (not recorded on the timeline: mounted gets the new items). Returns their count.
+int toolBuildRoadNetwork(script::VM& vm, ControlObj* player, GridObj* grid, std::map<std::pair<int, int>, uint32_t> blocks,
+                         std::vector<uint32_t>& mounted);
 
 // gsGridPlayer::createTrackBlock / createRoadBlock (L:0x08195400 / L:0x08190700): the preview pieces of track or road
 // for one cell and connection mask, as the laying tools make them and as placeObject makes a placed object's road and

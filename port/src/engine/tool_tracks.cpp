@@ -1363,13 +1363,15 @@ bool checkConflicts(Ctx& c) {
 // never go diagonal. The elevated ramp lies two cells over the ground (or over the item under the cursor). One
 // createRoadBlock per block with the connections back and forward; then the slopes (0x100 per block), the parts and
 // the conflicts.
+void layRoadTo(Ctx& c, int ex, int ez, int y);
+
 void moveLayRoad(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   Ctx c(vm, player, grid);
   ToolState& t = c.t;
   ToolPick pick = toolPick(vm, player, mx, my, false);
   if (!pick.hit) return;
-  const int T = roadType(c), S = roadShift(T), B = T == 1 ? 1 : 4;
-  const bool wide = T >= 5, avenue = T == 6;
+  const int T = roadType(c), B = T == 1 ? 1 : 4;
+  const bool wide = T >= 5;
   int y = kNoY;
   if (T == 4) {  // elevated ramp
     y = pick.y;
@@ -1386,6 +1388,17 @@ void moveLayRoad(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) 
     else ez = (pick.cellZ + 4 + (fz < 0 ? -8 : 0)) & ~3;
   }
   if (ex == t.cellX && ez == t.cellZ && y == t.cellY) return;
+  layRoadTo(c, ex, ez, y);
+}
+
+// the drag's preview from the start block (t.start*, or this block when no drag is in progress) to block (ex, ez)
+void layRoadTo(Ctx& c, int ex, int ez, int y) {
+  VM& vm = c.vm;
+  GridObj* grid = c.grid;
+  ControlObj* player = c.player;
+  ToolState& t = c.t;
+  const int T = roadType(c), S = roadShift(T), B = T == 1 ? 1 : 4;
+  const bool wide = T >= 5, avenue = T == 6;
   gridEditBegin(vm, grid);
   if (!t.inProgress) t.startX = ex, t.startZ = ez, t.startY = y;
   clearPreview(c);
@@ -1774,6 +1787,241 @@ void cancelLaying(VM& vm, ControlObj* player, GridObj* grid) {
 
 void toolSoftenArea(GridObj* grid, int cx, int cz, int r) {
   if (grid && grid->data) softenArea(grid, cx, cz, r);
+}
+
+int toolBuildRoadNetwork(VM& vm, ControlObj* player, GridObj* grid, std::map<std::pair<int, int>, uint32_t> blocks,
+                         std::vector<uint32_t>& mounted) {
+  if (!grid || !grid->data || !player) return 0;
+  auto& fv = player->fieldValues;
+  auto keep = [&](const char16_t* k) { auto it = fv.find(k); return it == fv.end() ? Value() : it->second; };
+  Value oldEdit = keep(u"editMode"), oldMode = keep(u"toolMode"), oldType = keep(u"toolType"), oldSize = keep(u"toolSize");
+  fv[u"editMode"] = Value::integer(kGridModeLayRoad);
+  fv[u"toolMode"] = Value::integer(0);
+  fv[u"toolType"] = Value::integer(0);
+  fv[u"toolSize"] = Value::integer(0);
+  Ctx c(vm, player, grid);
+  ToolState& t = c.t;
+  t.newItems.clear();
+  t.replaced.clear();
+  static const int kType[4] = {2, 5, 6, 7};  // small, large, avenue, express: connection byte k of the mask
+  auto stepOf = [](int kind, uint32_t bit) {
+    int dz = 0, dx = 0;
+    bitStep(bit, dz, dx);
+    int s = kind == 0 ? 4 : (dx && dz) ? 4 : 8;
+    return std::pair<int, int>{dx * s, dz * s};
+  };
+  auto edge = [&](int x, int z) {
+    return (x == 0 ? 0x40u : 0) | (x == c.g.width - 4 ? 4u : 0) | (z == c.g.length - 4 ? 0x10u : 0) | (z == 0 ? 1u : 0);
+  };
+  // the piece for a block's whole mask, trying the types of the kinds it holds (widest first)
+  auto make = [&](int x, int z, uint32_t m, Piece& out) {
+    uint32_t c2 = edge(x, z);
+    for (int k = 3; k >= 0; --k) {
+      if (!((m >> (8 * k)) & 0xff)) continue;
+      Piece p = c.createRoadItem(x, kNoY, z, m, c2, kType[k], 0, c2 ? 0x40000u : 0u);
+      if (p.t && !(p.flags() & kItemNegative)) {
+        out = p;
+        return true;
+      }
+    }
+    return false;
+  };
+  // masks without a piece lose connections (and their neighbours the matching ones) until every block has one
+  static const bool dbgNet = std::getenv("REGS_DEBUG_OSM") != nullptr;
+  std::set<std::pair<int, int>> dirty;
+  for (auto& [k, m] : blocks) dirty.insert(k);
+  auto cut = [&](std::pair<int, int> at, uint32_t bitMask) {  // removes connection bits here and at the neighbours
+    uint32_t& m = blocks[at];
+    for (int b = 0; b < 32; ++b) {
+      if (!((bitMask >> b) & 1) || !((m >> b) & 1)) continue;
+      m &= ~(1u << b);
+      int kind = b / 8;
+      uint32_t bit = 1u << (b % 8);
+      auto [dx, dz] = stepOf(kind, bit);
+      auto nb = std::pair<int, int>{at.first + dx, at.second + dz};
+      auto it = blocks.find(nb);
+      if (it != blocks.end()) {
+        it->second &= ~(rot(bit, 4) << (8 * kind));
+        dirty.insert(nb);
+      }
+    }
+  };
+  auto resolve = [&] {
+  for (int pass = 0; pass < 8 && !dirty.empty(); ++pass) {
+    std::set<std::pair<int, int>> now;
+    now.swap(dirty);
+    for (auto at : now) {
+      uint32_t m = blocks[at];
+      if (!m) continue;
+      Piece p;
+      if (make(at.first, at.second, m, p)) continue;
+      bool fixed = false;
+      for (int b = 0; b < 32 && !fixed; ++b)  // one connection less, the small roads' first
+        if ((m >> b) & 1) {
+          Piece q;
+          if (make(at.first, at.second, m & ~(1u << b), q)) {
+            cut(at, 1u << b);
+            fixed = true;
+          }
+        }
+      if (dbgNet) LOG_INFO("net: (%d,%d) mask %08x: no piece%s", at.first, at.second, m, fixed ? ", one connection less" : ", dropped");
+      if (!fixed) cut(at, m);  // nothing fits: the block goes
+    }
+  }
+  };
+  // the parts of the network that touch neither the largest part nor the map edge go (no floating streets)
+  auto prune = [&] {
+    std::map<std::pair<int, int>, int> comp;
+    std::vector<std::pair<size_t, bool>> info;
+    for (auto& [k, m] : blocks) {
+      if (!m || comp.count(k)) continue;
+      int id = int(info.size());
+      info.push_back({0, false});
+      std::vector<std::pair<int, int>> stack{k};
+      comp[k] = id;
+      while (!stack.empty()) {
+        auto at = stack.back();
+        stack.pop_back();
+        ++info[size_t(id)].first;
+        if (edge(at.first, at.second)) info[size_t(id)].second = true;
+        uint32_t mm = blocks[at];
+        for (int b = 0; b < 32; ++b) {
+          if (!((mm >> b) & 1)) continue;
+          auto [dx, dz] = stepOf(b / 8, 1u << (b % 8));
+          std::pair<int, int> nb{at.first + dx, at.second + dz};
+          auto it = blocks.find(nb);
+          if (it != blocks.end() && it->second && !comp.count(nb)) comp[nb] = id, stack.push_back(nb);
+        }
+      }
+    }
+    int largest = -1;
+    for (size_t i = 0; i < info.size(); ++i)
+      if (largest < 0 || info[i].first > info[size_t(largest)].first) largest = int(i);
+    for (auto& [k, m] : blocks) {
+      auto it = comp.find(k);
+      if (m && it != comp.end() && it->second != largest && !info[size_t(it->second)].second) m = 0;
+    }
+  };
+  resolve();
+  // build, find the pieces that collide (streets snapped close together), drop the weaker block of each spot (small
+  // roads and few connections first; its neighbours lose the connection), and build again until nothing collides
+  int placed = 0;
+  for (int iter = 0; iter < 10; ++iter) {
+    prune();
+    c.W.clear();
+    std::vector<std::pair<int, int>> pieceBlock;
+    gridEditBegin(vm, grid);
+    for (auto& [at, m] : blocks) {
+      if (!m) continue;
+      Piece p;
+      if (make(at.first, at.second, m, p)) c.W.push_back(p), pieceBlock.push_back(at);
+    }
+    size_t mainCount = c.W.size();  // (no checkRoadSlopes: it follows one drag in order; the import levels the ground)
+    for (size_t k = 0; k < c.W.size(); ++k) placeParts(c, k);
+    materialize(c);
+    gridEditEnd(vm, grid);
+    std::vector<std::pair<int, int>> bad;
+    for (size_t k = 0; k < mainCount; ++k)
+      if (c.W[k].live >= 0 && gridCheckConflict(vm, grid, uint32_t(c.W[k].live), {})) {
+        bad.push_back(pieceBlock[k]);
+        if (dbgNet && iter == 0) {
+          uint32_t i = uint32_t(c.W[k].live);
+          const auto& it = c.g.items[i];
+          std::string with;
+          for (uint32_t o : gridItemsNear(vm, grid, it.x - 8, it.z - 8, it.x + 8, it.z + 8))
+            if (o != i && !c.g.items[o].removed && gridItemsConflict(vm, grid, o, i))
+              with += " " + c.g.types[c.g.items[o].type] + "@" + std::to_string(c.g.items[o].x) + "," + std::to_string(c.g.items[o].z) + "/o" + std::to_string(c.g.items[o].orient);
+          LOG_INFO("net: block (%d,%d) %08x %s@%d,%d/o%d collides with%s", pieceBlock[k].first, pieceBlock[k].second, blocks[pieceBlock[k]], c.g.types[it.type].c_str(), it.x, it.z, it.orient, with.c_str());
+        }
+      }
+    if (dbgNet) LOG_INFO("net: pass %d: %zu pieces, %zu collide", iter, mainCount, bad.size());
+    if (bad.empty() || iter == 9) break;
+    auto rank = [&](std::pair<int, int> at) {
+      uint32_t m = blocks[at];
+      int kind = 0, n = 0;
+      for (int b = 0; b < 32; ++b)
+        if ((m >> b) & 1) kind = std::max(kind, b / 8), ++n;
+      return kind * 100 + n;
+    };
+    std::sort(bad.begin(), bad.end(), [&](auto x, auto y) { return rank(x) < rank(y); });
+    std::vector<std::pair<int, int>> cutNow;
+    for (auto at : bad) {
+      bool near = false;
+      for (auto o : cutNow)
+        if (std::abs(o.first - at.first) <= 8 && std::abs(o.second - at.second) <= 8) near = true;
+      if (near) continue;
+      cutNow.push_back(at);
+      cut(at, blocks[at]);
+    }
+    gridEditBegin(vm, grid);
+    clearPreview(c);
+    gridEditEnd(vm, grid);
+    resolve();
+  }
+  // commit what has no conflict with the map (as toolCommit, but piece by piece)
+  gridEditBegin(vm, grid);
+  grid->mountedCopies.clear();
+  std::vector<uint32_t> temps = t.newItems;
+  for (uint32_t i : temps) {
+    if (i >= c.g.items.size() || c.g.items[i].removed) continue;
+    gridSetSelected(vm, grid, i, false, false);
+    if (gridCheckConflict(vm, grid, i, {})) {
+      if (dbgNet) LOG_INFO("net: conflict %s at (%d,%d)", c.g.types[c.g.items[i].type].c_str(), c.g.items[i].x, c.g.items[i].z);
+      continue;
+    }
+    int m = gridMountObject(vm, grid, i);
+    if (m >= 0) mounted.push_back(uint32_t(m)), ++placed;
+  }
+  for (auto i = temps.rbegin(); i != temps.rend(); ++i)
+    if (*i < c.g.items.size() && !c.g.items[*i].removed) gridEditRemoveItem(vm, grid, *i);
+  grid->mountedCopies.clear();
+  gridEditEnd(vm, grid);
+  t.newItems.clear();
+  t.replaced.clear();
+  fv[u"editMode"] = oldEdit;
+  fv[u"toolMode"] = oldMode;
+  fv[u"toolType"] = oldType;
+  fv[u"toolSize"] = oldSize;
+  return placed;
+}
+
+bool toolLayRoad(VM& vm, ControlObj* player, GridObj* grid, int editMode, int toolMode, int x0, int z0, int x1, int z1) {
+  if (!grid || !grid->data || !player) return false;
+  auto& fv = player->fieldValues;
+  auto keep = [&](const char16_t* k) { auto it = fv.find(k); return it == fv.end() ? Value() : it->second; };
+  Value oldEdit = keep(u"editMode"), oldMode = keep(u"toolMode"), oldType = keep(u"toolType"), oldSize = keep(u"toolSize");
+  fv[u"editMode"] = Value::integer(editMode);
+  fv[u"toolMode"] = Value::integer(toolMode);
+  fv[u"toolType"] = Value::integer(0);
+  fv[u"toolSize"] = Value::integer(0);
+  ToolState& t = toolState(player);
+  t.newItems.clear();
+  t.replaced.clear();
+  t.inProgress = false;
+  bool ok = false;
+  {
+    Ctx c(vm, player, grid);
+    layRoadTo(c, x0, z0, kNoY);
+  }
+  t.inProgress = true;
+  {
+    Ctx c(vm, player, grid);
+    if (x1 != x0 || z1 != z0) layRoadTo(c, x1, z1, kNoY);
+    ok = !t.newItems.empty() && !checkConflicts(c);
+    for (uint32_t i : t.newItems)
+      if (i < c.g.items.size() && (c.g.items[i].flags & kItemNegative)) ok = false;
+  }
+  if (ok) finishLaying(vm, player, grid);
+  else cancelLaying(vm, player, grid);
+  t.inProgress = false;
+  t.cellX = t.cellZ = -1;
+  t.newItems.clear();
+  t.replaced.clear();
+  fv[u"editMode"] = oldEdit;
+  fv[u"toolMode"] = oldMode;
+  fv[u"toolType"] = oldType;
+  fv[u"toolSize"] = oldSize;
+  return ok;
 }
 
 void registerTrackTools(VM& vm) {

@@ -1,5 +1,7 @@
 #pragma once
 #include <filesystem>
+#include <string>
+#include <cstdint>
 #include <vector>
 
 namespace regs::engine {
@@ -19,5 +21,24 @@ DisplayMode platformCurrentDisplayMode();
 std::filesystem::path platformDocumentsFolder();
 // Explorer at a file (selected) or a folder (opened): the editor's template export and import
 void platformShowInExplorer(const std::filesystem::path& path, bool select);
+
+}  // namespace regs::engine
+
+namespace regs::engine {
+
+// HTTPS GET (or POST when body is given, as application/x-www-form-urlencoded) with the port's User-Agent; blocking,
+// safe to call from worker threads. Returns the HTTP status (0 when the connection failed) and fills out.
+int platformHttpRequest(const std::string& url, const std::string* postBody, std::vector<uint8_t>& out,
+                        std::string* error = nullptr);
+// a PNG or JPEG file → top-down BGRA bytes (Windows: WIC). False when it is no image the platform can decode.
+bool platformDecodeImage(const std::vector<uint8_t>& file, int& width, int& height, std::vector<uint8_t>& bgra);
+
+}  // namespace regs::engine
+
+namespace regs::engine {
+
+// The user's home region as the system knows it (Windows: the region setting, a country's centre); no network, no
+// location service. False when unknown.
+bool platformHomeRegion(double& lat, double& lon);
 
 }  // namespace regs::engine

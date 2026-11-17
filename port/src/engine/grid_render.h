@@ -82,6 +82,11 @@ struct TerrainCache {
   uint64_t curvesVersion = ~0ull;
   render::GpuMesh curves, curvePreview;
   bool curvesBuilt = false, curvePreviewBuilt = false;
+  // the footpath curves and their junctions in a mesh of their own, drawn with a copy of the footpath material whose
+  // grass is transparent (owner 2026-11-15: footpaths without grass beneath them; collectCurves)
+  render::GpuMesh paths;
+  bool pathsBuilt = false;
+  std::vector<render::GpuMaterial> pathMaterials;
 };
 
 // The view mode a division is built with (gsGridDivision::update, L:0x08166080.c:309-345): in the underground view

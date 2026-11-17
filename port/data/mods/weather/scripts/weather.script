@@ -871,6 +871,7 @@ event MAIN.$player.keyDown::["F9"]() {
   toggleTestDialog();
 }
 if (getenv("REGS_TEST_WEATHER_DIALOG") != "") toggleTestDialog();   // open from the start (screenshot tests)
+if (getenv("REGS_TEST_GROUND") != "") setGround(getenv("REGS_TEST_GROUND"));   // dry, wet, puddles or snow at once (screenshot tests)
 
 echo "weather: on (" + ($mode != "" ? "REGS_TEST_WEATHER=" + $mode : "seed " + string($seed)) + ")";
 if ($debug) logPlan($clock.date);

@@ -63,12 +63,15 @@ add_library(regs_engine STATIC
   src/engine/sky.cpp
   src/engine/night_lights.cpp
   src/engine/texture_upscale.cpp
+  src/engine/traffic_lights.cpp
   src/engine/interaction.cpp
   src/engine/tools.cpp
   src/engine/tool_objects.cpp
   src/engine/tool_templates.cpp
+  src/engine/osm.cpp
   src/engine/tool_curves.cpp
   src/engine/curve_roads.cpp
+  src/engine/proc_buildings.cpp
   src/engine/tool_terrain.cpp
   src/engine/tool_tracks.cpp
   src/engine/grid_save.cpp
@@ -287,6 +290,6 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32)
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
-  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 hid)
+  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid)
 endif()
 

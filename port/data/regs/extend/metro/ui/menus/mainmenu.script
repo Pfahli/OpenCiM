@@ -72,6 +72,7 @@ function showDialog($text, $inputText = false, $default = "", $items = null) {
   }
   if (!$inputText && $items != null && $text == $strings.$menu_loadMap_dialog) {
     $inDialog = true;
+    MAIN.$regsOsmPending = false;   // an OpenStreetMap area belongs only to a new map
     $regsBrowser = load "/regs/ui/mapbrowser.script";
     $regsBrowser.$folder = $regsMapFolder;
     $regsOk = $regsBrowser.run();
