@@ -393,11 +393,11 @@ function save() {
   }
 }
 
-// ---- "Image quality" in its own row above OK and Cancel: the port's image options page (regs/ui/quality.script),
+// ---- "Advanced settings" (the port's image options page, regs/ui/quality.script) on the left above OK,
 // opened over this one
 with ($regsQualityButton = MAIN.$ui.createButton($box.$content, 0, 0, 322, 32, $regs.$regs_quality_button, macro :: MAIN.$main.regsOpenQualityPage($box), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
   .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
   .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
   MAIN.$ui.setTitleFont(current);
-  .setRect(int(($box.$content.width - .width) * 0.5), $okButton.top - .height - 10, .width, .height);
+  .setRect($okButton.left, $okButton.top - .height - 10, .width, .height);  // left, over OK
 }

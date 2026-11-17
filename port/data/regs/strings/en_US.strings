@@ -49,8 +49,8 @@ $regs_saves_newFolder_dialog = "Name of the new folder:";
 $regs_game_button = "Game";
 $regs_game_title = "Game";
 // the settings menu's Image quality page (regs/ui/quality.script): TAA and render scale (docs/renderer/vulkan.md §9)
-$regs_quality_button = "Image quality";
-$regs_quality_title = "Image quality";
+$regs_quality_button = "Advanced settings";
+$regs_quality_title = "Advanced settings";
 $regs_q_perf_heading = "Resolution and antialiasing";
 $regs_q_perf_hint1 = "Below 100 %% the city is drawn smaller and scaled up: faster, softer.";
 $regs_q_perf_hint2 = "TAA belongs to ReGS; frame generation needs AMD FSR 3.1.";

@@ -49,8 +49,8 @@ $regs_saves_newFolder_dialog = "Name des neuen Ordners:";
 $regs_game_button = "Spiel";
 $regs_game_title = "Spiel";
 // Seite Bildqualität im Einstellungsmenü (regs/ui/quality.script): TAA und Renderauflösung
-$regs_quality_button = "Bildqualität";
-$regs_quality_title = "Bildqualität";
+$regs_quality_button = "Erweiterte Einstellungen";
+$regs_quality_title = "Erweiterte Einstellungen";
 $regs_q_perf_heading = "Auflösung und Kantenglättung";
 $regs_q_perf_hint1 = "Unter 100 %% wird die Stadt kleiner gezeichnet: schneller, weicher.";
 $regs_q_perf_hint2 = "TAA gehört zu ReGS, die Bildgenerierung braucht AMD FSR 3.1.";
