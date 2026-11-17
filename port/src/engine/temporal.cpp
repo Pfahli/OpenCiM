@@ -20,9 +20,10 @@ using namespace regs::render;
 namespace {
 
 struct TemporalState {
-  bool failed = false;
-  uint32_t taa = 0, upscale = 0;
-  RenderTarget input, history[2];
+  bool failed = false, aoFailed = false;
+  uint32_t taa = 0, upscale = 0, copy = 0, ao = 0, aoBlur = 0;
+  RenderTarget input, history[2], aoRaw, aoSmooth;
+  Mat4 drawnViewProj;   // the projection the scene was drawn with (jittered), for the occlusion's positions
   int current = 0;      // history[current] holds last frame's result
   bool valid = false;   // the history matches the view (size, a previous frame)
   int frame = 0;
@@ -46,11 +47,12 @@ float halton(int index, int base) {
   return r;
 }
 
-uint32_t postProgram(Display& d, script::VM& vm, const char* fragment) {
+// rays: with the ray-query additions (regs_Scene; Vulkan only)
+uint32_t postProgram(Display& d, script::VM& vm, const char* fragment, bool rays = false) {
   std::vector<uint8_t> vs, fs;
   if (!vm.vfs().read("regs/shaders/post.vertex", vs) || !vm.vfs().read(std::string("regs/shaders/") + fragment, fs)) return 0;
   std::string err;
-  uint32_t p = d.r3d().buildProgram(std::string(vs.begin(), vs.end()), std::string(fs.begin(), fs.end()), &err);
+  uint32_t p = d.r3d().buildProgram(std::string(vs.begin(), vs.end()), std::string(fs.begin(), fs.end()), &err, false, rays);
   if (!p) LOG_ERROR("regs/shaders/%s: %s", fragment, err.c_str());
   return p;
 }
@@ -75,14 +77,30 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
   if (const char* e = std::getenv("REGS_TAA")) taa = std::atoi(e) != 0;
   if (const char* e = std::getenv("REGS_RENDER_SCALE")) percent = float(std::atof(e));
   float scale = std::clamp(percent, 50.0f, 100.0f) / 100.0f;
-  if (!taa && scale > 0.999f) {
+  // raytraced ambient occlusion (regsRtAo, REGS_RT_AO=0|1): needs ray queries; runs on the temporal input
+  bool ao = false;
+  if (gpu::dev().rayTracing() && !s.aoFailed) {
+    ao = settingNumber(vm, u"regsRtAo", 0) > 0;
+    if (const char* e = std::getenv("REGS_RT_AO")) ao = std::atoi(e) != 0;
+  }
+  if (ao && !s.ao) {
+    s.ao = postProgram(d, vm, "ao.fragment", true);
+    s.aoBlur = postProgram(d, vm, "aoblur.fragment");
+    if (!s.ao || !s.aoBlur) {
+      LOG_ERROR("temporal: the ambient occlusion programs do not build, it stays off");
+      s.aoFailed = true;
+      ao = false;
+    }
+  }
+  if (!taa && scale > 0.999f && !ao) {
     s.valid = false;
     return t;
   }
   if (!s.taa) {
     s.taa = postProgram(d, vm, "taa.fragment");
     s.upscale = postProgram(d, vm, "upscale.fragment");
-    if (!s.taa || !s.upscale) {
+    s.copy = postProgram(d, vm, "copy.fragment");
+    if (!s.taa || !s.upscale || !s.copy) {
       LOG_ERROR("temporal: the TAA / upscaling programs do not build, both stay off");
       s.failed = true;
       return t;
@@ -102,6 +120,7 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
   s.outH = h;
   t.input = &s.input;
   t.taa = taa;
+  t.ao = ao;
   t.active = true;
   s.viewProj = v.proj * v.view;
   s.jitterUv[0] = s.jitterUv[1] = 0;
@@ -115,7 +134,9 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
     s.jitterUv[1] = 0.5f * oy;
   } else {
     s.valid = false;
+    ++s.frame;  // the occlusion's noise still moves from frame to frame
   }
+  s.drawnViewProj = v.proj * v.view;
   return t;
 }
 
@@ -128,6 +149,24 @@ void temporalFinish(Display& d, script::VM& vm, const TemporalPass& t, int x, in
   gpu::Device& g = gpu::dev();
   r.resolve(s.input);
   const float uv[4][4] = {{0, 1, 0, 0}, {1, 1, 0, 0}, {1, 0, 0, 0}, {0, 0, 0, 0}};  // TL, TR, BR, BL
+  // raytraced ambient occlusion on the drawn frame: rays, a depth-aware blur, multiplied into the colour
+  if (t.ao && ensure(d, s.aoRaw, t.rw, t.rh, 0, false, TargetFormat::Rgba8) &&
+      ensure(d, s.aoSmooth, t.rw, t.rh, 0, false, TargetFormat::Rgba8)) {
+    Mat4 inv = inverse(s.drawnViewProj);
+    const float c0[4] = {1.0f / float(t.rw), 1.0f / float(t.rh), float(s.frame % 64), 2.5f};
+    const float c1[4] = {0.85f, 0, 0, 0};
+    g.scissorTest(false);
+    g.bindFramebuffer(s.aoRaw.fbo);
+    g.viewport(0, 0, t.rw, t.rh);
+    r.drawQuad(s.ao, &s.input.depthTex, 1, c0, uv, nullptr, c1, inv.m);
+    const uint32_t blurIn[2] = {s.aoRaw.color, s.input.depthTex};
+    g.bindFramebuffer(s.aoSmooth.fbo);
+    r.drawQuad(s.aoBlur, blurIn, 2, c0, uv);
+    g.bindFramebuffer(s.input.fbo);
+    // REGS_RT_AO=2 (a check): the occlusion alone instead of multiplied into the colour
+    static const bool aoOnly = std::getenv("REGS_RT_AO") && std::atoi(std::getenv("REGS_RT_AO")) == 2;
+    r.drawQuad(s.copy, &s.aoSmooth.color, 1, nullptr, uv, nullptr, nullptr, nullptr, !aoOnly);
+  }
   auto into = [&](const RenderTarget* target) {  // a target's bottom-left w×h, or the back-buffer rect
     g.scissorTest(false);
     g.bindFramebuffer(target ? target->fbo : 0);
@@ -160,6 +199,9 @@ void temporalFinish(Display& d, script::VM& vm, const TemporalPass& t, int x, in
     const float sc1[4] = {1.0f / float(w), 1.0f / float(h), 0, 0};
     into(out);
     r.drawQuad(s.upscale, &next.color, 1, sc0, uv, nullptr, sc1);
+  } else if (t.rw == w && t.rh == h) {  // only the occlusion ran: a plain copy
+    into(out);
+    r.drawQuad(s.copy, &s.input.color, 1, nullptr, uv);
   } else {  // spatial upscaling straight into its destination
     const float c0[4] = {1.0f / float(t.rw), 1.0f / float(t.rh), 0.5f, 0};
     const float c1[4] = {1.0f / float(w), 1.0f / float(h), 0, 0};
@@ -176,6 +218,8 @@ void temporalReset(Display& d) {
   d.r3d().destroyTarget(s.input);
   d.r3d().destroyTarget(s.history[0]);
   d.r3d().destroyTarget(s.history[1]);
+  d.r3d().destroyTarget(s.aoRaw);
+  d.r3d().destroyTarget(s.aoSmooth);
   s.valid = false;
 }
 

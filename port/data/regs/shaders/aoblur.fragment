@@ -1,0 +1,21 @@
+// ReGS: the raytraced ambient occlusion smoothed over 5×5 pixels, weighted by depth so it stays on its surface.
+// texture0 = raw occlusion, texture1 = depth; custom0 = (1/width, 1/height, 0, 0)
+uniform sampler2D texture0;
+uniform sampler2D texture1;
+uniform vec4 custom0;
+varying vec4 texCoord;
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  float dc = texture2D(texture1, uv).r;
+  float sum = 0.0, wsum = 0.0;
+  for (int j = -2; j <= 2; ++j)
+    for (int i = -2; i <= 2; ++i) {
+      vec2 o = vec2(float(i), float(j)) * custom0.xy;
+      float d = texture2D(texture1, uv + o).r;
+      float w = exp(-abs(d - dc) * 4000.0) * (1.0 - 0.1 * float(i * i + j * j) / 8.0);
+      sum += texture2D(texture0, uv + o).r * w;
+      wsum += w;
+    }
+  gl_FragColor = vec4(vec3(sum / max(wsum, 1e-4)), 1.0);
+}

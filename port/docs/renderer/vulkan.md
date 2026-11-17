@@ -254,7 +254,14 @@ and `=2` as a check that keeps the ray programs but switches the rays off). How 
   toward the sun (offset along the derivative normal); GLSL 4.60 for those programs. The shadow-map pass draws only the
   leftovers (foliage, blended, skinned), so trees keep their cut-out shadows from the map.
 * Checked on the Vienna save: the same shadows as the map, crisper at contact and outside the map's range, no acne.
-  Not yet: soft shadows (jittered sun disc with TAA), alpha-tested foliage in the rays, ambient occlusion.
+  Not yet: soft shadows (jittered sun disc with TAA), alpha-tested foliage in the rays.
+
+Raytraced ambient occlusion done too, setting `$regsRtAo` (`REGS_RT_AO=1`, `=2` shows the occlusion alone): it runs in
+the temporal chain (`engine/temporal.cpp`, which is then active even at 100 % without TAA) on the drawn frame's depth:
+position and normal per pixel, 4 cosine-weighted rays of 2.5 m into the same frame scene (`ao.fragment`, turned per
+pixel and frame), a 5×5 depth-aware blur (`aoblur.fragment`), multiplied into the colour before TAA. Rays start off the
+surface and ignore hits within 10 cm: paving lies a few centimetres over the terrain and otherwise darkened every
+square. It multiplies the whole colour, not only the ambient term (a post pass cannot separate them).
 
 * Device features: `VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, `bufferDeviceAddress`; vertex and index
   buffers get the acceleration-structure input usage. The RTX 3080 has all of them; other GPUs fall back to raster.

@@ -281,9 +281,11 @@ class Renderer3D {
   // POSITION and TEXCOORD0 as a vec4 per corner, corners TL, TR, BR, BL), textures on units 0..n−1 and the custom0
   // parameter. rect = (left, top, right, bottom) in glOrtho(0, 1, 1, 0) units of the viewport (y = 0 at the top),
   // null = the whole viewport. Depth test, culling and blending off.
-  // matrix: the program's "matrix" uniform (a mat4, column-major), when given.
+  // matrix: the program's "matrix" uniform (a mat4, column-major), when given. multiply: the result multiplies what
+  // is in the target (blend DST_COLOR × src) instead of replacing it.
   void drawQuad(uint32_t program, const uint32_t* textures, int count, const float custom0[4], const float uv[4][4],
-                const float* rect = nullptr, const float* custom1 = nullptr, const float* matrix = nullptr);
+                const float* rect = nullptr, const float* custom1 = nullptr, const float* matrix = nullptr,
+                bool multiply = false);
   // The red channel of a float texture (glGetTexImage(GL_RED, GL_FLOAT)), w·h values.
   void readRed(uint32_t texture, int w, int h, std::vector<float>& out);
   // Starts drawing into a target (or the back buffer when null) inside the pixel rect; clears depth, and colour

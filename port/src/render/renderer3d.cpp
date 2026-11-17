@@ -479,7 +479,7 @@ void Renderer3D::destroyTarget(RenderTarget& t) {
 }
 
 void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count, const float custom0[4], const float uv[4][4],
-                          const float* rect, const float* custom1, const float* matrix) {
+                          const float* rect, const float* custom1, const float* matrix, bool multiply) {
   if (!program) return;
   if (!quadVao_) {
     quadVbo_ = dev().createBuffer();
@@ -523,7 +523,15 @@ void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count,
     dev().uniform1i(l.texture[i], i);
     dev().bindTexture(i, textures[i]);
   }
+  if (multiply) {
+    dev().blend(true);
+    dev().blendFunc(gpu::Blend::DstColor, gpu::Blend::Zero);
+  }
   dev().drawArrays(gpu::Prim::Triangles, 0, 6);
+  if (multiply) {
+    dev().blend(false);
+    dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
+  }
   dev().depthMask(1);
   dev().bindVertexInput(0);
 }

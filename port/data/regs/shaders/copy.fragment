@@ -1,0 +1,5 @@
+// ReGS: a plain copy of texture0 (the temporal chain at 100 % without TAA, when only the occlusion runs)
+uniform sampler2D texture0;
+varying vec4 texCoord;
+
+void main(void) { gl_FragColor = texture2D(texture0, texCoord.xy); }

@@ -572,6 +572,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     rayShadows = settingNumber(vm, u"regsRtShadows", 0) > 0;
     if (const char* e = std::getenv("REGS_RT_SHADOWS")) rayShadows = std::atoi(e) != 0;
   }
+  bool rayScene = false;  // the frame's ray-query scene, built once for the shadows and the occlusion
+  auto ensureRayScene = [&] { return rayScene || (rayScene = d.r3d().buildRayScene(items)); };
   if (shadow && !rt && fieldOf(vm, shadow, u"viewport").object() == vp) {
     Object* lightObj = fieldOf(vm, shadow, u"light").object();
     Light sun;
@@ -613,7 +615,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         d.r3d().draw(lv, items);
         d.r3d().end(bw, bh);
         v.env |= kEnvShadowMap;
-        if (rayShadows && d.r3d().buildRayScene(items)) {
+        if (rayShadows && ensureRayScene()) {
           v.env |= kEnvRayShadows;
           // REGS_RT_SHADOWS=2 (a check): the ray programs and the foliage-only map, but the rays switched off
           static const bool raysOff = std::getenv("REGS_RT_SHADOWS") && std::atoi(std::getenv("REGS_RT_SHADOWS")) == 2;
@@ -634,6 +636,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   // temporal input, then resolved or upscaled to the view's size (before the colour styles)
   TemporalPass temporal;
   if (!rt && !grids.empty()) temporal = temporalBegin(d, vm, w, h, v);
+  if (temporal.ao && !ensureRayScene()) temporal.ao = false;
   const int sw = temporal.active ? temporal.rw : w, sh = temporal.active ? temporal.rh : h;
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites
   // it into this rect (docs/renderer/bloom.md §3.3)

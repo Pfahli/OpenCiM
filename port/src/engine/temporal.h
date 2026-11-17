@@ -18,6 +18,7 @@ class Display;
 struct TemporalPass {
   bool active = false;  // TAA on or a render scale below 100 %
   bool taa = false;
+  bool ao = false;      // raytraced ambient occlusion runs on the input (the frame's ray scene must be built)
   int rw = 0, rh = 0;   // render size
   const render::RenderTarget* input = nullptr;
 };
