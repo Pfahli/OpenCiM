@@ -112,10 +112,11 @@ bool Renderer2D::init(std::string* error) {
   return true;
 }
 
-uint32_t Renderer2D::createTexture(const Image& img) {
+uint32_t Renderer2D::createTexture(const Image& img, uint32_t reuse) {
   flush();  // binding a texture below must not disturb a pending batch
-  uint32_t t = 0;
-  gl::GenTextures(1, &t);
+  uint32_t t = reuse;
+  if (!t) gl::GenTextures(1, &t);
+  else std::erase(mipTextures_, t);  // listed again below when it still has mipmaps
   gl::GLenum target = img.cube ? gl::TEXTURE_CUBE_MAP : gl::TEXTURE_2D;
   gl::BindTexture(target, t);
   gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
@@ -152,6 +153,14 @@ uint32_t Renderer2D::createTexture(const Image& img) {
     gl::Enable(gl::TEXTURE_CUBE_MAP_SEAMLESS);
   }
   return t;
+}
+
+int Renderer2D::videoMemoryInUseMB() {
+  gl::GLint total = 0, avail = 0;
+  gl::GetIntegerv(0x9048, &total);  // GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX (KB)
+  gl::GetIntegerv(0x9049, &avail);  // GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX (KB)
+  for (int i = 0; i < 8 && gl::GetError() != 0; ++i) {}  // no such enums without the extension
+  return total > 0 ? int((total - avail) / 1024) : 0;
 }
 
 uint32_t Renderer2D::createTextureBGRA(const uint8_t* bgra, int w, int h) {

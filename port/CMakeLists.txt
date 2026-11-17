@@ -59,6 +59,7 @@ add_library(regs_engine STATIC
   src/engine/skinning.cpp
   src/engine/sky.cpp
   src/engine/night_lights.cpp
+  src/engine/texture_upscale.cpp
   src/engine/interaction.cpp
   src/engine/tools.cpp
   src/engine/tool_objects.cpp
@@ -115,7 +116,7 @@ else()
   set_source_files_properties(src/audio/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
-add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/crash_win32.cpp)
+add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/texture_tools.cpp src/tools/crash_win32.cpp)
 target_include_directories(regs-tool PRIVATE third_party/miniaudio)
 target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
 

@@ -6,8 +6,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <map>
+#include <mutex>
+#include <thread>
 
 #include "core/log.h"
 #include "core/text.h"
@@ -21,6 +24,7 @@
 #include "engine/minimap.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
+#include "engine/texture_upscale.h"
 #include "engine/ui_graphs.h"
 #include "render/gl.h"
 #include "render/glsl.h"
@@ -217,6 +221,14 @@ void Display::dropGuiTargets() {
   targets_.clear();
 }
 
+namespace {
+size_t imageBytes(const render::Image& img) {
+  size_t n = 0;
+  for (const auto& lv : img.levels) n += lv.size();
+  return n;
+}
+}  // namespace
+
 uint32_t Display::texture(VM& vm, TextureObj* t) {
   if (t->gl) return t->gl;
   if (t->renderTarget) {
@@ -229,10 +241,9 @@ uint32_t Display::texture(VM& vm, TextureObj* t) {
     if (!blank_) blank_ = r2d_.createTextureBGRA(clear, 1, 1);
     return blank_;
   }
-  std::vector<uint8_t> data;
   render::Image img;
   std::string err;
-  if (!vm.vfs().read(utf16ToUtf8(t->path), data) || !render::parseDds(data, img, &err)) {
+  if (!loadTextureImage(vm, t, img, &err)) {
     // "Invalid texture file": the cache hands out textures/default.dds instead (FUN_100431c0)
     if (!t->loadFailed) LOG_WARN("Invalid texture file: '%s' (%s)", utf16ToUtf8(t->path).c_str(), err.c_str());
     t->loadFailed = true;
@@ -241,8 +252,125 @@ uint32_t Display::texture(VM& vm, TextureObj* t) {
   }
   r2d_.setAnisotropy(settingNumber(vm, u"anisotropy", 0));  // window.script: video.anisotropy = $settings.$anisotropy
   t->gl = r2d_.createTexture(img);
+  textureBytes_[t->gl] = imageBytes(img);
   t->cube = img.cube;
   return t->gl;
+}
+
+// ---- upscaled textures (docs/renderer/texture-upscaling.md) ----
+
+struct Display::UpscaleJob {
+  texup::Progress progress;
+  std::thread thread;
+  std::vector<std::string> pending;  // made by the job and loaded here: swapped in a few per frame
+  ~UpscaleJob() {
+    progress.stop = true;
+    if (thread.joinable()) thread.join();
+  }
+};
+
+Display::~Display() = default;
+
+int Display::textureUpscaleProgress() const {
+  if (!upscaleJob_ || upscaleJob_->progress.finished) return -1;
+  int total = upscaleJob_->progress.total;
+  return total > 0 ? std::min(99, upscaleJob_->progress.done * 100 / total) : 0;
+}
+
+bool Display::loadTextureImage(VM& vm, TextureObj* t, render::Image& img, std::string* err) {
+  std::vector<uint8_t> data;
+  std::string path = utf16ToUtf8(t->path);
+  t->upscaled = false;
+  if (!vm.vfs().read(path, data)) return false;
+  // the cached upscale only when it was made from exactly these bytes (a changed file shows its original)
+  if (upscaleOn_ && !host().userFolder.empty() && texup::loadCached(texup::cacheRoot(host().userFolder), path, data, img)) {
+    t->upscaled = true;
+    return true;
+  }
+  return render::parseDds(data, img, err);
+}
+
+void Display::syncTextureUpscale(VM& vm) {
+  // graphics page "Upscaled textures" (live); REGS_TEXTURE_UPSCALE=0|1 overrides it for test runs
+  bool on = settingNumber(vm, u"regsTextureUpscale", 0) != 0;
+  if (const char* e = std::getenv("REGS_TEXTURE_UPSCALE")) on = std::atoi(e) != 0;
+  if (host().userFolder.empty()) on = false;
+  auto reloadable = [](TextureObj* t) {
+    return t->gl && !t->renderTarget && !t->cube && !t->loadFailed && t->cpuBGRA.empty() && !t->path.empty() && t->path[0] != u'<';
+  };
+  if (on != upscaleOn_) {
+    upscaleOn_ = on;
+    auto t0 = std::chrono::steady_clock::now();
+    int swapped = 0;
+    // every loaded texture again, from the cache (on) or from its original file (off: exactly the original upload)
+    forEachTexture([&](TextureObj* t) {
+      if (!reloadable(t) || (!on && !t->upscaled)) return;
+      render::Image img;
+      if (!loadTextureImage(vm, t, img, nullptr)) return;
+      if (on && !t->upscaled) return;  // not in the cache (yet)
+      r2d_.createTexture(img, t->gl);
+      textureBytes_[t->gl] = imageBytes(img);
+      ++swapped;
+    });
+    LOG_INFO("upscaled textures %s: %d textures swapped in %.0f ms", on ? "on" : "off", swapped,
+             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    upscaleJob_.reset();
+    if (on) {
+      // the missing ones are made in the background, the loaded textures first. The thread checks the cache's
+      // complete.txt itself and ends at once when the cache is complete for this install
+      auto job = std::make_unique<UpscaleJob>();
+      texup::GenerateOptions opt;
+      forEachTexture([&](TextureObj* t) {
+        if (reloadable(t) && !t->upscaled) opt.first.push_back(utf16ToUtf8(t->path));
+      });
+      opt.threads = std::max(1, int(std::thread::hardware_concurrency()) / 2);  // the game keeps the other half
+      std::filesystem::path root = texup::cacheRoot(host().userFolder), install = vm.vfs().installRoot();
+      bool community = host().communityAddons;
+      UpscaleJob* j = job.get();
+      j->thread = std::thread([j, root, install, community, opt] {
+        Vfs vfs;
+        vfs.setInstallRoot(install);
+        vfs.setCommunityContent(community);
+        vfs.rescan();
+        if (texup::cacheComplete(root, texup::installSignature(vfs))) {
+          j->progress.finished = true;
+          return;
+        }
+        LOG_INFO("upscaled textures: making the cache in %s", root.string().c_str());
+        texup::generate(vfs, root, opt, j->progress, [](const std::string& s) { LOG_INFO("%s", s.c_str()); });
+        LOG_INFO("upscaled textures: %d made, %d up to date, %d skipped, %d failed%s", j->progress.written.load(),
+                 j->progress.upToDate.load(), j->progress.skipped.load(), j->progress.failed.load(),
+                 j->progress.stop ? " (stopped)" : "");
+      });
+      upscaleJob_ = std::move(job);
+    }
+    return;
+  }
+  if (!upscaleJob_) return;
+  // textures the job made since the last look that the game has loaded: a few per frame, so no frame stalls long
+  auto now = std::chrono::steady_clock::now();
+  bool finished = upscaleJob_->progress.finished;
+  if (now - upscalePoll_ > std::chrono::milliseconds(500) || finished) {
+    upscalePoll_ = now;
+    std::vector<std::string> made;
+    {
+      std::lock_guard<std::mutex> lock(upscaleJob_->progress.madeMutex);
+      made.swap(upscaleJob_->progress.made);
+    }
+    upscaleJob_->pending.insert(upscaleJob_->pending.end(), made.begin(), made.end());
+  }
+  auto& pending = upscaleJob_->pending;
+  for (int k = 0; k < 6 && !pending.empty(); ++k) {
+    auto* t = dynamic_cast<TextureObj*>(textureIfLoaded(utf8ToUtf16(pending.back())));
+    pending.pop_back();
+    if (!t || !reloadable(t) || t->upscaled) continue;
+    render::Image img;
+    if (loadTextureImage(vm, t, img, nullptr) && t->upscaled) {
+      r2d_.createTexture(img, t->gl);
+      textureBytes_[t->gl] = imageBytes(img);
+    }
+  }
+  if (finished && pending.empty()) upscaleJob_.reset();
 }
 
 namespace {
@@ -426,6 +554,29 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
   // REGS_LOG_TIME: frames over 250 ms are logged with the shader programs linked in them
   static const bool logTime = std::getenv("REGS_LOG_TIME") != nullptr;
   const auto frameStart = std::chrono::steady_clock::now();
+  // REGS_FRAME_STATS=<from>:<to> (measurements): frame times between those frames, the bytes of the uploaded file
+  // textures and the driver's free video memory (GL_NVX_gpu_memory_info) at the end
+  if (static const char* fs = std::getenv("REGS_FRAME_STATS"); fs && std::strchr(fs, ':')) {
+    static const int from = std::atoi(fs), to = std::atoi(std::strchr(fs, ':') + 1);
+    static int frame = 0;
+    static std::vector<double> ms;
+    static std::chrono::steady_clock::time_point last;
+    if (++frame > from && frame <= to) ms.push_back(std::chrono::duration<double, std::milli>(frameStart - last).count());
+    last = frameStart;
+    if (frame == to && !ms.empty()) {
+      std::vector<double> s = ms;
+      std::sort(s.begin(), s.end());
+      double sum = 0;
+      for (double v : s) sum += v;
+      size_t bytes = 0, up = 0, count = 0;
+      forEachTexture([&](TextureObj* t) {
+        if (auto it = textureBytes_.find(t->gl); t->gl && it != textureBytes_.end()) bytes += it->second, up += t->upscaled, ++count;
+      });
+      LOG_INFO("frame stats %d-%d: mean %.2f ms, median %.2f, 95th %.2f, 99th %.2f; %zu file textures (%zu upscaled) %.1f MB; video memory in use %d MB",
+               from, to, sum / double(s.size()), s[s.size() / 2], s[s.size() * 95 / 100], s[s.size() * 99 / 100], count, up,
+               double(bytes) / 1048576.0, r2d_.videoMemoryInUseMB());
+    }
+  }
   const int linkedBefore = render::gProgramsLinked;
   const double linkBefore = render::gLinkSeconds;
   for (double& p : gPhaseSeconds) p = 0;
@@ -513,6 +664,7 @@ void Display::syncRenderSettings(VM& vm) {
     LOG_INFO("anisotropic filtering: %.0f -> %.0f", double(r2d_.anisotropy), double(aniso));
     r2d_.setAnisotropy(aniso);
   }
+  syncTextureUpscale(vm);
 }
 
 void Display::drawFpsReadout(VM& vm) {
@@ -665,6 +817,7 @@ void registerDisplayNatives(VM& vm) {
   if (ClassInfo* c = vm.findClass("gsWindow_OGL")) {
     addMethod(c, u"regsApplyDisplay", 3, 4);
     addMethod(c, u"regsUiScale", 0, 0);
+    addMethod(c, u"regsTextureUpscaleProgress", 0, 0);
     addMethod(c, u"regsSetRect", 5, 5);
   }
   // window.regsSetRect(control, left, top, width, height): placeControl, for HUD scripts that place a control again
@@ -674,6 +827,11 @@ void registerDisplayNatives(VM& vm) {
     auto* c = dynamic_cast<ControlObj*>(cv.object());
     if (c && !c->destroyed) placeControl(v, c, v.toFloat(a[1]), v.toFloat(a[2]), v.toFloat(a[3]), v.toFloat(a[4]));
     return Value();
+  });
+  // window.regsTextureUpscaleProgress(): percent of the background run making upscaled textures, -1 when none runs
+  implement(vm, "gsWindow_OGL", u"regsTextureUpscaleProgress", [](VM&, Object*, int, const Value*) {
+    Display* d = display();
+    return Value::integer(d ? d->textureUpscaleProgress() : -1);
   });
   // window.regsUiScale(): the UI scale in use (the automatic choice when the setting is unset)
   implement(vm, "gsWindow_OGL", u"regsUiScale", [](VM&, Object*, int, const Value*) {

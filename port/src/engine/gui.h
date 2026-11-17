@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,6 +18,7 @@ class TextureObj : public script::Object {
   bool renderTarget = false;  // colour buffer of a gsTextureTarget_OGL (drawn into by a viewport)
   bool cube = false;          // DDS cube map (bound as GL_TEXTURE_CUBE_MAP)
   bool loadFailed = false;
+  bool upscaled = false;      // uploaded from the upscaled-texture cache (engine/texture_upscale.h)
   // pixels the engine made on the CPU (gsGrid.renderMap): BGRA bytes, row 0 first, width × height; saveToFile writes
   // them (the original reads the GL texture back with glGetTexImage)
   std::vector<uint8_t> cpuBGRA;
@@ -24,6 +26,10 @@ class TextureObj : public script::Object {
 
 // Texture cache by path (gsTextures_OGL): a missing or unreadable file gives textures/default.dds.
 script::Ref<script::Object> getTexture(script::VM& vm, std::u16string path);
+// Every texture in that cache (the upscaled textures switch on and off over all loaded ones).
+void forEachTexture(const std::function<void(TextureObj*)>& fn);
+// The cached texture of a path, or null when nothing loaded it.
+script::Object* textureIfLoaded(const std::u16string& path);
 
 // Engine key codes (gsKey, docs/ui/input.md §1.4) used for mouse buttons and the wheel.
 enum Key : int { kKeyEnter = 6, kKeyControl = 9, kKeyEscape = 12, kKeyAlt = 10, kKeyShift = 11, kMouseLeft = 143, kMouseMiddle = 144, kMouseRight = 145,

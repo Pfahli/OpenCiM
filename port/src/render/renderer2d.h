@@ -31,7 +31,11 @@ class Renderer2D {
   bool init(std::string* error);
 
   // Textures (GL names). Untextured drawing uses texture 0.
-  uint32_t createTexture(const Image& img);
+  // reuse: fill that existing name instead of a new one (the upscaled textures switch on and off this way while the
+  // materials keep the name)
+  uint32_t createTexture(const Image& img, uint32_t reuse = 0);
+  // video memory in use by the whole system, MB, from GL_NVX_gpu_memory_info (0 without it); for measurements
+  int videoMemoryInUseMB();
   void updateTextureBGRA(uint32_t tex, const uint8_t* bgra, int w, int h);  // same size and format as created
   float timer = 0;       // the effect timer for GUI shaders (`timer` uniform), set by the display each frame
   // UI scale (docs/ui/scaling.md), read at beginFrame: sharpScale > 1 samples magnified texels sharp (0 = plain

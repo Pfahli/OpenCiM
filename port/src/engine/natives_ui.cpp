@@ -40,6 +40,16 @@ bool ddsSize(const std::vector<uint8_t>& d, int& w, int& h) {
 
 }  // namespace
 
+void forEachTexture(const std::function<void(TextureObj*)>& fn) {
+  for (auto& [path, t] : textureCache())
+    if (auto* tex = dynamic_cast<TextureObj*>(t.get())) fn(tex);
+}
+
+Object* textureIfLoaded(const std::u16string& path) {
+  auto it = textureCache().find(path);
+  return it == textureCache().end() ? nullptr : it->second.get();
+}
+
 Ref<Object> getTexture(VM& vm, std::u16string path) {
   if (path.empty()) path = u"textures/default.dds";
   auto& cache = textureCache();
