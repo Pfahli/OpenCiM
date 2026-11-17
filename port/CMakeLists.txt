@@ -187,6 +187,49 @@ if(REGS_VULKAN AND EXISTS ${CMAKE_SOURCE_DIR}/third_party/glslang/CMakeLists.txt
         COMMENT "ffx-shadergen ${name}")
       list(APPEND FFX_GENERATED ${FFX_GEN}/${name}_permutations.h)
     endforeach()
+    # FSR 3 frame generation (docs/renderer/vulkan.md §9.4): frame interpolation and optical flow; the fixed options match
+    # render/fsr_vk.cpp (motion vectors without jitter, depth 0 near .. 1 far); low-resolution vectors and the optical
+    # flow's HDR (PQ) input vary
+    set(FI_ARGS
+      -I ${FFX_GPU} -I ${FFX_GPU}/frameinterpolation -D FFX_GPU=1 -D FFX_GLSL=1
+      -D FFX_FRAMEINTERPOLATION_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF=0 -D FFX_FRAMEINTERPOLATION_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FRAMEINTERPOLATION_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1 -D FFX_FRAMEINTERPOLATION_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FRAMEINTERPOLATION_OPTION_UPSAMPLE_USE_LANCZOS_TYPE=2
+      --option FFX_FRAMEINTERPOLATION_OPTION_LOW_RES_MOTION_VECTORS --option FFX_FRAMEINTERPOLATION_OPTION_JITTER_MOTION_VECTORS
+      --option FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
+      --fixed FFX_FRAMEINTERPOLATION_OPTION_JITTER_MOTION_VECTORS=0 --fixed FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH=0)
+    set(OF_ARGS -I ${FFX_GPU} -I ${FFX_GPU}/opticalflow -D FFX_GPU=1 -D FFX_GLSL=1 --option FFX_OPTICALFLOW_OPTION_HDR_COLOR_INPUT)
+    foreach(pass reconstruct_and_dilate disocclusion_mask reconstruct_previous_depth setup game_motion_vector_field
+                 optical_flow_vector_field compute_game_vector_field_inpainting_pyramid compute_inpainting_pyramid inpainting
+                 debug_view)
+      list(APPEND FFX_FI_PASSES ffx_frameinterpolation_${pass}_pass)
+    endforeach()
+    list(APPEND FFX_FI_PASSES ffx_frameinterpolation_pass)
+    foreach(name ${FFX_FI_PASSES})
+      set(src ${FFX_DIR}/src/backends/vk/shaders/frameinterpolation/${name}.glsl)
+      add_custom_command(
+        OUTPUT ${FFX_GEN}/${name}_permutations.h ${FFX_GEN}/${name}_wave64_permutations.h
+               ${FFX_GEN}/${name}_16bit_permutations.h ${FFX_GEN}/${name}_wave64_16bit_permutations.h
+        COMMAND ffx-shadergen --source ${src} --name ${name} --out ${FFX_GEN} ${FI_ARGS}
+        DEPENDS ffx-shadergen ${src}
+        COMMENT "ffx-shadergen ${name}")
+      list(APPEND FFX_GENERATED ${FFX_GEN}/${name}_permutations.h)
+    endforeach()
+    foreach(pass compute_luminance_pyramid compute_optical_flow_advanced compute_scd_divergence filter_optical_flow
+                 generate_scd_histogram prepare_luma scale_optical_flow_advanced)
+      set(name ffx_opticalflow_${pass}_pass)
+      if(pass MATCHES "advanced$" OR pass STREQUAL "filter_optical_flow")
+        set(name ${name}_v5)
+      endif()
+      set(src ${FFX_DIR}/src/backends/vk/shaders/opticalflow/${name}.glsl)
+      add_custom_command(
+        OUTPUT ${FFX_GEN}/${name}_permutations.h ${FFX_GEN}/${name}_wave64_permutations.h
+               ${FFX_GEN}/${name}_16bit_permutations.h ${FFX_GEN}/${name}_wave64_16bit_permutations.h
+        COMMAND ffx-shadergen --source ${src} --name ${name} --out ${FFX_GEN} ${OF_ARGS}
+        DEPENDS ffx-shadergen ${src}
+        COMMENT "ffx-shadergen ${name}")
+      list(APPEND FFX_GENERATED ${FFX_GEN}/${name}_permutations.h)
+    endforeach()
     add_library(regs_ffx STATIC
       ${FFX_DIR}/src/shared/ffx_assert.cpp
       ${FFX_DIR}/src/shared/ffx_message.cpp
@@ -196,11 +239,15 @@ if(REGS_VULKAN AND EXISTS ${CMAKE_SOURCE_DIR}/third_party/glslang/CMakeLists.txt
       ${FFX_DIR}/src/backends/vk/ffx_vk.cpp
       ${FFX_DIR}/src/backends/shared/ffx_shader_blobs.cpp
       ${FFX_DIR}/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp
+      ${FFX_DIR}/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+      ${FFX_DIR}/src/components/opticalflow/ffx_opticalflow.cpp
+      ${FFX_DIR}/src/backends/shared/blob_accessors/ffx_frameinterpolation_shaderblobs.cpp
+      ${FFX_DIR}/src/backends/shared/blob_accessors/ffx_opticalflow_shaderblobs.cpp
       src/render/fsr_vk.cpp
       ${FFX_GENERATED})
     target_include_directories(regs_ffx PRIVATE ${FFX_DIR}/include ${FFX_DIR}/src ${FFX_DIR}/src/components ${FFX_DIR}/src/shared
                                ${FFX_DIR}/src/backends/shared ${FFX_GEN} ${REGS_VULKAN_HEADERS} ${CMAKE_SOURCE_DIR}/src)
-    target_compile_definitions(regs_ffx PRIVATE FFX_FSR3UPSCALER VK_USE_PLATFORM_WIN32_KHR _UNICODE UNICODE)
+    target_compile_definitions(regs_ffx PRIVATE FFX_FSR3UPSCALER FFX_FI FFX_OF VK_USE_PLATFORM_WIN32_KHR _UNICODE UNICODE)
     if(MSVC)
       target_compile_options(regs_ffx PRIVATE /W0 /FIbit)
     endif()

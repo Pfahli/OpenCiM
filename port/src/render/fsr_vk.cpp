@@ -4,7 +4,9 @@
 #include "render/fsr_vk.h"
 
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
+#include <FidelityFX/host/ffx_frameinterpolation.h>
 #include <FidelityFX/host/ffx_fsr3upscaler.h>
+#include <FidelityFX/host/ffx_opticalflow.h>
 
 #include <cstdlib>
 #include <cwchar>
@@ -29,6 +31,16 @@ struct State {
   FfxUInt32 sharedId = 0;
   FfxResourceInternal shared[3]{};  // dilated depth, dilated motion vectors, reconstructed previous nearest depth
   PFN_vkDeviceWaitIdle waitIdle = nullptr;
+  // frame generation (made on first use, with the upscaler's sizes): optical flow, frame interpolation and the optical
+  // flow's two shared outputs
+  bool fgCreated = false, fgFailed = false;
+  bool fgPq = false;
+  FfxOpticalflowContext of{};
+  FfxFrameInterpolationContext fi{};
+  FfxResourceInternal ofShared[2]{};  // optical flow vectors, scene change detection
+  VkFormat fgFormat = VK_FORMAT_UNDEFINED;
+  // the last upscale's camera and sizes (the interpolation reads the same)
+  UpscaleDesc last;
   std::vector<uint8_t> scratch;
   uint32_t renderW = 0, renderH = 0, outW = 0, outH = 0;
   // the instance-level functions the SDK's backend calls directly
@@ -84,10 +96,20 @@ FfxResource resource(const Image& im, const wchar_t* name) {
   return ffxGetResourceVK(reinterpret_cast<void*>(im.image), desc, name, FFX_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
-constexpr uint32_t kContexts = FFX_FSR3UPSCALER_CONTEXT_COUNT + 1;  // the upscaler and the shared resources
+// the upscaler, the shared resources, optical flow, frame interpolation
+constexpr uint32_t kContexts = FFX_FSR3UPSCALER_CONTEXT_COUNT + 1 + FFX_OPTICALFLOW_CONTEXT_COUNT + FFX_FRAMEINTERPOLATION_CONTEXT_COUNT;
+
+void destroyFrameGen(State& s) {
+  if (!s.fgCreated) return;
+  for (FfxResourceInternal& r : s.ofShared) s.backend.fpDestroyResource(&s.backend, r, s.sharedId);
+  ffxFrameInterpolationContextDestroy(&s.fi);
+  ffxOpticalflowContextDestroy(&s.of);
+  s.fgCreated = false;
+}
 
 void destroyContext(State& s) {
   if (s.created && s.waitIdle) s.waitIdle(s.vk.device);  // frames in flight still use the resources
+  destroyFrameGen(s);
   if (s.sharedCreated) {
     for (FfxResourceInternal& r : s.shared) s.backend.fpDestroyResource(&s.backend, r, s.sharedId);
     s.backend.fpDestroyBackendContext(&s.backend, s.sharedId);
@@ -179,6 +201,7 @@ bool upscale(VkCommandBuffer cmd, const UpscaleDesc& d, std::string* error) {
   dd.dilatedDepth = s.backend.fpGetResource(&s.backend, s.shared[0]);
   dd.dilatedMotionVectors = s.backend.fpGetResource(&s.backend, s.shared[1]);
   dd.reconstructedPrevNearestDepth = s.backend.fpGetResource(&s.backend, s.shared[2]);
+  s.last = d;
   dd.jitterOffset = {d.jitterX, d.jitterY};
   dd.motionVectorScale = {float(d.renderWidth), float(d.renderHeight)};  // the vectors are in UV units
   dd.renderSize = {d.renderWidth, d.renderHeight};
@@ -194,6 +217,115 @@ bool upscale(VkCommandBuffer cmd, const UpscaleDesc& d, std::string* error) {
   dd.viewSpaceToMetersFactor = 1.0f;  // the game's units are metres
   if (FfxErrorCode e = ffxFsr3UpscalerContextDispatch(&s.context, &dd); e != FFX_OK) {
     if (error) *error = "ffxFsr3UpscalerContextDispatch failed (" + std::to_string(int(e)) + ")";
+    return false;
+  }
+  return true;
+}
+
+namespace {
+
+bool createFrameGen(State& s, VkFormat format, bool pq, std::string* error) {
+  destroyFrameGen(s);
+  FfxOpticalflowContextDescription od{};
+  od.backendInterface = s.backend;
+  od.resolution = {s.outW, s.outH};
+  if (FfxErrorCode e = ffxOpticalflowContextCreate(&s.of, &od); e != FFX_OK) {
+    if (error) *error = "ffxOpticalflowContextCreate failed (" + std::to_string(int(e)) + ")";
+    return false;
+  }
+  FfxFrameInterpolationContextDescription fd{};
+  fd.backendInterface = s.backend;
+  fd.flags = pq ? FFX_FRAMEINTERPOLATION_ENABLE_HDR_COLOR_INPUT : 0;  // vectors at the render size (low resolution)
+  fd.maxRenderSize = {s.renderW, s.renderH};
+  fd.displaySize = {s.outW, s.outH};
+  fd.backBufferFormat = ffxGetSurfaceFormatVK(format);
+  fd.previousInterpolationSourceFormat = fd.backBufferFormat;
+  if (FfxErrorCode e = ffxFrameInterpolationContextCreate(&s.fi, &fd); e != FFX_OK) {
+    ffxOpticalflowContextDestroy(&s.of);
+    if (error) *error = "ffxFrameInterpolationContextCreate failed (" + std::to_string(int(e)) + ")";
+    return false;
+  }
+  FfxOpticalflowSharedResourceDescriptions sd{};
+  ffxOpticalflowGetSharedResourceDescriptions(&s.of, &sd);
+  if (s.backend.fpCreateResource(&s.backend, &sd.opticalFlowVector, s.sharedId, &s.ofShared[0]) != FFX_OK ||
+      s.backend.fpCreateResource(&s.backend, &sd.opticalFlowSCD, s.sharedId, &s.ofShared[1]) != FFX_OK) {
+    ffxFrameInterpolationContextDestroy(&s.fi);
+    ffxOpticalflowContextDestroy(&s.of);
+    if (error) *error = "the optical flow's resources could not be created";
+    return false;
+  }
+  s.fgCreated = true;
+  s.fgFormat = format;
+  s.fgPq = pq;
+  LOG_INFO("fsr: FSR 3 frame generation %ux%u (render %ux%u)%s", s.outW, s.outH, s.renderW, s.renderH, pq ? ", HDR10" : "");
+  return true;
+}
+
+}  // namespace
+
+bool frameGenerate(VkCommandBuffer cmd, const FrameGenDesc& d, std::string* error) {
+  State& s = state();
+  if (!s.ready || !s.created || !s.sharedCreated) {
+    if (error) *error = "no FSR upscale this frame";
+    return false;
+  }
+  if (d.displayWidth != s.outW || d.displayHeight != s.outH) {
+    if (error) *error = "the display size differs from the upscaler's output";
+    return false;
+  }
+  bool fresh = false;
+  if (!s.fgCreated || s.fgFormat != d.backBuffer.format || s.fgPq != d.pq) {
+    if (s.fgFailed) return false;
+    if (s.fgCreated && s.waitIdle) s.waitIdle(s.vk.device);
+    if (!createFrameGen(s, d.backBuffer.format, d.pq, error)) {
+      s.fgFailed = true;
+      return false;
+    }
+    fresh = true;
+  }
+  FfxResource ofVector = s.backend.fpGetResource(&s.backend, s.ofShared[0]);
+  FfxResource ofScd = s.backend.fpGetResource(&s.backend, s.ofShared[1]);
+  FfxResource hudless = resource(d.hudless, L"FG_HudlessColor");
+  FfxOpticalflowDispatchDescription od{};
+  od.commandList = ffxGetCommandListVK(cmd);
+  od.color = hudless;
+  od.opticalFlowVector = ofVector;
+  od.opticalFlowSCD = ofScd;
+  od.reset = d.reset || fresh;
+  od.backbufferTransferFunction = d.pq ? FFX_BACKBUFFER_TRANSFER_FUNCTION_PQ : FFX_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
+  od.minMaxLuminance = {0.0f, d.pq ? 10000.0f : 1.0f};
+  if (FfxErrorCode e = ffxOpticalflowContextDispatch(&s.of, &od); e != FFX_OK) {
+    if (error) *error = "ffxOpticalflowContextDispatch failed (" + std::to_string(int(e)) + ")";
+    return false;
+  }
+  FfxFrameInterpolationDispatchDescription fd{};
+  fd.commandList = ffxGetCommandListVK(cmd);
+  fd.displaySize = {d.displayWidth, d.displayHeight};
+  fd.renderSize = {s.renderW, s.renderH};
+  fd.currentBackBuffer = resource(d.backBuffer, L"FG_BackBuffer");
+  fd.currentBackBuffer_HUDLess = hudless;
+  fd.output = resource(d.output, L"FG_Output");
+  fd.interpolationRect = {0, 0, int32_t(d.displayWidth), int32_t(d.displayHeight)};
+  fd.opticalFlowVector = ofVector;
+  fd.opticalFlowSceneChangeDetection = ofScd;
+  fd.opticalFlowBufferSize = {(d.displayWidth + 7) / 8, (d.displayHeight + 7) / 8};
+  fd.opticalFlowScale = {1.0f / float(d.displayWidth), 1.0f / float(d.displayHeight)};
+  fd.opticalFlowBlockSize = 8;
+  fd.cameraNear = s.last.cameraNear;
+  fd.cameraFar = s.last.cameraFar;
+  fd.cameraFovAngleVertical = s.last.fovY;
+  fd.viewSpaceToMetersFactor = 1.0f;
+  fd.frameTimeDelta = s.last.frameTimeMs;
+  fd.reset = d.reset || fresh;
+  fd.backBufferTransferFunction = d.pq ? FFX_BACKBUFFER_TRANSFER_FUNCTION_PQ : FFX_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
+  fd.minMaxLuminance[0] = 0.0f;
+  fd.minMaxLuminance[1] = d.pq ? 10000.0f : 1.0f;
+  fd.frameID = d.frameId;
+  fd.dilatedDepth = s.backend.fpGetResource(&s.backend, s.shared[0]);
+  fd.dilatedMotionVectors = s.backend.fpGetResource(&s.backend, s.shared[1]);
+  fd.reconstructedPrevDepth = s.backend.fpGetResource(&s.backend, s.shared[2]);
+  if (FfxErrorCode e = ffxFrameInterpolationDispatch(&s.fi, &fd); e != FFX_OK) {
+    if (error) *error = "ffxFrameInterpolationDispatch failed (" + std::to_string(int(e)) + ")";
     return false;
   }
   return true;

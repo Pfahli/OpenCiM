@@ -14,6 +14,9 @@ it is, what already exists, and the open decisions. Order is not priority.
 * **Raytraced shadows.** Done (same branch): sun shadows by ray queries on Vulkan, option on the Image quality page
   (`docs/renderer/vulkan.md` §9.3), and raytraced ambient occlusion. Open: foliage still from the shadow map (alpha in
   the rays), soft shadows, reflections on water and glass, global illumination.
+* **FSR 3 frame generation.** Done (same branch): a generated frame between two real ones on Vulkan with the FSR
+  upscaler, presented by the device's own present thread (`docs/renderer/vulkan.md` §9.4). Open: display-timed pacing,
+  per-object motion vectors.
 * **Raytraced reflections.** Water and glass done (same branch): the game's environment-cube reflections are traced
   against the city on Vulkan, option on the Image quality page (`docs/renderer/vulkan.md` §9.7). The weather mod's puddles are
   traced too. Open: foliage and night lights in the reflections, a sheen on wet streets.

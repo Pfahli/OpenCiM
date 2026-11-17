@@ -16,9 +16,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <functional>
+#include <mutex>
+#include <thread>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -69,7 +75,7 @@ namespace {
   X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
   X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)  \
   X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets)          \
-  X(vkCmdBindDescriptorSets)
+  X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -489,6 +495,18 @@ class VkDeviceImpl final : public Device {
   bool hdrActive() const override { return hdr_; }
   bool hdrAvailable() const override { return hdrAvailable_; }
 
+  // ---- FSR 3 frame generation ----
+  bool frameGenAvailable() const override { return fsrReady_ && timeline_ != VK_NULL_HANDLE && fgStorage_; }
+  void setFrameGen(bool on) override {
+    if (on == fgWanted_) return;
+    fgWanted_ = on;
+    if (!on) fgDrain();
+    fgPrevOk_ = false;
+    LOG_INFO("vulkan: frame generation %s", on ? "on" : "off");
+  }
+  void frameGenHudless(uint32_t texture) override { fgHudless_ = texture; }
+  void presentTail();
+
   // ---- AMD FSR 3.1 ----
   bool fsrAvailable() const override { return fsrReady_; }
   bool fsrUpscale(const FsrParams& p) override;
@@ -636,7 +654,7 @@ class VkDeviceImpl final : public Device {
     freeImage(*t);
     *t = Tex{};
   }
-  bool makeImage(Tex& t, Format f, int w, int h, int levels, int samples);
+  bool makeImage(Tex& t, Format f, int w, int h, int levels, int samples, bool storage = false);
   void freeImage(Tex& t) {
     if (!t.image) return;
     VkImage img = t.image;
@@ -680,7 +698,8 @@ class VkDeviceImpl final : public Device {
   platform::Window& window_;
   std::string info_;
   float maxAniso_ = 1;
-  bool vsync_ = true, swapchainDirty_ = false;
+  bool vsync_ = true;
+  std::atomic<bool> swapchainDirty_{false};
   HMODULE lib_ = nullptr;
   VkInstance instance_ = VK_NULL_HANDLE;
   VkSurfaceKHR surface_ = VK_NULL_HANDLE;
@@ -741,10 +760,62 @@ class VkDeviceImpl final : public Device {
     timingPending_[frame_] = false;
   }
 
+  bool timelineSupported_ = false;
   bool hdrWanted_ = false, hdr_ = false, hdrAvailable_ = false, colorspaceExt_ = false, hdrMetadataExt_ = false;
   float hdrPeak_ = 1000, hdrPaper_ = 200;
   bool fsrReady_ = false;
   bool fsrErrorLogged_ = false;
+  bool fsrThisFrame_ = false;  // an upscale was recorded this frame (frame generation reads its outputs)
+
+  // FSR 3 frame generation (§9.4): the main thread records optical flow + interpolation into the frame and signals the
+  // timeline with the job's value; the present thread presents the generated frame, waits half the frame interval and
+  // presents the real one (both copied into the job's slot, so the next frame may draw meanwhile)
+  bool fgWanted_ = false, fgPrevOk_ = false, fgStorage_ = false, fgErrorLogged_ = false;
+  uint32_t fgHudless_ = 0;
+  uint64_t fgFrameId_ = 0;
+  VkSemaphore timeline_ = VK_NULL_HANDLE;
+  uint64_t fgSubmitted_ = 0;  // the last job's value
+  struct FgSlot {
+    uint32_t real = 0, gen = 0;  // textures: the frame as drawn, the interpolated one
+    VkImage realImage = VK_NULL_HANDLE, genImage = VK_NULL_HANDLE;  // for the present thread (the texture table may grow)
+    int w = 0, h = 0;
+    VkCommandBuffer cmd[2] = {};
+    VkFence fence[2] = {};
+    VkSemaphore acquired[2] = {};
+  };
+  FgSlot fgSlots_[2];
+  VkCommandPool fgPool_ = VK_NULL_HANDLE;
+  struct FgJob {
+    int slot = 0;
+    uint64_t value = 0;
+    double intervalMs = 16.7;
+    std::chrono::steady_clock::time_point start;
+  };
+  std::thread fgThread_;
+  std::mutex fgMutex_;
+  std::condition_variable fgCv_;
+  std::deque<FgJob> fgJobs_;
+  uint64_t fgDone_ = 0;
+  bool fgQuit_ = false;
+  std::mutex queueMutex_;  // the queue is shared with the present thread
+  double fgIntervalMs_ = 16.7;
+  std::chrono::steady_clock::time_point fgLastPresent_{};
+  void fgDrain() {
+    std::unique_lock<std::mutex> lk(fgMutex_);
+    fgCv_.wait(lk, [&] { return fgJobs_.empty(); });
+  }
+  bool fgPresent();          // the main thread's part of a generated frame; false: present normally
+  void fgLoop();             // the present thread
+  bool fgPresentImage(FgSlot& s, int which, uint64_t value);
+  void fgStop() {
+    if (!fgThread_.joinable()) return;
+    {
+      std::lock_guard<std::mutex> lk(fgMutex_);
+      fgQuit_ = true;
+    }
+    fgCv_.notify_all();
+    fgThread_.join();
+  }
 
   // raytraced reflections (docs/renderer/vulkan.md §9.7): every 2D texture in one bindless array (set 1, indexed by the
   // texture handle) and a hit table: per bottom-level geometry its vertex and index addresses, base texture and colour
@@ -950,6 +1021,12 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     if (exts) vkGetPhysicalDeviceFeatures2(phys_, &q2);
     rt_ = exts && rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && !std::getenv("REGS_VK_NO_RT");
     hdrMetadataExt_ = has(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+    {
+      VkPhysicalDeviceVulkan12Features t12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+      VkPhysicalDeviceFeatures2 t2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &t12};
+      vkGetPhysicalDeviceFeatures2(phys_, &t2);
+      timelineSupported_ = t12.timelineSemaphore == VK_TRUE;
+    }
     // raytraced reflections: descriptor indexing for the bindless texture array (Vulkan 1.2 features)
     if (rt_) {
       VkPhysicalDeviceVulkan12Features di{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -976,6 +1053,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   asf.accelerationStructure = VK_TRUE;
   VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, rt_ ? static_cast<void*>(&asf) : nullptr};
   f12.bufferDeviceAddress = rt_ ? VK_TRUE : VK_FALSE;
+  f12.timelineSemaphore = timelineSupported_ ? VK_TRUE : VK_FALSE;
   if (bindless_) {
     f12.runtimeDescriptorArray = VK_TRUE;
     f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
@@ -1083,11 +1161,40 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
 #if REGS_FFX
   fsrReady_ = fsr::init({instance_, phys_, dev_, vkGetInstanceProcAddr, vkGetDeviceProcAddr});
   if (fsrReady_) info_ += " / FSR 3.1";
+  if (fsrReady_ && timelineSupported_) {
+    // frame generation: a timeline semaphore, the present thread's command pool, fences and acquire semaphores; the
+    // interpolated frame is written as a storage image in the back buffer's format
+    VkSemaphoreTypeCreateInfo tci{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+    VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &tci};
+    vkCreateSemaphore(dev_, &sci, nullptr, &timeline_);
+    VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pci.queueFamilyIndex = queueFamily_;
+    vkCreateCommandPool(dev_, &pci, nullptr, &fgPool_);
+    for (FgSlot& s : fgSlots_) {
+      VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, fgPool_, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 2};
+      vkAllocateCommandBuffers(dev_, &ai, s.cmd);
+      for (int i = 0; i < 2; ++i) {
+        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, VK_FENCE_CREATE_SIGNALED_BIT};
+        vkCreateFence(dev_, &fci, nullptr, &s.fence[i]);
+        VkSemaphoreCreateInfo asci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        vkCreateSemaphore(dev_, &asci, nullptr, &s.acquired[i]);
+      }
+    }
+    VkFormatProperties fp8, fp16;
+    vkGetPhysicalDeviceFormatProperties(phys_, VK_FORMAT_B8G8R8A8_UNORM, &fp8);
+    vkGetPhysicalDeviceFormatProperties(phys_, VK_FORMAT_R16G16B16A16_SFLOAT, &fp16);
+    fgStorage_ = (fp8.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+                 (fp16.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
+    if (!fgStorage_) LOG_WARN("vulkan: no storage images in the back buffer's formats, no frame generation");
+    fgThread_ = std::thread([this] { fgLoop(); });
+  }
 #endif
   return true;
 }
 
 bool VkDeviceImpl::createSwapchain(std::string* error) {
+  fgDrain();  // the present thread uses the swapchain
   VkSurfaceCapabilitiesKHR caps;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps);
   uint32_t n = 0;
@@ -1219,10 +1326,18 @@ void VkDeviceImpl::shutdown() {
     return;
   }
   if (dev_) {
+    fgStop();
     vkDeviceWaitIdle(dev_);
 #if REGS_FFX
     fsr::shutdown();
 #endif
+    if (timeline_) vkDestroySemaphore(dev_, timeline_, nullptr);
+    for (FgSlot& s : fgSlots_)
+      for (int i = 0; i < 2; ++i) {
+        if (s.fence[i]) vkDestroyFence(dev_, s.fence[i], nullptr);
+        if (s.acquired[i]) vkDestroySemaphore(dev_, s.acquired[i], nullptr);
+      }
+    if (fgPool_) vkDestroyCommandPool(dev_, fgPool_, nullptr);
     for (Frame& f : frames_) {
       for (auto& g : f.garbage) g();
       f.garbage.clear();
@@ -1286,7 +1401,10 @@ void VkDeviceImpl::submitAndWait() {
   VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
   si.commandBufferInfoCount = 1;
   si.pCommandBufferInfos = &cbi;
-  vkQueueSubmit2(queue_, 1, &si, f.fence);
+  {
+    std::lock_guard<std::mutex> lk(queueMutex_);
+    vkQueueSubmit2(queue_, 1, &si, f.fence);
+  }
   vkWaitForFences(dev_, 1, &f.fence, VK_TRUE, UINT64_MAX);
   vkResetFences(dev_, 1, &f.fence);
   // everything recorded so far has run: the ring can start over (stream buffers written this frame keep their data:
@@ -1342,6 +1460,23 @@ void VkDeviceImpl::beginFrame(int width, int height) {
 
 void VkDeviceImpl::present() {
   endRendering();
+  {  // the real frames' interval (the present thread spaces the generated frame by half of it)
+    auto now = std::chrono::steady_clock::now();
+    if (fgLastPresent_.time_since_epoch().count()) {
+      double ms = std::chrono::duration<double, std::milli>(now - fgLastPresent_).count();
+      fgIntervalMs_ += (std::clamp(ms, 1.0, 100.0) - fgIntervalMs_) * 0.1;
+    }
+    fgLastPresent_ = now;
+  }
+  bool generated = fgWanted_ && fgPresent();
+  fsrThisFrame_ = false;
+  fgHudless_ = 0;
+  if (generated) {
+    presentTail();
+    return;
+  }
+  fgPrevOk_ = false;
+  if (fgSubmitted_ > fgDone_) fgDrain();  // the present thread's last images go first
   Frame& f = frames_[frame_];
   uint32_t image = 0;
   bool presentable = swapchain_ != VK_NULL_HANDLE;
@@ -1383,18 +1518,25 @@ void VkDeviceImpl::present() {
   si.pSignalSemaphoreInfos = &signal;
   si.commandBufferInfoCount = 1;
   si.pCommandBufferInfos = &cbi;
-  vkQueueSubmit2(queue_, 1, &si, f.fence);
-  if (presentable) {
-    VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &presentReady_[image];
-    pi.swapchainCount = 1;
-    pi.pSwapchains = &swapchain_;
-    pi.pImageIndices = &image;
-    VkResult r = vkQueuePresentKHR(queue_, &pi);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
+  {
+    std::lock_guard<std::mutex> lk(queueMutex_);
+    vkQueueSubmit2(queue_, 1, &si, f.fence);
+    if (presentable) {
+      VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+      pi.waitSemaphoreCount = 1;
+      pi.pWaitSemaphores = &presentReady_[image];
+      pi.swapchainCount = 1;
+      pi.pSwapchains = &swapchain_;
+      pi.pImageIndices = &image;
+      VkResult r = vkQueuePresentKHR(queue_, &pi);
+      if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
+    }
   }
-  // the next frame: wait until its previous use has finished, then reuse its pool, ring and garbage list
+  presentTail();
+}
+
+// the next frame: wait until its previous use has finished, then reuse its pool, ring and garbage list
+void VkDeviceImpl::presentTail() {
   frame_ = (frame_ + 1) % kFrames;
   ++frameCount_;
   Frame& n = frames_[frame_];
@@ -1408,6 +1550,221 @@ void VkDeviceImpl::present() {
   readFrameTimestamps();
   beginCommands();
   frameTimestampStart();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// FSR 3 frame generation: the present thread (docs/renderer/vulkan.md §9.4)
+
+bool VkDeviceImpl::fgPresent() {
+#if REGS_FFX
+  if (!frameGenAvailable() || !swapchain_ || !fsrThisFrame_ || !fgHudless_) return false;
+  Tex* hud = texture(fgHudless_);
+  Tex& back = textures_[backColor_];
+  if (!hud || !hud->image || hud->w != backW_ || hud->h != backH_) return false;
+  uint64_t value = fgSubmitted_ + 1;
+  FgSlot& s = fgSlots_[value & 1];
+  {  // the slot's previous job (two frames back) must have been presented
+    std::unique_lock<std::mutex> lk(fgMutex_);
+    fgCv_.wait(lk, [&] { return fgDone_ + 2 > value; });
+  }
+  auto ensure = [&](uint32_t& h, bool storage) {
+    Tex* t = texture(h);
+    if (t && t->w == backW_ && t->h == backH_ && t->format == back.format) return true;
+    if (!h) h = newTexture();
+    return makeImage(textures_[h], back.format, backW_, backH_, 1, 1, storage);
+  };
+  if (!ensure(s.real, false) || !ensure(s.gen, true)) return false;
+  Tex& real = textures_[s.real];
+  Tex& gen = textures_[s.gen];
+  s.realImage = real.image;
+  s.genImage = gen.image;
+  s.w = backW_;
+  s.h = backH_;
+  // the frame as drawn, for the second present
+  VkImageCopy c{};
+  c.srcSubresource = c.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  c.extent = {uint32_t(backW_), uint32_t(backH_), 1};
+  vkCmdCopyImage(cmd(), back.image, VK_IMAGE_LAYOUT_GENERAL, real.image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+  fullBarrier(cmd());
+  auto image = [](const Tex& t) { return fsr::Image{t.image, t.vkFormat, t.usage, uint32_t(t.w), uint32_t(t.h), false}; };
+  fsr::FrameGenDesc d;
+  d.backBuffer = image(back);
+  d.hudless = image(*hud);
+  d.output = image(gen);
+  d.displayWidth = uint32_t(backW_);
+  d.displayHeight = uint32_t(backH_);
+  d.pq = hdr_;
+  d.reset = !fgPrevOk_;
+  d.frameId = ++fgFrameId_;
+  std::string err;
+  if (!fsr::frameGenerate(cmd(), d, &err)) {
+    if (!fgErrorLogged_) LOG_ERROR("fsr: frame generation: %s", err.c_str());
+    fgErrorLogged_ = true;
+    return false;
+  }
+  fullBarrier(cmd());
+  fgPrevOk_ = true;
+  // REGS_FG_DUMP=<n> (a check): the n-th generated frame and its real frame as fg-<n>-gen.ppm / fg-<n>-real.ppm
+  static const long dumpAt = std::getenv("REGS_FG_DUMP") ? std::atol(std::getenv("REGS_FG_DUMP")) : -1;
+  VkBuffer dumpBuf = VK_NULL_HANDLE;
+  Allocation dumpMem;
+  size_t bpp = back.format == Format::RGBA16F ? 8 : 4, dumpBytes = size_t(backW_) * size_t(backH_) * bpp;
+  if (dumpAt > 0 && (uint64_t(dumpAt) == fgFrameId_ || uint64_t(dumpAt) + 1 == fgFrameId_)) {
+    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bci.size = dumpBytes * 2;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    vkCreateBuffer(dev_, &bci, nullptr, &dumpBuf);
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(dev_, dumpBuf, &req);
+    alloc_.alloc(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true, dumpMem);
+    vkBindBufferMemory(dev_, dumpBuf, dumpMem.memory, dumpMem.offset);
+    VkBufferImageCopy bc{};
+    bc.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    bc.imageExtent = {uint32_t(backW_), uint32_t(backH_), 1};
+    vkCmdCopyImageToBuffer(cmd(), gen.image, VK_IMAGE_LAYOUT_GENERAL, dumpBuf, 1, &bc);
+    bc.bufferOffset = dumpBytes;
+    vkCmdCopyImageToBuffer(cmd(), real.image, VK_IMAGE_LAYOUT_GENERAL, dumpBuf, 1, &bc);
+    fullBarrier(cmd());
+  }
+  Frame& f = frames_[frame_];
+  if (timestamps_) {
+    vkCmdWriteTimestamp2(cmd(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timestamps_, uint32_t(frame_) * 2 + 1);
+    timingPending_[frame_] = true;
+  }
+  vkEndCommandBuffer(f.cmd);
+  VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, f.cmd, 0};
+  VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, timeline_, value,
+                               VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
+  VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+  si.signalSemaphoreInfoCount = 1;
+  si.pSignalSemaphoreInfos = &signal;
+  si.commandBufferInfoCount = 1;
+  si.pCommandBufferInfos = &cbi;
+  {
+    std::lock_guard<std::mutex> lk(queueMutex_);
+    vkQueueSubmit2(queue_, 1, &si, f.fence);
+  }
+  fgSubmitted_ = value;
+  if (dumpBuf) {
+    vkWaitForFences(dev_, 1, &f.fence, VK_TRUE, UINT64_MAX);
+    for (int k = 0; k < 2; ++k) {
+      std::string name = "fg-" + std::to_string(fgFrameId_) + (k ? "-real.ppm" : "-gen.ppm");
+      if (std::FILE* out = std::fopen(name.c_str(), "wb")) {
+        std::fprintf(out, "P6\n%d %d\n255\n", backW_, backH_);
+        const uint8_t* px = dumpMem.mapped + size_t(k) * dumpBytes;
+        std::vector<uint8_t> row(size_t(backW_) * 3);
+        for (int y = backH_ - 1; y >= 0; --y) {  // GL rows: bottom first
+          for (int x = 0; x < backW_; ++x) {
+            size_t i = (size_t(y) * size_t(backW_) + size_t(x));
+            if (bpp == 4) {
+              row[size_t(x) * 3] = px[i * 4 + 2], row[size_t(x) * 3 + 1] = px[i * 4 + 1], row[size_t(x) * 3 + 2] = px[i * 4];
+            } else {
+              const auto* h = reinterpret_cast<const uint16_t*>(px) + i * 4;
+              for (int c = 0; c < 3; ++c)
+                row[size_t(x) * 3 + size_t(c)] = uint8_t(std::lround(std::clamp(halfToFloat(h[c]), 0.0f, 1.0f) * 255.0f));
+            }
+          }
+          std::fwrite(row.data(), 1, row.size(), out);
+        }
+        std::fclose(out);
+        LOG_INFO("vulkan: frame generation dump %s", name.c_str());
+      }
+    }
+    vkDestroyBuffer(dev_, dumpBuf, nullptr);
+    alloc_.free(dumpMem);
+  }
+  {
+    std::lock_guard<std::mutex> lk(fgMutex_);
+    fgJobs_.push_back({int(value & 1), value, fgIntervalMs_, std::chrono::steady_clock::now()});
+  }
+  fgCv_.notify_all();
+  return true;
+#else
+  return false;
+#endif
+}
+
+// one image of a job onto the swapchain: which 0 = the generated frame, 1 = the real one
+bool VkDeviceImpl::fgPresentImage(FgSlot& s, int which, uint64_t value) {
+  vkWaitForFences(dev_, 1, &s.fence[which], VK_TRUE, UINT64_MAX);
+  uint32_t image = 0;
+  VkResult r = vkAcquireNextImageKHR(dev_, swapchain_, UINT64_MAX, s.acquired[which], VK_NULL_HANDLE, &image);
+  if (r == VK_ERROR_OUT_OF_DATE_KHR) {
+    swapchainDirty_ = true;
+    return false;
+  }
+  if (r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
+  else if (r != VK_SUCCESS) return false;
+  vkResetFences(dev_, 1, &s.fence[which]);
+  VkCommandBuffer c = s.cmd[which];
+  vkResetCommandBuffer(c, 0);
+  VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(c, &bi);
+  VkImage dst = swapImages_[image];
+  imageBarrier(c, dst, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  VkImage srcImage = which == 0 ? s.genImage : s.realImage;
+  VkImageBlit b{};
+  b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  b.srcOffsets[1] = {s.w, s.h, 1};
+  b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  b.dstOffsets[0] = {0, int32_t(swapExtent_.height), 0};
+  b.dstOffsets[1] = {int32_t(swapExtent_.width), 0, 1};
+  vkCmdBlitImage(c, srcImage, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
+  imageBarrier(c, dst, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+  vkEndCommandBuffer(c);
+  VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, c, 0};
+  VkSemaphoreSubmitInfo waits[2] = {
+      {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, timeline_, value, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0},
+      {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, s.acquired[which], 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0}};
+  VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, presentReady_[image], 0,
+                               VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
+  VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+  si.waitSemaphoreInfoCount = 2;
+  si.pWaitSemaphoreInfos = waits;
+  si.signalSemaphoreInfoCount = 1;
+  si.pSignalSemaphoreInfos = &signal;
+  si.commandBufferInfoCount = 1;
+  si.pCommandBufferInfos = &cbi;
+  std::lock_guard<std::mutex> lk(queueMutex_);
+  vkQueueSubmit2(queue_, 1, &si, s.fence[which]);
+  VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+  pi.waitSemaphoreCount = 1;
+  pi.pWaitSemaphores = &presentReady_[image];
+  pi.swapchainCount = 1;
+  pi.pSwapchains = &swapchain_;
+  pi.pImageIndices = &image;
+  r = vkQueuePresentKHR(queue_, &pi);
+  if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
+  return true;
+}
+
+void VkDeviceImpl::fgLoop() {
+  for (;;) {
+    FgJob j;
+    {
+      std::unique_lock<std::mutex> lk(fgMutex_);
+      fgCv_.wait(lk, [&] { return fgQuit_ || !fgJobs_.empty(); });
+      if (fgJobs_.empty()) return;  // quitting
+      j = fgJobs_.front();
+    }
+    FgSlot& s = fgSlots_[j.slot];
+    if (swapchain_) {
+      fgPresentImage(s, 0, j.value);
+      // the real frame half a frame interval after the generated one
+      auto due = j.start + std::chrono::microseconds(int64_t(j.intervalMs * 500.0));
+      std::this_thread::sleep_until(due);
+      fgPresentImage(s, 1, j.value);
+    }
+    {
+      std::lock_guard<std::mutex> lk(fgMutex_);
+      fgJobs_.pop_front();
+      fgDone_ = j.value;
+    }
+    fgCv_.notify_all();
+    if (j.value == 1 || j.value % 1000 == 0)
+      LOG_INFO("vulkan: frame generation: %llu generated frames, real frames %.1f ms apart", (unsigned long long)j.value, j.intervalMs);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1431,7 +1788,7 @@ VkFormat VkDeviceImpl::vkFormatOf(Format f) const {
   return VK_FORMAT_B8G8R8A8_UNORM;
 }
 
-bool VkDeviceImpl::makeImage(Tex& t, Format f, int w, int h, int levels, int samples) {
+bool VkDeviceImpl::makeImage(Tex& t, Format f, int w, int h, int levels, int samples, bool storage) {
   freeImage(t);
   t.format = f;
   t.vkFormat = vkFormatOf(f);
@@ -1454,7 +1811,7 @@ bool VkDeviceImpl::makeImage(Tex& t, Format f, int w, int h, int levels, int sam
   if (isDepth(f)) ici.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   else if (!isCompressed(f) && !t.cube) ici.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
   // float targets can be written by compute passes (FSR's output)
-  if (samples == 1 && (f == Format::RGBA16F || f == Format::RGBA32F)) ici.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+  if (samples == 1 && (storage || f == Format::RGBA16F || f == Format::RGBA32F)) ici.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
   t.usage = ici.usage;
   ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (VkResult r = vkCreateImage(dev_, &ici, nullptr, &t.image); r != VK_SUCCESS) {
@@ -2373,6 +2730,7 @@ bool VkDeviceImpl::fsrUpscale(const FsrParams& p) {
   endRendering();
   std::string err;
   bool ok = fsr::upscale(cmd(), d, &err);
+  fsrThisFrame_ = ok;
   fullBarrier(cmd());
   if (!ok && !fsrErrorLogged_) {
     LOG_ERROR("fsr: %s", err.c_str());

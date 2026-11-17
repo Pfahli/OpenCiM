@@ -189,6 +189,12 @@ class Device {
     bool reset = false;
   };
   virtual bool fsrUpscale(const FsrParams& p) { return false; }
+  // FSR 3 frame generation (docs/renderer/vulkan.md §9.4): with it on, a frame that had an FSR upscale and got its
+  // HUD-less colour (the finished 3D view before the GUI, back-buffer size and encoding) is shown after an interpolated
+  // one; a present thread spaces the two by half a frame. Needs the FSR upscaler in the same frame.
+  virtual bool frameGenAvailable() const { return false; }
+  virtual void setFrameGen(bool on) {}
+  virtual void frameGenHudless(uint32_t texture) {}  // this frame's; cleared at present
   // FSR's jitter sequence (render pixels) for this render → output width
   virtual void fsrJitter(uint32_t frame, int renderWidth, int outputWidth, float& x, float& y) { x = y = 0; }
 };

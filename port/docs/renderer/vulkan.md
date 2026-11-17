@@ -301,12 +301,40 @@ square. It multiplies the whole colour, not only the ambient term (a post pass c
 
 ### 9.4 Frame generation
 
+Status (2026-11-17): **AMD FSR 3 frame generation done** (Vulkan; setting `$regsFrameGen` on the Image quality page,
+`REGS_FRAMEGEN=0|1`). It needs the FSR 3.1 upscaler in the same frame (any render scale, 100 % included).
+
+* **Shaders and libraries:** the SDK's frame interpolation (11 passes) and optical flow (7 passes) built by
+  `ffx-shadergen` like the upscaler (fixed: motion vectors without jitter, depth 0 near .. 1 far; varying: low-resolution
+  vectors, the optical flow's HDR input); `regs_ffx` defines `FFX_FI` and `FFX_OF` (the names the SDK's blob table
+  checks). The optical flow and interpolation contexts share the upscaler's backend and its dilated depth, dilated
+  motion vectors and reconstructed previous depth (`fsr::frameGenerate`, render/fsr_vk.cpp).
+* **No SDK swapchain:** the SDK's frame-interpolation swapchain would replace ours and its threads; the device presents
+  itself instead. Per frame with an FSR upscale and a HUD-less view: the main thread copies the finished back buffer
+  into a slot, records optical flow and interpolation (output in the back buffer's format, a storage image) into the
+  frame's command buffer, and submits it with a **timeline semaphore** value. A **present thread** then acquires,
+  blits and presents the generated frame, sleeps until half the measured frame interval after the job came, and
+  presents the real frame (two slots, so the next frame draws meanwhile; one lock around the queue). Frames without
+  frame generation present as before, after the thread's last job.
+* **HUD-less frame:** after the game view is finished (styles, lens blur, the HDR lift) and before its GUI, the engine
+  copies the view (a full-window view only; `temporalHudless`), and in HDR PQ-encodes it like the back buffer
+  (`hdrEncodeTexture`), so the interpolation keeps the GUI from the real frame (labels stay sharp).
+* **Seen on Vienna** (`REGS_DEBUG_FOLLOW=1` for a moving camera; `REGS_FG_DUMP=<n>` writes the n-th and next generated
+  and real frames as PPM): the city and the camera motion interpolate cleanly; vehicles that move on their own show a
+  faint double image (the motion vectors carry camera motion only; per-object vectors would help, 9.1 phase 2).
+* **Cost** (1600×900, vsync off): 118 → 113 real frames per second, so about 225 shown; GPU 2.36 → 2.51 ms. With vsync
+  on, the two presents per frame halve the real rate at the display's refresh (60 Hz: 30 real, 60 shown), so frame
+  generation suits vsync off or a high-refresh display. HDR10 works with it (PQ input to the optical flow).
+* **Open:** pacing by display timing (`VK_GOOGLE_display_timing` or present-wait) instead of a sleep, per-object motion
+  vectors, a reactive mask.
+
+Earlier plan notes:
+
 * **Own interpolation:** with full motion vectors (9.1 phase 2) a generated frame between two rendered ones: each
   pixel warped halfway along its motion, holes filled from the frame that sees them (depth decides), the GUI drawn
   fresh on top of every presented frame (it is cheap and must not smear). Doubles the presented frame rate at the
   cost of a frame of latency. Option "Frame generation: off / on".
-* **AMD FSR 3 frame generation** (FidelityFX SDK, MIT, Vulkan): an alternative with its own optical flow; owner's OK
-  needed. NVIDIA DLSS Frame Generation needs an RTX 40 card, so it is not an option on the RTX 3080.
+* **AMD FSR 3 frame generation** (FidelityFX SDK, MIT, Vulkan): done, above. NVIDIA DLSS Frame Generation needs an RTX 40 card, so it is not an option on the RTX 3080.
 
 ### 9.5 DLSS
 

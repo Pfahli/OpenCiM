@@ -17,5 +17,7 @@ void hdrSync(Display& d, script::VM& vm);  // the settings → the device; once 
 void hdrExpandView(Display& d, script::VM& vm, int x, int y, int w, int h, int backW, int backH);  // top-left rect
 void hdrEncode(Display& d, script::VM& vm, int backW, int backH);
 void hdrReset(Display& d);  // the targets are made again (window size changed)
+// a w×h texture (gamma 2.2, paper-white relative) PQ-encoded into the module's own target; its texture, 0 without HDR
+uint32_t hdrEncodeTexture(Display& d, script::VM& vm, uint32_t texture, int w, int h);
 
 }  // namespace regs::engine

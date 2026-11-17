@@ -22,6 +22,7 @@ struct HdrState {
   bool failed = false;
   uint32_t expand = 0, encode = 0;
   RenderTarget copy;  // the back buffer (or a view's rect of it) as the passes' input
+  RenderTarget encoded;  // hdrEncodeTexture's output (frame generation's HUD-less frame)
   float paper = 200, peak = 1000;
 };
 
@@ -118,8 +119,31 @@ void hdrEncode(Display& d, script::VM& vm, int backW, int backH) {
   d.r3d().drawQuad(s.encode, &s.copy.color, 1, c0, uv);
 }
 
+uint32_t hdrEncodeTexture(Display& d, script::VM& vm, uint32_t texture, int w, int h) {
+  if (!texture || w <= 0 || h <= 0 || !ready(d, vm)) return 0;
+  HdrState& s = state();
+  if (!s.encoded.fbo || s.encoded.width != w || s.encoded.height != h) {
+    d.r3d().destroyTarget(s.encoded);
+    if (!d.r3d().makeTarget(s.encoded, w, h, TargetFormat::Rgba16f, false, true)) {
+      d.r3d().destroyTarget(s.encoded);
+      return 0;
+    }
+  }
+  gpu::Device& g = gpu::dev();
+  const float c0[4] = {s.paper, s.peak, 0, 0};
+  const float uv[4][4] = {{0, 1, 0, 0}, {1, 1, 0, 0}, {1, 0, 0, 0}, {0, 0, 0, 0}};
+  g.bindFramebuffer(s.encoded.fbo);
+  g.scissorTest(false);
+  g.viewport(0, 0, w, h);
+  d.r3d().drawQuad(s.encode, &texture, 1, c0, uv);
+  g.bindFramebuffer(0);
+  g.viewport(0, 0, w, h);
+  return s.encoded.color;
+}
+
 void hdrReset(Display& d) {
   d.r3d().destroyTarget(state().copy);
+  d.r3d().destroyTarget(state().encoded);
 }
 
 }  // namespace regs::engine

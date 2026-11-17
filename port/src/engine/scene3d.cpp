@@ -726,6 +726,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     d.r3d().end(bw, bh);
   }
   if (!rt) hdrExpandView(d, vm, x, y, w, h, bw, bh);  // HDR output: the view's highlights, before the GUI over it
+  if (!rt) temporalHudless(d, vm, x, y, w, h, bw, bh);  // frame generation: the view before the GUI
   d.r2d().resume();
 }
 

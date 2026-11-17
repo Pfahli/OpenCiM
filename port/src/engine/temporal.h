@@ -28,5 +28,10 @@ void temporalFinish(Display& d, script::VM& vm, const TemporalPass& t, int x, in
                     const render::RenderTarget* out);
 // render targets are made again at the next frame (window size or UI scale changed)
 void temporalReset(Display& d);
+// FSR 3 frame generation (setting regsFrameGen; docs/renderer/vulkan.md §9.4), with the FSR upscaler: after the game
+// view is finished (its post effects, the HDR lift) and before the GUI, temporalHudless keeps the view (a full-window
+// view only); right before the present, temporalFrameGenSubmit hands it to the device (PQ-encoded too in HDR)
+void temporalHudless(Display& d, script::VM& vm, int x, int y, int w, int h, int backW, int backH);
+void temporalFrameGenSubmit(Display& d, script::VM& vm, int backW, int backH);
 
 }  // namespace regs::engine

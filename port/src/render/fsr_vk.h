@@ -40,6 +40,20 @@ bool init(const VulkanContext& vk);
 // Records FSR into cmd (outside any rendering). The images live in VK_IMAGE_LAYOUT_GENERAL and stay there. The context
 // is (re)created when the sizes change.
 bool upscale(VkCommandBuffer cmd, const UpscaleDesc& d, std::string* error);
+// FSR 3 frame generation (docs/renderer/vulkan.md §9.4): optical flow and frame interpolation on the same backend,
+// fed with the upscaler's dilated depth and motion vectors of this frame (so it runs after upscale() in the same frame).
+// The interpolated frame lies between the previous call's frame and this one.
+struct FrameGenDesc {
+  Image backBuffer;  // this frame as it will be shown (with the GUI), display size
+  Image hudless;     // the same before the GUI (the 3D view), display size: the interpolation's source
+  Image output;      // the generated frame, display size, back-buffer format with storage usage
+  uint32_t displayWidth = 0, displayHeight = 0;
+  bool pq = false;          // the frames are PQ-encoded (HDR10 output)
+  bool reset = false;       // no usable previous frame
+  uint64_t frameId = 0;     // +1 per generated frame; a gap resets the generation
+};
+bool frameGenerate(VkCommandBuffer cmd, const FrameGenDesc& d, std::string* error);
+
 // FSR's own jitter sequence for a render → output ratio (pixels in [-0.5, 0.5]).
 void jitter(uint32_t frameIndex, uint32_t renderWidth, uint32_t outputWidth, float& x, float& y);
 // Frees the context (the device must be idle).

@@ -6,6 +6,7 @@
 //                                upscaled, temporally with TAA, else with the spatial upscaler
 //   $settings.$regsUpscaler      0 the port's TAA / upscaler, 1 AMD FSR 3.1 (drop-down list; Vulkan; replaces TAA,
 //                                also at 100 %)
+//   $settings.$regsFrameGen      0 off, 1 FSR 3 frame generation (Vulkan, with the FSR upscaler)
 //   $settings.$regsHdr           0 off, 1 HDR output (Vulkan with Windows HDR on; engine/hdr.cpp)
 //   $settings.$regsHdrPaperWhite 80 .. 400 nits (slider, 10-nit steps): menus and the game's normal white
 //   $settings.$regsHdrPeak       400 .. 4000 nits (slider, 50-nit steps): the display's maximum, highlights roll off
@@ -29,6 +30,7 @@ $c = $box.$content;
 $taa = int($settings.$regsTaa : 0);
 $renderScale = int($settings.$regsRenderScale : 100);
 $upscaler = int($settings.$regsUpscaler : 0);
+$frameGen = int($settings.$regsFrameGen : 0);
 $hdr = int($settings.$regsHdr : 0);
 $hdrPaper = int($settings.$regsHdrPaperWhite : 200);
 $hdrPeak = int($settings.$regsHdrPeak : 1000);
@@ -100,6 +102,7 @@ function slider($y, $min, $max, $value, $format, $shown) {
 function pick($group, $v) {
   if ($group == "regsTaa") $taa = $v;
   else if ($group == "regsUpscaler") $upscaler = $v;
+  else if ($group == "regsFrameGen") $frameGen = $v;
   else if ($group == "regsHdr") $hdr = $v;
   else if ($group == "regsRtShadows") $rtShadows = $v;
   else if ($group == "regsRtAo") $rtAo = $v;
@@ -110,14 +113,14 @@ function note($y, $text) {
   with (label(40, $y, $c.width - 80, $text, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
 }
 
-$y = 60;
+$y = 50;
 label(40, $y, 600, $regs.$regs_quality_aa_heading, true);
 $y += 34;
 label(40, $y, 250, $regs.$regs_taa_label, false);
 radioRow("regsTaa", $y, [0, 1], $regs.$regs_taa_values, $taa);
 $y += 24;
 note($y, $regs.$regs_taa_note);
-$y += 44;
+$y += 36;
 label(40, $y, 600, $regs.$regs_quality_scale_heading, true);
 $y += 34;
 label(40, $y, 250, $regs.$regs_renderScale_label, false);
@@ -134,9 +137,12 @@ note($y, $regs.$regs_renderScale_note2);
 $y += 34;
 label(40, $y, 250, $regs.$regs_upscaler_label, false);
 $upscalerList = dropDown("regsUpscaler", 300, $y, 210, [0, 1], $regs.$regs_upscaler_values, $upscaler);
+$y += 30;
+label(40, $y, 250, $regs.$regs_frameGen_label, false);
+radioRow("regsFrameGen", $y, [0, 1], $regs.$regs_taa_values, $frameGen);
 $y += 28;
 note($y, $regs.$regs_upscaler_note);
-$y += 44;
+$y += 36;
 label(40, $y, 600, $regs.$regs_quality_rt_heading, true);
 $y += 34;
 label(40, $y, 250, $regs.$regs_rtShadows_label, false);
@@ -151,7 +157,7 @@ $y += 24;
 note($y, $regs.$regs_rtShadows_note1);
 $y += 22;
 note($y, $regs.$regs_rtShadows_note2);
-$y += 44;
+$y += 36;
 label(40, $y, 600, $regs.$regs_hdr_heading, true);
 $y += 34;
 label(40, $y, 250, $regs.$regs_hdr_label, false);
@@ -201,6 +207,8 @@ function save() {
   $settings.exportVariables("regsRenderScale");
   $settings.setVariable("regsUpscaler", $upscaler);
   $settings.exportVariables("regsUpscaler");
+  $settings.setVariable("regsFrameGen", $frameGen);
+  $settings.exportVariables("regsFrameGen");
   $settings.setVariable("regsHdr", $hdr);
   $settings.exportVariables("regsHdr");
   $settings.setVariable("regsHdrPaperWhite", $hdrPaper);

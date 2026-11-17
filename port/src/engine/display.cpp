@@ -16,6 +16,7 @@
 #include "engine/font.h"
 #include "engine/gui.h"
 #include "engine/hdr.h"
+#include "engine/temporal.h"
 #include "engine/host.h"
 #include "engine/input.h"
 #include "engine/interaction.h"
@@ -501,6 +502,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     shot_.clear();
   }
   hdrEncode(*this, vm, w, h);  // after the screenshot, which stays SDR
+  temporalFrameGenSubmit(*this, vm, w, h);  // FSR 3 frame generation: this frame's HUD-less view to the device
   if (!pqShot.empty() && saveScreenshot(pqShot)) LOG_INFO("screenshot: %s", pqShot.string().c_str());
   const auto beforePresent = std::chrono::steady_clock::now();
   render::gpu::dev().present();

@@ -10,6 +10,7 @@
 
 #include "core/log.h"
 #include "engine/display.h"
+#include "engine/hdr.h"
 #include "engine/settings.h"
 #include "render/gpu.h"
 #include "vfs/vfs.h"
@@ -25,6 +26,10 @@ struct TemporalState {
   uint32_t taa = 0, upscale = 0, copy = 0, ao = 0, aoBlur = 0, motion = 0;
   RenderTarget input, history[2], aoRaw, aoSmooth, motionVectors, fsrOutput;
   bool lastFsr = false;
+  bool frameGen = false;   // this frame: frame generation on (FSR upscale in the game view)
+  bool hudReady = false;   // the HUD-less view was kept this frame
+  RenderTarget hudless;
+  bool hudFloat = false;
   float jitterPx[2] = {0, 0};  // FSR's: render pixels
   float cameraNear = 0.1f, cameraFar = 1000, fovY = 1;
   std::chrono::steady_clock::time_point lastFinish{};
@@ -111,6 +116,13 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
     }
   }
   if (fsr) taa = false;
+  // FSR 3 frame generation (regsFrameGen, REGS_FRAMEGEN=0|1): with the FSR upscaler only (it reads its dilated depth
+  // and motion)
+  bool fg = settingNumber(vm, u"regsFrameGen", 0) > 0;
+  if (const char* e = std::getenv("REGS_FRAMEGEN")) fg = std::atoi(e) != 0;
+  fg = fg && fsr && gpu::dev().frameGenAvailable();
+  gpu::dev().setFrameGen(fg);
+  s.frameGen = fg;
   if (fsr != s.lastFsr) s.valid = false;
   s.lastFsr = fsr;
   if (!taa && scale > 0.999f && !ao && !fsr) {
@@ -289,8 +301,36 @@ void temporalFinish(Display& d, script::VM& vm, const TemporalPass& t, int x, in
   g.viewport(0, 0, backW, backH);
 }
 
+void temporalHudless(Display& d, script::VM& vm, int x, int y, int w, int h, int backW, int backH) {
+  (void)vm;
+  TemporalState& s = state();
+  if (!s.frameGen || x != 0 || y != 0 || w != backW || h != backH) return;
+  TargetFormat f = gpu::dev().hdrActive() ? TargetFormat::Rgba16f : TargetFormat::Rgba8;
+  bool want16 = f == TargetFormat::Rgba16f;
+  if (s.hudless.fbo && (s.hudless.width != w || s.hudless.height != h || s.hudFloat != want16)) d.r3d().destroyTarget(s.hudless);
+  if (!s.hudless.fbo && !d.r3d().makeTarget(s.hudless, w, h, f, false, true)) {
+    d.r3d().destroyTarget(s.hudless);
+    return;
+  }
+  s.hudFloat = want16;
+  gpu::dev().blit(0, s.hudless.fbo, 0, 0, w, h, 0, 0, w, h, true, false);
+  s.hudReady = true;
+}
+
+void temporalFrameGenSubmit(Display& d, script::VM& vm, int backW, int backH) {
+  TemporalState& s = state();
+  if (s.hudReady) {
+    uint32_t tex = s.hudless.color;
+    if (gpu::dev().hdrActive()) tex = hdrEncodeTexture(d, vm, tex, backW, backH);  // in the back buffer's encoding
+    if (tex) gpu::dev().frameGenHudless(tex);
+  }
+  s.hudReady = false;
+  s.frameGen = false;
+}
+
 void temporalReset(Display& d) {
   TemporalState& s = state();
+  d.r3d().destroyTarget(s.hudless);
   d.r3d().destroyTarget(s.input);
   d.r3d().destroyTarget(s.history[0]);
   d.r3d().destroyTarget(s.history[1]);
