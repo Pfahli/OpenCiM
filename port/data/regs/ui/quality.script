@@ -22,7 +22,7 @@ $file = "regs/strings/" + MAIN.$language + ".strings";
 if (!file_exists($file)) $file = "regs/strings/en_US.strings";
 $regs = load "/" + $file;
 
-$boxH = $desktop.height - 20 < 800 ? $desktop.height - 20 : 800;
+$boxH = $desktop.height - 20 < 600 ? $desktop.height - 20 : 600;
 $box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - $boxH) * 0.5), 1000, $boxH, 1 | 2 | 4 | 8, $desktop);
 $title = MAIN.$ui.createHeadingBar($box, $regs.$regs_quality_title);
 $c = $box.$content;
@@ -51,12 +51,34 @@ function label($x, $y, $w, $text, $title) {
   return $l;
 }
 
-// a row of radio buttons: the values, their texts, the one shown as chosen
-function radioRow($group, $y, $values, $texts, $chosen) {
+// two columns (left: sharpness and performance; right: raytracing, HDR), each section a heading over a thin line; a
+// row is a label at the column's left and its control at $ctl
+$colL = 40;
+$colR = 530;
+$colW = 430;
+$ctlOff = 200;  // the controls, from the column's left
+
+// a thin line (section underline, column divider)
+function rule($x, $y, $w, $h) {
+  with ($r = new_control($c)) {
+    .setRect($x, $y, $w, $h);
+    .background = 0x40FFFFFF;
+    .visible = true;
+    .canActivate = false;
+  }
+}
+
+function heading($x, $y, $text) {
+  label($x, $y, $colW, $text, true);
+  rule($x, $y + 22, $colW, 1);
+}
+
+// a row of choice buttons from $x: the values, their texts, the one shown as chosen
+function radioRow($group, $x, $y, $values, $texts, $chosen) {
   for ($i = 0; $i < #$values; ++$i) {
-    $x = 300 + $i * 120;
-    $b = MAIN.$ui.createChoiceButton($c, $group, $x, $y + 1, 16, 16, "", macro($group, $values[$i]) :: pick($0, $1), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
-    label($x + 22, $y, 96, $texts[$i], false);
+    $bx = $x + $i * 90;
+    $b = MAIN.$ui.createChoiceButton($c, $group, $bx, $y + 1, 16, 16, "", macro($group, $values[$i]) :: pick($0, $1), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+    label($bx + 22, $y, 66, $texts[$i], false);
     if ($values[$i] == $chosen) MAIN.$ui.selectChoiceButton($b, $group);
   }
 }
@@ -90,10 +112,10 @@ function dropDown($group, $x, $y, $w, $values, $texts, $chosen) {
   return $d;
 }
 
-// a slider from $min to $max; its value (rounded by the caller's action) is shown right of it with $format's %0
-function slider($y, $min, $max, $value, $format, $shown) {
-  $s = MAIN.$ui.createSlider($c, $value, $min, $max, 300, $y - 5, 210, 27);
-  with (label(525, $y, 160, $format, false)) {
+// a slider from $min to $max at $x; its value (rounded by the caller's action) is shown right of it with $format's %0
+function slider($x, $y, $min, $max, $value, $format, $shown) {
+  $s = MAIN.$ui.createSlider($c, $value, $min, $max, $x, $y - 5, 160, 27);
+  with (label($x + 168, $y, 70, $format, false)) {
     .setArg(0, $shown);
   }
   return $s;
@@ -109,75 +131,87 @@ function pick($group, $v) {
   else if ($group == "regsRtReflections") $rtReflections = $v;
 }
 
-function note($y, $text) {
-  with (label(40, $y, $c.width - 80, $text, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
+// a grey hint line in a column
+function hint($x, $y, $text) {
+  with (label($x, $y, $colW, $text, false)) MAIN.$ui.setTextFont(current, 0xFF999999);
 }
 
-$y = 50;
-label(40, $y, 600, $regs.$regs_quality_aa_heading, true);
+rule(500, 40, 1, 400);  // between the columns
+
+// ---- left: sharpness and performance ----
+$x = $colL;
+$y = 40;
+heading($x, $y, $regs.$regs_q_perf_heading);
+$y += 38;
+label($x, $y, 190, $regs.$regs_upscaler_label, false);
+$upscalerList = dropDown("regsUpscaler", $x + $ctlOff, $y, 200, [0, 1], $regs.$regs_upscaler_values, $upscaler);
 $y += 34;
-label(40, $y, 250, $regs.$regs_taa_label, false);
-radioRow("regsTaa", $y, [0, 1], $regs.$regs_taa_values, $taa);
-$y += 24;
-note($y, $regs.$regs_taa_note);
-$y += 36;
-label(40, $y, 600, $regs.$regs_quality_scale_heading, true);
-$y += 34;
-label(40, $y, 250, $regs.$regs_renderScale_label, false);
+label($x, $y, 190, $regs.$regs_renderScale_label, false);
 $renderScale = $renderScale < 50 ? 50 : ($renderScale > 100 ? 100 : $renderScale);
-$scaleSlider = slider($y, 50.0, 100.0, $renderScale, $regs.$regs_percent_value, macro :: $renderScale);
+$scaleSlider = slider($x + $ctlOff, $y, 50.0, 100.0, $renderScale, $regs.$regs_percent_value, macro :: $renderScale);
 $scaleSlider.$action = macro :: setRenderScale();
 function setRenderScale() {
   $renderScale = int($scaleSlider.$value + 0.5);
 }
-$y += 28;
-note($y, $regs.$regs_renderScale_note1);
-$y += 22;
-note($y, $regs.$regs_renderScale_note2);
 $y += 34;
-label(40, $y, 250, $regs.$regs_upscaler_label, false);
-$upscalerList = dropDown("regsUpscaler", 300, $y, 210, [0, 1], $regs.$regs_upscaler_values, $upscaler);
+label($x, $y, 190, $regs.$regs_taa_label, false);
+radioRow("regsTaa", $x + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $taa);
+$y += 32;
+label($x, $y, 190, $regs.$regs_frameGen_label, false);
+radioRow("regsFrameGen", $x + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $frameGen);
 $y += 30;
-label(40, $y, 250, $regs.$regs_frameGen_label, false);
-radioRow("regsFrameGen", $y, [0, 1], $regs.$regs_taa_values, $frameGen);
-$y += 28;
-note($y, $regs.$regs_upscaler_note);
-$y += 36;
-label(40, $y, 600, $regs.$regs_quality_rt_heading, true);
+hint($x, $y, $regs.$regs_q_perf_hint1);
+$y += 20;
+hint($x, $y, $regs.$regs_q_perf_hint2);
+$y += 20;
+hint($x, $y, $regs.$regs_q_perf_hint3);
+$y += 44;
+heading($x, $y, $regs.$regs_q_req_heading);
+$y += 38;
+hint($x, $y, $regs.$regs_q_req1);
+$y += 20;
+hint($x, $y, $regs.$regs_q_req2);
+
+// ---- right: raytracing, HDR ----
+$x = $colR;
+$y = 40;
+heading($x, $y, $regs.$regs_quality_rt_heading);
+$y += 38;
+label($x, $y, 190, $regs.$regs_rtShadows_label, false);
+radioRow("regsRtShadows", $x + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $rtShadows);
+$y += 32;
+label($x, $y, 190, $regs.$regs_rtAo_label, false);
+radioRow("regsRtAo", $x + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $rtAo);
+$y += 32;
+label($x, $y, 190, $regs.$regs_rtReflections_label, false);
+radioRow("regsRtReflections", $x + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $rtReflections);
+$y += 30;
+hint($x, $y, $regs.$regs_q_rt_hint1);
+$y += 20;
+hint($x, $y, $regs.$regs_q_rt_hint2);
+$y += 44;
+heading($x, $y, $regs.$regs_hdr_heading);
+$y += 38;
+label($x, $y, 190, $regs.$regs_hdr_label, false);
+radioRow("regsHdr", $x + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $hdr);
 $y += 34;
-label(40, $y, 250, $regs.$regs_rtShadows_label, false);
-radioRow("regsRtShadows", $y, [0, 1], $regs.$regs_taa_values, $rtShadows);
-$y += 30;
-label(40, $y, 250, $regs.$regs_rtAo_label, false);
-radioRow("regsRtAo", $y, [0, 1], $regs.$regs_taa_values, $rtAo);
-$y += 30;
-label(40, $y, 250, $regs.$regs_rtReflections_label, false);
-radioRow("regsRtReflections", $y, [0, 1], $regs.$regs_taa_values, $rtReflections);
-$y += 24;
-note($y, $regs.$regs_rtShadows_note1);
-$y += 22;
-note($y, $regs.$regs_rtShadows_note2);
-$y += 36;
-label(40, $y, 600, $regs.$regs_hdr_heading, true);
-$y += 34;
-label(40, $y, 250, $regs.$regs_hdr_label, false);
-radioRow("regsHdr", $y, [0, 1], $regs.$regs_taa_values, $hdr);
-$y += 30;
-label(40, $y, 250, $regs.$regs_hdrPaper_label, false);
-$paperSlider = slider($y, 80.0, 400.0, $hdrPaper, $regs.$regs_nits_value, macro :: $hdrPaper);
+label($x, $y, 190, $regs.$regs_hdrPaper_label, false);
+$paperSlider = slider($x + $ctlOff, $y, 80.0, 400.0, $hdrPaper, $regs.$regs_nits_value, macro :: $hdrPaper);
 $paperSlider.$action = macro :: setPaperWhite();
 function setPaperWhite() {
   $hdrPaper = int($paperSlider.$value / 10.0 + 0.5) * 10;
 }
 $y += 34;
-label(40, $y, 250, $regs.$regs_hdrPeak_label, false);
-$peakSlider = slider($y, 400.0, 4000.0, $hdrPeak, $regs.$regs_nits_value, macro :: $hdrPeak);
+label($x, $y, 190, $regs.$regs_hdrPeak_label, false);
+$peakSlider = slider($x + $ctlOff, $y, 400.0, 4000.0, $hdrPeak, $regs.$regs_nits_value, macro :: $hdrPeak);
 $peakSlider.$action = macro :: setPeak();
 function setPeak() {
   $hdrPeak = int($peakSlider.$value / 50.0 + 0.5) * 50;
 }
-$y += 28;
-note($y, $regs.$regs_hdr_note);
+$y += 30;
+hint($x, $y, $regs.$regs_q_hdr_hint1);
+$y += 20;
+hint($x, $y, $regs.$regs_q_hdr_hint2);
 
 function pageButton($text, $action) {
   with ($b = MAIN.$ui.createButton($c, 4, 0, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {

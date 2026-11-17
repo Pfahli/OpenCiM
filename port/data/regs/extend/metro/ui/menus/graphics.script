@@ -2,7 +2,7 @@
 // //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds
 // presets, the port's options (stored as regs* settings, or fpsLimit, which the game reads but never offered here),
 // more steps for shadows and antialiasing, the style effects, the graphics engine choice, the frame-rate readout and
-// the "Image quality" button between OK and Cancel (regs/ui/quality.script).
+// the "Image quality" button above OK and Cancel (regs/ui/quality.script).
 // New options: a row in the middle column, a column in $regsPresets if it is a quality option, and a line in save().
 //@rename save regsBaseSave
 
@@ -290,10 +290,14 @@ function save() {
   }
 }
 
-// ---- "Image quality" between OK and Cancel: the port's image options page (regs/ui/quality.script), over this one ----
-with ($regsQualityButton = MAIN.$ui.createButton($box.$content, 0, 0, 250, 32, $regs.$regs_quality_button, macro :: MAIN.$main.regsOpenQualityPage($box), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
+// ---- "Image quality" in its own row above OK and Cancel: the port's image options page (regs/ui/quality.script),
+// opened over this one. The page grows by one button row (the frame follows its rect), OK and Cancel move down.
+$box.setRect($box.left, $box.top - 22, $box.width, $box.height + 44);
+$okButton.setRect(40, $box.$content.height - $okButton.height - 20, $okButton.width, $okButton.height);
+$backButton.setRect($box.$content.width - $backButton.width - 40, $box.$content.height - $backButton.height - 20, $backButton.width, $backButton.height);
+with ($regsQualityButton = MAIN.$ui.createButton($box.$content, 0, 0, 322, 32, $regs.$regs_quality_button, macro :: MAIN.$main.regsOpenQualityPage($box), "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
   .setCropRect(96.0 / 512.0, 0.0, 322.0 / 512.0, 1.0);
   .textAlign = ALIGN_MIDDLE | ALIGN_CENTER;
   MAIN.$ui.setTitleFont(current);
-  .setRect(int(($box.$content.width - .width) * 0.5), $box.$content.height - .height - 20, .width, .height);
+  .setRect(int(($box.$content.width - .width) * 0.5), $okButton.top - .height - 10, .width, .height);
 }
