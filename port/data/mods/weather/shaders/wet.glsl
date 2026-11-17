@@ -345,5 +345,8 @@ void weather_wet_apply(inout vec4 c, RegsSurface s) {
   // it from lighting up the ground
   vec3 water = mix(c.rgb * 0.45, refl, clamp(0.3 + fr, 0.0, 0.85));
   water = min(water, c.rgb * 1.1);  // at most a touch lighter than the wet asphalt around it (still darker than dry)
+  // and never much darker: at night the sky in it is black, and a puddle in a lamp's pool or a headlight beam would
+  // be a black hole (by day the grey sky keeps it above this anyway)
+  water = max(water, c.rgb * 0.62);
   c.rgb = mix(c.rgb, water, p * keep);
 }
