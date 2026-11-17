@@ -91,7 +91,16 @@ class Win32Window final : public Window {
       x = r.left;
       y = r.top;
     } else {
-      AdjustWindowRectEx(&r, style, FALSE, 0);
+      MONITORINFO mi{sizeof mi};
+      GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
+      if (desc.width >= mi.rcMonitor.right - mi.rcMonitor.left || desc.height >= mi.rcMonitor.bottom - mi.rcMonitor.top) {
+        style = WS_POPUP;  // as large as the monitor or larger (4K screenshots): a plain window at its corner, no frame
+        x = mi.rcMonitor.left;
+        y = mi.rcMonitor.top;
+        oversize_ = true;
+      } else {
+        AdjustWindowRectEx(&r, style, FALSE, 0);
+      }
     }
     hwnd_ = CreateWindowExW(0, kClass, reinterpret_cast<const wchar_t*>(desc.title.c_str()), style, x, y,
                             r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, this);
@@ -380,6 +389,14 @@ class Win32Window final : public Window {
       }
       case WM_DPICHANGED: return 0;
       case WM_ERASEBKGND: return 1;
+      case WM_GETMINMAXINFO:  // a window larger than the monitor keeps its size
+        if (oversize_) {
+          auto* mmi = reinterpret_cast<MINMAXINFO*>(l);
+          mmi->ptMaxTrackSize.x = mmi->ptMaxSize.x = 16384;
+          mmi->ptMaxTrackSize.y = mmi->ptMaxSize.y = 16384;
+          return 0;
+        }
+        break;
       case WM_CLOSE: emit({T::Close}); return 0;  // the game decides (scripts may ask before quitting)
     }
     return DefWindowProcW(hwnd_, m, w, l);
@@ -401,6 +418,7 @@ class Win32Window final : public Window {
   int width_ = 0, height_ = 0;
   char16_t highSurrogate_ = 0;
   std::vector<InputEvent> queued_;
+  bool oversize_ = false;
   double gestureDist_ = 0, gestureAngle_ = 0;  // WM_GESTURE: the last zoom distance and turn angle
   POINT gesturePan_{};
   TouchpadTwist touchpad_;

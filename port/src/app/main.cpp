@@ -79,6 +79,10 @@ int main(int argc, char** argv) {
     else if (a == "--data" && i + 1 < argc) data = widen(argv[++i]);
     else if (a == "--print-paths") printPaths = true;
     else if (a == "--windowed") engine::host().forceWindowed = true;
+    else if (a == "--size" && i + 1 < argc) {  // --size WxH: the window's client size (screenshots, e.g. 3840x2160)
+      std::sscanf(argv[++i], "%dx%d", &engine::host().forceWidth, &engine::host().forceHeight);
+      engine::host().forceWindowed = true;
+    }
     else if (a == "--community-addons") engine::host().communityAddons = true;
     else if (a == "--mods" && i + 1 < argc) engine::host().modsDir = fs::absolute(widen(argv[++i]));
     else if (a == "--no-mods") engine::host().noMods = true;
@@ -222,6 +226,9 @@ int main(int argc, char** argv) {
             }
           } catch (...) {
           }
+          continue;
+        } else if (sc.action == "ui") {  // ui:off draws the scene only (screenshots without the interface), ui:on back
+          engine::host().hideGui = sc.arg == "off";
           continue;
         } else if (sc.action == "vsync") {  // vsync:off after a frame-timed load, for frame-time measurements
           d->window().setVsync(sc.arg == "on");
