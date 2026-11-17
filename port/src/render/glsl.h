@@ -15,8 +15,13 @@ namespace regs::render {
 // rayShadows (Vulkan with ray queries, docs/renderer/vulkan.md §9.3): the fragment stage's shadow2D lookups are
 // multiplied by a ray query toward the sun (uniforms regs_Scene, the frame's acceleration structure, and regs_SunPos,
 // the sun in world space with w = 1 while the rays are on); the shadow map then only holds what the rays leave out.
+// rays is a bit set: kRayShadows (true converts to it) and kRayReflections (§9.7): the fragment stage's textureCube
+// lookups (the game's environment-cube reflections on water and glass) trace a ray along the reflected direction; what
+// it hits is shaded from the device's hit table and bindless textures (regs_HitTable, regs_Images), a miss reads the
+// cube as before.
+constexpr unsigned kRayShadows = 1, kRayReflections = 2;
 std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool hooks = false,
-                             bool rayShadows = false);
+                             unsigned rays = 0);
 
 // Port shader hooks for mods (port/docs/mod-manager.md §4.3): GLSL functions
 //   void <function>(inout vec4 color, RegsSurface s)

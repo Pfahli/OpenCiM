@@ -151,6 +151,9 @@ class Device {
   struct IndexRange {
     size_t firstIndex = 0;
     int indexCount = 0;
+    // for raytraced reflections (hit shading): the part's base texture (0 = none) and colour (RGBA8, R in the low byte)
+    uint32_t texture = 0;
+    uint32_t color = 0xFFFFFFFFu;
   };
   virtual uint32_t createBlas(uint32_t vertexBuffer, int stride, int vertexCount, uint32_t indexBuffer,
                               const IndexRange* ranges, int count) {
@@ -164,6 +167,8 @@ class Device {
     uint32_t blas = 0;
   };
   virtual void buildScene(const Instance* instances, int count) {}
+  // raytraced reflections (docs/renderer/vulkan.md §9.7): programs may shade ray hits (bindless textures, hit table)
+  virtual bool rayReflections() const { return false; }
 
   // ---- HDR output (docs/renderer/vulkan.md §9.6): Vulkan with an HDR10 swapchain (Windows HDR on) ----
   // While HDR is in effect the back buffer is RGBA16F and holds gamma-2.2 values relative to paper white (1.0 = paper

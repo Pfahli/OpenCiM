@@ -200,6 +200,8 @@ struct SceneView {
 enum : uint32_t { kEnvFog = 0x1, kEnvShadowMap = 0x2, kEnvShadowMapRender = 0x4, kEnvShadowRender = 0x8, kEnvShadow = 0x10 };
 // port pass bit (never given to the game's combiner scripts): the programs with raytraced shadows
 constexpr uint32_t kEnvRayShadows = 0x40000000u;
+// port pass bit: the programs with raytraced reflections (water and glass, docs/renderer/vulkan.md §9.7)
+constexpr uint32_t kEnvRayReflections = 0x20000000u;
 
 struct DrawItem {
   const GpuMesh* mesh = nullptr;
@@ -243,8 +245,9 @@ class Renderer3D {
   // slots of upload(). 0 on failure (error set).
   // hooks: add the mods' shader hooks (render/glsl.h; the scene combiner variants).
   // rayShadows: the fragment stage traces its shadow toward the sun (Vulkan with ray queries only, render/glsl.h).
+  // rays: kRayShadows / kRayReflections (render/glsl.h); true = ray shadows
   uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false,
-                        bool rayShadows = false);
+                        unsigned rays = 0);
   // The frame's ray-query scene from a draw list (docs/renderer/vulkan.md §9.3): every part that casts a shadow except
   // foliage, blended and skinned parts (those stay in the shadow map), as instances of per-mesh bottom-level structures
   // (built the first time a mesh is seen).
@@ -315,6 +318,7 @@ class Renderer3D {
         hookItem = -1, hookTrafficRect = -1, hookFootRect = -1, hookNight = -1, hookLaneCells = -1;
     std::map<std::string, int> hookUniforms;
     int sunPos = -1;  // raytraced shadows (render/glsl.h)
+    int eyePos = -1;  // raytraced reflections: the camera in world space
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
   };

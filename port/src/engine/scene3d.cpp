@@ -229,20 +229,23 @@ uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flag
   if (off) return 0;
   ShaderCombiner* c = getCombiner(vm, utf8ToUtf16(shader));
   if (!c) return 0;
-  // the port's ray-shadow bit is never given to the game's combiner: the same variant, its program with rays
-  const bool rays = (env & kEnvRayShadows) != 0;
-  ShaderVariant* v = combinerVariant(vm, c, flags, meshFlags, env & ~kEnvRayShadows);
+  // the port's ray bits are never given to the game's combiner: the same variant, its program with rays (shadows
+  // where it samples the shadow map, reflections where it reads an environment cube)
+  ShaderVariant* v = combinerVariant(vm, c, flags, meshFlags, env & ~(kEnvRayShadows | kEnvRayReflections));
   if (!v || v->failed) return 0;
-  if (rays && (env & kEnvShadowMap)) {
-    if (!v->programRay && !v->rayFailed) {
+  unsigned rays = 0;
+  if ((env & kEnvRayShadows) && (env & kEnvShadowMap)) rays |= render::kRayShadows;
+  if ((env & kEnvRayReflections) && v->fragment.find("textureCube") != std::string::npos) rays |= render::kRayReflections;
+  if (rays) {
+    if (!v->programRays[rays] && !v->raysFailed[rays]) {
       std::string err;
-      v->programRay = d.r3d().buildProgram(v->vertex, v->fragment, &err, true, true);
-      if (!v->programRay) {
-        v->rayFailed = true;
-        LOG_WARN("shader variant %s 0x%x/0x%x with ray shadows: %s", shader.empty() ? "default" : shader.c_str(), flags, env, err.c_str());
+      v->programRays[rays] = d.r3d().buildProgram(v->vertex, v->fragment, &err, true, rays);
+      if (!v->programRays[rays]) {
+        v->raysFailed[rays] = true;
+        LOG_WARN("shader variant %s 0x%x/0x%x with rays %u: %s", shader.empty() ? "default" : shader.c_str(), flags, env, rays, err.c_str());
       }
     }
-    if (v->programRay) return v->programRay;
+    if (v->programRays[rays]) return v->programRays[rays];
   }
   if (!v->program) {
     std::string err;
@@ -628,6 +631,23 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         v.shadowWarp = fit.warp;
         for (int k = 0; k < 4; ++k) v.shadowParams[k] = fit.params[k];
       }
+    }
+  }
+  // raytraced reflections (settings regsRtReflections, REGS_RT_REFLECTIONS=0|1; docs/renderer/vulkan.md §9.7): water and
+  // the reflective materials (glass) trace their environment-cube lookups; Vulkan with ray queries, the map view
+  if (!rt && !grids.empty() && render::gpu::dev().rayReflections()) {
+    bool on = settingNumber(vm, u"regsRtReflections", 0) > 0;
+    if (const char* e = std::getenv("REGS_RT_REFLECTIONS")) on = std::atoi(e) != 0;
+    if (on && ensureRayScene()) {
+      v.env |= kEnvRayReflections;
+      if (!v.rayShadows)  // the hits are lit by the sun (with ray shadows its position is known already)
+        for (Object* s : suns) {
+          Light sl;
+          if (sunLight(vm, s, sl)) {
+            v.sunWorld = sl.position;
+            break;
+          }
+        }
     }
   }
   { auto ts_ = std::chrono::steady_clock::now(); assignPrograms(d, vm, items, v.env); gPhaseSeconds[6] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }

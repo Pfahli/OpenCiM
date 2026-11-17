@@ -200,6 +200,8 @@ bool compileProgram(const std::string& vs, const std::string& fs,
     u.arraySize = std::max(1, r.size);
     // the type as a GL enum (glDefineType): samplers, matrices, vectors, ints
     const int gt = r.glDefineType;
+    // the bindless set (set 1, raytraced reflections) is the device's own, not a per-draw binding of set 0
+    if (u.name.rfind("regs_Images", 0) == 0 || u.name.rfind("regs_HitSampler", 0) == 0) continue;
     if (u.name == "regs_Scene") {  // the ray-query scene (render/glsl.h, raytraced shadows)
       u.accel = true;
       u.binding = r.getBinding();
@@ -220,13 +222,17 @@ bool compileProgram(const std::string& vs, const std::string& fs,
         case 0x8B50: case 0x8B53: case 0x8B57: u.components = 2; break;
         case 0x8B51: case 0x8B54: case 0x8B58: u.components = 3; break;
         case 0x8B52: case 0x8B55: case 0x8B59: u.components = 4; break;
+        case 0x8DC6: u.components = 2; break;  // uvec2 (regs_HitTable)
+        case 0x8DC7: u.components = 3; break;
+        case 0x8DC8: u.components = 4; break;
         default: u.components = 1; break;
       }
       if (u.columns) u.matrixStride = 16;
-      u.isInt = gt == 0x1404 || gt == 0x1405 || (gt >= 0x8B53 && gt <= 0x8B59);  // int, uint, ivec, bool, bvec
+      u.isInt = gt == 0x1404 || gt == 0x1405 || (gt >= 0x8B53 && gt <= 0x8B59) || (gt >= 0x8DC6 && gt <= 0x8DC8);
     }
     out.uniforms.push_back(u);
   }
+  out.bindless = fsText.find("regs_Images") != std::string::npos;
   out.inputs.clear();
   for (int i = 0; i < prog.getNumPipeInputs(); ++i) {
     unsigned loc = prog.getPipeInput(i).layoutLocation();

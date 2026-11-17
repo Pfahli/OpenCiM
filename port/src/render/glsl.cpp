@@ -11,6 +11,78 @@ namespace regs::render {
 namespace {
 
 // Fixed-function state of GLSL 1.10, re-declared as ordinary uniforms with the same layout and member names.
+const char* kReflectionCode = R"(
+// raytraced reflections (§9.7): the hit's triangle from the device's hit table (one record per mesh part: vertex and
+// index addresses, base texture, colour), its texture from the bindless array, lit by the sun with a shadow ray
+layout(set = 1, binding = 0) uniform texture2D regs_Images[];
+layout(set = 1, binding = 1) uniform sampler regs_HitSampler;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer RegsHitRecord { uvec4 a; uvec4 b; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RegsU32 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RegsF32 { float v[]; };
+uniform uvec2 regs_HitTable;
+uniform vec4 regs_EyePos;  // the camera, world space
+uvec2 regs_addr(uvec2 a, uint off) { uint lo = a.x + off; return uvec2(lo, a.y + (lo < a.x ? 1u : 0u)); }
+vec3 regs_vec3(RegsF32 b, uint at) { return vec3(b.v[at], b.v[at + 1u], b.v[at + 2u]); }
+vec4 regs_reflectCube(samplerCube s, vec3 dir) {
+  // the ray leaves along a calmer direction than the shader's: the reflection about the flat surface, bent 25 % of
+  // the way toward the rippled one (the water's normal maps would scatter single rays into speckles of sky and bank;
+  // the cube lookup they replace is smooth). Glass is flat, so there both are the same.
+  vec3 view = normalize(regs_WorldPos - regs_EyePos.xyz);
+  vec3 geo = cross(dFdx(regs_WorldPos), dFdy(regs_WorldPos));
+  geo = dot(geo, geo) > 1e-12 ? normalize(geo) : vec3(0.0, 1.0, 0.0);
+  if (dot(geo, view) > 0.0) geo = -geo;
+  vec3 d = normalize(mix(reflect(view, geo), normalize(dir), 0.25));
+  if (dot(d, geo) < 0.02) d = normalize(d + geo * (0.02 - dot(d, geo)));
+#if REGS_REFL_DEBUG == 1
+  return vec4(1.0, 0.0, 0.0, 1.0);
+#endif
+  rayQueryEXT q;
+  rayQueryInitializeEXT(q, regs_Scene, gl_RayFlagsOpaqueEXT, 0xFF, regs_WorldPos + d * 0.05, 0.05, d, 3000.0);
+  while (rayQueryProceedEXT(q)) {}
+  if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT) return texture(s, dir);
+#if REGS_REFL_DEBUG == 2
+  return vec4(0.0, 1.0, 0.0, 1.0);
+#endif
+  int rec = rayQueryGetIntersectionInstanceCustomIndexEXT(q, true) + rayQueryGetIntersectionGeometryIndexEXT(q, true);
+  RegsHitRecord r = RegsHitRecord(regs_addr(regs_HitTable, uint(rec) * 32u));
+  uvec4 ra = r.a, rb = r.b;
+#if REGS_REFL_DEBUG == 3
+  return unpackUnorm4x8(rb.y);
+#endif
+  RegsU32 ib = RegsU32(ra.zw);
+  RegsF32 vb = RegsF32(ra.xy);
+  uint prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true));
+  uint i0 = ib.v[prim * 3u] * 15u, i1 = ib.v[prim * 3u + 1u] * 15u, i2 = ib.v[prim * 3u + 2u] * 15u;
+  vec2 bc = rayQueryGetIntersectionBarycentricsEXT(q, true);
+  vec3 w = vec3(1.0 - bc.x - bc.y, bc.x, bc.y);
+  // the vertex: position 0-2, normal 3-5, uv 6-7 (15 floats, renderer3d.cpp Vtx)
+  vec3 on = regs_vec3(vb, i0 + 3u) * w.x + regs_vec3(vb, i1 + 3u) * w.y + regs_vec3(vb, i2 + 3u) * w.z;
+  vec2 uv = vec2(vb.v[i0 + 6u], vb.v[i0 + 7u]) * w.x + vec2(vb.v[i1 + 6u], vb.v[i1 + 7u]) * w.y +
+            vec2(vb.v[i2 + 6u], vb.v[i2 + 7u]) * w.z;
+  mat4x3 toWorld = rayQueryGetIntersectionObjectToWorldEXT(q, true);
+  vec3 n = mat3(toWorld) * on;
+  n = dot(n, n) > 1e-12 ? normalize(n) : -d;
+  if (dot(n, d) > 0.0) n = -n;
+  float t = rayQueryGetIntersectionTEXT(q, true);
+  vec4 albedo = unpackUnorm4x8(rb.y);
+  if (rb.x != 0u)  // farther hits read smaller mips (no screen derivatives along a reflected ray)
+    albedo *= textureLod(sampler2D(regs_Images[nonuniformEXT(rb.x)], regs_HitSampler), uv, clamp(log2(1.0 + t * 0.05) * 2.0, 0.0, 10.0));
+  vec3 p = regs_WorldPos + d * t;
+  vec3 l = normalize(regs_SunPos.xyz - p);
+  float lit = max(dot(n, l), 0.0);
+  if (lit > 0.0) {
+    rayQueryEXT sq;
+    rayQueryInitializeEXT(sq, regs_Scene, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFF, p + n * 0.05, 0.0, l, 4000.0);
+    while (rayQueryProceedEXT(sq)) {}
+    if (rayQueryGetIntersectionTypeEXT(sq, true) != gl_RayQueryCommittedIntersectionNoneEXT) lit = 0.0;
+  }
+  vec3 c = albedo.rgb * (regs_LightModel.ambient.rgb + regs_LightSource[0].ambient.rgb + regs_LightSource[0].diffuse.rgb * lit);
+  // the reflected point is t farther away: its own share of the fog
+  c = mix(c, regs_Fog.color.rgb, clamp((t - regs_Fog.start) * regs_Fog.scale, 0.0, 1.0));
+  return vec4(c, 1.0);
+}
+)";
+
 const char* kBuiltins = R"(struct regs_MaterialParameters { vec4 emission; vec4 ambient; vec4 diffuse; vec4 specular; float shininess; };
 struct regs_LightSourceParameters { vec4 ambient; vec4 diffuse; vec4 specular; vec4 position; vec4 halfVector;
   vec3 spotDirection; float spotExponent; float spotCutoff; float spotCosCutoff;
@@ -435,18 +507,41 @@ std::string renameIdentifiers(const std::string& src, bool fragment, const char*
 
 }  // namespace
 
+// whole-word replacement (the reflection hook: textureCube → regs_reflectCube before the GLSL 1.10 renames)
+static std::string replaceWord(const std::string& s, const std::string& from, const std::string& to) {
+  std::string out;
+  out.reserve(s.size() + 64);
+  size_t i = 0;
+  while (i < s.size()) {
+    size_t at = s.find(from, i);
+    if (at == std::string::npos) break;
+    bool before = at > 0 && identChar(s[at - 1]), after = at + from.size() < s.size() && identChar(s[at + from.size()]);
+    out.append(s, i, at - i);
+    out += before || after ? from : to;
+    i = at + from.size();
+  }
+  out.append(s, i, std::string::npos);
+  return out;
+}
+
 std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool withHooks,
-                             bool rayShadows) {
+                             unsigned rayBits) {
   withHooks = withHooks && !hooks().empty();
+  const bool rayShadows = (rayBits & kRayShadows) != 0;
+  const bool reflections = fragment && (rayBits & kRayReflections) && src.find("textureCube") != std::string::npos;
   std::string why;
-  std::string s = renameIdentifiers(src, fragment, fragment ? "regs_main" : "regs_vmain", &why);
+  std::string s = renameIdentifiers(reflections ? replaceWord(src, "textureCube", "regs_reflectCube") : src, fragment,
+                                    fragment ? "regs_main" : "regs_vmain", &why);
   if (s.empty() && !why.empty()) {
     if (unsupported) *unsupported = why;
     return "";
   }
   std::string head = "#version 330 core\n";
   const bool rays = rayShadows && fragment;
-  if (rays) head += "#extension GL_EXT_ray_query : require\n";
+  if (rays || reflections) head += "#extension GL_EXT_ray_query : require\n";
+  if (reflections)
+    head += "#extension GL_EXT_buffer_reference : require\n#extension GL_EXT_buffer_reference_uvec2 : require\n"
+            "#extension GL_EXT_nonuniform_qualifier : require\n";
   // REGS_SHADER_SALT=<text>: a comment that makes every source new to the driver's shader cache (cold-start tests)
   static const char* salt = std::getenv("REGS_SHADER_SALT");
   if (salt) head += std::string("// ") + salt + "\n";
@@ -471,9 +566,15 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
          "  regs_WorldPos = (regs_ViewInverse * vec4(e, 1.0)).xyz;\n  regs_Seed = regs_Color.a;\n  regs_ModelPos = regs_Vertex.xyz;\n}\n";
   } else {
     head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\nin vec3 regs_WorldPos;\nin float regs_Seed;\nin vec3 regs_ModelPos;\n";
+    if (rays || reflections) head += "uniform accelerationStructureEXT regs_Scene;\nuniform vec4 regs_SunPos;\n";
+    if (reflections) {
+      // REGS_RT_REFL_DEBUG=1|2|3 (a check): a constant, green hits, the hit record's colour
+      static const char* dbg = std::getenv("REGS_RT_REFL_DEBUG");
+      head += std::string("#define REGS_REFL_DEBUG ") + (dbg ? dbg : "0") + "\n";
+      head += kReflectionCode;
+    }
     if (rays)  // a ray from the surface toward the sun: 1 lit, 0 in shadow; the shadow map (foliage) multiplies it
       head +=
-          "uniform accelerationStructureEXT regs_Scene;\nuniform vec4 regs_SunPos;\n"
           "float regs_sunVisible() {\n"
           "  if (regs_SunPos.w < 0.5) return 1.0;\n"
           "  vec3 p = regs_WorldPos;\n"

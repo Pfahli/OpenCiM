@@ -14,6 +14,9 @@ it is, what already exists, and the open decisions. Order is not priority.
 * **Raytraced shadows.** Done (same branch): sun shadows by ray queries on Vulkan, option on the Image quality page
   (`docs/renderer/vulkan.md` §9.3), and raytraced ambient occlusion. Open: foliage still from the shadow map (alpha in
   the rays), soft shadows, reflections on water and glass, global illumination.
+* **Raytraced reflections.** Water and glass done (same branch): the game's environment-cube reflections are traced
+  against the city on Vulkan, option on the Image quality page (`docs/renderer/vulkan.md` §9.7). Open: wet streets and
+  puddles with the weather mod, foliage and night lights in the reflections.
 * **HDR output.** Done (same branch): HDR10 output on Vulkan with Windows HDR on, settings on the Image quality page
   (on/off, paper white, peak); the SDR picture's highlights are lifted, menus stay at paper white
   (`docs/renderer/vulkan.md` §9.6). Open: real HDR intensities for lamps, windows and the sun.

@@ -605,10 +605,10 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
 }
 
 uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks,
-                                  bool rayShadows) {
+                                  unsigned rays) {
   std::string why;
   std::string vs = translateGlsl110(vs110, false, &why, hooks),
-              fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks, rayShadows);
+              fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks, rays);
   if (vs.empty() || fs.empty()) {
     if (error) *error = "unsupported built-in " + why;
     return 0;
@@ -730,6 +730,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.hookNight = at("regs_HookNight");
   }
   l.sunPos = at("regs_SunPos");
+  l.eyePos = at("regs_EyePos");
   l.viewInverse = at("regs_ViewInverse");
   l.projInverse = at("regs_ProjInverse");
   l.night = at("regs_Night");
@@ -788,6 +789,7 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   dev().uniform4f(l.projInverse, 1.0f / v.proj.at(0, 0), 1.0f / v.proj.at(1, 1), v.proj.at(0, 2), v.proj.at(1, 2));
   dev().uniform4fv(l.night, 1, v.night);
   dev().uniform4f(l.sunPos, v.sunWorld.x, v.sunWorld.y, v.sunWorld.z, v.rayShadows ? 1.0f : 0.0f);
+  if (l.eyePos >= 0) dev().uniform4f(l.eyePos, v.eye.x, v.eye.y, v.eye.z, 1.0f);
   dev().uniform1f(l.shop, v.shopShare);
   dev().uniform1i(l.windowMask, kNightMapUnit);
   dev().uniform1i(l.lampMap, kNightMapUnit);
@@ -1090,7 +1092,12 @@ bool Renderer3D::buildRayScene(const std::vector<DrawItem>& items) {
         if (m.surfaceClass == kSurfaceOverlay || m.surfaceClass == kSurfaceWater || m.surfaceClass == kSurfaceFoliage ||
             !p.groups.empty())
           continue;
-        ranges.push_back({p.firstIndex, int(p.indexCount)});
+        // hit shading (raytraced reflections): the base texture and the diffuse colour
+        gpu::Device::IndexRange r{p.firstIndex, int(p.indexCount)};
+        if ((m.flags & kMatDiffuseMap) && !m.textures.empty()) r.texture = m.textures[0];
+        auto byte = [](float v) { return uint32_t(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+        r.color = byte(m.diffuse[0]) | byte(m.diffuse[1]) << 8 | byte(m.diffuse[2]) << 16 | 0xFF000000u;
+        ranges.push_back(r);
       }
       uint32_t b = ranges.empty() ? 0 : d.createBlas(it.mesh->vbo, int(sizeof(Vtx)), int(it.mesh->vertexCount), it.mesh->ibo, ranges.data(), int(ranges.size()));
       found = blas_.emplace(key, b).first;

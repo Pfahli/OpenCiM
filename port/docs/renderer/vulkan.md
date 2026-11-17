@@ -339,6 +339,36 @@ has to be built for the HDR swapchain from the start). Settings on the Image qua
 * Still to do: FSR's HDR mode (the upscaler sees the SDR scene now, which is right while the lift comes after it);
   per-light HDR intensities (lamps, windows, the sun's specular) instead of lifting the finished image.
 
+### 9.7 Raytraced reflections (Vulkan only)
+
+Owner's order 2026-11-17: water, puddles and glass after FSR. Status: water and glass done (setting
+`$regsRtReflections`, Image quality page; `REGS_RT_REFLECTIONS=0|1`); wet streets and puddles not yet.
+
+* **Where:** the game reflects with an environment cube on water (`metro/shaders/water/water.fragment`) and on every
+  material with the reflection flag (`shaders/default/reflection.fragment`, masked by the specular map: window glass),
+  both as `textureCube(cube, reflect(view, normal) * vieworient)`, a world-space direction. With the option on, the
+  pass gets the port bit `kEnvRayReflections`; variants whose fragment source reads a cube are built with
+  `kRayReflections` (render/glsl.h), and the translator turns those `textureCube` calls into `regs_reflectCube`.
+* **The ray** starts at the surface (`regs_WorldPos`) along a calmer direction than the shader's: the reflection about
+  the flat surface (from screen derivatives and the camera, `regs_EyePos`), bent 25 % toward the rippled one, so the
+  water's strong normal maps do not scatter single rays into speckles. A miss reads the cube as before.
+* **A hit** is shaded from the device's **hit table** (one 32-byte record per bottom-level geometry: vertex and index
+  buffer addresses, base texture handle, diffuse colour; the instance custom index points at the mesh's first record,
+  the geometry index picks the part): the triangle's indices and vertices are read through buffer references
+  (`GL_EXT_buffer_reference`), the UV interpolated with the barycentrics, the texture sampled from the **bindless
+  array** (set 1: every 2D texture at its handle, update-after-bind, partially bound; a fixed linear sampler; the mip
+  from the hit distance), lit by the sun with one shadow ray and the scene ambient, and fogged by the hit distance.
+* **Device:** descriptor indexing features (Vulkan 1.2) when ray queries are on; `REGS_VK_NO_BINDLESS` switches it off.
+  Programs that read `regs_Images` get a two-set pipeline layout; the device writes the hit table's address into
+  `regs_HitTable` before each draw and binds the bindless set.
+* **Check:** `REGS_RT_REFL_DEBUG=1` (a constant colour instead: the programs draw), `=2` (green where a ray hits),
+  `=3` (the hit record's colour).
+* **Seen on Vienna:** bridges and piers mirror in the Danube; the far banks show at grazing angles. The base game's old
+  facades barely use the reflection flag, so glass shows where modern buildings carry it.
+* **Open:** foliage is not in the ray scene (alpha-tested cut-outs need an any-hit test; the same holds for the shadow
+  rays), lit windows and lamps at night are not in the hit shading yet (the night-light masks), wet streets and
+  puddles (they need the weather mod's wetness on road and pavement surfaces), performance not measured yet.
+
 ## 10. Benchmarks
 
 Measured 2026-11-17 on the owner's machine (RTX 3080, driver 621.01), Vienna sandbox save (`run\documents-bench`: 4×

@@ -12,6 +12,7 @@
 //                                into it
 //   $settings.$regsRtShadows     0 off, 1 raytraced sun shadows (Vulkan on a GPU with ray queries, shadows on)
 //   $settings.$regsRtAo          0 off, 1 raytraced ambient occlusion (Vulkan on a GPU with ray queries)
+//   $settings.$regsRtReflections 0 off, 1 raytraced reflections on water and glass (Vulkan, ray queries, bindless)
 // OK stores and exports the settings, Cancel drops the changes; both close the page.
 $desktop = MAIN.$desktop;
 $settings = MAIN.$settings;
@@ -33,6 +34,7 @@ $hdrPaper = int($settings.$regsHdrPaperWhite : 200);
 $hdrPeak = int($settings.$regsHdrPeak : 1000);
 $rtShadows = int($settings.$regsRtShadows : 0);
 $rtAo = int($settings.$regsRtAo : 0);
+$rtReflections = int($settings.$regsRtReflections : 0);
 
 function label($x, $y, $w, $text, $title) {
   with ($l = new_control($c)) {
@@ -101,6 +103,7 @@ function pick($group, $v) {
   else if ($group == "regsHdr") $hdr = $v;
   else if ($group == "regsRtShadows") $rtShadows = $v;
   else if ($group == "regsRtAo") $rtAo = $v;
+  else if ($group == "regsRtReflections") $rtReflections = $v;
 }
 
 function note($y, $text) {
@@ -141,6 +144,9 @@ radioRow("regsRtShadows", $y, [0, 1], $regs.$regs_taa_values, $rtShadows);
 $y += 30;
 label(40, $y, 250, $regs.$regs_rtAo_label, false);
 radioRow("regsRtAo", $y, [0, 1], $regs.$regs_taa_values, $rtAo);
+$y += 30;
+label(40, $y, 250, $regs.$regs_rtReflections_label, false);
+radioRow("regsRtReflections", $y, [0, 1], $regs.$regs_taa_values, $rtReflections);
 $y += 24;
 note($y, $regs.$regs_rtShadows_note1);
 $y += 22;
@@ -189,6 +195,8 @@ function save() {
   $settings.exportVariables("regsRtShadows");
   $settings.setVariable("regsRtAo", $rtAo);
   $settings.exportVariables("regsRtAo");
+  $settings.setVariable("regsRtReflections", $rtReflections);
+  $settings.exportVariables("regsRtReflections");
   $settings.exportVariables("regsTaa");
   $settings.exportVariables("regsRenderScale");
   $settings.setVariable("regsUpscaler", $upscaler);

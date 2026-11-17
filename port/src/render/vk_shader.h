@@ -31,6 +31,7 @@ struct ProgramSpirv {
   int blockBinding = -1;  // the default uniform block's binding, −1 when the program has no loose uniforms
   int blockSize = 0;
   std::vector<int> inputs;  // vertex input locations the vertex shader reads
+  bool bindless = false;    // reads the device's bindless set (set 1: regs_Images, regs_HitSampler; reflections)
 };
 
 // False when glslang is not in the build (then error says so) or the source does not compile/link.

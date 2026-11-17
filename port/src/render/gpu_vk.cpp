@@ -46,7 +46,7 @@ namespace {
   X(vkGetPhysicalDeviceFormatProperties) X(vkCreateDevice) X(vkGetDeviceProcAddr)                                   \
   X(vkEnumerateDeviceExtensionProperties) X(vkCreateWin32SurfaceKHR) X(vkDestroySurfaceKHR)                         \
   X(vkGetPhysicalDeviceSurfaceSupportKHR) X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)                              \
-  X(vkGetPhysicalDeviceSurfaceFormatsKHR) X(vkGetPhysicalDeviceSurfacePresentModesKHR)
+  X(vkGetPhysicalDeviceSurfaceFormatsKHR) X(vkGetPhysicalDeviceSurfacePresentModesKHR) X(vkGetPhysicalDeviceProperties2)
 
 #define REGS_VK_DEVICE(X)                                                                                            \
   X(vkDestroyDevice) X(vkGetDeviceQueue) X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) \
@@ -67,7 +67,9 @@ namespace {
   X(vkCmdClearDepthStencilImage) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool)                 \
   X(vkCmdWriteTimestamp2) X(vkGetQueryPoolResults) X(vkGetBufferDeviceAddress) X(vkCreateAccelerationStructureKHR)                    \
   X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
-  X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)
+  X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)  \
+  X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets)          \
+  X(vkCmdBindDescriptorSets)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -475,6 +477,7 @@ class VkDeviceImpl final : public Device {
                       int count) override;
   void destroyBlas(uint32_t blas) override;
   void buildScene(const Instance* instances, int count) override;
+  bool rayReflections() const override { return rt_ && bindlessSet_ != VK_NULL_HANDLE; }
 
   // ---- HDR ----
   void setHdr(bool on, float paperWhiteNits, float peakNits) override {
@@ -540,6 +543,7 @@ class VkDeviceImpl final : public Device {
     Allocation mem;
     VkDeviceAddress address = 0;
     VkDeviceSize size = 0;
+    uint32_t hitBase = 0;  // bottom level: its first hit-table record (one per geometry), the instances' custom index
   };
   struct Program {
     bool used = false, null = false;  // null: no shaders (bring-up without glslang), draws are skipped
@@ -552,6 +556,8 @@ class VkDeviceImpl final : public Device {
     int blockBinding = -1;
     std::vector<int> inputs;
     std::unordered_map<std::string, int> locations;
+    bool bindless = false;    // set 1 = the bindless set (raytraced reflections)
+    int hitTableOffset = -1;  // regs_HitTable in the block: the device writes the hit table's address there
   };
   struct Frame {
     VkCommandPool pool = VK_NULL_HANDLE;
@@ -634,6 +640,10 @@ class VkDeviceImpl final : public Device {
   void freeImage(Tex& t) {
     if (!t.image) return;
     VkImage img = t.image;
+    VkImageView oldView = t.view;
+    t.view = VK_NULL_HANDLE;
+    bindlessWriteTex(t);  // the placeholder in its bindless slot before the view goes
+    t.view = oldView;
     VkImageView view = t.view;
     Allocation a = t.mem;
     later([this, img, view, a]() mutable {
@@ -735,6 +745,32 @@ class VkDeviceImpl final : public Device {
   float hdrPeak_ = 1000, hdrPaper_ = 200;
   bool fsrReady_ = false;
   bool fsrErrorLogged_ = false;
+
+  // raytraced reflections (docs/renderer/vulkan.md §9.7): every 2D texture in one bindless array (set 1, indexed by the
+  // texture handle) and a hit table: per bottom-level geometry its vertex and index addresses, base texture and colour
+  bool bindless_ = false;
+  uint32_t bindlessCount_ = 0;
+  VkDescriptorSetLayout bindlessLayout_ = VK_NULL_HANDLE;
+  VkDescriptorPool bindlessPool_ = VK_NULL_HANDLE;
+  VkDescriptorSet bindlessSet_ = VK_NULL_HANDLE;
+  VkSampler hitSampler_ = VK_NULL_HANDLE;
+  struct HitRecord {
+    uint64_t vertices = 0, indices = 0;
+    uint32_t texture = 0, color = 0xFFFFFFFFu, flags = 0, pad = 0;
+  };
+  std::vector<HitRecord> hitRecords_;
+  bool hitDirty_ = false;
+  VkBuffer hitBuffer_ = VK_NULL_HANDLE;
+  Allocation hitMem_;
+  size_t hitCapacity_ = 0;
+  VkDeviceAddress hitAddress_ = 0;
+  void createBindless();
+  void bindlessWrite(uint32_t h);
+  void bindlessWriteTex(const Tex& t) {
+    if (!bindlessSet_ || textures_.empty() || &t < textures_.data() || &t >= textures_.data() + textures_.size()) return;
+    bindlessWrite(uint32_t(&t - textures_.data()));
+  }
+  void ensureHitTable();
 
   // ray queries
   bool rt_ = false;
@@ -914,6 +950,20 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     if (exts) vkGetPhysicalDeviceFeatures2(phys_, &q2);
     rt_ = exts && rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && !std::getenv("REGS_VK_NO_RT");
     hdrMetadataExt_ = has(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+    // raytraced reflections: descriptor indexing for the bindless texture array (Vulkan 1.2 features)
+    if (rt_) {
+      VkPhysicalDeviceVulkan12Features di{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+      VkPhysicalDeviceFeatures2 d2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &di};
+      vkGetPhysicalDeviceFeatures2(phys_, &d2);
+      VkPhysicalDeviceVulkan12Properties p12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+      VkPhysicalDeviceProperties2 pp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &p12};
+      if (vkGetPhysicalDeviceProperties2) vkGetPhysicalDeviceProperties2(phys_, &pp);
+      bindlessCount_ = std::min<uint32_t>({65536u, p12.maxDescriptorSetUpdateAfterBindSampledImages,
+                                           p12.maxPerStageDescriptorUpdateAfterBindSampledImages});
+      bindless_ = di.runtimeDescriptorArray && di.shaderSampledImageArrayNonUniformIndexing &&
+                  di.descriptorBindingPartiallyBound && di.descriptorBindingSampledImageUpdateAfterBind &&
+                  di.descriptorBindingUpdateUnusedWhilePending && bindlessCount_ >= 4096 && !std::getenv("REGS_VK_NO_BINDLESS");
+    }
   }
   float prio = 1;
   VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
@@ -926,6 +976,13 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   asf.accelerationStructure = VK_TRUE;
   VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, rt_ ? static_cast<void*>(&asf) : nullptr};
   f12.bufferDeviceAddress = rt_ ? VK_TRUE : VK_FALSE;
+  if (bindless_) {
+    f12.runtimeDescriptorArray = VK_TRUE;
+    f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    f12.descriptorBindingPartiallyBound = VK_TRUE;
+    f12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+    f12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+  }
   VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &f12};
   f13.dynamicRendering = VK_TRUE;
   f13.synchronization2 = VK_TRUE;
@@ -1021,6 +1078,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     const float v[4] = {0, 0, 0, 1};
     std::memcpy(zeroAttribMem_.mapped, v, 16);
   }
+  if (bindless_) createBindless();
   if (!vk::available()) LOG_WARN("vulkan: this build has no glslang, so no shader compiles: only clears are drawn");
 #if REGS_FFX
   fsrReady_ = fsr::init({instance_, phys_, dev_, vkGetInstanceProcAddr, vkGetDeviceProcAddr});
@@ -1194,6 +1252,10 @@ void VkDeviceImpl::shutdown() {
     }
     destroySwapchain();
     if (timestamps_) vkDestroyQueryPool(dev_, timestamps_, nullptr);
+    if (hitBuffer_) vkDestroyBuffer(dev_, hitBuffer_, nullptr);
+    if (bindlessPool_) vkDestroyDescriptorPool(dev_, bindlessPool_, nullptr);
+    if (bindlessLayout_) vkDestroyDescriptorSetLayout(dev_, bindlessLayout_, nullptr);
+    if (hitSampler_) vkDestroySampler(dev_, hitSampler_, nullptr);
     alloc_.shutdown();
     vkDestroyDevice(dev_, nullptr);
     dev_ = VK_NULL_HANDLE;
@@ -1419,6 +1481,7 @@ bool VkDeviceImpl::makeImage(Tex& t, Format f, int w, int h, int levels, int sam
   // every image lives in GENERAL (see the top of this file)
   endRendering();
   imageBarrier(cmd(), t.image, aspectOf(t), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+  bindlessWriteTex(t);
   return true;
 }
 
@@ -1650,6 +1713,15 @@ uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& f
     p.block.assign(size_t(std::max(sp.blockSize, 0)), 0);
     p.blockBinding = sp.blockBinding;
     p.inputs = std::move(sp.inputs);
+    p.bindless = sp.bindless;
+    if (p.bindless && !bindlessLayout_) {
+      if (error) *error = "the program reads the bindless set, which this device has not";
+      vkDestroyShaderModule(dev_, p.vs, nullptr);
+      vkDestroyShaderModule(dev_, p.fs, nullptr);
+      return 0;
+    }
+    for (const vk::UniformInfo& u : p.uniforms)
+      if (u.name == "regs_HitTable") p.hitTableOffset = u.offset;
     std::vector<VkDescriptorSetLayoutBinding> bindings;
     if (p.blockBinding >= 0)
       bindings.push_back({uint32_t(p.blockBinding), VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
@@ -1664,8 +1736,9 @@ uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& f
     lci.pBindings = bindings.data();
     vkCreateDescriptorSetLayout(dev_, &lci, nullptr, &p.setLayout);
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    plci.setLayoutCount = 1;
-    plci.pSetLayouts = &p.setLayout;
+    const VkDescriptorSetLayout sets[2] = {p.setLayout, bindlessLayout_};
+    plci.setLayoutCount = p.bindless ? 2 : 1;
+    plci.pSetLayouts = sets;
     vkCreatePipelineLayout(dev_, &plci, nullptr, &p.layout);
     for (size_t i = 0; i < p.uniforms.size(); ++i) p.locations[p.uniforms[i].name] = int(i);
     static const bool debug = std::getenv("REGS_VK_DEBUG") != nullptr;
@@ -2017,6 +2090,8 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     VkDeviceSize uo;
     uint8_t* uptr;
     if (!ringAlloc(p.block.size(), uboAlign_, ub, uo, uptr)) return;
+    if (p.hitTableOffset >= 0 && size_t(p.hitTableOffset) + 8 <= p.block.size())
+      std::memcpy(p.block.data() + p.hitTableOffset, &hitAddress_, 8);
     std::memcpy(uptr, p.block.data(), p.block.size());
     ubo = {ub, uo, p.block.size()};
     VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -2058,6 +2133,8 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
   }
   if (!writes.empty())
     vkCmdPushDescriptorSetKHR(c, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 0, uint32_t(writes.size()), writes.data());
+  if (p.bindless)  // (a hit table exists whenever the scene has instances: they come from its bottom levels)
+    vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 1, 1, &bindlessSet_, 0, nullptr);
   if (indexed) {
     const Buf* ib = vi.index < buffers_.size() ? &buffers_[vi.index] : nullptr;
     if (!ib || !ib->buffer) return;
@@ -2160,6 +2237,115 @@ void VkDeviceImpl::readPixels(uint32_t fb, int x, int y, int w, int h, uint8_t* 
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// raytraced reflections: bindless textures and the hit table (docs/renderer/vulkan.md §9.7)
+
+void VkDeviceImpl::createBindless() {
+  VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+  sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sci.maxLod = VK_LOD_CLAMP_NONE;
+  vkCreateSampler(dev_, &sci, nullptr, &hitSampler_);
+  VkDescriptorSetLayoutBinding b[2] = {
+      {0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, bindlessCount_, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+      {1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, &hitSampler_}};
+  const VkDescriptorBindingFlags bf[2] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                                              VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+                                          0};
+  VkDescriptorSetLayoutBindingFlagsCreateInfo bfi{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+  bfi.bindingCount = 2;
+  bfi.pBindingFlags = bf;
+  VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &bfi};
+  lci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+  lci.bindingCount = 2;
+  lci.pBindings = b;
+  if (vkCreateDescriptorSetLayout(dev_, &lci, nullptr, &bindlessLayout_) != VK_SUCCESS) {
+    LOG_WARN("vulkan: no bindless texture set, raytraced reflections stay off");
+    bindlessLayout_ = VK_NULL_HANDLE;
+    return;
+  }
+  const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, bindlessCount_}, {VK_DESCRIPTOR_TYPE_SAMPLER, 1}};
+  VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+  pci.maxSets = 1;
+  pci.poolSizeCount = 2;
+  pci.pPoolSizes = sizes;
+  VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  if (vkCreateDescriptorPool(dev_, &pci, nullptr, &bindlessPool_) != VK_SUCCESS) {
+    LOG_WARN("vulkan: no bindless descriptor pool, raytraced reflections stay off");
+    vkDestroyDescriptorSetLayout(dev_, bindlessLayout_, nullptr);
+    bindlessLayout_ = VK_NULL_HANDLE;
+    bindlessPool_ = VK_NULL_HANDLE;
+    return;
+  }
+  ai.descriptorPool = bindlessPool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &bindlessLayout_;
+  if (vkAllocateDescriptorSets(dev_, &ai, &bindlessSet_) != VK_SUCCESS) bindlessSet_ = VK_NULL_HANDLE;
+  if (!bindlessSet_) return;
+  for (uint32_t i = 0; i < textures_.size() && i < bindlessCount_; ++i) bindlessWrite(i);
+  LOG_INFO("vulkan: bindless textures (%u slots) for raytraced reflections", bindlessCount_);
+}
+
+// a texture's slot: its view while it is a plain 2D colour texture, else the white placeholder (slot 0 too)
+void VkDeviceImpl::bindlessWrite(uint32_t h) {
+  if (!bindlessSet_ || h >= bindlessCount_) return;
+  const Tex* t = h && h < textures_.size() && textures_[h].used ? &textures_[h] : nullptr;
+  bool ok = t && t->image && t->view && !t->cube && !isDepth(t->format) && t->samples == 1;
+  const Tex& use = ok ? *t : textures_[dummy2D_];
+  if (!use.view) return;
+  VkDescriptorImageInfo ii{VK_NULL_HANDLE, use.view, VK_IMAGE_LAYOUT_GENERAL};
+  VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  w.dstSet = bindlessSet_;
+  w.dstBinding = 0;
+  w.dstArrayElement = h;
+  w.descriptorCount = 1;
+  w.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  w.pImageInfo = &ii;
+  vkUpdateDescriptorSets(dev_, 1, &w, 0, nullptr);
+}
+
+// the hit table on the GPU (host-visible, read through its address); a bigger one when it grows
+void VkDeviceImpl::ensureHitTable() {
+  if (!hitDirty_ || hitRecords_.empty()) return;
+  size_t bytes = hitRecords_.size() * sizeof(HitRecord);
+  if (bytes > hitCapacity_) {
+    if (hitBuffer_) {
+      VkBuffer old = hitBuffer_;
+      Allocation oldMem = hitMem_;
+      later([this, old, oldMem]() mutable {
+        vkDestroyBuffer(dev_, old, nullptr);
+        alloc_.free(oldMem);
+      });
+      hitBuffer_ = VK_NULL_HANDLE;
+    }
+    size_t cap = std::max<size_t>(bytes * 2, 64 * 1024);
+    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bci.size = cap;
+    bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    vkCreateBuffer(dev_, &bci, nullptr, &hitBuffer_);
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(dev_, hitBuffer_, &req);
+    if (!alloc_.alloc(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true, hitMem_) ||
+        !hitMem_.mapped) {
+      vkDestroyBuffer(dev_, hitBuffer_, nullptr);
+      hitBuffer_ = VK_NULL_HANDLE;
+      hitCapacity_ = 0;
+      hitAddress_ = 0;
+      return;
+    }
+    vkBindBufferMemory(dev_, hitBuffer_, hitMem_.memory, hitMem_.offset);
+    hitCapacity_ = cap;
+    hitAddress_ = bufferAddress(hitBuffer_);
+  } else {
+    // the frames in flight read the same buffer: records are only ever appended, so rewriting the old ones changes
+    // nothing they read
+  }
+  std::memcpy(hitMem_.mapped, hitRecords_.data(), bytes);
+  hitDirty_ = false;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // AMD FSR 3.1 (render/fsr_vk.h)
 
 bool VkDeviceImpl::fsrUpscale(const FsrParams& p) {
@@ -2241,6 +2427,7 @@ uint32_t VkDeviceImpl::createBlas(uint32_t vertexBuffer, int stride, int vertexC
   std::vector<VkAccelerationStructureGeometryKHR> geoms;
   std::vector<VkAccelerationStructureBuildRangeInfoKHR> rangeInfo;
   std::vector<uint32_t> prims;
+  std::vector<HitRecord> records;  // one per geometry, in geometry order (rayQueryGetIntersectionGeometryIndexEXT)
   for (int i = 0; i < count; ++i) {
     if (ranges[i].indexCount < 3) continue;
     VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
@@ -2255,6 +2442,12 @@ uint32_t VkDeviceImpl::createBlas(uint32_t vertexBuffer, int stride, int vertexC
     t.indexType = VK_INDEX_TYPE_UINT32;
     t.indexData.deviceAddress = ia + ranges[i].firstIndex * 4;
     geoms.push_back(g);
+    HitRecord hr;
+    hr.vertices = va;
+    hr.indices = ia + ranges[i].firstIndex * 4;
+    hr.texture = ranges[i].texture < bindlessCount_ ? ranges[i].texture : 0;
+    hr.color = ranges[i].color;
+    records.push_back(hr);
     prims.push_back(uint32_t(ranges[i].indexCount / 3));
     rangeInfo.push_back({prims.back(), 0, 0, 0});
   }
@@ -2302,6 +2495,9 @@ uint32_t VkDeviceImpl::createBlas(uint32_t vertexBuffer, int stride, int vertexC
     h = uint32_t(blas_.size());
     blas_.emplace_back();
   }
+  a.hitBase = uint32_t(hitRecords_.size());
+  hitRecords_.insert(hitRecords_.end(), records.begin(), records.end());
+  hitDirty_ = true;
   blas_[h] = a;
   return h;
 }
@@ -2312,6 +2508,7 @@ void VkDeviceImpl::destroyBlas(uint32_t blas) {
 
 void VkDeviceImpl::buildScene(const Instance* instances, int count) {
   if (!rt_) return;
+  if (bindlessSet_) ensureHitTable();
   Frame& f = frames_[frame_];
   std::vector<VkAccelerationStructureInstanceKHR> inst;
   inst.reserve(size_t(std::max(count, 0)));
@@ -2320,7 +2517,7 @@ void VkDeviceImpl::buildScene(const Instance* instances, int count) {
     if (!s.blas || s.blas >= blas_.size() || !blas_[s.blas].as) continue;
     VkAccelerationStructureInstanceKHR k{};
     std::memcpy(k.transform.matrix, s.transform, sizeof k.transform.matrix);
-    k.instanceCustomIndex = 0;
+    k.instanceCustomIndex = blas_[s.blas].hitBase & 0xFFFFFFu;
     k.mask = 0xFF;
     k.instanceShaderBindingTableRecordOffset = 0;
     k.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR | VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
