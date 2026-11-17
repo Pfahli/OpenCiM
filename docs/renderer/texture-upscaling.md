@@ -121,7 +121,7 @@ regs-tool upscale-textures $game "$env:USERPROFILE\Documents\OpenCiM\texture-cac
 # options: --only <path prefix>, --force (make everything again), --no-ui, --threads <n>
 # with an external upscaler for the colour textures: it is run once per 256 textures with a folder of PNGs ({in})
 # and must write PNGs of the same names into {out}, at any scale (4× results are boxed down to 2×), e.g.
-regs-tool upscale-textures $game <cache> --force --external "C:\tools\realesrgan\realesrgan-ncnn-vulkan.exe -i {in} -o {out} -n realesr-animevideov3 -s 2"
+regs-tool upscale-textures $game <cache> --force --external "C:\tools\realesrgan\realesrgan-ncnn-vulkan.exe -i {in} -o {out} -m C:\tools\realesrgan\models -n realesrgan-x4plus -s 4"
 # one texture: GPU-style bilinear 2× | cached upscale, side by side
 regs-tool upscale-compare $game metro/objects/buildings/tenements/tenement01.dds cmp.png [x y size]
 ```
