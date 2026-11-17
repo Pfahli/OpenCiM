@@ -90,6 +90,10 @@ gl::GLenum glBlend(Blend b) {
 gl::GLenum glPrim(Prim p) { return p == Prim::Lines ? gl::LINES : gl::TRIANGLES; }
 
 class GlDevice final : public Device {
+  static constexpr gl::GLenum kBoth[2] = {gl::COLOR_ATTACHMENT0, gl::COLOR_ATTACHMENT1};
+  std::vector<uint32_t> color1Fbs_;  // framebuffers with a second colour attachment (attachColor1)
+  bool hasAttachment1(uint32_t fb) const { return fb && std::find(color1Fbs_.begin(), color1Fbs_.end(), fb) != color1Fbs_.end(); }
+
  public:
   explicit GlDevice(platform::Window& w) : window_(w) {}
 
@@ -229,16 +233,51 @@ class GlDevice final : public Device {
   }
   void destroyFramebuffer(uint32_t fb) override {
     if (fb) gl::DeleteFramebuffers(1, &fb);
+    std::erase(color1Fbs_, fb);
   }
   void bindFramebuffer(uint32_t fb) override { gl::BindFramebuffer(gl::FRAMEBUFFER, fb); }
   void blit(uint32_t src, uint32_t dst, int sx0, int sy0, int sx1, int sy1, int dx0, int dy0, int dx1, int dy1,
             bool color, bool depth) override {
     gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src);
     gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, dst);
+    const bool two = color && hasAttachment1(dst);
+    static const gl::GLenum first = gl::COLOR_ATTACHMENT0;
+    if (two) gl::DrawBuffers(1, &first);  // the colour into attachment 0 only
     gl::BlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1,
                         (color ? gl::COLOR_BUFFER_BIT : 0) | (depth ? gl::DEPTH_BUFFER_BIT : 0), gl::NEAREST);
+    if (two) gl::DrawBuffers(2, kBoth);
     gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
   }
+  bool hasColor1() const override { return true; }
+  bool attachColor1(uint32_t fb, uint32_t color) override {
+    if (!fb || !color) return false;
+    gl::BindFramebuffer(gl::FRAMEBUFFER, fb);
+    if (color & kRenderbufferBit)
+      gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT1, gl::RENDERBUFFER, color & ~kRenderbufferBit);
+    else
+      gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT1, gl::TEXTURE_2D, color, 0);
+    gl::DrawBuffers(2, kBoth);
+    bool ok = gl::CheckFramebufferStatus(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
+    gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+    if (ok && !hasAttachment1(fb)) color1Fbs_.push_back(fb);
+    return ok;
+  }
+  void blitColor1(uint32_t src, uint32_t dst, int w, int h) override {
+    static const gl::GLenum second[2] = {gl::NONE, gl::COLOR_ATTACHMENT1};
+    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src);
+    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, dst);
+    gl::ReadBuffer(gl::COLOR_ATTACHMENT1);
+    gl::DrawBuffers(2, second);
+    gl::BlitFramebuffer(0, 0, w, h, 0, 0, w, h, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+    gl::ReadBuffer(gl::COLOR_ATTACHMENT0);
+    gl::DrawBuffers(2, kBoth);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  }
+  void clearColor1() override {
+    static const float zero[4] = {0, 0, 0, 0};
+    gl::ClearBufferfv(gl::COLOR, 1, zero);
+  }
+  void colorMask1(bool write) override { gl::ColorMaski(1, write, write, write, write); }
   void readPixels(uint32_t fb, int x, int y, int w, int h, uint8_t* rgba) override {
     if (fb) gl::BindFramebuffer(gl::FRAMEBUFFER, fb);
     gl::PixelStorei(gl::PACK_ALIGNMENT, 1);

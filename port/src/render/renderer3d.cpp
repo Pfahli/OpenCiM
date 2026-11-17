@@ -379,7 +379,8 @@ bool Renderer3D::makeDepthTarget(RenderTarget& t, int w, int h) {
   return t.fbo != 0;
 }
 
-bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture, TargetFormat format) {
+bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, bool depthTexture, TargetFormat format,
+                                 bool hookData) {
   gpu::Device& d = dev();
   if (depthTexture) {  // a sampleable depth on the (resolve) framebuffer
     t.width = w;
@@ -403,12 +404,27 @@ bool Renderer3D::makeSceneTarget(RenderTarget& t, int w, int h, int samples, boo
   } else if (!makeTarget(t, w, h, format, samples <= 0, true)) {
     return false;
   }
+  if (hookData) {  // the surface hooks' data: location 1 of every translated fragment shader (render/glsl.h)
+    t.hookData = d.createTexture(gpu::TexKind::Tex2D, 1);
+    std::vector<uint8_t> zero(size_t(w) * size_t(h) * 4, 0);  // stays 0 (nothing to tell) on a backend without it
+    d.texImage(t.hookData, 0, 0, gpu::Format::RGBA8, w, h, gpu::Pixels::BGRA8, zero.data());
+    gpu::SamplerDesc hs;
+    hs.wrapS = hs.wrapT = gpu::Wrap::ClampToEdge;
+    hs.maxLevel = 0;
+    d.setSampler(t.hookData, hs);
+    if (d.hasColor1() && !d.attachColor1(t.fbo, t.hookData)) return false;
+  }
   if (samples <= 0) return true;
   t.samples = samples;
   t.msColor = d.createRenderbuffer(format == TargetFormat::Rgba16f ? gpu::Format::RGBA16F : gpu::Format::RGBA8, w, h, samples);
   t.msDepth = d.createRenderbuffer(gpu::Format::Depth24, w, h, samples);
   t.msFbo = d.createFramebuffer(t.msColor, t.msDepth);
-  return t.msFbo != 0;
+  if (!t.msFbo) return false;
+  if (t.hookData && d.hasColor1()) {
+    t.msHookData = d.createRenderbuffer(gpu::Format::RGBA8, w, h, samples);
+    if (!d.attachColor1(t.msFbo, t.msHookData)) return false;
+  }
+  return true;
 }
 
 void Renderer3D::splat(const RenderTarget& t, uint32_t program, const GpuMesh& mesh, int backW, int backH, int regionH) {
@@ -440,6 +456,7 @@ void Renderer3D::resolve(const RenderTarget& t) {
   if (!t.msFbo) return;
   dev().scissorTest(false);
   dev().blit(t.msFbo, t.fbo, 0, 0, t.width, t.height, 0, 0, t.width, t.height, true, t.depthTex != 0);
+  if (t.hookData && t.msHookData) dev().blitColor1(t.msFbo, t.fbo, t.width, t.height);
 }
 
 void Renderer3D::blitToBack(const RenderTarget& t, int x, int y, int w, int h, int backH) {
@@ -460,6 +477,12 @@ void Renderer3D::blitDepth(const RenderTarget& src, const RenderTarget& dst, int
   dev().blit(src.msFbo ? src.msFbo : src.fbo, dst.fbo, 0, 0, w, h, 0, 0, w, h, false, true);
 }
 
+void Renderer3D::blitHookData(const RenderTarget& src, const RenderTarget& dst, int w, int h) {
+  if (!src.hookData || !dst.hookData || !dev().hasColor1()) return;
+  dev().scissorTest(false);
+  dev().blitColor1(src.msFbo ? src.msFbo : src.fbo, dst.fbo, w, h);
+}
+
 void Renderer3D::readRed(uint32_t texture, int w, int h, std::vector<float>& out) {
   out.assign(size_t(w) * size_t(h), 0.0f);
   dev().readTextureRed(texture, w, h, out.data());
@@ -470,6 +493,8 @@ void Renderer3D::destroyTarget(RenderTarget& t) {
   if (t.msFbo) d.destroyFramebuffer(t.msFbo);
   if (t.msColor) d.destroyRenderbuffer(t.msColor);
   if (t.msDepth) d.destroyRenderbuffer(t.msDepth);
+  if (t.msHookData) d.destroyRenderbuffer(t.msHookData);
+  if (t.hookData) d.destroyTexture(t.hookData);
   if (t.fbo) d.destroyFramebuffer(t.fbo);
   if (t.depthTex) d.destroyTexture(t.depthTex);
   if (t.depth && t.depthTexture) d.destroyTexture(t.depth);
@@ -548,6 +573,7 @@ void Renderer3D::begin(const RenderTarget* t, int x, int y, int w, int h, uint32
   dev().depthMask(1);
   dev().clear(clearColor, true, float(clearArgb >> 16 & 0xFF) / 255, float(clearArgb >> 8 & 0xFF) / 255,
               float(clearArgb & 0xFF) / 255, 0, 1.0f);
+  if (t && t->hookData) dev().clearColor1();  // the hooks' data starts at 0 (nothing to tell) whatever the clear colour
   dev().depthTest(true);
   dev().depthFunc(gpu::Compare::LEqual);
   dev().cull(true);
@@ -629,8 +655,16 @@ uint32_t Renderer3D::buildPostHookProgram(const std::string& vs110, std::string*
 void Renderer3D::postHookState(const SceneView& v, uint32_t prog) {
   dev().useProgram(prog);
   hookState(v, prog);
-  Mat4 inv = inverse(v.proj * v.view);
+  Mat4 vp = v.proj * v.view, inv = inverse(vp);
   dev().uniformMatrix4fv(dev().uniformLocation(prog, "regs_PostInvViewProj"), 1, inv.m);
+  dev().uniformMatrix4fv(dev().uniformLocation(prog, "regs_PostViewProj"), 1, vp.m);
+  // the scene's fog (regs_Fog), so a post hook can tell the colour of the hazy sky and how fogged a point is
+  const ProgramLocs& l = locs(prog);
+  dev().uniform4fv(l.fogColor, 1, v.fogColor);
+  dev().uniform1f(l.fogStart, v.fog ? v.fogStart : 1e30f);
+  dev().uniform1f(l.fogEnd, v.fog ? v.fogEnd : 1e30f);
+  dev().uniform1f(l.fogScale, v.fog && v.fogEnd > v.fogStart ? 1.0f / (v.fogEnd - v.fogStart) : 0.0f);
+  dev().uniform1f(l.fogDensity, 1);
 }
 
 // programs linked and the time spent (load-time measurements: Display::renderFrame logs slow frames)
@@ -1007,10 +1041,19 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   const DrawItem* bound = nullptr;
   gpu::Blend blendSrc = gpu::Blend::SrcAlpha, blendDst = gpu::Blend::OneMinusSrcAlpha;
   // opaque: no alpha test; alpha-tested: GREATER 0.2 with depth writes; blended and decals: GREATER 0.001 without
+  // the hooks' data (attachment 1 of a scene target made with it): opaque and cut-out draws write theirs; of the
+  // blended draws only walkable ground does (a blended road or pavement layer), the rest (decals on it, glass,
+  // route strips) leave the ground's data under them
+  bool dataMasked = false, blendedQueue = false;
+  auto maskData = [&](bool masked) {
+    if (masked != dataMasked) dev().colorMask1(!masked), dataMasked = masked;
+  };
   auto run = [&](const std::vector<Q>& q, float ref, bool depthWrite) {
     dev().depthMask(depthWrite);
     for (const Q& e : q) {
       const GpuMaterial& m = materialOf(*e.it, *e.p);
+      if (blendedQueue && !shadowPass)
+        maskData(m.surfaceClass != kSurfaceRoad && m.surfaceClass != kSurfacePavement && m.surfaceClass != kSurfacePlatform);
       if (!shadowPass) {
         // polygon offset (interfaces-3d.md material state): blended and decal (−2,−2), a depth offset d gives (2d, 2d)
         float off = (m.flags & (kMatAlphaBlend | kMatDecal)) ? -2.0f : 0.0f;
@@ -1062,8 +1105,11 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     dev().blendFunc(blendSrc = gpu::Blend::SrcAlpha, blendDst = gpu::Blend::OneMinusSrcAlpha);
   }
   run(tested, 0.2f, true);
+  blendedQueue = true;
   run(blended, 0.001f, shadowPass);
+  if (!shadowPass) maskData(true);  // particles (rain, leaves, glows) keep the data under them
   if (v.particles && !v.particles->sprites.empty()) drawParticles(v, *v.particles);
+  maskData(false);
   dev().blend(false);
   if (blendSrc != gpu::Blend::SrcAlpha || blendDst != gpu::Blend::OneMinusSrcAlpha) dev().blendFunc(gpu::Blend::SrcAlpha, gpu::Blend::OneMinusSrcAlpha);
   dev().depthMask(1);

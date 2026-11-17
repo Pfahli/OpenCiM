@@ -92,6 +92,17 @@ class Device {
                     bool color, bool depth) = 0;
   // RGBA8 pixels of a framebuffer, bottom row first
   virtual void readPixels(uint32_t fb, int x, int y, int w, int h, uint8_t* rgba) = 0;
+  // A second colour attachment (the surface hooks' data for the mods' post hooks: location 1 of every translated
+  // fragment shader). Backends without it keep one attachment per framebuffer: the shaders' second output is dropped
+  // and the data texture keeps what it was made with. attachColor1 adds a texture or renderbuffer to a framebuffer
+  // made by createFramebuffer (false: not supported or incomplete); blitColor1 copies attachment 1 bottom-left w×h
+  // (NEAREST, multisampled sources resolved); clearColor1 clears the bound framebuffer's attachment 1 to 0 (scissor
+  // applies); colorMask1 turns writes to it on and off.
+  virtual bool hasColor1() const { return false; }
+  virtual bool attachColor1(uint32_t fb, uint32_t color) { return false; }
+  virtual void blitColor1(uint32_t src, uint32_t dst, int w, int h) {}
+  virtual void clearColor1() {}
+  virtual void colorMask1(bool write) {}
 
   // ---- buffers and vertex layouts ----
   virtual uint32_t createBuffer() = 0;
