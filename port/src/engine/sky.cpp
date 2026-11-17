@@ -216,7 +216,7 @@ void applyLights(VM& vm, Object* light, Object* sky, Object* mat, const LightSet
 void SkyObj::dayNight(VM& vm, float dt) {
   if (mainVar(vm, u"sky") != this) return;  // the game's sky only (not the menu or object-list scenes)
   static const char* debugTime = std::getenv("REGS_DEBUG_TIME");
-  float minutes = settingNumber(vm, u"regsDayNight", 0) != 0 ? std::max(1.0f, settingNumber(vm, u"regsDayLength", 12)) : 0.0f;
+  float minutes = settingNumber(vm, u"regsDayNight", 1) != 0 ? std::max(1.0f, settingNumber(vm, u"regsDayLength", 12)) : 0.0f;
   Object* sun = mainVar(vm, u"sun");
   Object* clock = mainVar(vm, u"sceneClock");
   Object* light = sun ? fieldOf(vm, sun, u"light").object() : nullptr;

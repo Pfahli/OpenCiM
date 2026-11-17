@@ -218,7 +218,7 @@ icons vanish between 300 and 320 units from the camera (a commented call in `sec
 
 ### 6.2 Day and night (port option, not in the original)
 
-Graphics page checkbox "Tag und Nacht" (`$regsDayNight`, default off), cycle length `$regsDayLength` real minutes per
+Graphics page checkbox "Tag und Nacht" (`$regsDayNight`, default on since 2026-11-18; off keeps the location's fixed time of day as in the original), cycle length `$regsDayLength` real minutes per
 day at normal speed (default 12; settings.script only). Debug switch `REGS_DEBUG_TIME=<hour>` sets the time of day at
 the start of the game and holds it unless the option is on. Implemented in `SkyObj::dayNight` (the game sky's tick):
 

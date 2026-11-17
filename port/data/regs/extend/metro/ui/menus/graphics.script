@@ -1,7 +1,7 @@
 // ReGS extension of the game's graphics page (metro/ui/menus/graphics.script, used as installed). The part before
 // //@base runs before the original page, the rest after it, in the same script (see VM::extendSource). It adds
 // presets, the port's options (stored as regs* settings, or fpsLimit, which the game reads but never offered here),
-// more steps for shadows and antialiasing, the style effects, the graphics engine choice, the frame-rate readout and
+// more steps for shadows and antialiasing, the style effects, the frame-rate readout and
 // the "Image quality" button above OK and Cancel (regs/ui/quality.script).
 // New options: a row in the middle column, a column in $regsPresets if it is a quality option, and a line in save().
 //@rename save regsBaseSave
@@ -40,7 +40,6 @@ $detailDistance = $settings.$regsDetailDistance : 1.0;
 $fpsLimit = regsStepOf($fpsValues, $settings.$fpsLimit : 0.0);
 $colorStyle = int($settings.$regsColorStyle : 0);
 $lensBlur = int($settings.$regsLensBlur : 0);
-$renderer = int($settings.$regsRenderer : 0);
 
 function regsLabel($x, $y, $text) {
   with ($label = new_control($box.$content)) {
@@ -166,26 +165,16 @@ function regsSetLensBlur() {
   $lensBlur = int($lensBlurSlider.$value);
 }
 
-// ---- graphics engine (left column): OpenGL 3.3 or Vulkan, chosen when the game starts (Display::open; Vulkan falls
-// back to OpenGL when it cannot start) ----
-
-regsLabel(60, 450, $regs.$regs_renderer_item);
-$regsRendererButtons = [];
-for ($i = 0; $i < #$regs.$regs_renderer_values; ++$i) {
-  $regsRendererButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsRenderer", 170 + $i * 78, 450, 76, 18, $regs.$regs_renderer_values[$i], macro($i) :: regsSetRenderer($0));
-  MAIN.$ui.setTooltip($regsRendererButtons[$i], $regs.$regs_renderer_hint, 0, -1);
-}
-
-// ---- UI scale (left column, under the graphics engine): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
+// ---- UI scale (left column, under the sliders; the graphics engine moved to the Image quality page): $regsUiScale 1.0 / 1.5 / 2.0, read by the engine when the
 // window opens or changes (Display::chooseUiScale, docs/ui/scaling.md). Unset: 2x on windows taller than 1800 px,
 // else 1x (the page shows the scale in use); the setting is written only when the player picks another value.
 $uiScaleValues = [1.0, 1.5, 2.0];
 $regsUiScaleShown = regsStepOf($uiScaleValues, $settings.$regsUiScale : MAIN.$window.regsUiScale());
 $uiScale = $regsUiScaleShown;
-regsLabel(60, 474, $regs.$regs_uiScale_item);
+regsLabel(60, 450, $regs.$regs_uiScale_item);
 $regsUiScaleButtons = [];
 for ($i = 0; $i < #$uiScaleValues; ++$i) {
-  $regsUiScaleButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsUiScale", 170 + $i * 78, 474, 76, 18, $regs.$regs_uiScale_values[$i], macro($i) :: regsSetUiScale($0));
+  $regsUiScaleButtons[$i] = MAIN.$ui.createChoiceButton($box.$content, "regsUiScale", 170 + $i * 78, 450, 76, 18, $regs.$regs_uiScale_values[$i], macro($i) :: regsSetUiScale($0));
   MAIN.$ui.setTooltip($regsUiScaleButtons[$i], $regs.$regs_uiScale_hint, 0, -1);
 }
 function regsSetUiScale($index) {
@@ -207,7 +196,7 @@ regsSetShowFps($showFps);
 
 // day and night (port option; the original keeps each location's fixed time of day): the cycle length in minutes
 // of normal game speed is $regsDayLength (settings.script only, default 12)
-$dayNight = $settings.$regsDayNight : false;
+$dayNight = $settings.$regsDayNight : true;  // on unless the player switched it off
 $regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", int($box.$content.width * 0.5) + 40, 473, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
 regsLabel(int($box.$content.width * 0.5) + 60, 472, $regs.$regs_dayNight_item);
 function regsSetDayNight($value) {
@@ -216,11 +205,6 @@ function regsSetDayNight($value) {
 }
 regsSetDayNight($dayNight);
 
-function regsSetRenderer($index) {
-  $renderer = $index;
-  MAIN.$ui.selectChoiceButton($regsRendererButtons[$renderer], "regsRenderer");
-}
-regsSetRenderer($renderer < #$regsRendererButtons ? $renderer : 0);
 
 function regsCurrentPreset() {
   for ($i = 0; $i < #$regsPresets; ++$i) {
@@ -271,10 +255,9 @@ function save() {
   MAIN.fpsLimit = $settings.$fpsLimit;
   $settings.$regsColorStyle = $colorStyle;
   $settings.$regsLensBlur = $lensBlur;
-  $settings.$regsRenderer = $renderer;
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
   $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
-  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsRenderer", "regsShowFps", "regsDayNight");
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsShowFps", "regsDayNight");
   $regsNewScale = $uiScale != $regsUiScaleShown;
   if ($regsNewScale) {
     $settings.$regsUiScale = $uiScaleValues[$uiScale];
