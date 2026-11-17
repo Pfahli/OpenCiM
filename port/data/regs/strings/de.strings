@@ -53,6 +53,11 @@ $regs_autosave_keep_label = "Behalten";
 $regs_autosave_keep_item = "die letzten %0";
 $regs_autosave_note1 = "Die automatischen Spielstände liegen im Ordner Autosave der Spielstandliste.";
 $regs_autosave_note2 = "Gespeichert wird nur, wenn kein Bauwerkzeug und kein Dialog offen ist.";
+$regs_camera_heading = "Kamera";
+$regs_camera_smooth = "Weiche Kamera";
+$regs_camera_smooth_hint = "Stufenlos drehen und zoomen: Drehtasten gedrückt halten, Strg + mittlere Maustaste ziehen, Gesten auf Touchpad und Touchscreen.";
+$regs_camera_snap = "In die Hauptrichtungen einrasten";
+$regs_camera_snap_hint = "Endet eine Drehung nahe einer der acht Hauptrichtungen, gleitet die Kamera hinein.";
 // Suchfeld im Fahrzeughandel (extend/metro/ui/vehiclepanel/vehiclepanel.script): Platzhalter und Tooltip
 $regs_vehicles_search = "Suchen...";
 $regs_vehicles_search_hint = "Fahrzeuge nach Namen filtern";

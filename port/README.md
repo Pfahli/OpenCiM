@@ -80,7 +80,7 @@ original does (for comparisons). `--frames <n>` quits after n frames and `--scre
 saves the last one (used for checks). `--at <frame>:<action>` injects input for screenshot checks: `move:x,y`,
 `click:left|right|middle`, `down:…`/`up:…`, `key:<VK>` (press and release), `keydown:<VK>`/`keyup:<VK>` (hold), `text:<chars>` (typed into edit controls),
 `shot:<file.png>`, `vsync:on|off` (e.g. off after a frame-timed load, for frame-time measurements), `wheel:<notches>`
-(mouse wheel at the mouse position, negative zooms out), `cam:x,z` (the game camera over a world point through
+(mouse wheel at the mouse position, negative zooms out), `hwheel:<notches>` (sideways wheel), `gesture:zoom,<f>|turn,<rad>|pan,<dx>,<dy>|end` (a two-finger gesture, docs/camera.md), `tilt:`/`zoom:`/`dir:` (the game camera), `cam:x,z` (the game camera over a world point through
 `MAIN.$gameUI.setCameraPos`; clamped to the map, so `cam:0,99999` shows the south edge). Loading the save
 `Cim2` and entering the game, for example:
 

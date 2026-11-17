@@ -172,6 +172,20 @@ int main(int argc, char** argv) {
         } else if (sc.action == "wheel") {  // wheel:<notches> at the mouse position, positive away from the user
           e.type = T::MouseWheel;
           e.wheel = float(std::atof(sc.arg.c_str()));
+        } else if (sc.action == "hwheel") {  // hwheel:<notches>, the sideways wheel (positive to the right)
+          e.type = T::MouseHWheel;
+          e.wheel = float(std::atof(sc.arg.c_str()));
+        } else if (sc.action == "gesture") {
+          // gesture:zoom,<factor> | turn,<radians> | pan,<dx>,<dy> | end: a two-finger gesture at the mouse position
+          char kind[16] = {};
+          float a = 0, b = 0;
+          std::sscanf(sc.arg.c_str(), "%15[a-z],%f,%f", kind, &a, &b);
+          e.type = T::Gesture;
+          const std::string k = kind;
+          e.gesture = k == "zoom" ? 1 : k == "turn" ? 2 : k == "pan" ? 3 : 4;
+          e.value = a;
+          e.dx = a;
+          e.dy = b;
         } else if (sc.action == "text") {  // typed characters (edit controls)
           for (unsigned char ch : sc.arg) {
             platform::InputEvent c;

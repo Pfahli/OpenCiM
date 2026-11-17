@@ -53,6 +53,11 @@ $regs_autosave_keep_label = "Keep";
 $regs_autosave_keep_item = "the last %0";
 $regs_autosave_note1 = "Autosaves go to the folder Autosave in the save list.";
 $regs_autosave_note2 = "The game is only saved while no construction tool and no dialog is open.";
+$regs_camera_heading = "Camera";
+$regs_camera_smooth = "Smooth camera";
+$regs_camera_smooth_hint = "Turn and zoom without steps: hold the rotate keys, Ctrl + middle mouse drag, touchpad and touchscreen gestures.";
+$regs_camera_snap = "Snap to the main directions";
+$regs_camera_snap_hint = "When a turn ends near one of the eight main directions, the camera glides into it.";
 // search field in the vehicle shop (extend/metro/ui/vehiclepanel/vehiclepanel.script): placeholder and tooltip
 $regs_vehicles_search = "Search...";
 $regs_vehicles_search_hint = "Filter vehicles by name";
