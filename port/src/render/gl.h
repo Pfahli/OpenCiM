@@ -49,6 +49,7 @@ enum : GLenum {
   RGBA16F = 0x881A, HALF_FLOAT = 0x140B, DEPTH_COMPONENT = 0x1902, NONE = 0, RED = 0x1903,
   TEXTURE_COMPARE_MODE = 0x884C, TEXTURE_COMPARE_FUNC = 0x884D, COMPARE_REF_TO_TEXTURE = 0x884E,
   READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9, MAX_SAMPLES = 0x8D57, NEAREST_MIPMAP_NEAREST = 0x2700,
+  COLOR = 0x1800, COLOR_ATTACHMENT1 = 0x8CE1,
 };
 
 #define REGS_GL_FUNCS(X)                                                                                    \
@@ -63,6 +64,9 @@ enum : GLenum {
   X(void, DrawBuffer, GLenum)                                                                               \
   X(void, ReadBuffer, GLenum)                                                                               \
   X(void, ColorMask, GLboolean, GLboolean, GLboolean, GLboolean)                                            \
+  X(void, ColorMaski, GLuint, GLboolean, GLboolean, GLboolean, GLboolean)                                   \
+  X(void, DrawBuffers, GLsizei, const GLenum*)                                                              \
+  X(void, ClearBufferfv, GLenum, GLint, const GLfloat*)                                                     \
   X(void, GetTexImage, GLenum, GLint, GLenum, GLenum, void*)                                                \
   X(void, BlitFramebuffer, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)      \
   X(void, RenderbufferStorageMultisample, GLenum, GLsizei, GLenum, GLsizei, GLsizei)                        \

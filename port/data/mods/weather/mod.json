@@ -11,6 +11,7 @@
   "shaderHooks": [
     { "file": "shaders/seasons.glsl", "function": "seasons_foliage", "shadowPass": true },
     { "file": "shaders/wet.glsl", "function": "weather_wet_surface" },
+    { "file": "shaders/reflect.glsl", "function": "weather_reflect", "post": true },
     { "file": "shaders/heat.glsl", "function": "weather_heat", "post": true }
   ],
   "saves": "none",

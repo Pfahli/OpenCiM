@@ -56,6 +56,9 @@ uniform samplerCube regs_EnvMap;
 uniform sampler2D regs_SurfaceMap;
 uniform vec4 regs_SurfaceMapRect;
 uniform sampler2D regs_HookTexture0;  // texture unit 0: the material's first texture (its diffuse map)
+// what the surface hooks tell the post hooks about this pixel: 0 unless a hook sets it, written to the scene's
+// data attachment (RGBA8, 0..1) with the colour; post hooks read it with regs_postData
+vec4 regs_HookOut = vec4(0.0);
 struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; int surfaceClass; float time; float item;
                      vec2 uv; vec2 uv1; float shadow; };
 // the material's first texture (unit 0, the diffuse map of the game's materials) at a texture coordinate, as stored
@@ -467,14 +470,18 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
          "                (gl_Position.y - regs_ProjInverse.w * ze) * regs_ProjInverse.y, ze);\n"
          "  regs_WorldPos = (regs_ViewInverse * vec4(e, 1.0)).xyz;\n  regs_Seed = regs_Color.a;\n  regs_ModelPos = regs_Vertex.xyz;\n}\n";
   } else {
-    head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\nin vec3 regs_WorldPos;\nin float regs_Seed;\nin vec3 regs_ModelPos;\n";
+    // location 1: the surface hooks' data (regs_HookOut) for the post hooks; only scene targets made with a data
+    // attachment keep it, every other framebuffer drops it
+    head += "in vec4 regs_FrontColor;\nlayout(location = 0) out vec4 regs_FragColor;\nlayout(location = 1) out vec4 regs_HookData;\n"
+            "in vec3 regs_WorldPos;\nin float regs_Seed;\nin vec3 regs_ModelPos;\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
     if (withHooks)
       s += hookFragmentCode() +
            "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_HookOn > 0.5) regs_hooks(regs_FragColor);\n"
-           "  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
+           "  if (regs_FragColor.a <= regs_AlphaRef) discard;\n  regs_HookData = regs_HookOut;\n}\n";
     else
-      s += "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_FragColor.a <= regs_AlphaRef) discard;\n}\n";
+      s += "\nuniform float regs_AlphaRef = -1.0;\nvoid main() {\n  regs_main();\n  if (regs_FragColor.a <= regs_AlphaRef) discard;\n"
+           "  regs_HookData = vec4(0.0);\n}\n";
   }
   return head + s;
 }
@@ -498,15 +505,25 @@ std::string postHookFragment() {
 out vec4 regs_FragColor;
 uniform sampler2D texture0;  // the scene's colour
 uniform sampler2D texture1;  // and depth
+uniform sampler2D texture2;  // and the surface hooks' data (regs_HookOut)
 uniform vec4 custom0;        // texel size x, y
 uniform mat4 regs_PostInvViewProj;
+uniform mat4 regs_PostViewProj;
 struct RegsPost { vec2 uv; vec3 pos; vec3 view; float dist; float depth; float sky; float time; vec2 texel; };
-// the scene's colour, depth (0..1, 1 = nothing drawn) and world position at an image coordinate (0..1, bottom left)
+// the scene's colour, depth (0..1, 1 = nothing drawn), world position and the surface hooks' data (what the drawn
+// surface's hooks left in regs_HookOut, 0 elsewhere) at an image coordinate (0..1, bottom left)
 vec3 regs_postColor(vec2 uv) { return texture(texture0, uv).rgb; }
 float regs_postDepth(vec2 uv) { return texture(texture1, uv).r; }
+vec4 regs_postData(vec2 uv) { return texture(texture2, uv); }
 vec3 regs_postWorld(vec2 uv) {
   vec4 w = regs_PostInvViewProj * vec4(uv * 2.0 - 1.0, texture(texture1, uv).r * 2.0 - 1.0, 1.0);
   return w.xyz / w.w;
+}
+// a world point on the image: its image coordinate (xy) and depth (z, as regs_postDepth); z < 0 behind the camera
+vec3 regs_postProject(vec3 p) {
+  vec4 c = regs_PostViewProj * vec4(p, 1.0);
+  if (c.w <= 1e-4) return vec3(0.0, 0.0, -1.0);
+  return c.xyz / c.w * 0.5 + 0.5;
 }
 )";
   s += hookLibraryCode(true);
