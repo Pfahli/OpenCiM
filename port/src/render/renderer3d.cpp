@@ -286,6 +286,7 @@ GpuMesh Renderer3D::upload(const MeshData& src, const SkinLayout& layout) {
     for (int i = 0; i < 2; ++i) attrs.push_back({6 + i, 4, AttribType::Float, g.skinVbo, 32, size_t(16 * i)});
   }
   g.vao = d.createVertexInput(attrs.data(), int(attrs.size()), g.ibo);
+  g.vertexCount = uint32_t(n);
   for (size_t si = 0; si < m.submeshes.size(); ++si) {
     const Submesh& s = m.submeshes[si];
     GpuMesh::Part p{s.firstIndex, s.indexCount, s.material, s.colorize};
@@ -329,6 +330,14 @@ GpuMesh Renderer3D::upload(const MeshData& src, const SkinLayout& layout) {
 }
 
 void Renderer3D::destroy(GpuMesh& m) {
+  for (auto it = blas_.begin(); it != blas_.end();) {  // its ray-query structures
+    if (it->first.first == m.vao) {
+      dev().destroyBlas(it->second);
+      it = blas_.erase(it);
+    } else {
+      ++it;
+    }
+  }
   if (m.vao) dev().destroyVertexInput(m.vao);
   if (m.ibo) dev().destroyBuffer(m.ibo);
   if (m.skinVbo) dev().destroyBuffer(m.skinVbo);
@@ -587,9 +596,11 @@ void Renderer3D::drawPart(const SceneView& v, const DrawItem& it, const GpuMesh:
   dev().drawElements(gpu::Prim::Triangles, int(p.indexCount), p.firstIndex);
 }
 
-uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks) {
+uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks,
+                                  bool rayShadows) {
   std::string why;
-  std::string vs = translateGlsl110(vs110, false, &why, hooks), fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks);
+  std::string vs = translateGlsl110(vs110, false, &why, hooks),
+              fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks, rayShadows);
   if (vs.empty() || fs.empty()) {
     if (error) *error = "unsupported built-in " + why;
     return 0;
@@ -710,6 +721,7 @@ const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.hookFootRect = at("regs_FootRect");
     l.hookNight = at("regs_HookNight");
   }
+  l.sunPos = at("regs_SunPos");
   l.viewInverse = at("regs_ViewInverse");
   l.projInverse = at("regs_ProjInverse");
   l.night = at("regs_Night");
@@ -767,6 +779,7 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   dev().uniformMatrix4fv(l.viewInverse, 1, vi.m);
   dev().uniform4f(l.projInverse, 1.0f / v.proj.at(0, 0), 1.0f / v.proj.at(1, 1), v.proj.at(0, 2), v.proj.at(1, 2));
   dev().uniform4fv(l.night, 1, v.night);
+  dev().uniform4f(l.sunPos, v.sunWorld.x, v.sunWorld.y, v.sunWorld.z, v.rayShadows ? 1.0f : 0.0f);
   dev().uniform1f(l.shop, v.shopShare);
   dev().uniform1i(l.windowMask, kNightMapUnit);
   dev().uniform1i(l.lampMap, kNightMapUnit);
@@ -956,6 +969,10 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
       const GpuMaterial& m = materialOf(it, p);
       uint32_t prog = m.programFor(v.env);
       if (shadowPass && (!prog || (m.flags & (kMatNoShadow | kMatDecal)))) continue;
+      // with raytraced shadows the map keeps what the rays leave out (foliage, blended, skinned)
+      if (shadowPass && v.shadowMapLeftovers && !(m.flags & kMatAlphaBlend) && m.surfaceClass != kSurfaceFoliage &&
+          p.groups.empty())
+        continue;
       Vec3 dv = transformPoint(it.world, p.center) - v.eye;
       // MATERIAL_ZERO_RADIUS (water): radius −100, so it sorts before other blended parts nearby (terrain.md §6.4)
       float radius = (m.flags & 0x02000000u) ? -100.0f : p.radius;
@@ -1042,6 +1059,43 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   dev().depthMask(1);
   dev().cullFace(gpu::Face::Back);
   dev().bindVertexInput(0);
+}
+
+bool Renderer3D::buildRayScene(const std::vector<DrawItem>& items) {
+  gpu::Device& d = dev();
+  if (!d.rayTracing()) return false;
+  static const GpuMaterial fallbackMaterial;
+  std::vector<gpu::Device::Instance> inst;
+  inst.reserve(items.size());
+  for (const DrawItem& it : items) {
+    if (!it.mesh || !it.mesh->vao || it.layerMaterial >= 0 || it.surfaceClass == kSurfaceOverlay) continue;
+    auto key = std::make_pair(it.mesh->vao, static_cast<const void*>(it.materials));
+    auto found = blas_.find(key);
+    if (found == blas_.end()) {
+      // the parts that cast a ray-traced shadow: what the shadow-map pass would draw except foliage (its cut-outs need
+      // the texture), blended and skinned parts; other alpha-tested materials (most buildings) count as opaque
+      std::vector<gpu::Device::IndexRange> ranges;
+      for (const GpuMesh::Part& p : it.mesh->parts) {
+        const GpuMaterial& m =
+            it.materials && size_t(p.material) < it.materials->size() ? (*it.materials)[size_t(p.material)] : fallbackMaterial;
+        if (m.flags & (kMatNoShadow | kMatDecal | kMatAlphaBlend)) continue;
+        if (m.surfaceClass == kSurfaceOverlay || m.surfaceClass == kSurfaceWater || m.surfaceClass == kSurfaceFoliage ||
+            !p.groups.empty())
+          continue;
+        ranges.push_back({p.firstIndex, int(p.indexCount)});
+      }
+      uint32_t b = ranges.empty() ? 0 : d.createBlas(it.mesh->vbo, int(sizeof(Vtx)), int(it.mesh->vertexCount), it.mesh->ibo, ranges.data(), int(ranges.size()));
+      found = blas_.emplace(key, b).first;
+    }
+    if (!found->second) continue;
+    gpu::Device::Instance k;
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 4; ++c) k.transform[r * 4 + c] = it.world.at(r, c);
+    k.blas = found->second;
+    inst.push_back(k);
+  }
+  d.buildScene(inst.data(), int(inst.size()));
+  return true;
 }
 
 // gsParticleSystem_OGL::startRendering / renderParticle / endRendering (L:0x08218b60, 0x08218ee0, 0x08219720;

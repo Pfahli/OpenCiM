@@ -14,6 +14,7 @@
 #include "engine/display.h"
 #include "engine/effects.h"
 #include "engine/temporal.h"
+#include "render/gpu.h"
 #include "engine/grid.h"
 #include "engine/gui.h"
 #include "engine/night_lights.h"
@@ -227,8 +228,21 @@ uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flag
   if (off) return 0;
   ShaderCombiner* c = getCombiner(vm, utf8ToUtf16(shader));
   if (!c) return 0;
-  ShaderVariant* v = combinerVariant(vm, c, flags, meshFlags, env);
+  // the port's ray-shadow bit is never given to the game's combiner: the same variant, its program with rays
+  const bool rays = (env & kEnvRayShadows) != 0;
+  ShaderVariant* v = combinerVariant(vm, c, flags, meshFlags, env & ~kEnvRayShadows);
   if (!v || v->failed) return 0;
+  if (rays && (env & kEnvShadowMap)) {
+    if (!v->programRay && !v->rayFailed) {
+      std::string err;
+      v->programRay = d.r3d().buildProgram(v->vertex, v->fragment, &err, true, true);
+      if (!v->programRay) {
+        v->rayFailed = true;
+        LOG_WARN("shader variant %s 0x%x/0x%x with ray shadows: %s", shader.empty() ? "default" : shader.c_str(), flags, env, err.c_str());
+      }
+    }
+    if (v->programRay) return v->programRay;
+  }
   if (!v->program) {
     std::string err;
     v->program = d.r3d().buildProgram(v->vertex, v->fragment, &err, true);  // with the mods' shader hooks
@@ -551,6 +565,13 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   d.r2d().flushAll();
   // shadows (docs/renderer/shadows.md): fit the light camera to this view, render the depth map from the light,
   // then the main pass samples it on unit 7 with ENVIROMENT_SHADOWMAP
+  // raytraced shadows (settings regsRtShadows, REGS_RT_SHADOWS=0|1; docs/renderer/vulkan.md §9.3): Vulkan with ray
+  // queries, the map view, the game's shadows on; the rays replace the map for opaque casters
+  bool rayShadows = false;
+  if (shadow && !rt && !grids.empty() && render::gpu::dev().rayTracing()) {
+    rayShadows = settingNumber(vm, u"regsRtShadows", 0) > 0;
+    if (const char* e = std::getenv("REGS_RT_SHADOWS")) rayShadows = std::atoi(e) != 0;
+  }
   if (shadow && !rt && fieldOf(vm, shadow, u"viewport").object() == vp) {
     Object* lightObj = fieldOf(vm, shadow, u"light").object();
     Light sun;
@@ -585,12 +606,20 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         lv.shadowWarp = fit.warp;
         lv.lights.clear();
         lv.fog = false;
+        lv.shadowMapLeftovers = rayShadows;
         assignPrograms(d, vm, items, lv.env);
         if (v.particles) prepareParticlePrograms(d, vm, particles, lv.env);
         d.r3d().begin(map, 0, 0, map->width, map->height, 0, false, bw, bh);
         d.r3d().draw(lv, items);
         d.r3d().end(bw, bh);
         v.env |= kEnvShadowMap;
+        if (rayShadows && d.r3d().buildRayScene(items)) {
+          v.env |= kEnvRayShadows;
+          // REGS_RT_SHADOWS=2 (a check): the ray programs and the foliage-only map, but the rays switched off
+          static const bool raysOff = std::getenv("REGS_RT_SHADOWS") && std::atoi(std::getenv("REGS_RT_SHADOWS")) == 2;
+          v.rayShadows = !raysOff;
+          v.sunWorld = sun.position;
+        }
         v.shadowMap = map->depth;
         v.shadowTransform = fit.lightProj * fit.lightView * inverseRigid(v.view);  // main eye space → light clip
         v.shadowWarp = fit.warp;

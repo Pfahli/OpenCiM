@@ -140,6 +140,27 @@ class Device {
   virtual void beginFrame(int width, int height) = 0;  // the back buffer's size this frame
   virtual void present() = 0;
   virtual void setVsync(bool on) = 0;
+
+  // ---- ray queries (docs/renderer/vulkan.md §9.3): Vulkan with VK_KHR_ray_query only; the defaults do nothing ----
+  virtual bool rayTracing() const { return false; }
+  // A bottom-level structure over triangles: positions are float3 at offset 0 of each `stride`-byte vertex of
+  // vertexBuffer, 32-bit indices from indexBuffer; one geometry per index range. 0 when it cannot be built.
+  struct IndexRange {
+    size_t firstIndex = 0;
+    int indexCount = 0;
+  };
+  virtual uint32_t createBlas(uint32_t vertexBuffer, int stride, int vertexCount, uint32_t indexBuffer,
+                              const IndexRange* ranges, int count) {
+    return 0;
+  }
+  virtual void destroyBlas(uint32_t blas) {}
+  // The scene for this frame's ray queries: instances of bottom-level structures with a 3×4 row-major transform.
+  // Programs with a uniform `accelerationStructureEXT regs_Scene` see the last one built.
+  struct Instance {
+    float transform[12];
+    uint32_t blas = 0;
+  };
+  virtual void buildScene(const Instance* instances, int count) {}
 };
 
 // The device of the running game (or tool); set once the window is open.

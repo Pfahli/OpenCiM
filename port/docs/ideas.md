@@ -11,6 +11,8 @@ it is, what already exists, and the open decisions. Order is not priority.
 * **TAA and render scale.** Done (same branch): temporal antialiasing and a render scale with temporal or spatial
   upscaling, on the new settings page Image quality; both graphics engines (`docs/renderer/vulkan.md` §9.1-9.2). Open:
   per-object motion vectors (vehicles, people), route-strip arrows smear under TAA (texture animation).
+* **Raytraced shadows.** Done (same branch): sun shadows by ray queries on Vulkan, option on the Image quality page
+  (`docs/renderer/vulkan.md` §9.3). Open: foliage still from the shadow map (alpha in the rays), soft shadows, AO.
 * **Raytracing, frame generation, DLSS, FSR.** Owner's scope 2026-11-17 ("Also add features like Raytracing, Lossless
   Scaling etc"): raytraced shadows and ambient occlusion first, then reflections; frame generation (own interpolation,
   or FSR 3); AMD FSR 2/3 and NVIDIA DLSS upscalers (SDK downloads need the owner's OK). Plan: `docs/renderer/vulkan.md`

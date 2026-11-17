@@ -61,7 +61,9 @@ namespace {
   X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBias)             \
   X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyBuffer) X(vkCmdBlitImage)  \
   X(vkCmdCopyImage) X(vkCmdResolveImage) X(vkCmdPushDescriptorSetKHR) X(vkCmdClearColorImage)                        \
-  X(vkCmdClearDepthStencilImage)
+  X(vkCmdClearDepthStencilImage) X(vkGetBufferDeviceAddress) X(vkCreateAccelerationStructureKHR)                    \
+  X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
+  X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -83,8 +85,9 @@ struct Allocation {
 
 class Allocator {
  public:
-  void init(VkPhysicalDevice pd, VkDevice d) {
+  void init(VkPhysicalDevice pd, VkDevice d, bool deviceAddress) {
     dev_ = d;
+    deviceAddress_ = deviceAddress;
     vkGetPhysicalDeviceMemoryProperties(pd, &props_);
   }
   void shutdown() {
@@ -98,7 +101,7 @@ class Allocator {
     if (type < 0) return false;
     bool host = (props_.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
     if (req.size > kBlockSize / 2) {  // big resources get their own allocation
-      VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, uint32_t(type)};
+      VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, flagsInfo(), req.size, uint32_t(type)};
       if (vkAllocateMemory(dev_, &ai, nullptr, &out.memory) != VK_SUCCESS) return false;
       out.offset = 0;
       out.size = req.size;
@@ -117,7 +120,7 @@ class Allocator {
     for (size_t bi = 0;; ++bi) {
       if (bi == p.blocks.size()) {
         Block b;
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, kBlockSize, uint32_t(type)};
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, flagsInfo(), kBlockSize, uint32_t(type)};
         if (vkAllocateMemory(dev_, &ai, nullptr, &b.memory) != VK_SUCCESS) return false;
         if (host) vkMapMemory(dev_, b.memory, 0, VK_WHOLE_SIZE, 0, reinterpret_cast<void**>(&b.mapped));
         b.free[0] = kBlockSize;
@@ -184,7 +187,15 @@ class Allocator {
       if ((bits & (1u << i)) && (props_.memoryTypes[i].propertyFlags & want) == want) return int(i);
     return -1;
   }
+  // buffers whose device address is taken (acceleration structures and their inputs) need memory allocated for it
+  const void* flagsInfo() {
+    if (!deviceAddress_) return nullptr;
+    flags_ = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
+    return &flags_;
+  }
   VkDevice dev_ = VK_NULL_HANDLE;
+  bool deviceAddress_ = false;
+  VkMemoryAllocateFlagsInfo flags_{};
   VkPhysicalDeviceMemoryProperties props_{};
   std::vector<Pool> pools_;
 };
@@ -453,6 +464,13 @@ class VkDeviceImpl final : public Device {
     if (on != vsync_) vsync_ = on, swapchainDirty_ = true;
   }
 
+  // ---- ray queries ----
+  bool rayTracing() const override { return rt_; }
+  uint32_t createBlas(uint32_t vertexBuffer, int stride, int vertexCount, uint32_t indexBuffer, const IndexRange* ranges,
+                      int count) override;
+  void destroyBlas(uint32_t blas) override;
+  void buildScene(const Instance* instances, int count) override;
+
  private:
   static constexpr int kUnits = 16;
   static constexpr int kFrames = 2;
@@ -489,6 +507,13 @@ class VkDeviceImpl final : public Device {
     uint32_t index = 0;
     int layout = 0;
   };
+  struct Accel {  // an acceleration structure and its storage
+    VkAccelerationStructureKHR as = VK_NULL_HANDLE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    Allocation mem;
+    VkDeviceAddress address = 0;
+    VkDeviceSize size = 0;
+  };
   struct Program {
     bool used = false, null = false;  // null: no shaders (bring-up without glslang), draws are skipped
     VkShaderModule vs = VK_NULL_HANDLE, fs = VK_NULL_HANDLE;
@@ -515,6 +540,8 @@ class VkDeviceImpl final : public Device {
     };
     std::vector<Chunk> ring;
     size_t ringCurrent = 0;
+    Accel tlas;  // this frame's scene for ray queries
+    bool tlasBuilt = false;
   };
   struct State {
     std::array<int, 4> vp{0, 0, 1, 1}, sc{0, 0, 1, 1};
@@ -656,6 +683,29 @@ class VkDeviceImpl final : public Device {
   uint32_t program_ = 0, boundVi_ = 0, boundFb_ = 0;
   int renderingFb_ = -1;
   bool nullDrawLogged_ = false;
+
+  // ray queries
+  bool rt_ = false;
+  VkDeviceSize scratchAlign_ = 256;
+  std::vector<Accel> blas_ = std::vector<Accel>(1);
+  bool makeAccel(Accel& a, VkAccelerationStructureTypeKHR type, VkDeviceSize size);
+  void freeAccel(Accel& a) {
+    if (!a.as) return;
+    Accel copy = a;
+    later([this, copy]() mutable {
+      vkDestroyAccelerationStructureKHR(dev_, copy.as, nullptr);
+      vkDestroyBuffer(dev_, copy.buffer, nullptr);
+      alloc_.free(copy.mem);
+    });
+    a = Accel{};
+  }
+  VkDeviceAddress bufferAddress(VkBuffer b) {
+    VkBufferDeviceAddressInfo bi{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, b};
+    return vkGetBufferDeviceAddress(dev_, &bi);
+  }
+  VkBufferUsageFlags rtUsage() const {
+    return rt_ ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0;
+  }
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -786,23 +836,52 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   VkFormatFeatureFlags need = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
   depthFormat_ = (fp.optimalTilingFeatures & need) == need ? VK_FORMAT_X8_D24_UNORM_PACK32 : VK_FORMAT_D32_SFLOAT;
 
+  // ray queries (raytraced shadows, §9.3): VK_KHR_acceleration_structure + VK_KHR_ray_query and buffer device addresses
+  {
+    uint32_t en = 0;
+    vkEnumerateDeviceExtensionProperties(phys_, nullptr, &en, nullptr);
+    std::vector<VkExtensionProperties> ep(en);
+    vkEnumerateDeviceExtensionProperties(phys_, nullptr, &en, ep.data());
+    auto has = [&](const char* e) {
+      return std::any_of(ep.begin(), ep.end(), [&](const VkExtensionProperties& x) { return std::strcmp(x.extensionName, e) == 0; });
+    };
+    VkPhysicalDeviceRayQueryFeaturesKHR rq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &rq};
+    VkPhysicalDeviceVulkan12Features v12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &asf};
+    VkPhysicalDeviceFeatures2 q2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12};
+    bool exts = has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) && has(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+                has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    if (exts) vkGetPhysicalDeviceFeatures2(phys_, &q2);
+    rt_ = exts && rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && !std::getenv("REGS_VK_NO_RT");
+  }
   float prio = 1;
   VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
   qci.queueFamilyIndex = queueFamily_;
   qci.queueCount = 1;
   qci.pQueuePriorities = &prio;
-  VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+  VkPhysicalDeviceRayQueryFeaturesKHR rqf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+  rqf.rayQuery = VK_TRUE;
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR asf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &rqf};
+  asf.accelerationStructure = VK_TRUE;
+  VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, rt_ ? static_cast<void*>(&asf) : nullptr};
+  f12.bufferDeviceAddress = rt_ ? VK_TRUE : VK_FALSE;
+  VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &f12};
   f13.dynamicRendering = VK_TRUE;
   f13.synchronization2 = VK_TRUE;
   VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
   f2.features.textureCompressionBC = VK_TRUE;
   f2.features.samplerAnisotropy = props.limits.maxSamplerAnisotropy > 1 ? VK_TRUE : VK_FALSE;
-  const char* dexts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
+  std::vector<const char*> dexts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
+  if (rt_) {
+    dexts.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    dexts.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    dexts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+  }
   VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f2};
   dci.queueCreateInfoCount = 1;
   dci.pQueueCreateInfos = &qci;
-  dci.enabledExtensionCount = 2;
-  dci.ppEnabledExtensionNames = dexts;
+  dci.enabledExtensionCount = uint32_t(dexts.size());
+  dci.ppEnabledExtensionNames = dexts.data();
   if (VkResult r = vkCreateDevice(phys_, &dci, nullptr, &dev_); r != VK_SUCCESS) {
     if (error) *error = vkError("vkCreateDevice", r);
     return false;
@@ -811,7 +890,15 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   REGS_VK_DEVICE(REGS_VK_LOAD_DEVICE)
 #undef REGS_VK_LOAD_DEVICE
   vkGetDeviceQueue(dev_, queueFamily_, 0, &queue_);
-  alloc_.init(phys_, dev_);
+  alloc_.init(phys_, dev_, rt_);
+  if (rt_) {
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR ap{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
+    VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &ap};
+    auto getProps2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(vkGetInstanceProcAddr(instance_, "vkGetPhysicalDeviceProperties2"));
+    if (getProps2) getProps2(phys_, &p2);
+    scratchAlign_ = std::max<VkDeviceSize>(1, ap.minAccelerationStructureScratchOffsetAlignment);
+    info_ += " / ray queries";
+  }
 
   for (Frame& f : frames_) {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -970,6 +1057,10 @@ void VkDeviceImpl::shutdown() {
       for (auto& g : f.garbage) g();
       f.garbage.clear();
     }
+    for (Accel& a : blas_)
+      if (a.as) vkDestroyAccelerationStructureKHR(dev_, a.as, nullptr), vkDestroyBuffer(dev_, a.buffer, nullptr);
+    for (Frame& f : frames_)
+      if (f.tlas.as) vkDestroyAccelerationStructureKHR(dev_, f.tlas.as, nullptr), vkDestroyBuffer(dev_, f.tlas.buffer, nullptr);
     for (auto& [k, p] : pipelines_) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& [k, s] : samplers_) vkDestroySampler(dev_, s, nullptr);
     for (Program& p : programs_) {
@@ -1048,7 +1139,7 @@ bool VkDeviceImpl::ringAlloc(VkDeviceSize bytes, VkDeviceSize align, VkBuffer& b
   VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
   bci.size = c.size;
   bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-              VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+              VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rtUsage();
   if (vkCreateBuffer(dev_, &bci, nullptr, &c.buffer) != VK_SUCCESS) return false;
   VkMemoryRequirements req;
   vkGetBufferMemoryRequirements(dev_, c.buffer, &req);
@@ -1134,6 +1225,7 @@ void VkDeviceImpl::present() {
   n.garbage.clear();
   for (auto& c : n.ring) c.used = 0;
   n.ringCurrent = 0;
+  n.tlasBuilt = false;
   beginCommands();
 }
 
@@ -1372,7 +1464,7 @@ void VkDeviceImpl::bufferData(uint32_t buf, size_t bytes, const void* data, bool
   if (!bytes) return;
   VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
   bci.size = bytes;
-  bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | rtUsage();
   if (vkCreateBuffer(dev_, &bci, nullptr, &b.buffer) != VK_SUCCESS) return;
   VkMemoryRequirements req;
   vkGetBufferMemoryRequirements(dev_, b.buffer, &req);
@@ -1441,9 +1533,9 @@ uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& f
       bindings.push_back({uint32_t(p.blockBinding), VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
     for (const vk::UniformInfo& u : p.uniforms)
-      if (u.sampler)
-        bindings.push_back({uint32_t(u.binding), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
+      if (u.sampler || u.accel)
+        bindings.push_back({uint32_t(u.binding), u.accel ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                            1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     lci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     lci.bindingCount = uint32_t(bindings.size());
@@ -1812,8 +1904,21 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     w.pBufferInfo = &ubo;
     writes.push_back(w);
   }
+  VkWriteDescriptorSetAccelerationStructureKHR sceneWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
   for (size_t i = 0; i < p.uniforms.size(); ++i) {
     const vk::UniformInfo& u = p.uniforms[i];
+    if (u.accel) {  // the frame's scene (buildScene); without one this frame the program cannot draw
+      Frame& fr = frames_[frame_];
+      if (!fr.tlasBuilt || !fr.tlas.as) return;
+      sceneWrite.accelerationStructureCount = 1;
+      sceneWrite.pAccelerationStructures = &fr.tlas.as;
+      VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, &sceneWrite};
+      w.dstBinding = uint32_t(u.binding);
+      w.descriptorCount = 1;
+      w.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+      writes.push_back(w);
+      continue;
+    }
     if (!u.sampler) continue;
     int unit = p.samplerUnit[i];
     uint32_t th = unit >= 0 && unit < kUnits ? units_[size_t(unit)].first : 0;
@@ -1930,6 +2035,185 @@ void VkDeviceImpl::readPixels(uint32_t fb, int x, int y, int w, int h, uint8_t* 
       std::memcpy(rgba + i * 4, ptr + i * 4, 4);
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// ray queries: acceleration structures (docs/renderer/vulkan.md §9.3)
+
+bool VkDeviceImpl::makeAccel(Accel& a, VkAccelerationStructureTypeKHR type, VkDeviceSize size) {
+  VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+  bci.size = size;
+  bci.usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  if (vkCreateBuffer(dev_, &bci, nullptr, &a.buffer) != VK_SUCCESS) return false;
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(dev_, a.buffer, &req);
+  if (!alloc_.alloc(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true, a.mem)) {
+    vkDestroyBuffer(dev_, a.buffer, nullptr);
+    a.buffer = VK_NULL_HANDLE;
+    return false;
+  }
+  vkBindBufferMemory(dev_, a.buffer, a.mem.memory, a.mem.offset);
+  VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+  ci.buffer = a.buffer;
+  ci.size = size;
+  ci.type = type;
+  if (vkCreateAccelerationStructureKHR(dev_, &ci, nullptr, &a.as) != VK_SUCCESS) {
+    vkDestroyBuffer(dev_, a.buffer, nullptr);
+    alloc_.free(a.mem);
+    a = Accel{};
+    return false;
+  }
+  VkAccelerationStructureDeviceAddressInfoKHR ai{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR, nullptr, a.as};
+  a.address = vkGetAccelerationStructureDeviceAddressKHR(dev_, &ai);
+  a.size = size;
+  return true;
+}
+
+uint32_t VkDeviceImpl::createBlas(uint32_t vertexBuffer, int stride, int vertexCount, uint32_t indexBuffer,
+                                  const IndexRange* ranges, int count) {
+  if (!rt_ || count <= 0 || vertexCount <= 0 || vertexBuffer >= buffers_.size() || indexBuffer >= buffers_.size()) return 0;
+  const Buf& vb = buffers_[vertexBuffer];
+  const Buf& ib = buffers_[indexBuffer];
+  if (!vb.buffer || !ib.buffer || vb.stream || ib.stream) return 0;
+  VkDeviceAddress va = bufferAddress(vb.buffer) + vb.offset, ia = bufferAddress(ib.buffer) + ib.offset;
+  std::vector<VkAccelerationStructureGeometryKHR> geoms;
+  std::vector<VkAccelerationStructureBuildRangeInfoKHR> rangeInfo;
+  std::vector<uint32_t> prims;
+  for (int i = 0; i < count; ++i) {
+    if (ranges[i].indexCount < 3) continue;
+    VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    g.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    auto& t = g.geometry.triangles;
+    t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    t.vertexData.deviceAddress = va;
+    t.vertexStride = VkDeviceSize(stride);
+    t.maxVertex = uint32_t(vertexCount - 1);
+    t.indexType = VK_INDEX_TYPE_UINT32;
+    t.indexData.deviceAddress = ia + ranges[i].firstIndex * 4;
+    geoms.push_back(g);
+    prims.push_back(uint32_t(ranges[i].indexCount / 3));
+    rangeInfo.push_back({prims.back(), 0, 0, 0});
+  }
+  if (geoms.empty()) return 0;
+  VkAccelerationStructureBuildGeometryInfoKHR bi{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+  bi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+  bi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  bi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+  bi.geometryCount = uint32_t(geoms.size());
+  bi.pGeometries = geoms.data();
+  VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+  vkGetAccelerationStructureBuildSizesKHR(dev_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bi, prims.data(), &sizes);
+  Accel a;
+  if (!makeAccel(a, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sizes.accelerationStructureSize)) return 0;
+  // scratch: a device-local buffer freed once this frame has run
+  VkBuffer scratch = VK_NULL_HANDLE;
+  Allocation smem;
+  VkBufferCreateInfo sci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+  sci.size = sizes.buildScratchSize + scratchAlign_;
+  sci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  vkCreateBuffer(dev_, &sci, nullptr, &scratch);
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(dev_, scratch, &req);
+  if (!alloc_.alloc(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true, smem)) {
+    vkDestroyBuffer(dev_, scratch, nullptr);
+    freeAccel(a);
+    return 0;
+  }
+  vkBindBufferMemory(dev_, scratch, smem.memory, smem.offset);
+  VkDeviceAddress sa = (bufferAddress(scratch) + scratchAlign_ - 1) / scratchAlign_ * scratchAlign_;
+  bi.dstAccelerationStructure = a.as;
+  bi.scratchData.deviceAddress = sa;
+  endRendering();
+  const VkAccelerationStructureBuildRangeInfoKHR* pr = rangeInfo.data();
+  vkCmdBuildAccelerationStructuresKHR(cmd(), 1, &bi, &pr);
+  fullBarrier(cmd());
+  later([this, scratch, smem]() mutable {
+    vkDestroyBuffer(dev_, scratch, nullptr);
+    alloc_.free(smem);
+  });
+  uint32_t h = 0;
+  for (uint32_t i = 1; i < blas_.size() && !h; ++i)
+    if (!blas_[i].as) h = i;
+  if (!h) {
+    h = uint32_t(blas_.size());
+    blas_.emplace_back();
+  }
+  blas_[h] = a;
+  return h;
+}
+
+void VkDeviceImpl::destroyBlas(uint32_t blas) {
+  if (blas && blas < blas_.size()) freeAccel(blas_[blas]);
+}
+
+void VkDeviceImpl::buildScene(const Instance* instances, int count) {
+  if (!rt_) return;
+  Frame& f = frames_[frame_];
+  std::vector<VkAccelerationStructureInstanceKHR> inst;
+  inst.reserve(size_t(std::max(count, 0)));
+  for (int i = 0; i < count; ++i) {
+    const Instance& s = instances[i];
+    if (!s.blas || s.blas >= blas_.size() || !blas_[s.blas].as) continue;
+    VkAccelerationStructureInstanceKHR k{};
+    std::memcpy(k.transform.matrix, s.transform, sizeof k.transform.matrix);
+    k.instanceCustomIndex = 0;
+    k.mask = 0xFF;
+    k.instanceShaderBindingTableRecordOffset = 0;
+    k.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR | VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
+    k.accelerationStructureReference = blas_[s.blas].address;
+    inst.push_back(k);
+  }
+  // an empty scene still gets a structure (zero instances), so programs that query it can draw
+  VkBuffer ib = VK_NULL_HANDLE;
+  VkDeviceSize io = 0;
+  uint8_t* ip = nullptr;
+  if (!ringAlloc(std::max<size_t>(inst.size(), 1) * sizeof(VkAccelerationStructureInstanceKHR), 16, ib, io, ip)) return;
+  if (!inst.empty()) std::memcpy(ip, inst.data(), inst.size() * sizeof(VkAccelerationStructureInstanceKHR));
+  VkAccelerationStructureGeometryKHR g{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+  g.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+  g.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+  g.geometry.instances.data.deviceAddress = bufferAddress(ib) + io;
+  VkAccelerationStructureBuildGeometryInfoKHR bi{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+  bi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+  bi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+  bi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+  bi.geometryCount = 1;
+  bi.pGeometries = &g;
+  uint32_t n = uint32_t(inst.size());
+  VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+  vkGetAccelerationStructureBuildSizesKHR(dev_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bi, &n, &sizes);
+  if (!f.tlas.as || f.tlas.size < sizes.accelerationStructureSize) {
+    freeAccel(f.tlas);
+    if (!makeAccel(f.tlas, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, sizes.accelerationStructureSize * 3 / 2 + 4096)) return;
+  }
+  // scratch from the ring would be host memory; a device-local one per build, freed with the frame
+  VkBuffer sb = VK_NULL_HANDLE;
+  VkBufferCreateInfo sci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+  sci.size = sizes.buildScratchSize + scratchAlign_;
+  sci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  vkCreateBuffer(dev_, &sci, nullptr, &sb);
+  Allocation smem;
+  VkMemoryRequirements req;
+  vkGetBufferMemoryRequirements(dev_, sb, &req);
+  if (!alloc_.alloc(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true, smem)) {
+    vkDestroyBuffer(dev_, sb, nullptr);
+    return;
+  }
+  vkBindBufferMemory(dev_, sb, smem.memory, smem.offset);
+  bi.dstAccelerationStructure = f.tlas.as;
+  bi.scratchData.deviceAddress = (bufferAddress(sb) + scratchAlign_ - 1) / scratchAlign_ * scratchAlign_;
+  VkAccelerationStructureBuildRangeInfoKHR range{n, 0, 0, 0};
+  const VkAccelerationStructureBuildRangeInfoKHR* pr = &range;
+  endRendering();
+  vkCmdBuildAccelerationStructuresKHR(cmd(), 1, &bi, &pr);
+  fullBarrier(cmd());
+  later([this, sb, smem]() mutable {
+    vkDestroyBuffer(dev_, sb, nullptr);
+    alloc_.free(smem);
+  });
+  f.tlasBuilt = true;
 }
 
 }  // namespace

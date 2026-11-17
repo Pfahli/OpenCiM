@@ -240,6 +240,22 @@ runs at the render size. FSR not started (needs the owner's OK for the FidelityF
 
 ### 9.3 Raytraced shadows and ambient occlusion (Vulkan only)
 
+Status (2026-11-17): raytraced sun shadows done, setting `$regsRtShadows` (Image quality page; `REGS_RT_SHADOWS=1`,
+and `=2` as a check that keeps the ray programs but switches the rays off). How it is built:
+* Device (`gpu_vk.cpp`): `VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, buffer device addresses (`REGS_VK_NO_RT`
+  turns them off); `createBlas`, `destroyBlas`, `buildScene` on `gpu::Device` (no-ops on OpenGL); the frame's TLAS is
+  pushed to programs with a uniform `accelerationStructureEXT regs_Scene`.
+* Renderer (`renderer3d.cpp`): `buildRayScene` turns the frame's draw list into TLAS instances of per-mesh BLAS (built
+  the first time a mesh is drawn, freed with it): every shadow-casting part except foliage (`kSurfaceFoliage`), blended,
+  skinned, water and overlay parts. Alpha-tested materials other than foliage count as opaque (most buildings carry the
+  flag); their cut-outs (railings) cast solid shadows.
+* Shaders (`glsl.cpp`): the program variant for the port pass bit `kEnvRayShadows` (never passed to the game's
+  combiner) replaces `regs_shadow2D` in the fragment stage by the shadow map times a ray query from `regs_WorldPos`
+  toward the sun (offset along the derivative normal); GLSL 4.60 for those programs. The shadow-map pass draws only the
+  leftovers (foliage, blended, skinned), so trees keep their cut-out shadows from the map.
+* Checked on the Vienna save: the same shadows as the map, crisper at contact and outside the map's range, no acne.
+  Not yet: soft shadows (jittered sun disc with TAA), alpha-tested foliage in the rays, ambient occlusion.
+
 * Device features: `VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, `bufferDeviceAddress`; vertex and index
   buffers get the acceleration-structure input usage. The RTX 3080 has all of them; other GPUs fall back to raster.
 * **Acceleration structures:** one BLAS per uploaded `GpuMesh` (static: built once at upload; skinned people and

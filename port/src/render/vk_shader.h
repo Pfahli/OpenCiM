@@ -21,6 +21,7 @@ struct UniformInfo {
   // samplers: not in the block; the descriptor binding and kind
   bool sampler = false;
   bool cube = false, shadow = false;
+  bool accel = false;    // accelerationStructureEXT (the ray-query scene, regs_Scene): binding, no block data
   int binding = -1;
 };
 

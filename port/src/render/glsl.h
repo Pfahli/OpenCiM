@@ -12,7 +12,11 @@ namespace regs::render {
 // the matrices, gl_FrontMaterial, gl_LightSource[], gl_FrontLightProduct[], gl_LightModel, gl_Fog) → regs_* inputs
 // and uniforms with the same members. Vertex inputs carry no locations; the program builder binds them.
 // With hooks, the registered shader hooks are added (below). Returns "" when the source uses another built-in.
-std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool hooks = false);
+// rayShadows (Vulkan with ray queries, docs/renderer/vulkan.md §9.3): the fragment stage's shadow2D lookups are
+// multiplied by a ray query toward the sun (uniforms regs_Scene, the frame's acceleration structure, and regs_SunPos,
+// the sun in world space with w = 1 while the rays are on); the shadow map then only holds what the rays leave out.
+std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool hooks = false,
+                             bool rayShadows = false);
 
 // Port shader hooks for mods (port/docs/mod-manager.md §4.3): GLSL functions
 //   void <function>(inout vec4 color, RegsSurface s)

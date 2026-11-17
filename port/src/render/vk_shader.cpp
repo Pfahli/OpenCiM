@@ -148,6 +148,10 @@ bool compileProgram(const std::string& vs, const std::string& fs,
   std::call_once(g_init, [] { glslang::InitializeProcess(); });
   glslang::TShader v(EShLangVertex), f(EShLangFragment);
   std::string vsText = bindInputs(vs, attribs), fsText = fs;
+  // ray queries (raytraced shadows) need GLSL 4.60; both stages move up together
+  if (fsText.find("GL_EXT_ray_query") != std::string::npos)
+    for (std::string* s : {&vsText, &fsText})
+      if (size_t at = s->find("#version 330 core"); at != std::string::npos) s->replace(at, 17, "#version 460 core");
   matchVaryings(vsText, fsText);
   vsText = remapDepth(vsText);
   static const bool debug = std::getenv("REGS_VK_DEBUG") != nullptr;
@@ -196,7 +200,10 @@ bool compileProgram(const std::string& vs, const std::string& fs,
     u.arraySize = std::max(1, r.size);
     // the type as a GL enum (glDefineType): samplers, matrices, vectors, ints
     const int gt = r.glDefineType;
-    if (gt == 0x8B5E /* SAMPLER_2D */ || gt == 0x8B60 /* SAMPLER_CUBE */ || gt == 0x8B62 /* SAMPLER_2D_SHADOW */ ||
+    if (u.name == "regs_Scene") {  // the ray-query scene (render/glsl.h, raytraced shadows)
+      u.accel = true;
+      u.binding = r.getBinding();
+    } else if (gt == 0x8B5E /* SAMPLER_2D */ || gt == 0x8B60 /* SAMPLER_CUBE */ || gt == 0x8B62 /* SAMPLER_2D_SHADOW */ ||
         gt == 0x8DC5 /* SAMPLER_CUBE_SHADOW */ || gt == 0x8B5F /* SAMPLER_3D */) {
       u.sampler = true;
       u.cube = gt == 0x8B60 || gt == 0x8DC5;

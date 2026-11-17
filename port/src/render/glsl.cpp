@@ -435,7 +435,8 @@ std::string renameIdentifiers(const std::string& src, bool fragment, const char*
 
 }  // namespace
 
-std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool withHooks) {
+std::string translateGlsl110(const std::string& src, bool fragment, std::string* unsupported, bool withHooks,
+                             bool rayShadows) {
   withHooks = withHooks && !hooks().empty();
   std::string why;
   std::string s = renameIdentifiers(src, fragment, fragment ? "regs_main" : "regs_vmain", &why);
@@ -444,12 +445,14 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     return "";
   }
   std::string head = "#version 330 core\n";
+  const bool rays = rayShadows && fragment;
+  if (rays) head += "#extension GL_EXT_ray_query : require\n";
   // REGS_SHADER_SALT=<text>: a comment that makes every source new to the driver's shader cache (cold-start tests)
   static const char* salt = std::getenv("REGS_SHADER_SALT");
   if (salt) head += std::string("// ") + salt + "\n";
   head += kBuiltins;
   // shadow2D as GLSL 1.10 has it (vec4); the particle shader samples the shadow map in its vertex shader too
-  head += "vec4 regs_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c)); }\n";
+  if (!rays) head += "vec4 regs_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c)); }\n";
   if (!fragment) {
     head += "in vec4 regs_Vertex;\nin vec3 regs_Normal;\nin vec4 regs_Color;\n";
     for (int i = 0; i < 8; ++i) head += "in vec4 regs_MultiTexCoord" + std::to_string(i) + ";\n";
@@ -468,6 +471,23 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
          "  regs_WorldPos = (regs_ViewInverse * vec4(e, 1.0)).xyz;\n  regs_Seed = regs_Color.a;\n  regs_ModelPos = regs_Vertex.xyz;\n}\n";
   } else {
     head += "in vec4 regs_FrontColor;\nout vec4 regs_FragColor;\nin vec3 regs_WorldPos;\nin float regs_Seed;\nin vec3 regs_ModelPos;\n";
+    if (rays)  // a ray from the surface toward the sun: 1 lit, 0 in shadow; the shadow map (foliage) multiplies it
+      head +=
+          "uniform accelerationStructureEXT regs_Scene;\nuniform vec4 regs_SunPos;\n"
+          "float regs_sunVisible() {\n"
+          "  if (regs_SunPos.w < 0.5) return 1.0;\n"
+          "  vec3 p = regs_WorldPos;\n"
+          "  vec3 l = normalize(regs_SunPos.xyz - p);\n"
+          "  vec3 n = cross(dFdx(p), dFdy(p));\n"
+          "  n = dot(n, n) > 1e-12 ? normalize(n) : l;\n"
+          "  if (dot(n, l) < 0.0) n = -n;\n"
+          "  vec3 o = p + n * 0.05 + l * 0.02;\n"
+          "  rayQueryEXT q;\n"
+          "  rayQueryInitializeEXT(q, regs_Scene, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFF, o, 0.0, l, 4000.0);\n"
+          "  while (rayQueryProceedEXT(q)) {}\n"
+          "  return rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;\n"
+          "}\n"
+          "vec4 regs_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c) * regs_sunVisible()); }\n";
     // the fixed-function alpha test (glAlphaFunc GREATER ref) runs after the shader's own main
     if (withHooks)
       s += hookFragmentCode() +

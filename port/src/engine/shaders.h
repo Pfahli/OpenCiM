@@ -14,6 +14,8 @@ struct ShaderVariant {
   std::string vertex, fragment;  // generated GLSL 1.10 (no #version)
   uint32_t attributes = 0, textures = 0, parameters = 0;
   uint32_t program = 0;          // GL program (0 until compiled)
+  uint32_t programRay = 0;       // the same with raytraced shadows (Vulkan, docs/renderer/vulkan.md §9.3)
+  bool rayFailed = false;
   bool failed = false;           // expansion or compilation failed: draw nothing with it
 };
 
