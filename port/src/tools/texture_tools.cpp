@@ -54,6 +54,7 @@ int cmdUpscaleTextures(int argc, char** argv) {
     std::string a = argv[i];
     if (a == "--only" && i + 1 < argc) opt.only = argv[++i];
     else if (a == "--external" && i + 1 < argc) opt.external = argv[++i];
+    else if (a == "--external-ui-only") opt.externalUiOnly = true;
     else if (a == "--force") opt.force = true;
     else if (a == "--no-ui") opt.ui = false;
     else if (a == "--threads" && i + 1 < argc) opt.threads = std::atoi(argv[++i]);
@@ -243,9 +244,13 @@ int cmdUpscaleCheck(int argc, char** argv) {
   return 0;
 }
 
-// ddspng <file.dds> <out.png> [level]: one level of a DDS file on disk (a cache file) as PNG
+// ddspng <file.dds> <out.png> [level] [--alpha]: one level of a DDS file on disk (a cache file) as PNG, colour only
+// unless --alpha
 int cmdDdsPng(int argc, char** argv) {
   if (argc < 4) return 2;
+  bool alpha = false;
+  for (int i = 4; i < argc; ++i)
+    if (std::string(argv[i]) == "--alpha") alpha = true, argc = i;
   FILE* f = _wfopen(widenArg(argv[2]).wstring().c_str(), L"rb");
   if (!f) return 1;
   std::vector<uint8_t> d;
@@ -256,7 +261,8 @@ int cmdDdsPng(int argc, char** argv) {
   std::vector<uint8_t> rgba;
   int w = 0, h = 0;
   if (!render::parseDds(d, img, nullptr) || !render::decodeRgba(img, argc > 4 ? std::atoi(argv[4]) : 0, rgba, w, h)) return 1;
-  for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;  // colour only
+  if (!alpha)
+    for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;  // colour only
   std::printf("%dx%d, %d levels\n", w, h, img.mipCount);
   return writeBytes(widenArg(argv[3]), render::encodePng(rgba.data(), w, h)) ? 0 : 1;
 }

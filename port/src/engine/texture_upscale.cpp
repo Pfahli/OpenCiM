@@ -487,9 +487,13 @@ Roles scanRoles(const Vfs& vfs, const std::function<bool(const std::string&, std
 Kind classify(const std::string& path, const Roles& roles, const Image& img, bool includeUi) {
   if (img.cube || img.levels.empty()) return Kind::Skip;
   int lo = std::min(img.width, img.height), hi = std::max(img.width, img.height);
-  // tiny ones are gradients, ramps and lookups; 2048 and up are already sharp and would cost 4× their VRAM again
-  if (lo < 16 || hi > 1024) return Kind::Skip;
   std::string l = lower(path);
+  // tiny ones are gradients, ramps and lookups; 2048 and up are already sharp and would cost 4× their VRAM again,
+  // except the full-screen art of the loading screens and the main menu (2048 × 1024 stretched to the screen height
+  // × 2: 2.1× at 4K, one screen at a time)
+  bool screenArt = l.find("location-data/illustrations/") != std::string::npos || l.find("/ui/loading/") != std::string::npos ||
+                   l.find("/ui/menus/animation/") != std::string::npos;
+  if (lo < 16 || hi > (screenArt ? 2048 : 1024)) return Kind::Skip;
   static const char* skipPrefix[] = {"effects/", "textures/", "fonts/", "metro/fonts/", "metro/maps/", "userdata/", "regs/", "memory/", "regs-cim/"};
   for (const char* p : skipPrefix)
     if (l.compare(0, std::strlen(p), p) == 0) return Kind::Skip;
@@ -696,7 +700,7 @@ bool loadCached(const fs::path& root, const std::string& vfsPath, const std::vec
 }
 
 std::string installSignature(const Vfs& vfs) {
-  uint64_t h = 0xcbf29ce484222325ull ^ kCacheVersion;
+  uint64_t h = (0xcbf29ce484222325ull ^ kCacheVersion) + kSelectionRules;
   auto mix = [&](const void* p, size_t n) {
     for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const uint8_t*>(p)[i]) * 0x100000001b3ull;
   };
@@ -710,7 +714,7 @@ std::string installSignature(const Vfs& vfs) {
     mix(&t, sizeof t);
   }
   char buf[40];
-  std::snprintf(buf, sizeof buf, "v%u-%016llx", kCacheVersion, (unsigned long long)h);
+  std::snprintf(buf, sizeof buf, "v%u-r%u-%016llx", kCacheVersion, kSelectionRules, (unsigned long long)h);
   return buf;
 }
 
@@ -814,7 +818,8 @@ bool generate(const Vfs& vfs, const fs::path& root, const GenerateOptions& opt, 
         continue;
       }
       uint64_t stamp = sourceStamp(data);
-      bool useExt = !opt.external.empty() && (kind == Kind::Color || kind == Kind::AlphaTest || kind == Kind::Ui);
+      bool useExt = !opt.external.empty() &&
+                    (kind == Kind::Ui || (!opt.externalUiOnly && (kind == Kind::Color || kind == Kind::AlphaTest)));
       fs::path out = cacheFile(root, path);
       uint64_t have = 0;
       bool haveExt = false;
@@ -854,13 +859,13 @@ bool generate(const Vfs& vfs, const fs::path& root, const GenerateOptions& opt, 
   // other folder; their alpha (and every normal map and mask) comes from the built-in filter
   if (!external.empty() && !p.stop) {
     fs::path tmp = root / L"_external";
-    for (size_t b = 0; b < external.size() && !p.stop; b += 256) {
-      size_t e = std::min(external.size(), b + 256);
+    // one run of the upscaler on these jobs (fresh folders)
+    auto runExternal = [&](const std::vector<size_t>& jobs) {
       std::error_code ec;
       fs::remove_all(tmp, ec);
       fs::create_directories(tmp / L"in", ec);
       fs::create_directories(tmp / L"out", ec);
-      for (size_t i = b; i < e; ++i) {
+      for (size_t i : jobs) {
         std::vector<uint8_t> data, rgba;
         Image src;
         int w = 0, h = 0;
@@ -876,45 +881,64 @@ bool generate(const Vfs& vfs, const fs::path& root, const GenerateOptions& opt, 
       };
       replace("{in}", tmp / L"in");
       replace("{out}", tmp / L"out");
-      say("texture upscale: external upscaler on " + std::to_string(e - b) + " textures");
+      say("texture upscale: external upscaler on " + std::to_string(jobs.size()) + " textures");
       int rc = std::system(("\"" + cmd + "\"").c_str());
       if (rc != 0) say("texture upscale: external upscaler returned " + std::to_string(rc));
-      for (size_t i = b; i < e; ++i) {
-        const ExtJob& j = external[i];
-        std::vector<uint8_t> data, png, ext, up;
-        Image src, res;
-        int ew = 0, eh = 0, w2 = 0, h2 = 0;
-        bool ok = read(j.path, data) && render::parseDds(data, src, nullptr) &&
-                  upscaleLevel0(src, j.kind, j.kind != Kind::Ui, up, w2, h2);
-        bool usedExt = false;
-        if (ok && readFile(tmp / L"out" / (std::to_wstring(i) + L".png"), png) && decodePng(png, ext, ew, eh) && ew >= w2 / 2) {
-          ext = fitTo(ext, ew, eh, w2, h2);
-          // a broken run (a lost GPU device writes black images) must not end up in the cache: the result has to
-          // stay close to the built-in one on average (the upscalers add detail, they do not move colours)
-          double diff = 0;
-          size_t n = 0;
-          for (size_t k = 0; k < up.size(); k += 4)
-            if (up[k + 3] >= 128) {
-              for (int c = 0; c < 3; ++c) diff += std::abs(int(up[k + size_t(c)]) - int(ext[k + size_t(c)]));
-              n += 3;
-            }
-          if (n && diff / double(n) > 24.0) {
-            say("texture upscale: external result for " + j.path + " differs too much (" + std::to_string(int(diff / double(n))) +
-                "/255 on average), built-in used");
-          } else {
-            for (size_t k = 0; k < up.size(); k += 4) std::memcpy(&up[k], &ext[k], 3);  // RGB from the upscaler, alpha ours
-            usedExt = true;
+    };
+    // takes a job's result into the cache; false (nothing written) when it is rejected and may be tried again
+    auto finish = [&](size_t i, bool lastTry) {
+      const ExtJob& j = external[i];
+      std::vector<uint8_t> data, png, ext, up;
+      Image src, res;
+      int ew = 0, eh = 0, w2 = 0, h2 = 0;
+      bool ok = read(j.path, data) && render::parseDds(data, src, nullptr) &&
+                upscaleLevel0(src, j.kind, j.kind != Kind::Ui, up, w2, h2);
+      bool usedExt = false;
+      if (ok && readFile(tmp / L"out" / (std::to_wstring(i) + L".png"), png) && decodePng(png, ext, ew, eh) && ew >= w2 / 2) {
+        ext = fitTo(ext, ew, eh, w2, h2);
+        // a broken run (a lost GPU device writes black images) must not end up in the cache: the result has to
+        // stay close to the built-in one on average (the upscalers add detail, they do not move colours)
+        double diff = 0;
+        size_t n = 0;
+        for (size_t k = 0; k < up.size(); k += 4)
+          if (up[k + 3] >= 128) {
+            for (int c = 0; c < 3; ++c) diff += std::abs(int(up[k + size_t(c)]) - int(ext[k + size_t(c)]));
+            n += 3;
           }
+        if (n && diff / double(n) > 24.0) {
+          if (!lastTry) return false;
+          say("texture upscale: external result for " + j.path + " differs too much (" + std::to_string(int(diff / double(n))) +
+              "/255 on average), built-in used");
+        } else {
+          for (size_t k = 0; k < up.size(); k += 4) std::memcpy(&up[k], &ext[k], 3);  // RGB from the upscaler, alpha ours
+          usedExt = true;
         }
-        if (!ok || !buildUpscaled(src, up, res) || !writeFile(cacheFile(root, j.path), writeDds(res, j.stamp, j.kind, usedExt))) {
-          ++p.failed, ++p.done;
-          continue;
-        }
-        p.bytesSource += gpuBytes(src);
-        p.bytesCache += gpuBytes(res);
-        ++p.written, ++p.done;
-        std::lock_guard<std::mutex> lock(p.madeMutex);
-        p.made.push_back(j.path);
+      } else if (ok && !lastTry) {
+        return false;  // no result at all: the run may have died
+      }
+      if (!ok || !buildUpscaled(src, up, res) || !writeFile(cacheFile(root, j.path), writeDds(res, j.stamp, j.kind, usedExt))) {
+        ++p.failed, ++p.done;
+        return true;
+      }
+      p.bytesSource += gpuBytes(src);
+      p.bytesCache += gpuBytes(res);
+      ++p.written, ++p.done;
+      std::lock_guard<std::mutex> lock(p.madeMutex);
+      p.made.push_back(j.path);
+      return true;
+    };
+    for (size_t b = 0; b < external.size() && !p.stop; b += 256) {
+      std::vector<size_t> jobs, again;
+      for (size_t i = b; i < std::min(external.size(), b + 256); ++i) jobs.push_back(i);
+      runExternal(jobs);
+      for (size_t i : jobs)
+        if (!finish(i, false)) again.push_back(i);
+      // GPU upscalers fail now and then for part of a run (black or shifted images); a second run nearly always
+      // gets those right
+      if (!again.empty() && !p.stop) {
+        say("texture upscale: " + std::to_string(again.size()) + " external results rejected, trying them once more");
+        runExternal(again);
+        for (size_t i : again) finish(i, true);
       }
     }
     std::error_code ec;

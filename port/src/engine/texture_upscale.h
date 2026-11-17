@@ -30,6 +30,9 @@ const char* kindName(Kind k);
 
 // Bumped when the filter changes: older cache files are then ignored and made again.
 inline constexpr uint32_t kCacheVersion = 3;
+// Bumped when classify() selects more textures: complete caches then count as incomplete and only the new ones are
+// made (the existing files stay valid). 2: the 2048-wide loading-screen and main-menu art.
+inline constexpr uint32_t kSelectionRules = 2;
 
 // Identity of a source file (64-bit FNV-1a of its bytes, mixed with the size).
 uint64_t sourceStamp(const std::vector<uint8_t>& file);
@@ -73,6 +76,7 @@ struct GenerateOptions {
   std::string only;                 // only paths starting with this
   std::vector<std::string> first;   // made before the rest (the textures the game has loaded)
   std::string external;             // an external upscaler's command line, see texture-upscaling.md Â§5
+  bool externalUiOnly = false;      // the external upscaler only for UI art (icons, cursors, loading and menu art)
   bool force = false;               // make every file again
   bool ui = true;                   // include UI art
   int threads = 0;                  // 0: all cores

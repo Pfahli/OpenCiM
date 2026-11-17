@@ -75,7 +75,7 @@ no material names (script materials: terrain, roads, texture variations) are sor
 | normal maps | Lanczos-3 clamped, no sharpening, RGB renormalised (z ≥ 0) when the source texels are unit vectors (mean deviation ≤ 0.1; a few `_n` files hold something else); alpha (a mask) scaled as a mask | stays a valid unit normal; sharpening normals makes lighting sparkle |
 | specular / illumination / AO masks | Lanczos-3 clamped, no sharpening | masks are data; night lights read the originals anyway |
 | UI art, portraits, illustrations | Lanczos-3 clamped, no wrap, CAS 0.35; the original kept as level 1 | at UI scale 1 the GPU picks level 1 (the original, exactly), at 1.5/2 the upscaled level |
-| skipped | fonts (bitmap glyph pages), cube maps (envmap), sky, particles, effects, `textures/`, saved minimaps, anything under 16 px on a side (ramps, lookups) or over 1024 px (already sharp; 4× VRAM again) | 230 textures |
+| skipped | fonts (bitmap glyph pages), cube maps (envmap), sky, particles, effects, `textures/`, saved minimaps, anything under 16 px on a side (ramps, lookups) or over 1024 px (already sharp; 4× VRAM again), except the full-screen art of the loading screens (`location-data/illustrations/`, `ui/loading/`) and the main menu (`ui/menus/animation/`), 2048 × 1024 pictures stretched to 2.1× at 4K and shown one screen at a time (§8.3) | 90 textures |
 
 Tileable atlases with parts side by side (building atlases) bleed at most half a source texel across part borders
 because of the 2×2 clamp, the same as the GPU's bilinear filter already does.
@@ -105,7 +105,9 @@ because of the 2×2 clamp, the same as the GPU's bilinear filter already does.
   in the DDS header's reserved words. The game uses a cached file only when the stamp matches the file it just read
   from the install; a patched or changed texture shows its original until it is made again. `complete.txt` records
   the install's signature (archive names, sizes, times); a bump of `kCacheVersion` (filter changes) invalidates
-  every file.
+  every file, a bump of `kSelectionRules` (more textures selected) only makes complete caches incomplete, so the
+  game adds the new files and keeps the rest. A file made by an external upscaler stays as long as its stamp
+  matches; the game never replaces it with a built-in one.
 * **In the game**: with the option on, `Display::texture` uploads the cached file when there is one. Switching the
   option (OK on the graphics page, applied live) uploads every loaded texture again into the same GL name
   (`Renderer2D::createTexture(img, reuse)`), from the cache (on) or from the original file (off: the very upload the port did
@@ -122,6 +124,10 @@ regs-tool upscale-textures $game "$env:USERPROFILE\Documents\OpenCiM\texture-cac
 # with an external upscaler for the colour textures: it is run once per 256 textures with a folder of PNGs ({in})
 # and must write PNGs of the same names into {out}, at any scale (4× results are boxed down to 2×), e.g.
 regs-tool upscale-textures $game <cache> --force --external "C:\tools\realesrgan\realesrgan-ncnn-vulkan.exe -i {in} -o {out} -m C:\tools\realesrgan\models -n realesrgan-x4plus -s 4"
+# results whose colours differ from the built-in one by more than 24/255 on average are run once more, then the
+# built-in one is used. --external-ui-only sends only the UI art (High Res UI, §8.3); without --force only files
+# not yet made by the external upscaler are sent, e.g. waifu2x for the UI on top of a built-in cache:
+regs-tool upscale-textures $game <cache> --external-ui-only --external "C:\tools\waifu2x\waifu2x-ncnn-vulkan.exe -i {in} -o {out} -s 2 -n 0 -m C:\tools\waifu2x\models-upconv_7_photo"
 # one texture: GPU-style bilinear 2× | cached upscale, side by side
 regs-tool upscale-compare $game metro/objects/buildings/tenements/tenement01.dds cmp.png [x y size]
 ```
@@ -208,6 +214,36 @@ The anime-trained models (CUGAN, CUnet) read the game's photo-sourced grain as n
 only one that adds sharpness without changing the art, but the difference from the built-in filter is small, too
 small to justify a download for players. Decision unchanged; the safeguard (§8.1) proved necessary again, catching
 the broken CUnet output and the CUGAN icon.
+
+### 8.3 High Res UI: loading screens, main menu, icons and cursor (2026-11-17)
+
+The UI is drawn at 1.5× or 2× on large screens (`docs/ui/scaling.md`; 2× is the default above 1800 px), so every UI
+texture is magnified. The built-in filter already made 2× versions of the UI art (§4: icons, buttons, panels, the
+four cursor images in `metro/ui/mouse/`, portraits, seals, logos). Missing were the 2048-wide pictures: the loading
+screens (134 in the base game and DLC: one per city, and per campaign scenario a background with up to 13 layered,
+animated props) and the 8 layers of the main menu's background. At 4K the loading picture is drawn 4320 × 2160, 2.1×
+its texels. They are selected now (2× = 4096 × 2048, 10–11 MB of VRAM per layer while its screen shows).
+
+The UI's sharp filter (`renderer2d.cpp`, `sampleGui`) measures texels per pixel from the texture's real size, so a 2×
+texture at UI scale 2 is drawn 1:1 with plain filtering and at 1.5× slightly minified; at UI scale 1 the GPU picks
+level 1, the original texels.
+
+waifu2x (owner's request) on the UI art, through `--external-ui-only`:
+
+* **Loading and menu pictures**: painted art with DXT block noise. waifu2x's photo model with noise reduction 1
+  removes the blocks and keeps edges and brush strokes crisper than the built-in filter (photo with noise 0 and 2
+  and CUnet tried; CUnet as clean but unreliable here, §8.2). 134 loading pictures in 10.5 minutes, almost all of it
+  the port's own work (Lanczos and DXT encoding at 4096 × 2048), none rejected.
+* **Icons, buttons, cursor**: the photo model without noise reduction draws cleaner outlines on the toolbar icons
+  and the cursor than the built-in filter; checkboxes and seals look the same. 1 469 UI textures in 2 minutes.
+* **Failures**: in one run waifu2x returned black or shifted images for 247 of the 1 469 (in a later test for 255 of
+  256 in one batch); a second run got all but 3 right (genuine colour shifts of 24–26/255 on tiny icons). The
+  generator now runs rejected results once more by itself before it falls back to the built-in filter.
+* In game at 4K (Vienna loading screen, UI scale 2): windows, figures and the dog's fur visibly sharper, no block
+  noise; the city seal and the bars as with the built-in filter.
+
+Not shipped: waifu2x was run from a scratch folder on PNGs exported from the install. Fonts stay as they are (the
+UI's glyph pages are skipped; the minimap's font was rejected by the safeguard anyway).
 
 ## 9. Later
 
