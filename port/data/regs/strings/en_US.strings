@@ -57,7 +57,7 @@ $regs_camera_heading = "Camera";
 $regs_camera_smooth = "Smooth camera";
 $regs_camera_smooth_hint = "Turn and zoom without steps: hold the rotate keys, Ctrl + middle mouse drag, touchpad and touchscreen gestures.";
 $regs_camera_snap = "Snap to the main directions";
-$regs_camera_snap_hint = "When a turn ends near one of the eight main directions, the camera glides into it.";
+$regs_camera_snap_hint = "When a turn ends near one of the eight main directions, the camera glides into it. Hold Shift to turn without snapping.";
 // search field in the vehicle shop (extend/metro/ui/vehiclepanel/vehiclepanel.script): placeholder and tooltip
 $regs_vehicles_search = "Search...";
 $regs_vehicles_search_hint = "Filter vehicles by name";

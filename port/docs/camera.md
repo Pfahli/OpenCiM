@@ -7,7 +7,7 @@ of the settings (`regs/ui/game.script`, section "Camera"):
 | Setting | Default | What it does |
 |---------|---------|--------------|
 | `$regsSmoothCamera` "Smooth camera" | on | Turning and zoom without steps, easing into place; touch and touchpad gestures. Off: the game's steps. |
-| `$regsCameraSnap` "Snap to the main directions" | on | A free turn that ends within 15 degrees of one of the eight main directions glides into it, and slow turns slow down a little while passing one (a magnet). Off: the camera stays where it is left. |
+| `$regsCameraSnap` "Snap to the main directions" | on | A free turn that ends within 15 degrees of one of the eight main directions glides into it, and slow turns slow down a little while passing one (a magnet). Off: the camera stays where it is left. **Shift** held at any time during a turn turns without snapping or magnet (owner's request 2026-11-17): a rotate key press then turns 45 degrees from where the camera is, a held key stops where it is let go. |
 
 ## Controls with the smooth camera
 

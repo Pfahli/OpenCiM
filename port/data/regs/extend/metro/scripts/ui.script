@@ -6,7 +6,7 @@
 //   fingers on a touchscreen zoom, turn and move the map (a twist on a touchpad turns it). Off: the game's steps.
 // * $settings.$regsCameraSnap (default on): a free turn that ends near one of the eight main directions (within 15
 //   degrees) glides into it, and turning slows a little while passing one, like a magnet. Off: the camera stays
-//   wherever it is left.
+//   wherever it is left. Shift held during a turn turns it without snapping (owner's request 2026-11-17).
 // The input comes from the engine (camera_input.cpp: regsCameraInput, regsKeyHeld); $cameraDir becomes a fraction
 // (0..8, 45 degrees per unit), which every user of it in the game's scripts takes as an angle.
 //@rename setCameraDirection regsBaseSetCameraDirection
@@ -23,6 +23,7 @@ $regsFreeIdle = 0.0;            // seconds since the last stepless turn input
 $regsTurnRate = 0.0;            // the direct turn's recent speed (units per second), for the glide after a release
 $regsHold = 0.0;                // seconds a rotate key has been held
 $regsHoldSign = 0.0;
+$regsNoSnap = false;            // Shift was held during this turn: no snapping, no magnet
 $regsCameraDebug = getenv("REGS_DEBUG_CAMERA") != "";   // the log gets a line per frame the camera moves
 
 // the script has no floor or exp
@@ -48,6 +49,11 @@ function regsSnapOn() {
   return MAIN.$settings.$regsCameraSnap : true;
 }
 
+// snapping for the turn going on: the setting, unless Shift is or was held during it
+function regsSnapNow() {
+  return regsSnapOn() && !$regsNoSnap && !regsKeyHeld("Shift");
+}
+
 // the rotate keys (base controls.script) and other callers
 function setCameraDirection($value) {
   if (!regsSmoothOn()) {
@@ -59,7 +65,7 @@ function setCameraDirection($value) {
   if (abs(abs($step) - 1.0) < 0.01) {
     // a key press: one main direction on from where the camera is heading
     $from = $regsDirGoal;
-    if (regsSnapOn()) $from = regsRound($from);
+    if (regsSnapNow()) $from = regsRound($from);
     $regsDirGoal = $from + $step;
     $regsFreeTurn = false;
     $regsHold = 0.0;
@@ -119,7 +125,7 @@ function regsWorldAt($x, $y) {
 function regsEndFreeTurn() {
   $regsDirGoal += $regsTurnRate * 0.12;
   $regsTurnRate = 0.0;
-  if (regsSnapOn()) {
+  if (regsSnapNow()) {
     $n = regsRound($regsDirGoal);
     if (abs($regsDirGoal - $n) < 0.34) $regsDirGoal = $n;
   }
@@ -131,6 +137,8 @@ function regsCameraTick($dt) {
   regsSmoothCamera($smooth);
   $in = regsCameraInput();
   if (!$smooth || $dt <= 0.0) return;
+  if (regsKeyHeld("Shift")) $regsNoSnap = true;
+  else if (!$regsFreeTurn && $regsHold <= 0.0 && abs($regsDirGoal - $cameraDir) < 0.001) $regsNoSnap = false;
   $dir = float($cameraDir);
   $zoom = $cameraZoom;
 
@@ -146,7 +154,7 @@ function regsCameraTick($dt) {
   // turning: keys held, the sideways wheel (eased), twists and drags (followed)
   $u = $regsTurnSign / $regsTurnUnit;
   $direct = $in[3] * $u;
-  if (regsSnapOn() && $direct != 0.0 && abs($direct) < 0.05) {
+  if (regsSnapNow() && $direct != 0.0 && abs($direct) < 0.05) {
     // the magnet: slow fingers or mouse slow down further while passing a main direction (fast turns pass freely)
     $near = abs($dir - regsRound($dir));
     if ($near < 0.1) $direct *= 0.4 + 6.0 * $near;
@@ -182,7 +190,7 @@ function regsCameraTick($dt) {
   } else if ($regsHold > 0.3) {
     // let go: on to the next main direction ahead (snapping), or stop where it is
     $regsHold = 0.0;
-    if (regsSnapOn()) {
+    if (regsSnapNow()) {
       if ($regsHoldSign > 0.0) $regsDirGoal = regsFloor($dir) + 1.0;
       else $regsDirGoal = regsFloor($dir + 0.9999) - 1.0;
       if (abs($regsDirGoal - $dir) > 0.75) $regsDirGoal = regsRound($dir);
