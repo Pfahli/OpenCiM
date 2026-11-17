@@ -13,6 +13,7 @@
 #include "engine/api.h"
 #include "engine/display.h"
 #include "engine/effects.h"
+#include "engine/hdr.h"
 #include "engine/temporal.h"
 #include "render/gpu.h"
 #include "engine/grid.h"
@@ -698,6 +699,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     styleFinish(d, vm, x, y, w, h, bw, bh, nearZ, farZ * viewScale, std::sqrt(dot(toTarget, toTarget)), postHooks ? &v : nullptr);
     d.r3d().end(bw, bh);
   }
+  if (!rt) hdrExpandView(d, vm, x, y, w, h, bw, bh);  // HDR output: the view's highlights, before the GUI over it
   d.r2d().resume();
 }
 

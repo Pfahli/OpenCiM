@@ -55,6 +55,7 @@ add_library(regs_engine STATIC
   src/engine/grid_items.cpp
   src/engine/effects.cpp
   src/engine/temporal.cpp
+  src/engine/hdr.cpp
   src/engine/settings.cpp
   src/engine/minimap.cpp
   src/engine/skinning.cpp
@@ -153,6 +154,59 @@ if(REGS_VULKAN AND EXISTS ${CMAKE_SOURCE_DIR}/third_party/glslang/CMakeLists.txt
   add_subdirectory(third_party/glslang EXCLUDE_FROM_ALL)
   target_sources(regs_engine PRIVATE src/render/vk_shader.cpp)
   target_link_libraries(regs_engine PRIVATE glslang::glslang glslang::glslang-default-resource-limits)
+  # AMD FSR 3.1 upscaling (third_party/fidelityfx-fsr, FidelityFX SDK v1.1.4, MIT; docs/renderer/vulkan.md §9.2). The
+  # shaders are compiled at build time by the port's own ffx-shadergen (glslang) instead of AMD's prebuilt tools; only
+  # the permutations the port uses are built (the fixed options below match render/fsr_vk.cpp's context flags).
+  set(FFX_DIR ${CMAKE_SOURCE_DIR}/third_party/fidelityfx-fsr)
+  if(EXISTS ${FFX_DIR}/LICENSE.txt)
+    add_executable(ffx-shadergen src/tools/ffx_shadergen.cpp)
+    target_link_libraries(ffx-shadergen PRIVATE glslang::glslang glslang::glslang-default-resource-limits)
+    set(FFX_GEN ${CMAKE_BINARY_DIR}/ffx_shaders)
+    set(FFX_GPU ${FFX_DIR}/include/FidelityFX/gpu)
+    set(FSR3U_ARGS
+      -I ${FFX_GPU} -I ${FFX_GPU}/fsr3upscaler
+      -D FFX_GPU=1 -D FFX_GLSL=1
+      -D FFX_FSR3UPSCALER_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF=0 -D FFX_FSR3UPSCALER_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FSR3UPSCALER_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1 -D FFX_FSR3UPSCALER_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF=0
+      -D FFX_FSR3UPSCALER_OPTION_UPSAMPLE_USE_LANCZOS_TYPE=2
+      --option FFX_FSR3UPSCALER_OPTION_REPROJECT_USE_LANCZOS_TYPE --option FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT
+      --option FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS --option FFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS
+      --option FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH --option FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING
+      --fixed FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT=0 --fixed FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS=1
+      --fixed FFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS=0 --fixed FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH=0)
+    set(FFX_GENERATED)
+    foreach(pass accumulate autogen_reactive debug_view luma_instability luma_pyramid prepare_inputs prepare_reactivity rcas
+                 shading_change shading_change_pyramid)
+      set(name ffx_fsr3upscaler_${pass}_pass)
+      set(src ${FFX_DIR}/src/backends/vk/shaders/fsr3upscaler/${name}.glsl)
+      add_custom_command(
+        OUTPUT ${FFX_GEN}/${name}_permutations.h ${FFX_GEN}/${name}_wave64_permutations.h
+               ${FFX_GEN}/${name}_16bit_permutations.h ${FFX_GEN}/${name}_wave64_16bit_permutations.h
+        COMMAND ffx-shadergen --source ${src} --name ${name} --out ${FFX_GEN} ${FSR3U_ARGS}
+        DEPENDS ffx-shadergen ${src}
+        COMMENT "ffx-shadergen ${name}")
+      list(APPEND FFX_GENERATED ${FFX_GEN}/${name}_permutations.h)
+    endforeach()
+    add_library(regs_ffx STATIC
+      ${FFX_DIR}/src/shared/ffx_assert.cpp
+      ${FFX_DIR}/src/shared/ffx_message.cpp
+      ${FFX_DIR}/src/shared/ffx_object_management.cpp
+      ${FFX_DIR}/src/shared/ffx_breadcrumbs_list.cpp
+      ${FFX_DIR}/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
+      ${FFX_DIR}/src/backends/vk/ffx_vk.cpp
+      ${FFX_DIR}/src/backends/shared/ffx_shader_blobs.cpp
+      ${FFX_DIR}/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp
+      src/render/fsr_vk.cpp
+      ${FFX_GENERATED})
+    target_include_directories(regs_ffx PRIVATE ${FFX_DIR}/include ${FFX_DIR}/src ${FFX_DIR}/src/components ${FFX_DIR}/src/shared
+                               ${FFX_DIR}/src/backends/shared ${FFX_GEN} ${REGS_VULKAN_HEADERS} ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(regs_ffx PRIVATE FFX_FSR3UPSCALER VK_USE_PLATFORM_WIN32_KHR _UNICODE UNICODE)
+    if(MSVC)
+      target_compile_options(regs_ffx PRIVATE /W0 /FIbit)
+    endif()
+    target_link_libraries(regs_engine PRIVATE regs_ffx)
+    target_compile_definitions(regs_engine PRIVATE REGS_FFX=1)
+  endif()
 elseif(REGS_VULKAN)
   target_sources(regs_engine PRIVATE src/render/vk_shader_stub.cpp)
 else()

@@ -2,6 +2,7 @@
 #include "engine/temporal.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <string>
@@ -20,9 +21,13 @@ using namespace regs::render;
 namespace {
 
 struct TemporalState {
-  bool failed = false, aoFailed = false;
-  uint32_t taa = 0, upscale = 0, copy = 0, ao = 0, aoBlur = 0;
-  RenderTarget input, history[2], aoRaw, aoSmooth;
+  bool failed = false, aoFailed = false, fsrFailed = false;
+  uint32_t taa = 0, upscale = 0, copy = 0, ao = 0, aoBlur = 0, motion = 0;
+  RenderTarget input, history[2], aoRaw, aoSmooth, motionVectors, fsrOutput;
+  bool lastFsr = false;
+  float jitterPx[2] = {0, 0};  // FSR's: render pixels
+  float cameraNear = 0.1f, cameraFar = 1000, fovY = 1;
+  std::chrono::steady_clock::time_point lastFinish{};
   Mat4 drawnViewProj;   // the projection the scene was drawn with (jittered), for the occlusion's positions
   int current = 0;      // history[current] holds last frame's result
   bool valid = false;   // the history matches the view (size, a previous frame)
@@ -92,7 +97,23 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
       ao = false;
     }
   }
-  if (!taa && scale > 0.999f && !ao) {
+  // the upscaler (regsUpscaler, REGS_UPSCALER): 0 = the port's TAA / spatial upscaler, 1 = AMD FSR 3.1 (Vulkan built
+  // with the FidelityFX SDK). FSR antialiases too, so it runs at 100 % as well and takes the place of TAA.
+  int upscaler = int(settingNumber(vm, u"regsUpscaler", 0));
+  if (const char* e = std::getenv("REGS_UPSCALER")) upscaler = std::atoi(e);
+  bool fsr = upscaler == 1 && gpu::dev().fsrAvailable() && !s.fsrFailed;
+  if (fsr && !s.motion) {
+    s.motion = postProgram(d, vm, "motion.fragment");
+    if (!s.motion) {
+      LOG_ERROR("temporal: the motion-vector program does not build, FSR stays off");
+      s.fsrFailed = true;
+      fsr = false;
+    }
+  }
+  if (fsr) taa = false;
+  if (fsr != s.lastFsr) s.valid = false;
+  s.lastFsr = fsr;
+  if (!taa && scale > 0.999f && !ao && !fsr) {
     s.valid = false;
     return t;
   }
@@ -115,16 +136,33 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
     s.failed = true;
     return t;
   }
-  if (taa && (s.outW != w || s.outH != h)) s.valid = false;
+  if ((taa || fsr) && (s.outW != w || s.outH != h)) s.valid = false;
   s.outW = w;
   s.outH = h;
   t.input = &s.input;
   t.taa = taa;
   t.ao = ao;
+  t.fsr = fsr;
   t.active = true;
   s.viewProj = v.proj * v.view;
   s.jitterUv[0] = s.jitterUv[1] = 0;
-  if (taa) {
+  if (fsr) {
+    // the camera for FSR's depth reconstruction, from the perspective matrix (GL form: [1][1] = cot(fov/2),
+    // [2][2] = -(f+n)/(f-n), [2][3] = -2fn/(f-n))
+    float a = v.proj.at(2, 2), b = v.proj.at(2, 3), c = v.proj.at(1, 1);
+    if (std::fabs(a - 1) > 1e-6f && std::fabs(a + 1) > 1e-6f && c > 0) {
+      s.cameraNear = b / (a - 1);
+      s.cameraFar = b / (a + 1);
+      s.fovY = 2 * std::atan(1 / c);
+    }
+    // FSR's own jitter sequence (its phase count follows the scale)
+    gpu::dev().fsrJitter(uint32_t(s.frame++), t.rw, w, s.jitterPx[0], s.jitterPx[1]);
+    float ox = 2.0f * s.jitterPx[0] / float(t.rw), oy = 2.0f * s.jitterPx[1] / float(t.rh);
+    v.proj.at(0, 2) -= ox;
+    v.proj.at(1, 2) -= oy;
+    s.jitterUv[0] = 0.5f * ox;
+    s.jitterUv[1] = 0.5f * oy;
+  } else if (taa) {
     // Halton (2, 3) over 8 frames, in render pixels; NDC shift +o needs −o in the projection's third column
     int i = s.frame++ % 8 + 1;
     float ox = 2.0f * (halton(i, 2) - 0.5f) / float(t.rw), oy = 2.0f * (halton(i, 3) - 0.5f) / float(t.rh);
@@ -178,7 +216,45 @@ void temporalFinish(Display& d, script::VM& vm, const TemporalPass& t, int x, in
       g.scissor(x, backH - y - h, w, h);
     }
   };
-  if (t.taa) {
+  auto now = std::chrono::steady_clock::now();
+  float frameMs = s.lastFinish.time_since_epoch().count() ? std::chrono::duration<float, std::milli>(now - s.lastFinish).count() : 16.7f;
+  s.lastFinish = now;
+  bool fsrDone = false;
+  if (t.fsr && ensure(d, s.motionVectors, t.rw, t.rh, 0, false, TargetFormat::Rgba16f) &&
+      ensure(d, s.fsrOutput, w, h, 0, false, TargetFormat::Rgba16f)) {
+    // camera motion vectors at the render size, then FSR into its own output, copied to the destination
+    Mat4 reproject = s.prevViewProj * inverse(s.viewProj);
+    const float c0[4] = {1.0f / float(t.rw), 1.0f / float(t.rh), s.jitterUv[0], s.jitterUv[1]};
+    const float c1[4] = {s.valid ? 1.0f : 0.0f, 0, 0, 0};
+    g.scissorTest(false);
+    g.bindFramebuffer(s.motionVectors.fbo);
+    g.viewport(0, 0, t.rw, t.rh);
+    r.drawQuad(s.motion, &s.input.depthTex, 1, c0, uv, nullptr, c1, reproject.m);
+    gpu::Device::FsrParams p;
+    p.color = s.input.color;
+    p.depth = s.input.depthTex;
+    p.motion = s.motionVectors.color;
+    p.output = s.fsrOutput.color;
+    p.renderWidth = t.rw, p.renderHeight = t.rh, p.outputWidth = w, p.outputHeight = h;
+    p.jitterX = s.jitterPx[0], p.jitterY = s.jitterPx[1];
+    p.cameraNear = s.cameraNear, p.cameraFar = s.cameraFar, p.fovY = s.fovY;
+    p.frameTimeMs = std::clamp(frameMs, 1.0f, 100.0f);
+    p.sharpness = t.rw < w ? 0.4f : 0.2f;
+    p.reset = !s.valid;
+    if (g.fsrUpscale(p)) {
+      s.prevViewProj = s.viewProj;
+      s.valid = true;
+      into(out);
+      r.drawQuad(s.copy, &s.fsrOutput.color, 1, nullptr, uv);
+      fsrDone = true;
+    } else {
+      LOG_ERROR("temporal: FSR failed, back to the port's upscaler");
+      s.fsrFailed = true;
+      s.valid = false;
+    }
+  }
+  if (fsrDone) {
+  } else if (t.taa) {
     RenderTarget& prev = s.history[s.current];
     RenderTarget& next = s.history[s.current ^ 1];
     if (!ensure(d, prev, w, h, 0, false, TargetFormat::Rgba16f) || !ensure(d, next, w, h, 0, false, TargetFormat::Rgba16f)) {
@@ -220,6 +296,8 @@ void temporalReset(Display& d) {
   d.r3d().destroyTarget(s.history[1]);
   d.r3d().destroyTarget(s.aoRaw);
   d.r3d().destroyTarget(s.aoSmooth);
+  d.r3d().destroyTarget(s.motionVectors);
+  d.r3d().destroyTarget(s.fsrOutput);
   s.valid = false;
 }
 

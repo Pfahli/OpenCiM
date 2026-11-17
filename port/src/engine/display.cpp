@@ -15,6 +15,7 @@
 #include "engine/effects.h"
 #include "engine/font.h"
 #include "engine/gui.h"
+#include "engine/hdr.h"
 #include "engine/host.h"
 #include "engine/input.h"
 #include "engine/interaction.h"
@@ -490,11 +491,17 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     std::vector<uint8_t> px = r2d_.readPixels();
     fn(px, r2d_.frameWidth(), r2d_.frameHeight());
   }
+  std::filesystem::path pqShot;
   if (!shot_.empty()) {
     if (saveScreenshot(shot_)) LOG_INFO("screenshot: %s", shot_.string().c_str());
     else LOG_ERROR("screenshot failed: %s", shot_.string().c_str());
+    // REGS_HDR_DUMP=1 (a check): in HDR, the encoded frame too (PQ code values as an image, <shot>-pq.png)
+    static const bool pqDump = std::getenv("REGS_HDR_DUMP") != nullptr;
+    if (pqDump && render::gpu::dev().hdrActive()) pqShot = shot_.parent_path() / (shot_.stem().string() + "-pq.png");
     shot_.clear();
   }
+  hdrEncode(*this, vm, w, h);  // after the screenshot, which stays SDR
+  if (!pqShot.empty() && saveScreenshot(pqShot)) LOG_INFO("screenshot: %s", pqShot.string().c_str());
   const auto beforePresent = std::chrono::steady_clock::now();
   render::gpu::dev().present();
   benchFrame(std::chrono::duration<double, std::milli>(beforePresent - frameStart).count());
@@ -558,6 +565,7 @@ void Display::syncRenderSettings(VM& vm) {
       vsyncKnown_ = true;
     }
   }
+  hdrSync(*this, vm);  // HDR output (engine/hdr.h): the device switches before the frame's back buffer begins
   float aniso = settingNumber(vm, u"anisotropy", r2d_.anisotropy);
   if (aniso != r2d_.anisotropy) {
     LOG_INFO("anisotropic filtering: %.0f -> %.0f", double(r2d_.anisotropy), double(aniso));

@@ -164,6 +164,28 @@ class Device {
     uint32_t blas = 0;
   };
   virtual void buildScene(const Instance* instances, int count) {}
+
+  // ---- HDR output (docs/renderer/vulkan.md §9.6): Vulkan with an HDR10 swapchain (Windows HDR on) ----
+  // While HDR is in effect the back buffer is RGBA16F and holds gamma-2.2 values relative to paper white (1.0 = paper
+  // white, above = brighter); the engine encodes it to PQ (BT.2100) right before present(), which copies it to the
+  // 10-bit HDR10 swapchain. Off, or without an HDR display: the plain 8-bit path.
+  virtual void setHdr(bool on, float paperWhiteNits, float peakNits) {}
+  virtual bool hdrActive() const { return false; }    // this frame's back buffer is the HDR one
+  virtual bool hdrAvailable() const { return false; }  // the display offers HDR10 (as of the last swapchain)
+
+  // ---- AMD FSR 3.1 upscaling (docs/renderer/vulkan.md §9.2): Vulkan built with third_party/fidelityfx-fsr ----
+  virtual bool fsrAvailable() const { return false; }
+  struct FsrParams {
+    uint32_t color = 0, depth = 0, motion = 0, output = 0;  // textures: render size ×3 (motion: UV deltas prev − cur), output
+    int renderWidth = 0, renderHeight = 0, outputWidth = 0, outputHeight = 0;
+    float jitterX = 0, jitterY = 0;  // render pixels, as the content moved
+    float cameraNear = 0.1f, cameraFar = 1000, fovY = 1;  // fov in radians
+    float frameTimeMs = 16.7f, sharpness = 0;
+    bool reset = false;
+  };
+  virtual bool fsrUpscale(const FsrParams& p) { return false; }
+  // FSR's jitter sequence (render pixels) for this render → output width
+  virtual void fsrJitter(uint32_t frame, int renderWidth, int outputWidth, float& x, float& y) { x = y = 0; }
 };
 
 // The device of the running game (or tool); set once the window is open.

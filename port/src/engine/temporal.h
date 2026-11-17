@@ -6,7 +6,7 @@ namespace regs::engine {
 
 class Display;
 
-// Temporal antialiasing and render scale for the game's map view (settings regsTaa and regsRenderScale;
+// Temporal antialiasing and render scale for the game's map view (settings regsTaa, regsRenderScale and regsUpscaler;
 // docs/renderer/vulkan.md §9.1-9.2). Backend-neutral: post passes on gpu::Device, so OpenGL and Vulkan both run it.
 //
 // temporalBegin decides for this frame (after culling and the shadow pass, right before the main pass): with TAA the
@@ -19,6 +19,7 @@ struct TemporalPass {
   bool active = false;  // TAA on or a render scale below 100 %
   bool taa = false;
   bool ao = false;      // raytraced ambient occlusion runs on the input (the frame's ray scene must be built)
+  bool fsr = false;     // AMD FSR 3.1 resolves the input instead of the port's TAA / upscaler (Vulkan)
   int rw = 0, rh = 0;   // render size
   const render::RenderTarget* input = nullptr;
 };

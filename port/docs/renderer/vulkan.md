@@ -225,7 +225,7 @@ would have to be drawn after the resolve). Phase 2 (object motion vectors) not s
 
 Status (2026-11-17): render scale and both own upscalers done (`$regsRenderScale`, `REGS_RENDER_SCALE=<percent>`);
 temporal at 67 % is about as sharp as the spatial upscaler, which keeps the 100 % look closest. With bloom on, bloom
-runs at the render size. FSR not started (needs the owner's OK for the FidelityFX SDK download).
+runs at the render size. AMD FSR 3.1 upscaling done on Vulkan (`$regsUpscaler` = 1, `REGS_UPSCALER=1`; below).
 
 * Option "Render scale" 100 / 85 / 77 / 67 / 50 %: the 3D view renders into a smaller scene target; the GUI always
   at full size.
@@ -235,8 +235,30 @@ runs at the render size. FSR not started (needs the owner's OK for the FidelityF
 * **Own spatial upscaler:** for when temporal is off: edge-directed upsampling (a Lanczos-like kernel steered by the
   local gradient) and contrast-adaptive sharpening. Written here; AMD's FSR 1 shaders (MIT) are an alternative that
   would be copied with their licence.
-* **AMD FSR 2/3 upscaler** (FidelityFX SDK, MIT, has a Vulkan backend): takes the same inputs (colour, depth, motion
-  vectors, jitter, exposure). Needs the owner's OK for the download. Vulkan only.
+* **AMD FSR 3.1 upscaler** (done, Vulkan only): option "Upscaler: ReGS / AMD FSR 3.1" on the Image quality page
+  (`$regsUpscaler` 0 / 1, `REGS_UPSCALER`). FSR takes the place of TAA and of the own upscalers and also runs at
+  100 % (native antialiasing). The code:
+  * `third_party/fidelityfx-fsr`: the FSR parts of the FidelityFX SDK v1.1.4 (MIT; v2.x has a different licence,
+    see `third_party/README.md`), built into the static library `regs_ffx` with the SDK's own Vulkan backend.
+  * Shaders: AMD's build uses prebuilt compiler tools; ours is `src/tools/ffx_shadergen.cpp` (glslang plus a small
+    SPIR-V reflection), run by CMake for the 10 upscaler passes. It writes the `*_permutations.h` headers the SDK's
+    blob accessors include, with only the permutations our flags need (LDR colour, motion vectors at render size
+    without jitter, depth 0 near .. 1 far; Lanczos type and sharpening vary). Like AMD's tool it lists only the
+    resources a shader uses (the effect's binding tables know only those).
+  * `src/render/fsr_vk.cpp`: context, dispatch, jitter. The backend calls a few Vulkan functions by name; they are
+    defined there and forward to the functions the device loaded (nothing links `vulkan-1.lib`). Its device-function
+    lookup maps `...KHR` names to the core names (a Vulkan 1.3 device without those extensions returns null). FSR
+    3.1 needs three app-owned shared resources (dilated depth and motion vectors, reconstructed previous depth),
+    created on a second backend context like the SDK's FSR 3 component does.
+  * Device (`gpu.h`): `fsrAvailable`, `fsrUpscale`, `fsrJitter`. Depth is now always `D32_SFLOAT` (the SDK views
+    depth as that format), and RGBA16F/32F images get storage usage (FSR writes its output with compute).
+  * Engine (`temporal.cpp`): FSR's jitter sequence instead of Halton; `motion.fragment` writes camera motion vectors
+    (uv of last frame − uv now, from depth and `prevViewProj · inverse(viewProj)`) at the render size; FSR writes an
+    RGBA16F output that is copied to the colour styles' input or the back buffer. Near, far and field of view come from
+    the projection matrix; sharpening (RCAS) 0.4 when upscaling, 0.2 at 100 %.
+  * Limits: motion vectors carry camera motion only (moving vehicles and people rely on FSR's own disocclusion and
+    luma checks; per-object vectors are a later step for both FSR and TAA); no reactive mask for particles and
+    transparent effects yet.
 
 ### 9.3 Raytraced shadows and ambient occlusion (Vulkan only)
 
@@ -291,6 +313,31 @@ square. It multiplies the whole colour, not only the ambient term (a post pass c
 * NVIDIA DLSS Super Resolution through the Streamline SDK (or the NGX DLSS SDK). Same inputs as FSR 2 (9.2). The
   runtime DLL (`nvngx_dlss.dll`) may be shipped under NVIDIA's DLSS licence terms; the SDK download and the licence need
   the owner's OK first. Vulkan only, RTX cards only; other cards keep the other upscalers.
+
+### 9.6 HDR output (Vulkan only)
+
+Owner's request 2026-11-17, placed before frame generation (FSR 3's frame generation replaces the presentation, so it
+has to be built for the HDR swapchain from the start). Settings on the Image quality page: `$regsHdr` (0 / 1),
+`$regsHdrPaperWhite` (120 .. 300 nits, default 200), `$regsHdrPeak` (600 .. 2000 nits, default 1000); test switches
+`REGS_HDR`, `REGS_HDR_PAPER`, `REGS_HDR_PEAK`. OpenGL has no dependable HDR path on Windows, so it stays SDR there.
+
+* **Swapchain** (`gpu_vk.cpp`): with `VK_EXT_swapchain_colorspace` the surface lists `A2B10G10R10` +
+  `HDR10_ST2084` while Windows HDR is on for that display. HDR on and offered: that swapchain, and the back buffer
+  becomes RGBA16F (blitted onto the 10-bit image at present, the blit converts). `VK_EXT_hdr_metadata`, when present,
+  tells the display the content's peak. HDR off in Windows, or switched off in the game: the 8-bit SDR swapchain as
+  before; the log says which (`vulkan: HDR10 output available / not offered`).
+* **Back-buffer values**: gamma 2.2, relative to paper white (1.0 = paper white, above = brighter). The GUI draws as
+  always (its white is paper white).
+* **Highlights** (`hdrexpand.fragment`, after each on-screen 3D view, before its GUI): the game is drawn for SDR, so
+  the top of its range is lifted. In linear light the brightest channel follows the original up to a knee (60 %),
+  then a curve that starts with the same slope and puts SDR white at a third of the way from paper white to the peak;
+  values already above 1.0 (bloom, light glows and night lights in the float targets) go on further. Hue is kept
+  (all channels scaled together).
+* **Encode** (`hdrencode.fragment`, the last pass before present, after any screenshot): BT.709 → BT.2020, × paper
+  white, a soft roll-off above 75 % of the peak, PQ (ST 2084).
+* Screenshots and `readPixels` stay SDR (the float back buffer clamped to 0..1, before the encode).
+* Still to do: FSR's HDR mode (the upscaler sees the SDR scene now, which is right while the lift comes after it);
+  per-light HDR intensities (lamps, windows, the sun's specular) instead of lifting the finished image.
 
 ## 10. Benchmarks
 

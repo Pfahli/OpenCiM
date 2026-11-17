@@ -28,6 +28,9 @@
 #include "platform/window.h"
 #include "render/gpu.h"
 #include "render/vk_shader.h"
+#if REGS_FFX
+#include "render/fsr_vk.h"
+#endif
 
 namespace regs::render::gpu {
 
@@ -64,7 +67,7 @@ namespace {
   X(vkCmdClearDepthStencilImage) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool)                 \
   X(vkCmdWriteTimestamp2) X(vkGetQueryPoolResults) X(vkGetBufferDeviceAddress) X(vkCreateAccelerationStructureKHR)                    \
   X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
-  X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR)
+  X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -473,6 +476,27 @@ class VkDeviceImpl final : public Device {
   void destroyBlas(uint32_t blas) override;
   void buildScene(const Instance* instances, int count) override;
 
+  // ---- HDR ----
+  void setHdr(bool on, float paperWhiteNits, float peakNits) override {
+    if (on != hdrWanted_ || (on && peakNits != hdrPeak_)) swapchainDirty_ = true;
+    hdrWanted_ = on;
+    hdrPeak_ = peakNits;
+    hdrPaper_ = paperWhiteNits;
+  }
+  bool hdrActive() const override { return hdr_; }
+  bool hdrAvailable() const override { return hdrAvailable_; }
+
+  // ---- AMD FSR 3.1 ----
+  bool fsrAvailable() const override { return fsrReady_; }
+  bool fsrUpscale(const FsrParams& p) override;
+  void fsrJitter(uint32_t frame, int renderWidth, int outputWidth, float& x, float& y) override {
+#if REGS_FFX
+    fsr::jitter(frame, uint32_t(renderWidth), uint32_t(outputWidth), x, y);
+#else
+    x = y = 0;
+#endif
+  }
+
  private:
   static constexpr int kUnits = 16;
   static constexpr int kFrames = 2;
@@ -489,6 +513,7 @@ class VkDeviceImpl final : public Device {
     SamplerDesc sampler;
     float aniso = 1;
     VkSampler vkSampler = VK_NULL_HANDLE;  // cached from sampler + aniso
+    VkImageUsageFlags usage = 0;
   };
   struct Fb {
     bool used = false;
@@ -706,6 +731,11 @@ class VkDeviceImpl final : public Device {
     timingPending_[frame_] = false;
   }
 
+  bool hdrWanted_ = false, hdr_ = false, hdrAvailable_ = false, colorspaceExt_ = false, hdrMetadataExt_ = false;
+  float hdrPeak_ = 1000, hdrPaper_ = 200;
+  bool fsrReady_ = false;
+  bool fsrErrorLogged_ = false;
+
   // ray queries
   bool rt_ = false;
   VkDeviceSize scratchAlign_ = 256;
@@ -754,6 +784,15 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   }
   // instance: Vulkan 1.3, the Win32 surface; the Khronos validation layer when asked for and installed
   std::vector<const char*> layers, exts = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+  {  // the HDR colour spaces of the swapchain (§9.6), where the loader has them
+    uint32_t n = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> ie(n);
+    vkEnumerateInstanceExtensionProperties(nullptr, &n, ie.data());
+    for (const auto& e : ie)
+      if (std::strcmp(e.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0) colorspaceExt_ = true;
+    if (colorspaceExt_) exts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+  }
   if (const char* v = std::getenv("REGS_VK_VALIDATION"); v && *v == '1') {
     uint32_t n = 0;
     vkEnumerateInstanceLayerProperties(&n, nullptr);
@@ -853,11 +892,9 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   info_ = "Vulkan " + std::to_string(VK_API_VERSION_MAJOR(props.apiVersion)) + "." +
           std::to_string(VK_API_VERSION_MINOR(props.apiVersion)) + "." + std::to_string(VK_API_VERSION_PATCH(props.apiVersion)) +
           " / " + props.deviceName;
-  // depth: 24-bit like GL's DEPTH_COMPONENT24 where it can be an attachment and sampled, else 32-bit float
-  VkFormatProperties fp;
-  vkGetPhysicalDeviceFormatProperties(phys_, VK_FORMAT_X8_D24_UNORM_PACK32, &fp);
-  VkFormatFeatureFlags need = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-  depthFormat_ = (fp.optimalTilingFeatures & need) == need ? VK_FORMAT_X8_D24_UNORM_PACK32 : VK_FORMAT_D32_SFLOAT;
+  // depth: 32-bit float (supported everywhere; FSR's backend views depth as D32_SFLOAT; at the depths the city sits at,
+  // close to 1.0, its steps are the same as the 24 bits of GL's DEPTH_COMPONENT24)
+  depthFormat_ = VK_FORMAT_D32_SFLOAT;
 
   // ray queries (raytraced shadows, §9.3): VK_KHR_acceleration_structure + VK_KHR_ray_query and buffer device addresses
   {
@@ -876,6 +913,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
                 has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
     if (exts) vkGetPhysicalDeviceFeatures2(phys_, &q2);
     rt_ = exts && rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && !std::getenv("REGS_VK_NO_RT");
+    hdrMetadataExt_ = has(VK_EXT_HDR_METADATA_EXTENSION_NAME);
   }
   float prio = 1;
   VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
@@ -900,6 +938,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     dexts.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
     dexts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
   }
+  if (hdrMetadataExt_) dexts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
   VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f2};
   dci.queueCreateInfoCount = 1;
   dci.pQueueCreateInfos = &qci;
@@ -983,6 +1022,10 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     std::memcpy(zeroAttribMem_.mapped, v, 16);
   }
   if (!vk::available()) LOG_WARN("vulkan: this build has no glslang, so no shader compiles: only clears are drawn");
+#if REGS_FFX
+  fsrReady_ = fsr::init({instance_, phys_, dev_, vkGetInstanceProcAddr, vkGetDeviceProcAddr});
+  if (fsrReady_) info_ += " / FSR 3.1";
+#endif
   return true;
 }
 
@@ -1000,6 +1043,25 @@ bool VkDeviceImpl::createSwapchain(std::string* error) {
       fmt = f;
       break;
     }
+  // HDR10 (BT.2020 primaries, PQ): offered while Windows HDR is on for this display; the RGBA16F back buffer is blitted
+  // onto the 10-bit image, so the format must take blits
+  VkSurfaceFormatKHR hdrFmt{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+  for (const auto& f : formats) {
+    if (f.colorSpace != VK_COLOR_SPACE_HDR10_ST2084_EXT) continue;
+    if (f.format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 && f.format != VK_FORMAT_A2R10G10B10_UNORM_PACK32) continue;
+    VkFormatProperties fp;
+    vkGetPhysicalDeviceFormatProperties(phys_, f.format, &fp);
+    if (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) {
+      hdrFmt = f;
+      break;
+    }
+  }
+  if (bool avail = hdrFmt.format != VK_FORMAT_UNDEFINED; avail != hdrAvailable_ || !swapchain_) {
+    hdrAvailable_ = avail;
+    LOG_INFO("vulkan: HDR10 output %s", avail ? "available" : "not offered (Windows HDR off or not supported)");
+  }
+  bool hdr = hdrWanted_ && hdrAvailable_;
+  if (hdr) fmt = hdrFmt;
   vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &n, nullptr);
   std::vector<VkPresentModeKHR> modes(n);
   vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &n, modes.data());
@@ -1037,6 +1099,21 @@ bool VkDeviceImpl::createSwapchain(std::string* error) {
   destroySwapchain();
   swapchain_ = sc;
   swapFormat_ = fmt.format;
+  if (hdr != hdr_) LOG_INFO("vulkan: %s output", hdr ? "HDR10" : "SDR");
+  hdr_ = hdr;
+  if (hdr && hdrMetadataExt_ && vkSetHdrMetadataEXT) {
+    // what the content reaches: BT.2020 primaries, D65, up to the peak the player set
+    VkHdrMetadataEXT md{VK_STRUCTURE_TYPE_HDR_METADATA_EXT};
+    md.displayPrimaryRed = {0.708f, 0.292f};
+    md.displayPrimaryGreen = {0.170f, 0.797f};
+    md.displayPrimaryBlue = {0.131f, 0.046f};
+    md.whitePoint = {0.3127f, 0.3290f};
+    md.maxLuminance = hdrPeak_;
+    md.minLuminance = 0.001f;
+    md.maxContentLightLevel = hdrPeak_;
+    md.maxFrameAverageLightLevel = std::min(hdrPeak_, hdrPaper_ * 1.5f);
+    vkSetHdrMetadataEXT(dev_, 1, &swapchain_, &md);
+  }
   swapExtent_ = ext;
   vkGetSwapchainImagesKHR(dev_, swapchain_, &n, nullptr);
   swapImages_.resize(n);
@@ -1062,12 +1139,14 @@ void VkDeviceImpl::destroySwapchain() {
 }
 
 bool VkDeviceImpl::makeBackBuffer(int w, int h) {
-  if (backColor_ && backW_ == w && backH_ == h) return true;
+  // HDR: float, so the 3D view's highlights and the PQ encode keep their range (§9.6)
+  Format want = hdr_ ? Format::RGBA16F : Format::RGBA8;
+  if (backColor_ && backW_ == w && backH_ == h && textures_[backColor_].format == want) return true;
   if (renderingFb_ == 0) endRendering();
   if (backColor_) releaseTexture(backColor_), releaseTexture(backDepth_);
   backColor_ = newTexture();
   backDepth_ = newTexture();
-  if (!makeImage(textures_[backColor_], Format::RGBA8, w, h, 1, 1) ||
+  if (!makeImage(textures_[backColor_], want, w, h, 1, 1) ||
       !makeImage(textures_[backDepth_], Format::Depth24, w, h, 1, 1))
     return false;
   framebuffers_[0] = {true, backColor_, backDepth_};
@@ -1083,6 +1162,9 @@ void VkDeviceImpl::shutdown() {
   }
   if (dev_) {
     vkDeviceWaitIdle(dev_);
+#if REGS_FFX
+    fsr::shutdown();
+#endif
     for (Frame& f : frames_) {
       for (auto& g : f.garbage) g();
       f.garbage.clear();
@@ -1189,11 +1271,11 @@ bool VkDeviceImpl::ringAlloc(VkDeviceSize bytes, VkDeviceSize align, VkBuffer& b
 }
 
 void VkDeviceImpl::beginFrame(int width, int height) {
-  makeBackBuffer(std::max(1, width), std::max(1, height));
   if (swapchainDirty_ || int(swapExtent_.width) != window_.width() || int(swapExtent_.height) != window_.height()) {
     std::string err;
     if (!createSwapchain(&err)) LOG_ERROR("vulkan: %s", err.c_str());
   }
+  makeBackBuffer(std::max(1, width), std::max(1, height));  // after the swapchain: its format follows HDR on / off
 }
 
 void VkDeviceImpl::present() {
@@ -1309,6 +1391,9 @@ bool VkDeviceImpl::makeImage(Tex& t, Format f, int w, int h, int levels, int sam
   if (samples == 1) ici.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
   if (isDepth(f)) ici.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
   else if (!isCompressed(f) && !t.cube) ici.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  // float targets can be written by compute passes (FSR's output)
+  if (samples == 1 && (f == Format::RGBA16F || f == Format::RGBA32F)) ici.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+  t.usage = ici.usage;
   ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (VkResult r = vkCreateImage(dev_, &ici, nullptr, &t.image); r != VK_SUCCESS) {
     LOG_ERROR("vulkan: %s for a %dx%d image", vkError("vkCreateImage", r).c_str(), w, h);
@@ -2072,6 +2157,46 @@ void VkDeviceImpl::readPixels(uint32_t fb, int x, int y, int w, int h, uint8_t* 
       std::memcpy(rgba + i * 4, ptr + i * 4, 4);
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// AMD FSR 3.1 (render/fsr_vk.h)
+
+bool VkDeviceImpl::fsrUpscale(const FsrParams& p) {
+#if REGS_FFX
+  if (!fsrReady_) return false;
+  auto image = [&](uint32_t h) {
+    fsr::Image im;
+    if (Tex* t = texture(h); t && t->image)
+      im = {t->image, t->vkFormat, t->usage, uint32_t(t->w), uint32_t(t->h), isDepth(t->format)};
+    return im;
+  };
+  fsr::UpscaleDesc d;
+  d.color = image(p.color);
+  d.depth = image(p.depth);
+  d.motion = image(p.motion);
+  d.output = image(p.output);
+  if (!d.color.image || !d.depth.image || !d.motion.image || !d.output.image ||
+      !(d.output.usage & VK_IMAGE_USAGE_STORAGE_BIT))
+    return false;
+  d.renderWidth = uint32_t(p.renderWidth), d.renderHeight = uint32_t(p.renderHeight);
+  d.outputWidth = uint32_t(p.outputWidth), d.outputHeight = uint32_t(p.outputHeight);
+  d.jitterX = p.jitterX, d.jitterY = p.jitterY;
+  d.cameraNear = p.cameraNear, d.cameraFar = p.cameraFar, d.fovY = p.fovY;
+  d.frameTimeMs = p.frameTimeMs, d.sharpness = p.sharpness, d.reset = p.reset;
+  endRendering();
+  std::string err;
+  bool ok = fsr::upscale(cmd(), d, &err);
+  fullBarrier(cmd());
+  if (!ok && !fsrErrorLogged_) {
+    LOG_ERROR("fsr: %s", err.c_str());
+    fsrErrorLogged_ = true;
+  }
+  return ok;
+#else
+  (void)p;
+  return false;
+#endif
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -4,6 +4,10 @@
 //   $settings.$regsTaa           0 off, 1 temporal antialiasing
 //   $settings.$regsRenderScale   100, 85, 77, 67 or 50 (%): the 3D view's render size; below 100 % it is upscaled,
 //                                temporally with TAA, else with the spatial upscaler
+//   $settings.$regsUpscaler      0 the port's TAA / upscaler, 1 AMD FSR 3.1 (Vulkan; replaces TAA, also at 100 %)
+//   $settings.$regsHdr           0 off, 1 HDR output (Vulkan with Windows HDR on; engine/hdr.cpp)
+//   $settings.$regsHdrPaperWhite 120, 160, 200, 250, 300 (nits): menus and the game's normal white
+//   $settings.$regsHdrPeak       600, 800, 1000, 1500, 2000 (nits): the display's maximum, highlights roll off into it
 //   $settings.$regsRtShadows     0 off, 1 raytraced sun shadows (Vulkan on a GPU with ray queries, shadows on)
 //   $settings.$regsRtAo          0 off, 1 raytraced ambient occlusion (Vulkan on a GPU with ray queries)
 // OK stores and exports the settings, Cancel drops the changes; both close the page.
@@ -14,12 +18,17 @@ $file = "regs/strings/" + MAIN.$language + ".strings";
 if (!file_exists($file)) $file = "regs/strings/en_US.strings";
 $regs = load "/" + $file;
 
-$box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - 600) * 0.5), 1000, 600, 1 | 2 | 4 | 8, $desktop);
+$boxH = $desktop.height - 20 < 800 ? $desktop.height - 20 : 800;
+$box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - $boxH) * 0.5), 1000, $boxH, 1 | 2 | 4 | 8, $desktop);
 $title = MAIN.$ui.createHeadingBar($box, $regs.$regs_quality_title);
 $c = $box.$content;
 
 $taa = int($settings.$regsTaa : 0);
 $renderScale = int($settings.$regsRenderScale : 100);
+$upscaler = int($settings.$regsUpscaler : 0);
+$hdr = int($settings.$regsHdr : 0);
+$hdrPaper = int($settings.$regsHdrPaperWhite : 200);
+$hdrPeak = int($settings.$regsHdrPeak : 1000);
 $rtShadows = int($settings.$regsRtShadows : 0);
 $rtAo = int($settings.$regsRtAo : 0);
 
@@ -48,6 +57,10 @@ function radioRow($group, $y, $values, $texts, $chosen) {
 
 function pick($group, $v) {
   if ($group == "regsTaa") $taa = $v;
+  else if ($group == "regsUpscaler") $upscaler = $v;
+  else if ($group == "regsHdr") $hdr = $v;
+  else if ($group == "regsHdrPaperWhite") $hdrPaper = $v;
+  else if ($group == "regsHdrPeak") $hdrPeak = $v;
   else if ($group == "regsRtShadows") $rtShadows = $v;
   else if ($group == "regsRtAo") $rtAo = $v;
   else $renderScale = $v;
@@ -74,6 +87,11 @@ $y += 24;
 note($y, $regs.$regs_renderScale_note1);
 $y += 22;
 note($y, $regs.$regs_renderScale_note2);
+$y += 30;
+label(40, $y, 250, $regs.$regs_upscaler_label, false);
+radioRow("regsUpscaler", $y, [0, 1], $regs.$regs_upscaler_values, $upscaler);
+$y += 24;
+note($y, $regs.$regs_upscaler_note);
 $y += 44;
 label(40, $y, 600, $regs.$regs_quality_rt_heading, true);
 $y += 34;
@@ -86,6 +104,19 @@ $y += 24;
 note($y, $regs.$regs_rtShadows_note1);
 $y += 22;
 note($y, $regs.$regs_rtShadows_note2);
+$y += 44;
+label(40, $y, 600, $regs.$regs_hdr_heading, true);
+$y += 34;
+label(40, $y, 250, $regs.$regs_hdr_label, false);
+radioRow("regsHdr", $y, [0, 1], $regs.$regs_taa_values, $hdr);
+$y += 30;
+label(40, $y, 250, $regs.$regs_hdrPaper_label, false);
+radioRow("regsHdrPaperWhite", $y, [120, 160, 200, 250, 300], $regs.$regs_hdrPaper_values, $hdrPaper);
+$y += 30;
+label(40, $y, 250, $regs.$regs_hdrPeak_label, false);
+radioRow("regsHdrPeak", $y, [600, 800, 1000, 1500, 2000], $regs.$regs_hdrPeak_values, $hdrPeak);
+$y += 24;
+note($y, $regs.$regs_hdr_note);
 
 function pageButton($text, $action) {
   with ($b = MAIN.$ui.createButton($c, 4, 0, 322, 32, $text, $action, "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button.dds", "/metro/ui/menus/pause-menu-button_ho.dds")) {
@@ -111,6 +142,14 @@ function save() {
   $settings.exportVariables("regsRtAo");
   $settings.exportVariables("regsTaa");
   $settings.exportVariables("regsRenderScale");
+  $settings.setVariable("regsUpscaler", $upscaler);
+  $settings.exportVariables("regsUpscaler");
+  $settings.setVariable("regsHdr", $hdr);
+  $settings.exportVariables("regsHdr");
+  $settings.setVariable("regsHdrPaperWhite", $hdrPaper);
+  $settings.exportVariables("regsHdrPaperWhite");
+  $settings.setVariable("regsHdrPeak", $hdrPeak);
+  $settings.exportVariables("regsHdrPeak");
   MAIN.$main.regsCloseQualityPage();
 }
 
