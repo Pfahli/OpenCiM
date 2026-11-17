@@ -141,18 +141,12 @@ Picked from what is on `main` today and ordered by how much they change the game
 
 Later releases add Vulkan with raytracing and upscaling, and the high-res textures, when they are done.
 
-**The pictures:** screenshots of the port show game art (buildings, vehicles, terrain), so shipping them in the
-installer would ship game data in another form. Two ways, owner's decision:
-
-* **Rendered on the player's machine (preferred):** the installer starts `regs.exe` with a showcase scene list
-  (`--showcase`, the `--at` camera actions and `shot` the test runs already use) right after the files are in place,
-  hidden, and shows the pictures as they come, the first slides with own illustrations while it renders. Nothing of
-  the game is in the download and the pictures always match the version installed. Cost: about 20-40 seconds of
-  rendering and a fixed showcase map shipped with the port (an OSM import of a free place, made from our data only).
-* **Own illustrations** in the painted style of the menu (made once, kept in `data/regs/ui/installer/`): no game
-  content, no render step, but they show the idea rather than the real game.
-
-Screenshots of the game itself in the installer (what store pages do) are left out because of the project rule.
+**The pictures (owner's decision 2026-11-17): screenshots, added later.** No pictures are rendered on the player's
+machine. Each slide gets a screenshot of the port showing its feature, made when the release is put together; until
+then the slides show the own painted street (§2) as a stand-in. The screenshots go with each GitHub release next to
+`release.json` (`showcase/<n>.jpg`, about 1280 × 800, a few hundred KB each), so the setup program stays small, every
+release can show its own new features, and the offline installer carries the same files appended. Screenshots show
+game art (buildings, vehicles, terrain); the owner chose them over own illustrations, as store pages do.
 
 ## 6. Steps
 
@@ -161,7 +155,7 @@ Screenshots of the game itself in the installer (what store pages do) are left o
 2. `src/setup/` with the payload, install, shortcuts, uninstall entry, manifest and maintenance page, plain pages
    first; then the GitHub download, update, repair and the in-game update check (needs the GitHub repository).
 3. The game's menu look (panel, bars, fonts, background from the install) and the own fallback art.
-4. The showcase: slides, cross-fade, progress bar; then the rendered pictures (`--showcase`).
+4. The showcase: slides, cross-fade, progress bar, the stand-in picture; the screenshots once they are made.
 5. The release script (`tools/make-release.ps1`): build, collect the files, licences (the port's own, miniaudio, miniz,
    later Vulkan-Headers and glslang), zip, `.sha256`, `release.json`, the offline installer, sign; later a GitHub
    Actions workflow that does the same and publishes the release (and the nightly pre-release from `main`).
