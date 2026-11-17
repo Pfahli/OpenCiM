@@ -142,6 +142,8 @@ std::shared_ptr<render::GpuMesh> buildStrip(Display& d, const SimState& s, const
 }  // namespace
 
 void collectLinePaths(Display& d, VM& vm, SimState& s, const Vec3& eye, float farZ, std::vector<render::DrawItem>& items) {
+  static const bool hidden = std::getenv("REGS_HIDE_LINE_PATHS") != nullptr;  // screenshots: no line ribbons at all
+  if (hidden) return;
   for (LineState& line : s.lines) {
     if (line.deleted || !line.object || !(line.object->flags & 2)) continue;  // gsModule visible (bit 2)
     size_t n = line.stops.size();
