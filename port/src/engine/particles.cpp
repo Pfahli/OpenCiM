@@ -912,6 +912,13 @@ void tickWakes(VM& vm, SimState& s, SimParticles& sp, const Vec3& eye, float dt)
     int n = emissionCount(vm, e, w.timer, dt);
     if (n <= 0) continue;
     Vec3 at = render::transformPoint(poseMatrix(p), e->localPos);
+    if (debugParticles()) {
+      static int logged = 0;
+      if (++logged % 25 == 0) {
+        Vec3 q = at - eye;
+        LOG_INFO("particles: wake emit %zu: boat %.0f from eye, point %.0f, localPos %.1f %.1f %.1f", id, std::sqrt(dot(dv, dv)), std::sqrt(dot(q, q)), e->localPos.x, e->localPos.y, e->localPos.z);
+      }
+    }
     for (int k = 0; k < std::min(n, 16); ++k) {
       bool still = false;
       if (w.count > 0) {
@@ -930,6 +937,14 @@ void tickWakes(VM& vm, SimState& s, SimParticles& sp, const Vec3& eye, float dt)
     w.custom0[3] = 0;
     w.at = at;
     w.dirty = w.count >= 2;
+  }
+  if (debugParticles()) {
+    static int frames = 0;
+    if (++frames % 120 == 0) {
+      int shown = 0;
+      for (auto& [id, w] : sp.wakes) shown += w.count >= 2 && (~w.still & 0xFFFFu) != 0;
+      LOG_INFO("particles: %zu boat wakes, %d with moving points", sp.wakes.size(), shown);
+    }
   }
 }
 
@@ -972,6 +987,13 @@ void simParticlesTick(VM& vm, GridObj* grid, SimState& s, float dt) {
 void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float farZ, std::vector<render::DrawItem>& items) {
   if (!s.particles || particlesOff()) return;
   for (auto& [id, w] : s.particles->wakes) {
+    if (debugParticles()) {
+      static int seen = 0;
+      if (++seen % 240 == 0) {
+        Vec3 q = w.at - eye;
+        LOG_INFO("particles: wake %zu seen: %d points, distance %.0f, farZ %.0f", id, w.count, std::sqrt(dot(q, q)), farZ);
+      }
+    }
     if (!w.emitter || w.count < 2) continue;
     Vec3 e = w.at - eye;
     if (dot(e, e) > farZ * farZ) continue;
@@ -979,6 +1001,12 @@ void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float fa
     try {
       matObj = vm.resolve(vm.getMember(Value::heap(VT::Object, w.emitter), u"material")).object();
     } catch (...) {
+    }
+    if (debugParticles()) {
+      static int calls = 0;
+      if (++calls % 240 == 0)
+        LOG_INFO("particles: wake %zu: %d points, material %p, planeSize %.2f, custom0 %.2f %.2f %.2f timer %.2f", id, w.count,
+                 (void*)matObj, w.emitter->planeSize, w.custom0[0], w.custom0[1], w.custom0[2], d.effectTimer);
     }
     if (!matObj) continue;
     if (w.materials.empty() || w.materialOf != matObj) {
