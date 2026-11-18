@@ -273,9 +273,8 @@ caused by shaders or pipelines in the measured runs; render CPU about 0.7 ms (10
 | Grid items at load (Vienna) | 4.4 s | 0.7 s |
 | Save, main-thread stall | about 500 ms | about 80 ms |
 
-(After-numbers from one merged run each with `REGS_FIXED_DT=0.016`; other sessions were running.) Left: the
-pedestrian A* (it must find exactly the same paths), bloom's per-frame readback wait, Vulkan programs still built one
-by one, the editor's tool-preview rescans (C2), `restampWalk` after big edits, and the script compile cache (B8).
+(After-numbers from one merged run each with `REGS_FIXED_DT=0.016`; other sessions were running.) The four items left after the
+second round are done in the sections below.
 
 ## Bloom readback (2026-11-18)
 
@@ -401,3 +400,14 @@ old and new alternated, two runs each (fps average, p95 frame ms; other sessions
 With the mouse still (tool active) the same views run at about 115-120 fps (Vienna) and 85-87 fps (Berlin), so in
 Berlin a moving preview now costs about nothing on average; what is left in Vienna is the tool itself and the division
 meshes it rebuilds. A slow drag (120 frames each way) changed less: Berlin 85-86 to 90-94 fps, p95 20 to 16.5 ms.
+
+## Third round (2026-11-18)
+
+Bloom's readback, Vulkan programs in parallel, the pedestrian search and the tool previews (sections above), merged
+together with the fix for the vehicles' light map shader (it used the reserved word `half`, so glslang refused it and
+Vulkan drew no headlight pools into the light map). Merged build, Berlin with bloom on at speed 10 with
+`REGS_DEBUG_WALK_COMPARE=1` and `REGS_DEBUG_ITEM_CACHES=1` on both renderers: no differences logged, no errors.
+Left: `restampWalk` after big edits, the script compile cache (B8), the ground height per q-cell in the pedestrian
+search, the few pipelines particles, post quads and the GUI still make at first draw, the editor ground overlay and
+tunnel count rebuilt in full while shown, and a real optional item hidden by a preview staying hidden afterwards
+(same in the old build).
