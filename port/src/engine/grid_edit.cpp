@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <map>
 #include <memory>
 #include <set>
 #include <unordered_map>
@@ -17,6 +19,7 @@
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
+#include "engine/sim_graph.h"
 
 namespace regs::engine {
 
@@ -42,6 +45,11 @@ struct TypeInfo {
   bool valid = false;
   int width = 1, length = 1, type = 0, height = 0x100, negHeight = 0, offx = 0, offz = 0;
   uint32_t flags = 0, diagonals = 0, connections = 0;
+  ObjectObj* obj = nullptr;
+  // read when first needed: the walk map (gsGridObject +0x274, the conflict test's per-cell masks) and whether the
+  // template has paths (its items get lane nodes, item +0x24)
+  bool walkRead = false, pathsRead = false, hasPaths = false;
+  const std::vector<uint32_t>* walk = nullptr;
 };
 
 struct Rect {
@@ -72,6 +80,7 @@ struct EditState {
 };
 
 std::unordered_map<const GridObj*, EditState> g_edits;
+size_t g_maskTests = 0;  // REGS_DEBUG_CONFLICTS: overlapping pairs that reached the walk-map test
 
 TypeInfo typeInfoOf(VM& vm, GridObj* grid, const std::string& name) {
   TypeInfo t;
@@ -89,6 +98,7 @@ TypeInfo typeInfoOf(VM& vm, GridObj* grid, const std::string& name) {
   t.offx = fieldInt(vm, o, u"offsetx", 0);
   t.offz = fieldInt(vm, o, u"offsetz", 0);
   t.connections = uint32_t(fieldInt(vm, o, u"connections", 0));
+  t.obj = dynamic_cast<ObjectObj*>(o);
   return t;
 }
 
@@ -156,6 +166,65 @@ bool coversAny(const EditState& st, const GridData::Item& a, const GridData::Ite
       // quadrants: diagonal pieces share the cells along their cut, each covering its half (0xf00 = whole cell)
       if (itemCellCover(fa, sa.flags, x - a.x, z - a.z) & itemCellCover(fb, sb.flags, x - b.x, z - b.z)) return true;
   return false;
+}
+
+}  // namespace
+namespace sim {
+const std::vector<uint32_t>* templateWalkMap(VM& vm, ObjectObj* tpl, int w, int l);  // engine/sim_citizens.cpp
+}
+namespace {
+
+// a type's walk map (gsGridObject +0x274) and whether it has paths, read once
+const std::vector<uint32_t>* walkOf(VM& vm, EditState& st, uint32_t type) {
+  if (type >= st.types.size()) return nullptr;
+  TypeInfo& t = st.types[type];
+  if (!t.walkRead) t.walkRead = true, t.walk = t.obj ? sim::templateWalkMap(vm, t.obj, t.width, t.length) : nullptr;
+  return t.walk;
+}
+
+bool hasPaths(VM& vm, EditState& st, uint32_t type) {
+  if (type >= st.types.size()) return false;
+  TypeInfo& t = st.types[type];
+  if (!t.pathsRead) t.pathsRead = true, t.hasPaths = t.obj && !templatePathDefs(vm, t.obj).empty();
+  return t.hasPaths;
+}
+
+// the walk word of an item's cell (cx, cz from its corner, world orientation): the template's 16 q-cell codes turned
+// with the item as the walk stamping turns them (sim_citizens.cpp stampWalkItem: the maps are half a turn off the mesh)
+uint32_t worldWalkWord(const std::vector<uint32_t>& map, const TypeInfo& t, int orient, int sx, int sz, int cx, int cz) {
+  uint32_t out = 0;
+  const int W = sx * 4, L = sz * 4;
+  for (int qz = 0; qz < 4; ++qz)
+    for (int qx = 0; qx < 4; ++qx) {
+      int wx = cx * 4 + qx, wz = cz * 4 + qz, tx, tz;
+      switch (orient & 3) {
+        case 0: tx = wx, tz = wz; break;
+        case 1: tx = L - 1 - wz, tz = wx; break;
+        case 2: tx = W - 1 - wx, tz = L - 1 - wz; break;
+        default: tx = wz, tz = W - 1 - wx; break;
+      }
+      size_t at = size_t(tz >> 2) * size_t(t.width) + size_t(tx >> 2);
+      if (at >= map.size()) continue;
+      uint32_t code = (map[at] >> (2 * ((tx & 3) + (tz & 3) * 4))) & 3;
+      out |= code << (2 * (qx + qz * 4));
+    }
+  return out;
+}
+
+// gsGridItem::pointCover (L:0x08182ff0) and getY's box rule for flag 0x400 (L:0x08183760.c:44-73): is the footprint
+// corner (px, pz) of a diagonal item (its turned cuts d: corner cut sizes in nibbles 0-3, their truncations in 4-7)
+// inside it; points on a cut line are
+bool cornerInside(uint32_t d, uint32_t flags, int W, int L, int px, int pz) {
+  auto n = [d](int k) { return int((d >> (4 * k)) & 0xf); };
+  if (flags & 0x400)
+    return std::max(W - px, pz) >= n(0) && std::max(W - px, L - pz) >= n(1) && std::max(px, L - pz) >= n(2) &&
+           std::max(px, pz) >= n(3);
+  const int r = W - px;
+  if (!(n(0) <= r + pz || n(0) - n(5) <= pz || n(0) - n(4) <= r)) return false;
+  if (!(n(1) <= r + L - pz || n(1) - n(5) <= L - pz || n(1) - n(6) <= r)) return false;
+  if (!(n(2) <= px + L - pz || n(2) - n(7) <= L - pz || n(2) - n(6) <= px)) return false;
+  if (px + pz < n(3) && pz < n(3) - n(7)) return n(3) - n(4) <= px;
+  return true;
 }
 
 // the live items in the buckets around a footprint, grown by one division as the engine searches
@@ -394,16 +463,31 @@ int gridEditAddItem(VM& vm, GridObj* grid, const std::string& templateName, int 
   touchItem(st, it);
   st.added.push_back(index);
   levelGround(st, g, index);
-  // removeOverlappingOptionalObjects (L:0x081481b0): a placed, covering, non-optional item clears the optional details
-  // (trees, props) under it
+  // removeOverlappingOptionalObjects (L:0x081481b0), from gsGrid::addObject / mountObject (L:0x08148680.c:58,
+  // 0x08148470.c:51): a placed item that covers the ground without being optional, or that has lanes, clears the
+  // optional details (trees, props; not previews, pillars or generated parts) it overlaps, heights included; with flag
+  // 0x1000000 the trees within 3 cells around it as well
   GridItemShape s = shapeOf(st, it);
-  if (removeOptional && !(s.flags & kFlagTemp) && (s.flags & (kFlagOptional | kFlagCover)) == kFlagCover &&
-      s.type != kTypeMarker) {
-    forItemsNear(st, it.x, it.z, it.x + s.sx - 1, it.z + s.sz - 1, [&](uint32_t o) {
-      if (o == index || g.items[o].removed) return;
-      if (!(shapeOf(st, g.items[o]).flags & kFlagOptional)) return;
-      if (coversAny(st, g.items[index], g.items[o])) removeItem(vm, grid, st, o, 0);
+  if (removeOptional && !(s.flags & kFlagTemp) && s.type != kTypeMarker &&
+      ((s.flags & (kFlagOptional | kFlagCover)) == kFlagCover || hasPaths(vm, st, it.type))) {
+    const int margin = (s.flags & 0x1000000) ? 3 : 1;
+    const int shift = 0x200 - int(g.heightBase), ya = it.y + shift, topA = ya + s.height;
+    const int lowA = ya - st.types[it.type].negHeight * 0x100;
+    std::vector<uint32_t> clear;
+    forItemsNear(st, it.x - margin, it.z - margin, it.x + s.sx - 1 + margin, it.z + s.sz - 1 + margin, [&](uint32_t o) {
+      const GridData::Item& io = g.items[o];
+      if (o == index || io.removed) return;
+      GridItemShape so = shapeOf(st, io);
+      if ((so.flags & 0x2b00000) != kFlagOptional) return;
+      if ((s.flags & 0x1000000) && so.type == kTypeTree) {
+        if (io.x + so.sx <= it.x - 3 || io.z + so.sz <= it.z - 3 || it.x + s.sx + 3 <= io.x || it.z + s.sz + 3 <= io.z) return;
+      } else {  // gsGridItem::overlap (L:0x081834e0): heights and covered cells
+        const int yb = io.y + shift, topB = yb + so.height, lowB = yb - st.types[io.type].negHeight * 0x100;
+        if (!(lowB < topA && lowA < topB) || !coversAny(st, it, io)) return;
+      }
+      clear.push_back(o);
     });
+    for (uint32_t o : clear) removeItem(vm, grid, st, o, 0);
   }
   return int(index);
 }
@@ -592,8 +676,8 @@ GridItemShape gridItemShape(VM& vm, GridObj* grid, uint32_t item) {
   return item < grid->data->items.size() ? shapeOf(st, grid->data->items[item]) : GridItemShape{};
 }
 
-// gsGridItem::checkConflict(a, b) (L:0x08183aa0). Port: the templates' per-cell masks (+0x274), which let some
-// footprints share a cell, are not read; overlapping covered cells at overlapping heights conflict.
+// gsGridItem::checkConflict(a, b) (L:0x08183aa0), with the templates' per-cell masks (+0x274: their walk maps) at
+// the end.
 // port: the ground rectangle of an item as drawn (itemTurn, offX / offZ): centre, unit axes and half sizes in world units
 struct GroundRect {
   float cx = 0, cz = 0, ux = 1, uz = 0, vx = 0, vz = 1, hu = 0, hv = 0;
@@ -728,14 +812,8 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
     if ((sa.flags & kBase) && (sb.flags & kBase)) return false;
     ItemFootprint fa = footprintOf(st, ia), fb = footprintOf(st, ib);
     auto cornerY = [&](const GridData::Item& it, const GridItemShape& s, const ItemFootprint& f, int y, int px, int pz) {
-      if (f.diag) {  // outside the diagonal cuts: no height
-        bool inside = false;
-        for (int dz = -1; dz <= 0 && !inside; ++dz)
-          for (int dx = -1; dx <= 0 && !inside; ++dx)
-            if (px + dx >= 0 && pz + dz >= 0 && px + dx < s.sx && pz + dz < s.sz && itemCellCover(f, s.flags, px + dx, pz + dz))
-              inside = true;
-        if (!inside) return INT32_MAX;
-      }
+      // gsGridItem::getY (L:0x08183760.c:37-73): a corner outside the diagonal cuts has no height
+      if (f.diag && !cornerInside(f.diag, s.flags, s.sx, s.sz, px, pz)) return INT32_MAX;
       return int(rampY(y, s.sx, s.sz, it.orient, s.flags, f.diag, px, pz));
     };
     int x0 = std::max(ia.x, ib.x), x1 = std::min(ia.x + sa.sx, ib.x + sb.sx);
@@ -754,9 +832,60 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
       }
     return false;
   }
-  return lowB < topA && lowA < topB && coversAny(st, ia, ib);
+  // the rest (L:0x08183aa0.c:394-570): overlapping heights, then cell by cell where both cover it, the templates'
+  // walk maps (+0x274, turned with each item): the items may share the cell when in every q-cell one of them is
+  // pavement or open ground (codes 2, 3); an item without a walk map shares nothing
+  if (!(lowB < topA && lowA < topB)) return false;
+  if (offGrid) return covers();
+  const std::vector<uint32_t>*wa = walkOf(vm, st, ia.type), *wb = walkOf(vm, st, ib.type);
+  if ((wa || wb) && coversAny(st, ia, ib)) ++g_maskTests;
+  int x0 = std::max(ia.x, ib.x), x1 = std::min(ia.x + sa.sx, ib.x + sb.sx);
+  int z0 = std::max(ia.z, ib.z), z1 = std::min(ia.z + sa.sz, ib.z + sb.sz);
+  ItemFootprint fa = footprintOf(st, ia), fb = footprintOf(st, ib);
+  for (int z = z0; z < z1; ++z)
+    for (int x = x0; x < x1; ++x) {
+      if (!(itemCellCover(fa, sa.flags, x - ia.x, z - ia.z) & itemCellCover(fb, sb.flags, x - ib.x, z - ib.z))) continue;
+      if (!wa && !wb) return true;
+      uint32_t m = (wa ? worldWalkWord(*wa, ta, ia.orient, sa.sx, sa.sz, x - ia.x, z - ia.z) : 0) |
+                   (wb ? worldWalkWord(*wb, tb, ib.orient, sb.sx, sb.sz, x - ib.x, z - ib.z) : 0);
+      if ((m & 0xAAAAAAAAu) != 0xAAAAAAAAu) return true;
+    }
+  return false;
 }
 
+
+// REGS_DEBUG_CONFLICTS=1 (checks of the conflict rules against a map the original made): every pair of the map's
+// items that gridItemsConflict calls a conflict, the most common template pairs among them, and how many overlapping
+// pairs the walk maps were asked about
+void gridDebugConflicts(VM& vm, GridObj* grid) {
+  static bool done = false;
+  if (done || !std::getenv("REGS_DEBUG_CONFLICTS") || !grid || !grid->data) return;
+  done = true;
+  EditState& st = state(vm, grid);
+  const GridData& g = *grid->data;
+  size_t conflicts = 0;
+  g_maskTests = 0;
+  std::map<std::string, size_t> pairs;
+  for (uint32_t i = 0; i < g.items.size(); ++i) {
+    const GridData::Item& it = g.items[i];
+    if (it.removed) continue;
+    GridItemShape s = shapeOf(st, it);
+    forItemsNear(st, it.x, it.z, it.x + s.sx - 1, it.z + s.sz - 1, [&](uint32_t j) {
+      if (j <= i || !gridItemsConflict(vm, grid, i, j)) return;
+      ++conflicts;
+      std::string a = g.types[it.type], b = g.types[g.items[j].type];
+      if (b < a) std::swap(a, b);
+      ++pairs[a + " / " + b];
+    });
+  }
+  std::vector<std::pair<size_t, std::string>> top;
+  for (auto& [k, n] : pairs) top.push_back({n, k});
+  std::sort(top.rbegin(), top.rend());
+  std::string list;
+  for (size_t k = 0; k < top.size() && k < 12; ++k) list += "\n  " + std::to_string(top[k].first) + " " + top[k].second;
+  LOG_INFO("conflicts among the map's %zu items: %zu pairs (%zu overlapping pairs asked the walk maps)%s", g.items.size(),
+           conflicts, g_maskTests, list.c_str());
+}
 
 // gsGrid.findItem and gsGrid.getRandomItem (docs/handlers/batch-A.md): queries over the live items that return the
 // item's controller. Port: the template and name scans run in file order, not in slot order (differs only when

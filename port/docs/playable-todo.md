@@ -53,8 +53,9 @@ modes (the editor's roads, terrain and paint tools come later):
   LOCK_GROUND items, the lane graph and walk map (simulation hooks), picking, the minimap raster with its transport
   marks (`docs/ui/minimap.md` §2.4, §3.2: stops and line legs from the live simulation, black edge and type colour;
   Vienna's tram, metro, water bus and helicopter lines checked in the minimap texture; the bridge and tunnel pieces'
-  sampling step is the port's, 4 per piece). Still open: the full `checkConflict` and
-  `removeOverlappingOptionalObjects` rules (simplified today), undo.
+  sampling step is the port's, 4 per piece), the full `checkConflict` (walk-map masks, diagonal corners) and
+  `removeOverlappingOptionalObjects` rules (2026-11-18; checked on Vienna's own items, construction.md §10). Still
+  open: undo of live edits.
 
 ## 2. Lines and vehicles
 

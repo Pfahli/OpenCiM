@@ -1997,6 +1997,7 @@ void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
   s->rt.assign(s->graph.nodes.size(), NodeRt());
   collectSources(*s);
   buildDoors(vm, grid, *s);
+  gridDebugConflicts(vm, grid);
   grid->sim = s;
   loadTransport(vm, grid, *s, file);
   for (auto& l : s->lines)

@@ -72,6 +72,8 @@ GridItemShape gridItemShape(script::VM& vm, GridObj* grid, uint32_t item);
 // when their covered cells overlap at overlapping heights, unless they are related, markers, hidden previews or
 // optional items under previews, or on different layers (tunnel vs. surface)
 bool gridItemsConflict(script::VM& vm, GridObj* grid, uint32_t a, uint32_t b);
+// REGS_DEBUG_CONFLICTS=1: logs the conflicts gridItemsConflict finds among a loaded map's own items (once)
+void gridDebugConflicts(script::VM& vm, GridObj* grid);
 
 // gsGrid.findItem / getRandomItem over the live items
 void registerGridEditNatives(script::VM& vm);

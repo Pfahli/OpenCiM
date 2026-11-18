@@ -230,10 +230,17 @@ per map (`buildHighlightOverlay`, `grid_items.cpp`), drawn with the grid's posit
 do not reach the simulation (`grid_edit.cpp`). `REGS_DEBUG_HIGHLIGHT=1` highlights the cells and item under the cursor
 in any mode (overlay test).
 
-Deviations: the pairwise conflict test (`gridItemsConflict`, `grid_edit.cpp`) follows `gsGridItem::checkConflict`
+The pairwise conflict test (`gridItemsConflict`, `grid_edit.cpp`) follows `gsGridItem::checkConflict`
 (`L:0x08183aa0`: relations, stop rules, tram tracks on their road's layer, bridges, tunnels, pillars, ground pieces
-meeting at their corners, height ranges) but does not read the templates' per-cell masks (+0x274), so overlapping
-covered cells always conflict; no timeline actions or undo are recorded (the game has no timeline object).
+meeting at their corners with `getY` / `pointCover` deciding which corners a diagonal piece has, height ranges), and
+at the end the templates' per-cell masks (+0x274, their walk maps turned with the item): two items share a cell when
+in every q-cell one of them is pavement or open ground (codes 2, 3), an item without a walk map shares nothing.
+Placed items clear optional details as `removeOverlappingOptionalObjects` (`L:0x081481b0`, from addObject /
+mountObject): items that cover the ground without being optional or that have lanes; candidates optional, not
+previews, pillars or generated parts; heights must overlap; flag 0x1000000 also clears trees within 3 cells. Check
+(2026-11-18, `REGS_DEBUG_CONFLICTS=1`): among Vienna's 72 845 items the test finds 129 conflicting pairs (optional
+fences, hedges and trees beside buildings), down from 2 240 (alley corners) before `pointCover`; 5 036 overlapping
+pairs are decided by the masks, all of which the test without them called conflicts.
 
 **Tracks** (§6-§9) are `port/src/engine/tool_tracks.cpp` (modes 6 and 0x11, `toolBlocks().track` / `.road`). A
 preview is built as a list of pieces (as the engine's loose items) and added to the map as TEMP items in one batch;
