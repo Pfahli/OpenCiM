@@ -257,6 +257,11 @@ class Renderer3D {
   // rays: kRayShadows / kRayReflections (render/glsl.h); true = ray shadows
   uint32_t buildProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false,
                         unsigned rays = 0);
+  // buildProgram in two halves, for a batch (gpu::Device::queueProgram): queueProgram translates and issues the
+  // build (0 with the error when the GLSL cannot be translated), finishProgram waits for it (0 with the error)
+  uint32_t queueProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks = false,
+                        unsigned rays = 0);
+  uint32_t finishProgram(uint32_t ticket, std::string* error);
   // The frame's ray-query scene from a draw list (docs/renderer/vulkan.md §9.3): every part that casts a shadow except
   // foliage, blended and skinned parts (those stay in the shadow map), as instances of per-mesh bottom-level structures
   // (built the first time a mesh is seen).
@@ -350,6 +355,8 @@ class Renderer3D {
   void setupProgram(const SceneView& v, uint32_t prog);
   void hookState(const SceneView& v, uint32_t prog);
   uint32_t linkProgram(const std::string& vs, const std::string& fs, std::string* error);
+  uint32_t queueLink(const std::string& vs, const std::string& fs);
+  uint32_t finishLink(uint32_t ticket, std::string* error);  // the sampler units of the hooks set once it is linked
   void setupFallback(const SceneView& v);
   void drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
                     const ProgramLocs& l, float alphaRef);

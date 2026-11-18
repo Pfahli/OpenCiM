@@ -25,6 +25,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/display.h"
 #include "engine/host.h"
 #include "engine/platform.h"
 #include "vfs/archive.h"
@@ -369,6 +370,7 @@ fs::path redirectUserdata(Vfs& vfs, const fs::path& requested) {
   LOG_INFO("userdata: %s (OpenCiM's folder; the scripts asked for the original's)", u8(host().userFolder).c_str());
   LOG_INFO("originals: %s (read only: saves and maps are listed and copied in when opened)", u8(original).c_str());
   vfs.setOriginalRoot(original, kOriginalVfsPrefix);
+  useProgramCache();  // the graphics device keeps its programs below the user folder too
   return host().userFolder;
 }
 

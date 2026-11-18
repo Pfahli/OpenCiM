@@ -127,6 +127,11 @@ void drawText(VM& vm, Display& d, Font& f, const std::u16string& s, const TextPa
 
 Display* display() { return g_display.get(); }
 
+void useProgramCache() {
+  if (!render::gpu::hasDevice() || host().userFolder.empty() || regs::envVar("REGS_NO_PROGRAM_CACHE")) return;
+  render::gpu::dev().setProgramCache(host().userFolder / L"cache" / L"gl");
+}
+
 void WindowObj::tick(VM& vm, float dt) {
   // timing (0x10057160.c:25-49): fps every >= 0.1 s, avgFps over the whole run, frameTime in ms
   ++frames;
@@ -169,6 +174,7 @@ bool Display::open(const platform::WindowDesc& desc, bool vulkan, std::string* e
     if (!device) return false;
     render::gpu::setDevice(std::move(device));
   }
+  useProgramCache();
   if (!r2d_.init(error) || !r3d_.init(error)) return false;
   LOG_INFO("display: %dx%d, %s", window_->width(), window_->height(), r2d_.info.c_str());
   if (int dpi = window_->dpi()) LOG_INFO("display: %d dpi (%d %%), per-monitor DPI aware", dpi, dpi * 100 / 96);

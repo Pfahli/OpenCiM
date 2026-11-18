@@ -244,52 +244,104 @@ GpuMaterial gpuMaterial(Display& d, VM& vm, const MaterialDef& m) {
 // compiled on first use
 // surfaceClass: the material's (renderer3d.h kSurface*); the mods' puddles get traced reflections on roads, pavements
 // and platforms only (-1: unknown, none)
-uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags = 0,
-                    int surfaceClass = -1) {
+// what programFor draws these flags with: the combiner variant (null: none, draw nothing) and the port's ray bits
+struct ProgramNeed {
+  ShaderVariant* v = nullptr;
+  unsigned rays = 0;
+};
+ProgramNeed programNeed(VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags, int surfaceClass) {
   static const bool off = regs::envVar("REGS_NO_COMBINER") != nullptr;  // debugging: the built-in shader only
-  if (off) return 0;
+  if (off) return {};
   ShaderCombiner* c = getCombiner(vm, utf8ToUtf16(shader));
-  if (!c) return 0;
+  if (!c) return {};
   // the port's ray bits are never given to the game's combiner: the same variant, its program with rays (shadows
   // where it samples the shadow map, reflections where it reads an environment cube)
   ShaderVariant* v = combinerVariant(vm, c, flags, meshFlags, env & ~(kEnvRayShadows | kEnvRayReflections));
-  if (!v || v->failed) return 0;
+  if (!v || v->failed) return {};
   unsigned rays = 0;
   if ((env & kEnvRayShadows) && (env & kEnvShadowMap)) rays |= render::kRayShadows;
   const bool puddleSurface = surfaceClass == kSurfaceRoad || surfaceClass == kSurfacePavement || surfaceClass == kSurfacePlatform;
   if ((env & kEnvRayReflections) &&
       (v->fragment.find("textureCube") != std::string::npos || (puddleSurface && render::hooksReadEnvMap())))
     rays |= render::kRayReflections;
+  return {v, rays};
+}
+
+// a variant's program (with those ray bits) built, or the failure noted and logged
+void storeProgram(ShaderVariant* v, unsigned rays, uint32_t prog, const std::string& err, const std::string& shader,
+                  uint32_t flags, uint32_t env) {
+  if (rays) {
+    v->programRays[rays] = prog;
+    if (!prog) {
+      v->raysFailed[rays] = true;
+      LOG_WARN("shader variant %s 0x%x/0x%x with rays %u: %s", shader.empty() ? "default" : shader.c_str(), flags, env, rays, err.c_str());
+    }
+  } else {
+    v->program = prog;
+    if (!prog) {
+      v->failed = true;
+      LOG_WARN("shader variant %s 0x%x/0x%x: %s", shader.empty() ? "default" : shader.c_str(), flags, env, err.c_str());
+    }
+  }
+}
+
+uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags = 0,
+                    int surfaceClass = -1) {
+  auto [v, rays] = programNeed(vm, shader, flags, env, meshFlags, surfaceClass);
+  if (!v) return 0;
   if (rays) {
     if (!v->programRays[rays] && !v->raysFailed[rays]) {
       std::string err;
-      v->programRays[rays] = d.r3d().buildProgram(v->vertex, v->fragment, &err, true, rays);
-      if (!v->programRays[rays]) {
-        v->raysFailed[rays] = true;
-        LOG_WARN("shader variant %s 0x%x/0x%x with rays %u: %s", shader.empty() ? "default" : shader.c_str(), flags, env, rays, err.c_str());
-      }
+      storeProgram(v, rays, d.r3d().buildProgram(v->vertex, v->fragment, &err, true, rays), err, shader, flags, env);
     }
     if (v->programRays[rays]) return v->programRays[rays];
   }
   if (!v->program) {
     std::string err;
-    v->program = d.r3d().buildProgram(v->vertex, v->fragment, &err, true);  // with the mods' shader hooks
-    if (!v->program) {
-      v->failed = true;
-      LOG_WARN("shader variant %s 0x%x/0x%x: %s", shader.empty() ? "default" : shader.c_str(), flags, env, err.c_str());
-    }
+    // with the mods' shader hooks
+    storeProgram(v, 0, d.r3d().buildProgram(v->vertex, v->fragment, &err, true), err, shader, flags, env);
   }
   return v->program;
 }
 
-// makes sure every material of the draw list has its combiner variant for a pass environment
+// makes sure every material of the draw list has its combiner variant for a pass environment. The programs still
+// missing are all queued first and then waited for, so the driver can compile them side by side (OpenGL with
+// GL_KHR_parallel_shader_compile, gpu::Device::queueProgram); a first view needs dozens at once.
 void assignPrograms(Display& d, VM& vm, std::vector<DrawItem>& items, uint32_t env) {
   std::vector<const std::vector<GpuMaterial>*> seen;  // grid divisions share one material table
+  std::vector<GpuMaterial*> todo;
   for (DrawItem& it : items)
     if (auto* mats = const_cast<std::vector<GpuMaterial>*>(it.materials);
         mats && std::find(seen.begin(), seen.end(), mats) == seen.end() && (seen.push_back(mats), true))
       for (GpuMaterial& m : *mats)
-        if (!m.hasProgramFor(env)) m.setProgram(env, programFor(d, vm, m.shader, m.flags, env, m.meshFlags, m.surfaceClass));
+        if (!m.hasProgramFor(env)) todo.push_back(&m);
+  if (todo.empty()) return;
+  // REGS_NO_SHADER_BATCH=1 (comparisons): each program built and waited for on its own, as before the batches
+  static const bool noBatch = regs::envVar("REGS_NO_SHADER_BATCH") != nullptr;
+  struct Build {
+    ShaderVariant* v;
+    unsigned rays;
+    uint32_t ticket;
+    const GpuMaterial* m;
+  };
+  std::vector<Build> builds;
+  for (GpuMaterial* m : todo) {
+    auto [v, wanted] = programNeed(vm, m->shader, m->flags, env, m->meshFlags, m->surfaceClass);
+    if (!v) continue;
+    // as programFor builds it: the program with rays, or the plain one once that failed
+    unsigned rays = wanted && !v->raysFailed[wanted] ? wanted : 0;
+    if (rays ? v->programRays[rays] : v->program) continue;
+    if (noBatch) break;
+    if (std::any_of(builds.begin(), builds.end(), [&](const Build& b) { return b.v == v && b.rays == rays; })) continue;
+    std::string err;
+    if (uint32_t t = d.r3d().queueProgram(v->vertex, v->fragment, &err, true, rays)) builds.push_back({v, rays, t, m});
+    else storeProgram(v, rays, 0, err, m->shader, m->flags, env);
+  }
+  for (const Build& b : builds) {
+    std::string err;
+    storeProgram(b.v, b.rays, d.r3d().finishProgram(b.ticket, &err), err, b.m->shader, b.m->flags, env);
+  }
+  for (GpuMaterial* m : todo) m->setProgram(env, programFor(d, vm, m->shader, m->flags, env, m->meshFlags, m->surfaceClass));
 }
 
 // the classes collect() tests every scene node against, looked up once per frame (VM::findClass is a map lookup by

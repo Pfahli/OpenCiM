@@ -645,6 +645,29 @@ uint32_t Renderer3D::buildProgram(const std::string& vs110, const std::string& f
   return linkProgram(vs, fs, error);
 }
 
+uint32_t Renderer3D::queueProgram(const std::string& vs110, const std::string& fs110, std::string* error, bool hooks,
+                                  unsigned rays) {
+  auto t0 = std::chrono::steady_clock::now();
+  std::string why;
+  std::string vs = translateGlsl110(vs110, false, &why, hooks),
+              fs = vs.empty() ? "" : translateGlsl110(fs110, true, &why, hooks, rays);
+  if (vs.empty() || fs.empty()) {
+    if (error) *error = "unsupported built-in " + why;
+    return 0;
+  }
+  uint32_t ticket = queueLink(vs, fs);
+  gLinkSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  return ticket;
+}
+
+uint32_t Renderer3D::finishProgram(uint32_t ticket, std::string* error) {
+  auto t0 = std::chrono::steady_clock::now();
+  uint32_t prog = finishLink(ticket, error);
+  ++gProgramsLinked;
+  gLinkSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  return prog;
+}
+
 uint32_t Renderer3D::buildPostHookProgram(const std::string& vs110, std::string* error) {
   std::string why;
   std::string vs = translateGlsl110(vs110, false, &why, false);
@@ -682,12 +705,19 @@ uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, s
       gLinkSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     }
   } timed;
+  return finishLink(queueLink(vs, fs), error);
+}
+
+uint32_t Renderer3D::queueLink(const std::string& vs, const std::string& fs) {
   // the vertex layout of upload(): fixed-function arrays become generic attributes at fixed slots
-  uint32_t prog = dev().createProgram(vs, fs,
-                                      {{0, "regs_Vertex"}, {1, "regs_Normal"}, {2, "regs_MultiTexCoord0"},
-                                       {3, "regs_MultiTexCoord1"}, {4, "regs_MultiTexCoord2"}, {5, "regs_Color"},
-                                       {6, "regs_MultiTexCoord3"}, {7, "regs_MultiTexCoord4"}},
-                                      error);
+  return dev().queueProgram(vs, fs,
+                            {{0, "regs_Vertex"}, {1, "regs_Normal"}, {2, "regs_MultiTexCoord0"}, {3, "regs_MultiTexCoord1"},
+                             {4, "regs_MultiTexCoord2"}, {5, "regs_Color"}, {6, "regs_MultiTexCoord3"},
+                             {7, "regs_MultiTexCoord4"}});
+}
+
+uint32_t Renderer3D::finishLink(uint32_t ticket, std::string* error) {
+  uint32_t prog = dev().finishProgram(ticket, error);
   if (!prog) return 0;
   // the hooks' environment cube lives on unit 8 (a sampler left at unit 0 would clash with the 2D map there)
   int env = dev().uniformLocation(prog, "regs_EnvMap"), surf = dev().uniformLocation(prog, "regs_SurfaceMap");

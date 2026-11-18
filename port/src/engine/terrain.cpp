@@ -1615,6 +1615,7 @@ void registerTerrainNatives(VM& vm) {
       // the first view drawn once, unseen (the loading screen covers it): its shader programs compile now; with a
       // cold driver cache (a new driver, changed shaders) that took half a minute of black screen after Spielen
       const int linked = render::gProgramsLinked;
+      const double linkSeconds = render::gLinkSeconds;
       Value* vpv = m->findVar(u"viewport");
       Value* scene = m->findVar(u"scene");
       Value* camera = m->findVar(u"camera");
@@ -1632,9 +1633,10 @@ void registerTerrainNatives(VM& vm) {
         }
       }
       auto t2 = std::chrono::steady_clock::now();
-      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs)",
+      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs, %.0f ms linking them)",
                std::chrono::duration<double, std::milli>(t1 - t0).count(),
-               std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked);
+               std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked,
+               (render::gLinkSeconds - linkSeconds) * 1000);
     }
     return Value();
   });
