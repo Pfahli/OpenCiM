@@ -286,6 +286,7 @@ $x = $regsColX[2];
 regsHeading($x, 58, $regs.$regs_g_effects);
 
 regsCheckRow($lightingButton, $lightingItem, $x, 96);
+$lightingItem.text = $regs.$regs_bloom_item;  // the game calls it "HDR lighting"; it is the bloom (glow), not HDR output
 $lightingButton.$action = macro :: regsSetHDR(!$hdrLighting);
 function regsSetHDR($value) {
   setHDRlighting($value);

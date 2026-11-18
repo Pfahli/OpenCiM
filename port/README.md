@@ -201,8 +201,8 @@ one of them except the cursor, vsync and the frame-rate display, and the port no
 
 | Option | Setting | Applies in the port |
 |---|---|---|
-| HDR rendering (bloom) | `$bloom` | on OK: engine.script's extension makes or removes the bloom effect (`regsApplyEffects`) |
-| Saturation | `$saturation` | on OK (bloom's saturation; only with HDR rendering, as in the original) |
+| Bloom (glow), the game's "HDR lighting" | `$bloom` | on OK: engine.script's extension makes or removes the bloom effect (`regsApplyEffects`) |
+| Saturation | `$saturation` | on OK (bloom's saturation; only with bloom on, as in the original) |
 | Vsync | `$vsync` | on OK (the original set `window.vsync`; the port now applies the field every frame) |
 | Fullscreen | `$fullscreen` | on OK: the same window becomes borderless over the monitor or a captioned window again (`--windowed` only holds at start) |
 | Resolution | `$screenwidth`, `$screenheight` | on OK: the window's size when not fullscreen |

@@ -3,6 +3,7 @@ $regs_preset_label = "Grafikvoreinstellung";
 $regs_g_display = "Anzeige";
 $regs_g_quality = "Qualität";
 $regs_g_effects = "Effekte und Stil";
+$regs_bloom_item = "Bloom (Leuchten)";
 $regs_preset_values = ["Niedrig", "Mittel", "Original", "Hoch", "Ultra"];
 $regs_preset_custom = "Benutzerdefiniert";
 $regs_viewDistance_item = "Sichtweite: %0%%";
