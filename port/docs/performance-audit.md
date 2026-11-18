@@ -192,3 +192,39 @@ REGS_BENCH=300:1400, REGS_FIXED_DT=0.016, before and after runs alternated on a 
 view after: `placeTracer` 5.0 % (was ~15 %; what is left are the bubbles' own field reads), `intersectGrid` 2.7 %
 (was 3-5 %; now mostly the per-mover cull test itself). Screenshots (Vulkan, OpenGL) and a 1,034-position pick sweep
 are identical to the build before, apart from the few snow pixels that also differ between two runs of one build.
+
+## Citizens and speed 10 (2026-11-18)
+
+Speed 10 is set in a test with the game's speed key: `--at <frame>:key:51` (key 3, `controls.keys`
+`$timeSpeed3`, the minimap's selectSpeed(3)); `REGS_DEBUG_GROUPS=1` then logs the 'game' thread group at speed 10.
+Runs: Berlin, Vulkan, 1920×1080, vsync and frame limit off, `REGS_FIXED_DT=0.016` (every frame advances the same game
+time, so both builds simulate the same), the key at frames 100-250, 1400 frames measured from frame 300.
+
+Before (profiled build): at speed 10 the grid tick was 50 % of a 29.2 ms frame: `stepCitizens` 24.6 % (`walkPathIn`
+11.5 % from stepTravel, stepWalk and carArrived; `LaneGraph::search` 8 %, half of it stepDrive repeating the search
+startTrip had just priced; `transitRoute` 1.9 %; `stepCharacter` 2 %) and `simTrafficMapsTick` 17 %: the mods'
+trodden map, an unordered_map of every 1 m cell a visible pedestrian walked in the last minutes (175,000 cells after
+five game minutes; it grows with game time at any speed), decayed node by node every grid step. At speed 1
+`stepCitizens` was 13.5 % of 12.3 ms (`stepCharacter` 6.7 %: `animateCharacter` 3.2 % with `modelSkeleton` building
+a heap key per call).
+
+Done (each its own commit): character animation by slot ids with a per-skeleton slot table; the pedestrian search's
+scratch kept between searches with stamps (no clearing of up to 800² q-cells per search), the heights it read reused;
+the trodden map as flat arrays; the car start reusing the path its price came from (valid while `laneVersion` is
+unchanged); `transitRoute` without heap keys and with each stop and line read once per search; `LaneGraph::search` on
+a packed copy of the nodes (made again per `laneVersion`). Results identical: the new switch `REGS_DEBUG_SIM_DIGEST=10`
+logs the random stream and hashes of the citizens, walkers with their animation, movers, line vehicles and stops every
+10 citizen steps; the build before and after print the same 171 digests at speed 1 and at speed 10 (and two runs of
+one build match, so the test is deterministic). Screenshots of two runs of the same build differ at speed 1 (snow
+particles), so they are no proof here.
+
+| Berlin, Vulkan | fps before | fps after | Frame ms before / after (profiled) | Grid tick share before / after |
+|---|---|---|---|---|
+| speed 1 | 78.2, 85.1 | 89.3, 90.4 | 12.3 / 11.5 | 28 % / 25 % |
+| speed 10 | 43.0, 42.4 | 59.7, 58.6 | 29.2 / 17.9 | 50 % / 35 % |
+
+(Two runs each, alternating builds; the machine had other sessions running, so single numbers move by about 10 %.)
+After: `stepCitizens` 1.1 ms at speed 1 (was 1.7; `animateCharacter` 1.2 % of the frame, was 3.2 %), 3.7 ms at
+speed 10 (was 7.2), of it the pedestrian search 1.8 ms and the trip start's lane
+search 0.9 ms; the trodden map 0.6 ms (was 5). Left: the pedestrian A* itself (its expansions and tie order decide the
+paths; a faster search must find the same ones), the one lane search per car trip, the render side.

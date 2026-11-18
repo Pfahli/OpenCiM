@@ -231,6 +231,11 @@ struct Citizen {
   int home = -1, work = -1, start = -1, target = -1;  // items
   int charModel = -1, carModel = -1;                  // pool indices (class pool / generic car pool of the class)
   int driveStart = -1, driveEnd = -1;                 // road nodes of the drive
+  // port: the lane search's path from driveStart to driveEnd as the trip start priced it, for the car's start (the
+  // same search on the same lanes gives the same path); valid while the lanes have that LaneGraph::laneVersion
+  std::vector<int> drivePath;
+  int drivePathFrom = -1, drivePathTo = -1;
+  uint64_t drivePathVersion = 0;
   Route route;
   bool hasRoute = false;
   bool toCar = false;          // DRIVE phase 0x100 of the original: the pedestrian walks to the parked car

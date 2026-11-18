@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "render/renderer3d.h"
@@ -25,6 +26,10 @@ struct AnimSlot {
   int order = 0;                 // load order: the order slots apply per bone
 };
 
+// animation names as small ids for CharacterAnimation (0 = none, the empty name); the same name always the same id
+int animNameId(std::string_view name);
+const std::string& animName(int id);
+
 // gsSkeleton: the skeleton a model loaded with loadSkeleton, and its named slots (std::map: name order)
 class SkeletonObj : public script::Object {
  public:
@@ -32,6 +37,13 @@ class SkeletonObj : public script::Object {
   std::shared_ptr<const render::SkeletonData> data;
   std::string path;  // the .skeleton file; animation files resolve against its directory
   std::map<std::string, AnimSlot> slots;
+  uint32_t slotsEpoch = 0;  // bumped when a slot is added or removed (the table below is made again)
+  // the slot of an animNameId, or null: a per-skeleton table instead of a map search per character step
+  const AnimSlot* slotById(int id);
+
+ private:
+  std::vector<const AnimSlot*> byId_;
+  uint32_t byIdEpoch_ = ~0u;
 };
 
 void registerSkinningNatives(script::VM& vm);
@@ -50,13 +62,12 @@ Pose poseFirstAnimation(script::VM& vm, ObjectObj* model, float time);
 // characters (gsGridCharacterAnimations L:0x08151ea0-0x08151f60): the named slot fades in over 0.5 s while the
 // previous one fades out; positions advance by factor · dt · slot speed
 struct CharacterAnimation {
-  std::string current, previous;
+  int current = 0, previous = 0;  // animNameId of the slot names (0 none)
   float currentPos = 0, previousPos = 0, fade = 1, currentFactor = 1, previousFactor = 1;
 };
 // gsGridCharacter::move calls it with "walk" (factor = speed in m/s), "idle" or "sitting" (1), "sitdown" or "getup"
 // (−1: played once to the end); returns true when the slot completed a cycle (or reached the end)
-bool animateCharacter(script::VM& vm, ObjectObj* model, CharacterAnimation& a, const std::string& name, float dt,
-                      float factor);
+bool animateCharacter(script::VM& vm, ObjectObj* model, CharacterAnimation& a, int name, float dt, float factor);
 Pose poseCharacter(script::VM& vm, ObjectObj* model, const CharacterAnimation& a);
 
 // Draw items for a model's mesh (lod 0, or 1 when it has one) at a world placement and pose (null = bind pose). The

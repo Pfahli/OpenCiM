@@ -369,23 +369,34 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   t.laneTrafficDirty = true;
   // trodden cells: visible pedestrians (not animals, not off-screen walks)
   float keepT = std::exp(-dt / 300.0f);
-  for (auto it = t.trodden.begin(); it != t.trodden.end();) {
-    it->second *= keepT;
-    uint32_t x = it->first & 0xffff, z = it->first >> 16;
-    if (it->second < 0.05f) {
-      uint8_t& b = t.troddenBytes[size_t(z) * size_t(t.laneW) + x];
-      if (b) b = 0, t.markTrodden(int(x), int(z));
-      it = t.trodden.erase(it);
-    } else {
-      ++it;
+  for (size_t i = 0; i < t.troddenCells.size();) {
+    float& v = t.troddenTime[i];
+    v *= keepT;
+    if (v >= 0.05f) {
+      ++i;
+      continue;
     }
+    uint32_t cell = t.troddenCells[i], x = cell & 0xffff, z = cell >> 16;
+    uint8_t& b = t.troddenBytes[size_t(z) * size_t(t.laneW) + x];
+    if (b) b = 0, t.markTrodden(int(x), int(z));
+    t.troddenIndex.erase(cell);
+    if (i + 1 < t.troddenCells.size()) {  // the last entry (not decayed yet) takes this place
+      t.troddenCells[i] = t.troddenCells.back();
+      t.troddenTime[i] = t.troddenTime.back();
+      t.troddenIndex[t.troddenCells[i]] = uint32_t(i);
+    }
+    t.troddenCells.pop_back();
+    t.troddenTime.pop_back();
   }
   int walkers = 0;
   for (const Character& c : s.characters) {
     if (!c.alive || c.animal || c.virtualLeft >= 0) continue;
     int x = int((c.pos.x - t.originX) / kTexel), z = int((c.pos.z - t.originZ) / kTexel);
     if (x < 0 || z < 0 || x >= t.laneW || z >= t.laneH) continue;
-    t.trodden[uint32_t(z) << 16 | uint32_t(x)] += dt;
+    uint32_t cell = uint32_t(z) << 16 | uint32_t(x);
+    auto [it, fresh] = t.troddenIndex.try_emplace(cell, uint32_t(t.troddenCells.size()));
+    if (fresh) t.troddenCells.push_back(cell), t.troddenTime.push_back(0.0f);
+    t.troddenTime[it->second] += dt;
     ++walkers;
   }
   // footprints (gsGrid.regsFootprints)
@@ -430,12 +441,12 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   if (debug && (logClock += dt) > 10.0f) {
     logClock = 0;
     float maxT = 0, maxL = 0;
-    for (const auto& [cell, v] : t.trodden) maxT = std::max(maxT, v);
+    for (float v : t.troddenTime) maxT = std::max(maxT, v);
     int plowed = 0;
     for (float p : t.lanePlow) plowed += p > 0.5f;
     for (float c : t.laneCount) maxL = std::max(maxL, c);
     LOG_INFO("traffic maps: %d walkers, %zu trodden cells (max %.1f s), busiest lane %.1f s; footprints fill %.0f, %d tiles; %d plows, %d lanes plowed",
-             walkers, t.trodden.size(), maxT, maxL, t.footFill, kSlots - t.freeSlots, s.plowsLive, plowed);
+             walkers, t.troddenCells.size(), maxT, maxL, t.footFill, kSlots - t.freeSlots, s.plowsLive, plowed);
   }
 }
 
@@ -512,7 +523,9 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& laneTraffic, float rect[4], float 
       }
       t.laneTrafficDirty = false;
     }
-    for (const auto& [cell, v] : t.trodden) {
+    for (size_t i = 0; i < t.troddenCells.size(); ++i) {
+      uint32_t cell = t.troddenCells[i];
+      float v = t.troddenTime[i];
       int x = int(cell & 0xffff), z = int(cell >> 16);
       uint8_t b = uint8_t(std::lround(255.0f * (1.0f - std::exp(-v / 1.5f))));
       uint8_t& old = t.troddenBytes[size_t(z) * size_t(t.laneW) + size_t(x)];

@@ -34,6 +34,7 @@ namespace sim {
 namespace {
 
 constexpr int kVisitHome = 1, kVisitWork = 2;
+const int kAnimIdle = animNameId("idle"), kAnimWalk = animNameId("walk");
 constexpr uint32_t kStateMask = 0xf0, kIdle = 0, kWalk = 0x10, kDrive = 0x20, kTravel = 0x30, kReplan = 0x40;
 
 SimState* stateOf(GridObj* g) { return g ? g->sim.get() : nullptr; }
@@ -873,12 +874,35 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
         if (int list = s.walk.deckList[size_t(cz) * size_t(s.walk.width) + size_t(cx)]; list >= 0)
           K = std::max(K, 1 + int(s.walk.decks[size_t(list)].size()));
   if (l0 >= K) l0 = 0;
+  // scratch kept between searches: a q-cell's cost and parent count only when its stamp is this search's (the box
+  // grows up to 800² q-cells; clearing it for every search cost more than most searches), and the open list (a binary
+  // heap with std::priority_queue's push and pop) keeps its storage
   static thread_local std::vector<float> cost;
   static thread_local std::vector<int> parent;
-  cost.assign(size_t(W) * size_t(L) * size_t(K), -1.0f);
-  parent.assign(cost.size(), -1);
+  static thread_local std::vector<uint32_t> stamp;
+  static thread_local std::vector<float> height;  // a reached q-cell's layerHeight (for its expansion)
+  static thread_local uint32_t serial = 0;
+  const size_t cells = size_t(W) * size_t(L) * size_t(K);
+  if (stamp.size() < cells) cost.resize(cells), parent.resize(cells), stamp.resize(cells, 0), height.resize(cells);
+  // the ground layer's height per q-cell of the box, made on first use: up to eight neighbours ask for it
+  static thread_local std::vector<float> groundY;
+  static thread_local std::vector<uint32_t> groundStamp;
+  const size_t boxCells = size_t(W) * size_t(L);
+  if (groundStamp.size() < boxCells) groundY.resize(boxCells), groundStamp.resize(boxCells, 0);
+  if (++serial == 0) {
+    std::fill(stamp.begin(), stamp.end(), 0u), std::fill(groundStamp.begin(), groundStamp.end(), 0u);
+    serial = 1;
+  }
+  auto known = [&](int q) { return stamp[size_t(q)] == serial; };  // else as cost −1, parent −1
+  auto groundHeight = [&](int x, int z) {  // = layerHeight(s, x, z)
+    size_t i = size_t(z - z0) * size_t(W) + size_t(x - x0);
+    if (groundStamp[i] != serial) groundStamp[i] = serial, groundY[i] = layerHeight(s, x, z);
+    return groundY[i];
+  };
   using E = std::pair<float, int>;
-  std::priority_queue<E, std::vector<E>, std::greater<E>> open;
+  static thread_local std::vector<E> open;
+  open.clear();
+  auto push = [&](E e) { open.push_back(e), std::push_heap(open.begin(), open.end(), std::greater<E>()); };
   auto idx = [&](int x, int z, int lv) { return ((z - z0) * W + (x - x0)) * K + lv; };
   auto h = [&](int x, int z) {
     float dx = float(std::abs(x - qx1)), dz = float(std::abs(z - qz1));
@@ -886,12 +910,16 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
   };
   int start = idx(qx0, qz0, l0), goal = -1;
   cost[size_t(start)] = 0;
-  open.push({h(qx0, qz0), start});
+  parent[size_t(start)] = -1;
+  stamp[size_t(start)] = serial;
+  height[size_t(start)] = layerHeight(s, qx0, qz0 | l0 << kLayerShift);
+  push({h(qx0, qz0), start});
   static const int dxs[8] = {1, 0, -1, 0, 1, 1, -1, -1}, dzs[8] = {0, 1, 0, -1, 1, -1, 1, -1};
   int expansions = 0;
   while (!open.empty() && expansions < cap * K) {
-    auto [f, p] = open.top();
-    open.pop();
+    std::pop_heap(open.begin(), open.end(), std::greater<E>());
+    auto [f, p] = open.back();
+    open.pop_back();
     int cell = p / K, pl = p % K, px = cell % W + x0, pz = cell / W + z0;
     if (f - h(px, pz) > cost[size_t(p)] + 1e-3f) continue;
     if (px == qx1 && pz == qz1) {
@@ -899,26 +927,50 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
       break;
     }
     ++expansions;
-    float y = layerHeight(s, px, pz | pl << kLayerShift);
+    float y = height[size_t(p)];  // = layerHeight(s, px, pz | pl << kLayerShift)
     for (int d = 0; d < 8; ++d) {
       int nx = px + dxs[d], nz = pz + dzs[d];
       if (nx < x0 || nx > x1 || nz < z0 || nz > z1) continue;
-      int nl = stepLayer(s, nx, nz, y, pl == 0);
+      // stepLayer(s, nx, nz, y, pl == 0), keeping the code and height it reads (walk.code and layerHeight of the
+      // layer taken give the same values again)
+      int nl = -1, v = 0, ground = 0;
+      float ny = 0, gy = 0;
+      bool gyKnown = false;
+      if (nx < s.walk.width * 4 && nz < s.walk.length * 4) {
+        ground = s.walk.code(nx, nz);
+        if (ground) {
+          gy = groundHeight(nx, nz), gyKnown = true;
+          if (std::abs(gy - y) <= 160.0f) nl = 0;
+        }
+        if (nl < 0)
+          if (int list = s.walk.deckList[size_t(nz >> 2) * size_t(s.walk.width) + size_t(nx >> 2)]; list >= 0) {
+            const auto& decks = s.walk.decks[size_t(list)];
+            for (size_t k = 0; k < decks.size(); ++k) {
+              int bits = int((decks[k].word >> (2 * ((nx & 3) + (nz & 3) * 4))) & 3);
+              if (bits && std::abs(float(decks[k].height) - y) <= 160.0f) {
+                nl = int(k) + 1, v = bits, ny = float(decks[k].height);
+                break;
+              }
+            }
+          }
+        if (nl < 0 && ground && pl == 0) nl = 0;
+      }
       bool end = nx == qx1 && nz == qz1;
       if (nl < 0 && !end) continue;
       nl = std::max(nl, 0);
       if (nl >= K) continue;
-      int nzl = nz | nl << kLayerShift;
-      int v = s.walk.code(nx, nzl);
-      float c = (d < 4 ? 1.0f : 1.4142135f) + 0.05f * std::abs(layerHeight(s, nx, nzl) - y);
+      if (nl == 0) v = ground, ny = gyKnown ? gy : groundHeight(nx, nz);
+      float c = (d < 4 ? 1.0f : 1.4142135f) + 0.05f * std::abs(ny - y);
       if (v == 1) c *= 3;
       else if (v == 3) c *= 4;
       int q = idx(nx, nz, nl);
       float ng = cost[size_t(p)] + c;
-      if (cost[size_t(q)] >= 0 && cost[size_t(q)] <= ng) continue;
+      if (known(q) && cost[size_t(q)] <= ng) continue;
       cost[size_t(q)] = ng;
       parent[size_t(q)] = p;
-      open.push({ng + h(nx, nz), q});
+      stamp[size_t(q)] = serial;
+      height[size_t(q)] = ny;
+      push({ng + h(nx, nz), q});
     }
   }
   if (goal < 0) {
@@ -1026,7 +1078,7 @@ void stepCharacter(SimState& s, Character& ch, float dt) {
   // gsGridCharacter::move: the walk cycle at the walking speed, idle when standing
   if (ch.model >= 0 && ch.virtualLeft < 0)
     if (ObjectObj* o = s.models[size_t(ch.model)].object; o && o->data)
-      animateCharacter(*s.vm, o, ch.anim, ch.done() ? "idle" : "walk", dt, ch.done() ? 1.0f : ch.speed);
+      animateCharacter(*s.vm, o, ch.anim, ch.done() ? kAnimIdle : kAnimWalk, dt, ch.done() ? 1.0f : ch.speed);
   if (ch.virtualLeft >= 0) {
     ch.virtualLeft = std::max(0.0f, ch.virtualLeft - dt);
     if (ch.virtualLeft == 0) ch.pos = ch.goal;
@@ -1096,7 +1148,7 @@ void stepBird(SimState& s, Character& ch, float dt) {
     if (d.x * d.x + d.z * d.z > 1e-6f) ch.yaw = std::atan2(d.x, d.z);
   }
   if (ch.model >= 0)
-    if (ObjectObj* o = s.models[size_t(ch.model)].object; o && o->data) animateCharacter(*s.vm, o, ch.anim, "walk", dt, ch.speed);
+    if (ObjectObj* o = s.models[size_t(ch.model)].object; o && o->data) animateCharacter(*s.vm, o, ch.anim, kAnimWalk, dt, ch.speed);
 }
 
 void retargetBird(SimState& s, Character& ch) {
@@ -1325,6 +1377,7 @@ void endTrip(SimState& s, int ci, bool keepCar) {
   c.start = c.target >= 0 ? c.target : c.home;
   c.target = -1;
   c.driveStart = c.driveEnd = -1;
+  c.drivePath = std::vector<int>();
   c.usedTransport = 0;
   c.waitTime = 0;
   fireCitizen(s, ci, u"onIdle");
@@ -1374,10 +1427,12 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
   centreCells(s, toItem, x1, z1);
   float cs = s.graph.cellSize, w = cs / speed;
   size_t N = s.lineNodes.size();
-  std::vector<float> best(N, -1.0f);
-  std::vector<int> parent(N, -1);
-  std::vector<uint32_t> paid(N, 0);
-  std::vector<uint8_t> closed(N, 0);
+  // scratch kept between searches (one search per trip start, many per second at speed 10)
+  static thread_local std::vector<float> best;
+  static thread_local std::vector<int> parent;
+  static thread_local std::vector<uint32_t> paid;
+  static thread_local std::vector<uint8_t> closed;
+  best.assign(N, -1.0f), parent.assign(N, -1), paid.assign(N, 0), closed.assign(N, 0);
   struct E {
     float g;
     uint32_t paid;
@@ -1385,25 +1440,64 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
     bool operator>(const E& o) const { return g > o.g || (g == o.g && paid > o.paid); }
   };
   std::priority_queue<E, std::vector<E>, std::greater<E>> open;
-  auto stopCells = [&](int item, int& x, int& z) { centreCells(s, item, x, z); };
-  auto attr = [&](const LineStopState& st) { return st.stop ? fieldFloat(*s.vm, st.stop.get(), u"attractiveness", 1.0f) : 1.0f; };
-  auto quality = [&](const LineState& l) {
-    float a = l.object ? fieldFloat(*s.vm, l.object.get(), u"attractiveness", 1.0f) : 1.0f, mean = 0;
-    for (int vi : l.vehicles) mean += s.vehicles[size_t(vi)].attractiveness;
-    if (!l.vehicles.empty()) mean /= float(l.vehicles.size());
-    return a * mean / (1 + 0.01f * l.avgWait);
+  // the stops' and lines' script fields, the stop centres and a line's quality are read once per search: nothing
+  // changes them during it (field reads only, no script runs), so the values are the same as read at each use
+  static const std::u16string kAttractiveness = u"attractiveness", kCatchment = u"catchmentArea",
+                              kTicketPrice = u"ticketPrice", kActive = u"active";
+  struct NodeInfo {
+    int8_t usable = -1;  // −1 not yet known
+    bool centre = false;
+    int x = 0, z = 0;
   };
-  auto fare = [&](const LineState& l) {
-    float price = l.object ? fieldFloat(*s.vm, l.object.get(), u"ticketPrice", 0) : 0;
+  struct LineInfo {
+    bool qualityKnown = false, fareKnown = false;
+    float quality = 0, fare = 0;
+  };
+  static thread_local std::vector<NodeInfo> nodeInfo;
+  static thread_local std::vector<LineInfo> lineInfo;
+  nodeInfo.assign(N, NodeInfo());
+  lineInfo.assign(s.lines.size(), LineInfo());
+  auto stopCells = [&](int node, int& x, int& z) {
+    NodeInfo& ni = nodeInfo[size_t(node)];
+    if (!ni.centre) centreCells(s, nodeState(s, node).item, ni.x, ni.z), ni.centre = true;
+    x = ni.x, z = ni.z;
+  };
+  auto attr = [&](const LineStopState& st) { return st.stop ? fieldFloat(*s.vm, st.stop.get(), kAttractiveness, 1.0f) : 1.0f; };
+  auto quality = [&](int node) {
+    LineInfo& li = lineInfo[size_t(s.lineNodes[size_t(node)].first)];
+    if (!li.qualityKnown) {
+      const LineState& l = nodeLine(s, node);
+      float a = l.object ? fieldFloat(*s.vm, l.object.get(), kAttractiveness, 1.0f) : 1.0f, mean = 0;
+      for (int vi : l.vehicles) mean += s.vehicles[size_t(vi)].attractiveness;
+      if (!l.vehicles.empty()) mean /= float(l.vehicles.size());
+      li.quality = a * mean / (1 + 0.01f * l.avgWait);
+      li.qualityKnown = true;
+    }
+    return li.quality;
+  };
+  auto fareOf = [&](const LineState& l) {
+    float price = l.object ? fieldFloat(*s.vm, l.object.get(), kTicketPrice, 0) : 0;
     return std::max(price - 200.0f, 1.0f) * ps;
   };
+  auto fare = [&](int node) {
+    LineInfo& li = lineInfo[size_t(s.lineNodes[size_t(node)].first)];
+    if (!li.fareKnown) li.fare = fareOf(nodeLine(s, node)), li.fareKnown = true;
+    return li.fare;
+  };
   auto usable = [&](int node) {
-    const LineState& l = nodeLine(s, node);
-    const LineStopState& st = nodeState(s, node);
-    if (!l.object || st.item < 0 || !st.reachable || (st.flags & 1)) return false;
-    auto it = l.object->fieldValues.find(u"active");
-    bool active = it == l.object->fieldValues.end() || it->second.isNone() || s.vm->resolve(it->second).toBool();
-    return active && nextNode(s, node) >= 0 && !l.vehicles.empty();
+    NodeInfo& ni = nodeInfo[size_t(node)];
+    if (ni.usable < 0) {
+      const LineState& l = nodeLine(s, node);
+      const LineStopState& st = nodeState(s, node);
+      bool u = false;
+      if (l.object && st.item >= 0 && st.reachable && !(st.flags & 1)) {
+        auto it = l.object->fieldValues.find(kActive);
+        bool active = it == l.object->fieldValues.end() || it->second.isNone() || s.vm->resolve(it->second).toBool();
+        u = active && nextNode(s, node) >= 0 && !l.vehicles.empty();
+      }
+      ni.usable = u ? 1 : 0;
+    }
+    return ni.usable != 0;
   };
   // boarding candidates within the catchment of their departure stop
   for (size_t n = 0; n < N; ++n) {
@@ -1411,12 +1505,15 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
     const LineStopState& st = nodeState(s, int(n));
     const LineState& l = nodeLine(s, int(n));
     int sx, sz;
-    stopCells(st.item, sx, sz);
-    float catchment = st.stop ? fieldFloat(*s.vm, st.stop.get(), u"catchmentArea", 100.0f) : 100.0f;
+    stopCells(int(n), sx, sz);
+    float catchment = st.stop ? fieldFloat(*s.vm, st.stop.get(), kCatchment, 100.0f) : 100.0f;
     float dx = float(sx - x0), dz = float(sz - z0);
     if ((dx * dx + dz * dz) * cs * cs > catchment * catchment) continue;
-    float q = quality(l);
-    float g = w * std::sqrt(dx * dx + dz * dz) + 6 * rndFloat(s, 0, 1 - 0.8f * attr(st)) + rndFloat(s, 1, 2 - 0.8f * q) * st.cost + fare(l);
+    float q = quality(int(n));
+    // the two random terms in this order (as the build before named them; written out so no compiler may swap them)
+    float waitTerm = rndFloat(s, 0, 1 - 0.8f * attr(st));
+    float rideTerm = rndFloat(s, 1, 2 - 0.8f * q);
+    float g = w * std::sqrt(dx * dx + dz * dz) + 6 * waitTerm + rideTerm * st.cost + fare(int(n));
     uint32_t mask = 1u << l.type;
     if (best[n] < 0 || g < best[n]) {
       best[n] = g;
@@ -1436,7 +1533,7 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
     int arr = nextNode(s, e.node);
     const LineStopState& as = nodeState(s, arr);
     int ax, az;
-    stopCells(as.item, ax, az);
+    stopCells(arr, ax, az);
     if (std::abs(ax - x1) <= 50 && std::abs(az - z1) <= 50) {  // alight here and walk
       float dx = float(ax - x1), dz = float(az - z1), total = e.g + w * std::sqrt(dx * dx + dz * dz);
       if (bestNode < 0 || total < bestTotal) bestTotal = total, bestNode = e.node;
@@ -1449,17 +1546,17 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
       parent[size_t(n)] = e.node;
       open.push({g, mask, n});
     };
-    const LineState& l = nodeLine(s, e.node);
-    relax(arr, e.g + rndFloat(s, 1, 2 - 0.8f * quality(l)) * as.cost + 5.0f, e.paid);  // ride on
+    relax(arr, e.g + rndFloat(s, 1, 2 - 0.8f * quality(e.node)) * as.cost + 5.0f, e.paid);  // ride on
     for (int t : nodeState(s, e.node).transfers) {
       const LineStopState& ts = nodeState(s, t);
       const LineState& tl = nodeLine(s, t);
       int tx, tz;
-      stopCells(ts.item, tx, tz);
+      stopCells(t, tx, tz);
       float dx = float(tx - ax), dz = float(tz - az);
       uint32_t bit = 1u << tl.type;
-      float g = e.g + w * std::sqrt(dx * dx + dz * dz) + 6 * rndFloat(s, 2, 3 - 0.8f * attr(ts)) +
-                rndFloat(s, 1, 2 - 0.8f * quality(tl)) * ts.cost + ((e.paid & bit) ? 0.0f : fare(tl));
+      float waitTerm = rndFloat(s, 2, 3 - 0.8f * attr(ts));  // in this order, as above
+      float rideTerm = rndFloat(s, 1, 2 - 0.8f * quality(t));
+      float g = e.g + w * std::sqrt(dx * dx + dz * dz) + 6 * waitTerm + rideTerm * ts.cost + ((e.paid & bit) ? 0.0f : fare(t));
       relax(t, g, e.paid | bit);
     }
   }
@@ -1472,7 +1569,7 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
   uint32_t types = 0;
   for (int n : out.nodes) {
     const LineState& l = nodeLine(s, n);
-    if (!(types & (1u << l.type))) fareSum += fare(l), types |= 1u << l.type;
+    if (!(types & (1u << l.type))) fareSum += fare(n), types |= 1u << l.type;
   }
   return true;
 }
@@ -1571,6 +1668,9 @@ void startTrip(SimState& s, int ci) {
     }
   } else {
     c.flags = (c.flags & ~kStateMask) | kDrive;
+    // D ≥ 0 here: the search above found this path; stepDrive takes it instead of searching again
+    c.drivePath = std::move(drive);
+    c.drivePathFrom = c.driveStart, c.drivePathTo = c.driveEnd, c.drivePathVersion = s.graph.laneVersion;
     if (!utility) {
       ++s.driveCount[cls];
       if (hasRoute) {
@@ -1697,7 +1797,11 @@ void stepDrive(SimState& s, int ci) {
   if (!canEnter(s, c.driveStart, -2, false)) return;  // wait until the spawn node is free
   std::vector<int> path;
   float cost = 0;
-  if (!s.graph.search(c.driveStart, c.driveEnd, false, path, cost) || path.empty()) {
+  bool priced = !c.drivePath.empty() && c.drivePathFrom == c.driveStart && c.drivePathTo == c.driveEnd &&
+                c.drivePathVersion == s.graph.laneVersion;
+  if (priced) path = std::move(c.drivePath);
+  c.drivePath = std::vector<int>();
+  if (!priced && (!s.graph.search(c.driveStart, c.driveEnd, false, path, cost) || path.empty())) {
     fireCitizens(s, ci, u"onCitizenArrive");
     endTrip(s, ci, false);
     return;
@@ -2300,6 +2404,70 @@ void loadCitizens(VM& vm, GridObj* grid, SimState& s, const std::vector<uint8_t>
            loaded, waiting, riding, homes, free, droppedHomes, s.characters.size() - s.freeCharacters.size());
 }
 
+namespace {
+
+const std::string& characterAnimName(const Character& ch, bool current) { return animName(current ? ch.anim.current : ch.anim.previous); }
+
+// FNV-1a over the state the citizen step reads and writes (REGS_DEBUG_SIM_DIGEST)
+struct Digest {
+  uint64_t h = 1469598103934665603ull;
+  void bytes(const void* p, size_t n) {
+    for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const uint8_t*>(p)[i]) * 1099511628211ull;
+  }
+  template <class T> void add(const T& v) { bytes(&v, sizeof v); }
+  void add(const std::string& v) { add(v.size()), bytes(v.data(), v.size()); }
+  void add(const Vec3& v) { add(v.x), add(v.y), add(v.z); }
+};
+
+void logSimDigest(SimState& s, long long step) {
+  Digest cit, chars, anim, cars, lines;
+  int alive = 0, walkers = 0;
+  for (const Citizen& c : s.citizens) {
+    cit.add(c.alive);
+    if (!c.alive) continue;
+    ++alive;
+    for (int v : {int(c.flags), int(c.id), int(c.tripQueue), int(c.usedTransport), c.cycleTimer, c.waitTime, c.character,
+                  c.car, c.lineNode, c.vehicle, c.home, c.work, c.start, c.target, c.charModel, c.carModel, c.driveStart,
+                  c.driveEnd, int(c.hasRoute), int(c.toCar), c.replanFrom, c.route.leg})
+      cit.add(v);
+    cit.add(c.route.cost);
+    cit.add(c.route.nodes.size());
+    for (int n : c.route.nodes) cit.add(n);
+  }
+  for (const Character& ch : s.characters) {
+    chars.add(ch.alive);
+    if (!ch.alive) continue;
+    ++walkers;
+    chars.add(ch.model), chars.add(ch.citizen), chars.add(ch.next), chars.add(ch.pos), chars.add(ch.yaw);
+    chars.add(ch.speed), chars.add(ch.virtualLeft), chars.add(ch.goal), chars.add(ch.animal);
+    chars.add(ch.path.size());
+    for (uint32_t q : ch.path) chars.add(q);
+    anim.add(characterAnimName(ch, true)), anim.add(characterAnimName(ch, false));
+    for (float f : {ch.anim.currentPos, ch.anim.previousPos, ch.anim.fade, ch.anim.currentFactor, ch.anim.previousFactor})
+      anim.add(f);
+  }
+  for (const Mover& m : s.movers) {
+    cars.add(m.live);
+    if (!m.live) continue;
+    cars.add(m.dist), cars.add(m.speed), cars.add(m.citizen), cars.add(m.parked);
+  }
+  for (const VehicleState& v : s.vehicles) lines.add(v.passengerCount), lines.add(v.boardingReserved), lines.add(v.passengersTransported);
+  for (const LineState& l : s.lines) {
+    lines.add(l.avgWait);
+    for (const LineStopState& st : l.stops) {
+      lines.add(st.waiting), lines.add(st.passengersTransported), lines.add(st.waitingTime);
+      for (int k = 0; k < 3; ++k) lines.add(st.mood[k]);
+    }
+  }
+  LOG_INFO("sim digest %lld: seed %08x, citizens %d %016llx, walkers %d %016llx anim %016llx, movers %016llx, lines %016llx; "
+           "trips %d boarded %d alighted %d cars %d walks %d failed %d",
+           step, s.seed, alive, (unsigned long long)cit.h, walkers, (unsigned long long)chars.h, (unsigned long long)anim.h,
+           (unsigned long long)cars.h, (unsigned long long)lines.h, s.trips, s.boarded, s.alighted, s.carsSpawned,
+           s.walkPaths, s.walkFailed);
+}
+
+}  // namespace
+
 void stepCitizens(VM& vm, SimState& s, float dt) {
   if (!s.citizensLoaded || !s.citizensModule || !s.citizensModule->enabled()) return;
   // every free home slot gets a citizen (§2.2)
@@ -2336,6 +2504,12 @@ void stepCitizens(VM& vm, SimState& s, float dt) {
   stepAnimals(vm, s, dt);
   for (Character& ch : s.characters)
     if (ch.alive && ch.animal != 1) stepCharacter(s, ch, dt);
+  // REGS_DEBUG_SIM_DIGEST=<n> (tests): every n citizen steps a digest of the simulation state (the random stream, the
+  // citizens, pedestrians with their walk animation, movers, line vehicles and stops, the trip counters), so two builds
+  // run with REGS_FIXED_DT from the same start can be compared step by step
+  static const int digestEvery = regs::envVar("REGS_DEBUG_SIM_DIGEST") ? std::atoi(regs::envVar("REGS_DEBUG_SIM_DIGEST")) : 0;
+  static long long digestSteps = 0;
+  if (digestEvery > 0 && ++digestSteps % digestEvery == 0) logSimDigest(s, digestSteps);
   // REGS_DEBUG_VISITS (2026-11-16): every 30 grid-seconds the share of the items the port carries (kItemPortHidden: the
   // OSM import's visitors at sights and in its procedural buildings) in the pools and in the citizens' homes, jobs and
   // trips
