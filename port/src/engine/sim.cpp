@@ -2201,10 +2201,15 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
           std::string name = list.substr(p, q - p);
           p = q + 1;
           if (name.empty()) continue;
-          LOG_INFO("test: calling scenario function %s", name.c_str());
+          int arg = 0;  // name=arg passes an integer argument (default 0)
+          if (size_t eq = name.find('='); eq != std::string::npos) {
+            arg = std::atoi(name.c_str() + eq + 1);
+            name.resize(eq);
+          }
+          LOG_INFO("test: calling scenario function %s(%d)", name.c_str(), arg);
           try {
             vm.call(vm.getMember(vm.getMember(*main, u"$scenario"), u"callFunction"),
-                    {Value::string(utf8ToUtf16(name)), Value::integer(0)});
+                    {Value::string(utf8ToUtf16(name)), Value::integer(arg)});
           } catch (...) {
             LOG_WARN("test: %s failed", name.c_str());
           }

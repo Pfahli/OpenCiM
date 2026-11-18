@@ -158,9 +158,16 @@ modes (the editor's roads, terrain and paint tools come later):
   (F2); the tutorial through its first task. Fixed on the way (were stubs): `gsGridCitizens.getCharacter`,
   `clearGameData`, `resetTraffic` (new games' pre-simulation) and the debug console's `trimFirstLines`. Script
   quirk kept as in the original: `monthlyProfit` uses the previous month's fares (§2 of the spec).
-- [ ] Still to run: the tutorial past its first tasks (needs building), scenarios 3–12, a whole campaign; the
-  demonstrations and parades (`gsGridItemController.activate`/`deactivate` are stubs, the ticker shows but the
-  crowd items do not appear); `setClusterData` (scenario 4).
+- [x] Demonstrations and parades: `gsGridItemController.activate`/`deactivate` set a per-item type override
+  (marker hidden / none drawn); Vienna's demonstration crowd appears in front of the town hall
+  (Vulkan, `REGS_TEST_SCENARIO_CALL=60:start_demonstration=30`, the `=arg` form is new) and is gone again when a
+  1-day demonstration ends (GL). The parade (`start_parade=30`, one item at cell 498,492 by the cathedral) shows its
+  marching columns and vans on the street; road traffic still drives through it (not compared with the original). Left: the lane/walk graph is not
+  rebuilt on the call, picking ignores the override, the override is not saved. `setClusterData` (scenario 4) is
+  ported (clusters.bmp, citizens pick workplaces and visit places in their home's cluster) but not run yet.
+- [ ] Still to run: the tutorial past its first tasks (needs building), scenarios 3–12 (scenario 4 for
+  `setClusterData`), a whole campaign. This branch has no `REGS_START` start switch (other branches do), so scenario
+  runs need the menu clicks.
 - [x] Statistics and graphs: `gsGraphCtrl` (`setArg`, `update`, `reset`, `setColor`, `getColor`, its fields and the
   automatic update) draws series strips, the grid and the value labels as the original computes them
   (`engine/ui_graphs.cpp`, spec `docs/ui/graphs.md`). The graphs panel (12 company and economy graphs, the 12–60 month

@@ -281,6 +281,25 @@ bool acceptDistance(SimState& s, int home, int cand) {
   return int64_t(rnd(s) & 0xfff) <= 0x20000000LL / (d2 + 0x20000);
 }
 
+// gsGridCitizens.setClusterData(bmp) (L:0x081584f0 = W:0x100ce8d0, scenario 4): per map cell the red byte of the
+// image (gsColorMap, rows top-down), kept by the citizens module (+0x84c); null until a script sets it
+std::map<const Object*, std::vector<uint8_t>> clusterMaps;
+
+// selectWorkPlace / selectVisitPlace (L:0x0815c950 / 0x0815cb00): with cluster data, a candidate whose footprint
+// corner cell has another cluster byte than the home's is drawn again (index x + z·grid width)
+bool sameCluster(SimState& s, int home, int cand) {
+  if (clusterMaps.empty()) return true;
+  auto m = clusterMaps.find(module(s));
+  if (m == clusterMaps.end() || m->second.empty()) return true;
+  const GridData& g = *s.grid->data;
+  const auto& a = g.items[size_t(home)];
+  const auto& b = g.items[size_t(cand)];
+  size_t ia = size_t(a.z) * size_t(g.width) + size_t(a.x), ib = size_t(b.z) * size_t(g.width) + size_t(b.x);
+  const auto& cl = m->second;
+  uint8_t ca = ia < cl.size() ? cl[ia] : 0, cb = ib < cl.size() ? cl[ib] : 0;
+  return ca == cb;
+}
+
 int findWorkplace(SimState& s, const Citizen& c) {
   int cls = int(c.flags & 0xf);
   auto& pool = s.freeWork[cls];
@@ -288,7 +307,7 @@ int findWorkplace(SimState& s, const Citizen& c) {
   for (int t = 0; t < 32; ++t) {
     int r1 = rnd(s), r2 = rnd(s);
     size_t idx = size_t(((r2 << 12) | (r1 & 0xfff))) % pool.size();
-    if (!acceptDistance(s, c.home, pool[idx])) continue;
+    if (!sameCluster(s, c.home, pool[idx]) || !acceptDistance(s, c.home, pool[idx])) continue;
     int item = pool[idx];
     pool[idx] = pool.back();
     pool.pop_back();
@@ -304,6 +323,7 @@ int findPlace(SimState& s, const Citizen& c, int type) {
   for (int t = 0; t < 32; ++t) {
     int r1 = rnd(s), r2 = rnd(s);
     int cand = pool[size_t(((r2 << 12) | (r1 & 0xfff))) % pool.size()];
+    if (!sameCluster(s, c.home, cand)) continue;
     ItemInfo info = itemInfo(s, cand);
     if (info.tpl && (info.tpl->barredVisitors & (1u << cls))) continue;
     if (type >= 3 && type <= 5)
@@ -461,7 +481,7 @@ bool stampWalkItem(SimState& s, size_t i, int rx0, int rz0, int rx1, int rz1, bo
   if ((it.flags & 0x500000) || it.removed) return false;
   if (g.curveAnchors.count(uint32_t(i))) return false;  // port: a curve stop's anchor (the curve stamps its pavement)
   ItemInfo info = itemInfo(s, int(i));
-  if (!info.tpl || info.type == 0x15 || info.type == 0x13) return false;  // markers, trees
+  if (!info.tpl || gridItemType(it, info.type) == 0x15 || info.type == 0x13) return false;  // markers, trees
   int w = (it.orient & 1) ? info.sz : info.sx, l = (it.orient & 1) ? info.sx : info.sz;  // template size
   const std::vector<int32_t>* ydata = walkHeightMap(s, info.tpl, w, l);
   bool deck = (info.flags & 0xc001) || ydata;
@@ -2767,6 +2787,23 @@ void registerCitizenNatives(VM& vm) {
     if (it == s->citizenById.end()) it = s->citizenById.begin();
     Object* c = citizenController(*s, it->second);
     return c ? Value::heap(VT::Object, c) : Value::null();
+  });
+
+  implement(vm, "gsGridCitizens", u"setClusterData", [](VM& v, Object* o, int, const Value* a) {
+    std::string path = utf16ToUtf8(v.toStr(a[0]));
+    std::vector<uint8_t> file;
+    int w = 0, h = 0;
+    std::vector<uint32_t> px;
+    auto& out = clusterMaps[o];
+    out.clear();
+    if (!v.vfs().read(path, file) || !parseBmp(file, w, h, px)) {
+      LOG_WARN("setClusterData: cannot read %s", path.c_str());
+      return Value();
+    }
+    out.resize(px.size());
+    for (size_t i = 0; i < px.size(); ++i) out[i] = uint8_t(px[i] >> 16);
+    LOG_INFO("setClusterData: %s, %dx%d", path.c_str(), w, h);
+    return Value();
   });
 
   // resetTraffic (0x100ce9b0, L:0x0815b960; presimulate.script before a new game's 125 s of pre-simulation): every

@@ -665,7 +665,7 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
   if (!(it.flags & 0x500000)) hideWaterUnder(G, g, it, sx, sz, itemHeight(g, it, tp.flags, tp.type), tp.height);
   if (!tp.paths || tp.paths->paths.empty()) return;
   // FUN_100ecbf0: no paths for temporary or hidden items and markers
-  if ((it.flags & 0x500000) || tp.type == 0x15) return;
+  if ((it.flags & 0x500000) || gridItemType(it, tp.type) == 0x15) return;
   const float cs = g.cellSize;
   // the item placement of the renderer (grid-items.md §2.2): turn by (orient + 2)·90°, then to the item centre
   Vec3 T{(2.0f * float(it.x) + float(sx - g.width)) * cs * 0.5f, float(itemHeight(g, it, tp.flags, tp.type)) * cs / 256.0f,

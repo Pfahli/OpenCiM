@@ -38,6 +38,9 @@ struct GridData {
     // port: a uniform size factor on the template's model (2026-11-16, owner: statues sized as OSM has them), drawn only
     // (the cells stay the template's); saved with yaw (bit 30 of the section's count)
     float scale = 1;
+    // gsGridItemController.activate / deactivate (L:0x08187650 / 0x08187610) set the item's own type (gsGridItem +0x58)
+    // to GRID_ITEM_NONE (0) or GRID_ITEM_MARKER (0x15); -1: the template's type (not saved)
+    int8_t typeOverride = -1;
   };
   std::vector<std::string> types;
   std::vector<Item> items;
@@ -154,6 +157,9 @@ inline bool itemOffGrid(const GridData::Item& it) { return it.yaw != 0 || it.off
 // per item off the grid its 1-based saved index (savedItemRefs), the angle, (bit 31) offX, offZ and (bit 30) the scale
 // as floats
 constexpr uint32_t kItemTurnSectionTag = 0x07F10000;
+
+// the item's GRID_ITEM type: its activate/deactivate override, else the template's
+inline int gridItemType(const GridData::Item& it, int templateType) { return it.typeOverride >= 0 ? it.typeOverride : templateType; }
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);
 
