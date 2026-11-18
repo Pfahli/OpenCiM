@@ -21,6 +21,7 @@
 #include "render/gpu.h"
 #include "engine/display.h"
 #include "engine/grid.h"
+#include "engine/grid_edit.h"
 #include "engine/grid_render.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
@@ -147,6 +148,7 @@ struct LampCache {
   struct Head {
     Vec3 pos;
     float onAt = 0.4f;  // night01 at which this lamp switches on (a small stagger over the dusk)
+    uint32_t item = 0;
   };
   std::vector<Head> heads;
 };
@@ -198,39 +200,55 @@ bool ownGlow(const ObjectData& od) {
   return false;
 }
 
+bool lampTemplate(const GridTemplate& tp) {
+  return tp.object && tp.object->data && isLampTemplate(tp.object->pendingPath) && !ownGlow(*tp.object->data) &&
+         !headsOf(*tp.object->data, tp.object->pendingPath).empty();
+}
+
+// the lamp heads of item i in world space (isLamp: per template, 1 = a lamp; null: looked up)
+void itemHeads(const GridData& g, const TerrainCache& tc, uint32_t i, const std::vector<uint8_t>* isLamp,
+               std::vector<LampCache::Head>& out) {
+  constexpr uint32_t kHidden = 0x400000;
+  const GridData::Item& it = g.items[i];
+  if (it.removed || it.type >= tc.typeTemplate.size()) return;
+  int ti = tc.typeTemplate[it.type];
+  if (ti < 0 || !(isLamp ? (*isLamp)[size_t(ti)] != 0 : lampTemplate(tc.templates[size_t(ti)]))) return;
+  const GridTemplate& tp = tc.templates[size_t(ti)];
+  if ((it.flags | tp.flags) & kHidden) return;
+  int div = itemDivision(g, tc, i);
+  if (div < 0) return;
+  Mat4 world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
+  uint32_t k = 0;
+  for (const Vec3& h : headsOf(*tp.object->data, tp.object->pendingPath)) {
+    LampCache::Head head;
+    head.pos = transformPoint(world, h);
+    head.onAt = 0.36f + 0.14f * hash01(uint32_t(it.x) * 7919u ^ uint32_t(it.z) * 104729u ^ k++);
+    head.item = i;
+    out.push_back(head);
+  }
+}
+
 // the lamp heads of the map in world space, in item order
 std::vector<LampCache::Head> collectHeads(GridObj* grid) {
   const GridData& g = *grid->data;
   const TerrainCache& tc = *grid->terrain;
-  constexpr uint32_t kHidden = 0x400000;
   std::vector<uint8_t> isLamp(tc.templates.size(), 0);
-  for (size_t t = 0; t < tc.templates.size(); ++t) {
-    const GridTemplate& tp = tc.templates[t];
-    if (tp.object && tp.object->data && isLampTemplate(tp.object->pendingPath) && !ownGlow(*tp.object->data) &&
-        !headsOf(*tp.object->data, tp.object->pendingPath).empty())
-      isLamp[t] = 1;
-  }
+  for (size_t t = 0; t < tc.templates.size(); ++t) isLamp[t] = lampTemplate(tc.templates[t]);
   std::vector<LampCache::Head> heads;
-  for (uint32_t i = 0; i < g.items.size(); ++i) {
-    const GridData::Item& it = g.items[i];
-    if (it.removed || it.type >= tc.typeTemplate.size()) continue;
-    int ti = tc.typeTemplate[it.type];
-    if (ti < 0 || !isLamp[size_t(ti)]) continue;
-    const GridTemplate& tp = tc.templates[size_t(ti)];
-    if ((it.flags | tp.flags) & kHidden) continue;
-    int div = itemDivision(g, tc, i);
-    if (div < 0) continue;
-    Mat4 world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
-    uint32_t k = 0;
-    for (const Vec3& h : headsOf(*tp.object->data, tp.object->pendingPath)) {
-      LampCache::Head head;
-      head.pos = transformPoint(world, h);
-      head.onAt = 0.36f + 0.14f * hash01(uint32_t(it.x) * 7919u ^ uint32_t(it.z) * 104729u ^ k++);
-      heads.push_back(head);
-    }
-  }
+  for (uint32_t i = 0; i < g.items.size(); ++i) itemHeads(g, tc, i, &isLamp, heads);
   return heads;
 }
+
+}  // namespace
+
+// live edits of the items since `version` for a cache of the renderer's item data (night and traffic lights): false
+// when the batches are not kept or the renderer has not registered every type yet (collectGrid does that earlier in
+// the frame, syncGridItems); then the cache walks all items
+bool renderItemsTouchedSince(const GridObj* grid, uint64_t version, std::vector<uint32_t>& touched) {
+  return grid->data->types.size() <= grid->terrain->typeTemplate.size() && gridItemsTouchedSince(grid, version, touched);
+}
+
+namespace {
 
 constexpr float kPoolRadius = 14.0f;
 
@@ -273,14 +291,59 @@ void updateLampMap(Display& d, GridObj* grid, LampCache& lc) {
   auto t0 = std::chrono::steady_clock::now();
   const GridData& g = *grid->data;
   const TerrainCache& tc = *grid->terrain;
-  std::vector<LampCache::Head> heads = collectHeads(grid);
+  bool full = !lc.texture || lc.builtFor != grid->generation;
+  // live edits (a tool preview on every mouse move): the heads of the touched items only, and the heads that differ
+  // straight from them (the full walk below finds them by comparing all heads)
+  static std::vector<uint32_t> touched;
+  std::vector<LampCache::Head> heads, changed;
+  bool known = false;  // `changed` holds the differing heads
+  if (!full && lc.generation == grid->generation && renderItemsTouchedSince(grid, lc.itemsVersion, touched)) {
+    std::vector<LampCache::Head> fresh, dropped;
+    for (uint32_t i : touched)
+      if (i < g.items.size()) itemHeads(g, tc, i, nullptr, fresh);
+    heads = lc.heads;
+    gridMergeTouched(heads, touched, fresh, [&](LampCache::Head& old, LampCache::Head*) { dropped.push_back(old); });
+    // (fresh was moved into heads: its heads are those of the touched items there)
+    for (const auto& h : heads)
+      if (std::binary_search(touched.begin(), touched.end(), h.item)) fresh.push_back(h);
+    auto key = [](const LampCache::Head& a, const LampCache::Head& b) {
+      return std::tie(a.pos.x, a.pos.y, a.pos.z) < std::tie(b.pos.x, b.pos.y, b.pos.z);
+    };
+    std::sort(dropped.begin(), dropped.end(), key);
+    std::sort(fresh.begin(), fresh.end(), key);
+    std::set_symmetric_difference(dropped.begin(), dropped.end(), fresh.begin(), fresh.end(), std::back_inserter(changed), key);
+    known = true;
+    if (gridDebugItemCaches()) {
+      std::vector<LampCache::Head> all = collectHeads(grid);
+      bool same = all.size() == heads.size();
+      for (size_t k = 0; same && k < all.size(); ++k)
+        same = all[k].item == heads[k].item && all[k].pos.x == heads[k].pos.x && all[k].pos.y == heads[k].pos.y &&
+               all[k].pos.z == heads[k].pos.z && all[k].onAt == heads[k].onAt;
+      gridItemCacheChecked("lamp heads", same);
+    }
+  } else {
+    heads = collectHeads(grid);
+  }
+  lc.generation = grid->generation;
+  lc.itemsVersion = grid->itemsVersion;
   auto same = [](const LampCache::Head& a, const LampCache::Head& b) {
     return a.pos.x == b.pos.x && a.pos.y == b.pos.y && a.pos.z == b.pos.z;
   };
-  bool full = !lc.texture || lc.builtFor != grid->generation;
   float yMin = 1e30f, yMax = -1e30f;
-  for (const auto& h : heads) yMin = std::min(yMin, h.pos.y), yMax = std::max(yMax, h.pos.y);
-  if (!full) {
+  if (known) {
+    if (changed.empty()) {
+      lc.heads = std::move(heads);
+      return;
+    }
+    for (const auto& h : changed) yMin = std::min(yMin, h.pos.y), yMax = std::max(yMax, h.pos.y);
+    if (yMin < lc.y0 || yMax > lc.y0 + lc.yScale) {  // out of the height encoding: all again, its range from all heads
+      full = true;
+      yMin = 1e30f, yMax = -1e30f;
+    }
+  }
+  if (!known || full)
+    for (const auto& h : heads) yMin = std::min(yMin, h.pos.y), yMax = std::max(yMax, h.pos.y);
+  if (!full && !known) {
     if (heads.size() == lc.heads.size() && std::equal(heads.begin(), heads.end(), lc.heads.begin(), same)) return;
     if (!heads.empty() && (yMin < lc.y0 || yMax > lc.y0 + lc.yScale)) full = true;  // out of the height encoding
   }
@@ -307,10 +370,15 @@ void updateLampMap(Display& d, GridObj* grid, LampCache& lc) {
     auto key = [](const LampCache::Head& a, const LampCache::Head& b) {
       return std::tie(a.pos.x, a.pos.y, a.pos.z) < std::tie(b.pos.x, b.pos.y, b.pos.z);
     };
-    std::vector<LampCache::Head> a = lc.heads, b = heads, diff;
-    std::sort(a.begin(), a.end(), key);
-    std::sort(b.begin(), b.end(), key);
-    std::set_symmetric_difference(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(diff), key);
+    std::vector<LampCache::Head> diff;
+    if (known) {
+      diff = std::move(changed);
+    } else {
+      std::vector<LampCache::Head> a = lc.heads, b = heads;
+      std::sort(a.begin(), a.end(), key);
+      std::sort(b.begin(), b.end(), key);
+      std::set_symmetric_difference(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(diff), key);
+    }
     if (diff.empty()) {
       lc.heads = std::move(heads);  // the same heads in another order
       return;
@@ -325,6 +393,12 @@ void updateLampMap(Display& d, GridObj* grid, LampCache& lc) {
   }
   lc.heads = std::move(heads);
   splatRect(lc, x0, z0, x1, z1);
+  if (known && !full && gridDebugItemCaches()) {  // the area against the whole map splatted again
+    LampCache all = lc;
+    std::fill(all.px.begin(), all.px.end(), uint8_t(0));
+    splatRect(all, 0, 0, all.w - 1, all.h - 1);
+    gridItemCacheChecked("lamp map", all.px == lc.px);
+  }
   // one level, linear: from the highest camera a screen pixel covers about one texel, so no mipmaps are needed
   // into the light map's upper half (all of it cleared first on a full build: a smaller map leaves no old texels)
   RenderTarget* lm = lightMap(d);
@@ -335,7 +409,11 @@ void updateLampMap(Display& d, GridObj* grid, LampCache& lc) {
     std::vector<uint8_t> zero(size_t(kLightMapSide) * kLightMapSide * 4, 0);
     render::gpu::dev().texSubImage(lm->color, 0, 0, kLightMapSide, kLightMapSide, kLightMapSide, Pixels::BGRA8, zero.data());
   }
-  render::gpu::dev().texSubImage(lm->color, 0, 0, kLightMapSide, lc.w, lc.h, Pixels::BGRA8, lc.px.data());
+  if (full || !lc.texture)
+    render::gpu::dev().texSubImage(lm->color, 0, 0, kLightMapSide, lc.w, lc.h, Pixels::BGRA8, lc.px.data());
+  else  // an area: its rows (whole rows are contiguous in px)
+    render::gpu::dev().texSubImage(lm->color, 0, 0, kLightMapSide + z0, lc.w, z1 - z0 + 1, Pixels::BGRA8,
+                                   lc.px.data() + size_t(z0) * size_t(lc.w) * 4);
   lc.texture = lm->color;  // not owned: marks the lamp map as uploaded
   LOG_INFO("night lights: %zu lamp heads, lamp map %dx%d (%s %dx%d texels) in %lld ms", lc.heads.size(), lc.w, lc.h,
            full ? "all" : "area", x1 - x0 + 1, z1 - z0 + 1,
@@ -388,11 +466,13 @@ struct BuiltUp {
   uint64_t generation = ~0ull, itemsVersion = ~0ull;
   int w = 0, h = 0;
   float ox = 0, oz = 0, cs = 3;
-  std::vector<uint8_t> cell;
+  std::vector<uint16_t> cell;     // the buildings on each cell
+  std::vector<uint8_t> building;  // per item: counted in cell (live edits take it out again)
   struct Tent {
     Vec3 pos;  // the stand's ground centre
     float radius = 3;
     uint32_t seed = 0;
+    uint32_t item = 0;
   };
   std::vector<Tent> tents;  // market stands: a lamp under each canopy
   bool cellAt(float x, float z) const {  // a building on the cell of (x, z)
@@ -410,45 +490,92 @@ struct BuiltUp {
   }
 };
 
+// a building's cells in BuiltUp::cell, counted up (+1) or down (−1)
+void stampBuilding(BuiltUp& bu, const GridTemplate& tp, const GridData::Item& it, int delta) {
+  ItemFootprint f = itemFootprint(tp.width, tp.length, 0, it.orient);  // (buildings only from here)
+  for (int z = std::max(0, int(it.z)); z < std::min(bu.h, it.z + f.sz); ++z)
+    for (int x = std::max(0, int(it.x)); x < std::min(bu.w, it.x + f.sx); ++x)
+      bu.cell[size_t(z) * size_t(bu.w) + size_t(x)] = uint16_t(bu.cell[size_t(z) * size_t(bu.w) + size_t(x)] + delta);
+}
+
+// a market stand's lamp, or false
+bool makeTent(const GridData& g, const TerrainCache& tc, uint32_t i, BuiltUp::Tent& t) {
+  const GridData::Item& it = g.items[i];
+  if (it.removed || it.type >= tc.typeTemplate.size() || tc.typeTemplate[it.type] < 0) return false;
+  const GridTemplate& tp = tc.templates[size_t(tc.typeTemplate[it.type])];
+  if (!tp.object || !tp.object->data) return false;
+  const std::string& p = tp.object->pendingPath;
+  if (p.find("marketstand") == std::string::npos) return false;
+  int div = itemDivision(g, tc, i);
+  if (div < 0) return false;
+  const MeshData& me = tp.object->data->mesh;
+  Mat4 world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
+  t.pos = transformPoint(world, Vec3{0.5f * (me.boundsMin[0] + me.boundsMax[0]), me.boundsMin[1], 0.5f * (me.boundsMin[2] + me.boundsMax[2])});
+  t.radius = 1.3f * 0.5f * std::max(me.boundsMax[0] - me.boundsMin[0], me.boundsMax[2] - me.boundsMin[2]) + 1.0f;
+  t.seed = uint32_t(it.x) * 73856093u ^ uint32_t(it.z) * 19349663u;
+  t.item = i;
+  return true;
+}
+
 void updateBuiltUp(GridObj* grid, BuiltUp& bu) {
   const GridData& g = *grid->data;
   const TerrainCache& tc = *grid->terrain;
+  auto isBuilding = [&](const GridTemplate& tp) { return tp.object && tp.object->pendingPath.find("/buildings/") != std::string::npos; };
+  // live edits (a tool preview on every mouse move): only the touched items
+  static std::vector<uint32_t> touched;
+  if (bu.generation == grid->generation && renderItemsTouchedSince(grid, bu.itemsVersion, touched)) {
+    bu.itemsVersion = grid->itemsVersion;
+    bu.building.resize(g.items.size(), 0);
+    std::vector<BuiltUp::Tent> fresh;
+    for (uint32_t i : touched) {
+      if (i >= g.items.size()) continue;
+      const GridData::Item& it = g.items[i];
+      int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
+      bool now = !it.removed && ti >= 0 && isBuilding(tc.templates[size_t(ti)]);
+      if (bool(bu.building[i]) != now && ti >= 0) {  // (an item's place and template never change)
+        stampBuilding(bu, tc.templates[size_t(ti)], it, now ? 1 : -1);
+        bu.building[i] = now;
+      }
+      BuiltUp::Tent t;
+      if (makeTent(g, tc, i, t)) fresh.push_back(t);
+    }
+    gridMergeTouched(bu.tents, touched, fresh, [](BuiltUp::Tent&, BuiltUp::Tent*) {});
+    if (gridDebugItemCaches()) {  // the full walk below, compared
+      BuiltUp full;
+      full.generation = ~0ull;
+      updateBuiltUp(grid, full);
+      bool same = full.cell == bu.cell && full.tents.size() == bu.tents.size();
+      for (size_t k = 0; same && k < full.tents.size(); ++k)
+        same = full.tents[k].item == bu.tents[k].item && full.tents[k].pos.x == bu.tents[k].pos.x &&
+               full.tents[k].pos.z == bu.tents[k].pos.z && full.tents[k].radius == bu.tents[k].radius;
+      gridItemCacheChecked("built-up cells", same);
+    }
+    return;
+  }
   bu.generation = grid->generation;
   bu.itemsVersion = grid->itemsVersion;
   bu.w = g.width, bu.h = g.length, bu.cs = g.cellSize;
   bu.ox = -(float(tc.n / 2) + float((g.width - tc.n) >> 1)) * g.cellSize;
   bu.oz = -(float(tc.n / 2) + float((g.length - tc.n) >> 1)) * g.cellSize;
   bu.cell.assign(size_t(bu.w) * size_t(bu.h), 0);
+  bu.building.assign(g.items.size(), 0);
   std::vector<int8_t> building(tc.templates.size(), -1);
-  for (const GridData::Item& it : g.items) {
+  for (uint32_t i = 0; i < g.items.size(); ++i) {
+    const GridData::Item& it = g.items[i];
     if (it.removed || it.type >= tc.typeTemplate.size()) continue;
     int ti = tc.typeTemplate[it.type];
     if (ti < 0) continue;
     const GridTemplate& tp = tc.templates[size_t(ti)];
     int8_t& b = building[size_t(ti)];
-    if (b < 0) b = tp.object && tp.object->pendingPath.find("/buildings/") != std::string::npos;
+    if (b < 0) b = isBuilding(tp);
     if (!b) continue;
-    ItemFootprint f = itemFootprint(tp.width, tp.length, 0, it.orient);  // (buildings only from here)
-    for (int z = std::max(0, int(it.z)); z < std::min(bu.h, it.z + f.sz); ++z)
-      for (int x = std::max(0, int(it.x)); x < std::min(bu.w, it.x + f.sx); ++x) bu.cell[size_t(z) * size_t(bu.w) + size_t(x)] = 1;
+    stampBuilding(bu, tp, it, 1);
+    bu.building[i] = 1;
   }
   bu.tents.clear();
   for (uint32_t i = 0; i < g.items.size(); ++i) {
-    const GridData::Item& it = g.items[i];
-    if (it.removed || it.type >= tc.typeTemplate.size() || tc.typeTemplate[it.type] < 0) continue;
-    const GridTemplate& tp = tc.templates[size_t(tc.typeTemplate[it.type])];
-    if (!tp.object || !tp.object->data) continue;
-    const std::string& p = tp.object->pendingPath;
-    if (p.find("marketstand") == std::string::npos) continue;
-    int div = itemDivision(g, tc, i);
-    if (div < 0) continue;
-    const MeshData& me = tp.object->data->mesh;
-    Mat4 world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
     BuiltUp::Tent t;
-    t.pos = transformPoint(world, Vec3{0.5f * (me.boundsMin[0] + me.boundsMax[0]), me.boundsMin[1], 0.5f * (me.boundsMin[2] + me.boundsMax[2])});
-    t.radius = 1.3f * 0.5f * std::max(me.boundsMax[0] - me.boundsMin[0], me.boundsMax[2] - me.boundsMin[2]) + 1.0f;
-    t.seed = uint32_t(it.x) * 73856093u ^ uint32_t(it.z) * 19349663u;
-    bu.tents.push_back(t);
+    if (makeTent(g, tc, i, t)) bu.tents.push_back(t);
   }
 }
 
@@ -1655,11 +1782,8 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
     if (g->data && g->terrain && !g->data->items.empty()) grid = g;
   if (!grid) return;
   LampCache& lc = lampCaches()[grid];  // built while the cycle is on, so dusk brings no hitch
-  if (lc.generation != grid->generation || lc.itemsVersion != grid->itemsVersion || !lc.texture) {
-    lc.generation = grid->generation;
-    lc.itemsVersion = grid->itemsVersion;
-    updateLampMap(d, grid, lc);
-  }
+  if (lc.generation != grid->generation || lc.itemsVersion != grid->itemsVersion || !lc.texture)
+    updateLampMap(d, grid, lc);  // (it takes the generation and version)
   const TerrainCache& tc = *grid->terrain;
   if (tc.viewMode == 0x180) return;  // the underground view: no lamps, no buildings, no vehicle lights
   Mat4 vp = v.proj * v.view;

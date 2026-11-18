@@ -11,6 +11,7 @@
 
 #include "core/log.h"
 #include "engine/api.h"
+#include "engine/grid_edit.h"
 #include "engine/grid_render.h"
 #include "engine/sim.h"
 #include "engine/sim_state.h"
@@ -290,6 +291,37 @@ void tickCharacters(SimState& s, SimSounds& ss, const Vec3& eye, float dt) {
 // gsGridItem::move (L:0x08182b10.c:122-140): the template's engineSound loops at the item centre while in range
 void tickItems(VM& vm, GridObj* grid, SimSounds& ss, const Vec3& eye, float dt) {
   if (!grid->data) return;
+  static std::vector<uint32_t> touched;
+  if (ss.itemsGeneration == grid->generation && ss.itemsVersion != grid->itemsVersion &&
+      gridItemsTouchedSince(grid, ss.itemsVersion, touched)) {
+    // live edits (a tool preview on every mouse move): only the touched items; the other loops play on
+    ss.itemsVersion = grid->itemsVersion;
+    const GridData& g = *grid->data;
+    std::vector<ItemSound> fresh;
+    for (uint32_t i : touched) {
+      if (i >= g.items.size() || g.items[i].removed || g.items[i].type >= g.types.size()) continue;
+      auto t = grid->templates.find(g.types[g.items[i].type]);
+      SoundTemplate st;
+      if (t != grid->templates.end() && soundTemplate(templateSound(t->second.get(), u"engineSound"), st))
+        fresh.push_back({i, itemCentre(vm, grid, int(i)), st});
+    }
+    gridMergeTouched(ss.items, touched, fresh, [](ItemSound& old, ItemSound* now) {
+      if (now) now->voice = old.voice, now->outOfRange = old.outOfRange;  // (the same item, still there)
+      else worldSoundStop(old.voice, "item removed");
+    });
+    if (gridDebugItemCaches()) {  // the full walk below, compared (the items)
+      std::vector<uint32_t> full, inc;
+      for (size_t i = 0; i < g.items.size(); ++i) {
+        const GridData::Item& it = g.items[i];
+        if (it.removed || it.type >= g.types.size()) continue;
+        auto t = grid->templates.find(g.types[it.type]);
+        SoundTemplate st;
+        if (t != grid->templates.end() && soundTemplate(templateSound(t->second.get(), u"engineSound"), st)) full.push_back(uint32_t(i));
+      }
+      for (const ItemSound& s : ss.items) inc.push_back(s.item);
+      gridItemCacheChecked("item sounds", full == inc);
+    }
+  }
   if (ss.itemsGeneration != grid->generation || ss.itemsVersion != grid->itemsVersion) {
     for (ItemSound& it : ss.items) worldSoundStop(it.voice, "map changed");
     ss.items.clear();

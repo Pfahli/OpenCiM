@@ -11,6 +11,7 @@
 #include "engine/display.h"
 #include "vfs/vfs.h"
 #include "engine/grid.h"
+#include "engine/grid_edit.h"
 #include "engine/grid_render.h"
 #include "engine/night_lights.h"
 #include "engine/scene3d.h"
@@ -164,9 +165,17 @@ struct Light {
   Vec3 base;         // the pole's foot
   float offset = 0;  // seconds into the cycle at time 0
 };
+// a traffic light item's pole: placement and facing
+struct Raw {
+  Vec3 pos, face;
+  Mat4 world;
+  const ObjectData* od = nullptr;
+  uint32_t item = 0;
+};
 struct Cache {
   uint64_t generation = ~0ull, itemsVersion = ~0ull;
   bool incomplete = false;  // a light's model not loaded yet (grid templates load on first use): again next frame
+  std::vector<Raw> raw;     // the light items in item order (live edits update it)
   std::vector<Light> lights;
 };
 std::map<const GridObj*, Cache>& caches() {
@@ -174,37 +183,57 @@ std::map<const GridObj*, Cache>& caches() {
   return m;
 }
 
+bool lightTemplate(const GridTemplate& tp) { return tp.object && tp.object->pendingPath.find("traffic-lights") != std::string::npos; }
+
+// item i as a traffic light (isLight: per template; null: looked up)
+void rawOf(const GridData& g, const TerrainCache& tc, uint32_t i, const std::vector<uint8_t>* isLight, std::vector<Raw>& out) {
+  const GridData::Item& it = g.items[i];
+  if (it.removed || it.type >= tc.typeTemplate.size()) return;
+  const int ti = tc.typeTemplate[it.type];
+  if (ti < 0 || !(isLight ? (*isLight)[size_t(ti)] != 0 : lightTemplate(tc.templates[size_t(ti)]))) return;
+  const int div = itemDivision(g, tc, i);
+  if (div < 0) return;
+  Raw r;
+  r.od = tc.templates[size_t(ti)].object->data.get();
+  r.world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
+  r.pos = transformPoint(r.world, Vec3{0, 0, 0});
+  const Vec3 f = transformPoint(r.world, Vec3{1, 0, 0});  // (the lenses look along the model's +x)
+  r.face = Vec3{f.x - r.pos.x, 0, f.z - r.pos.z};
+  r.item = i;
+  out.push_back(r);
+}
+
 void collect(script::VM& vm, GridObj* grid, Cache& c) {
   c.lights.clear();
-  c.incomplete = false;
   const GridData& g = *grid->data;
   const TerrainCache& tc = *grid->terrain;
-  std::vector<uint8_t> isLight(tc.templates.size(), 0);
-  for (size_t t = 0; t < tc.templates.size(); ++t) {
-    const GridTemplate& tp = tc.templates[t];
-    if (tp.object && tp.object->pendingPath.find("traffic-lights") != std::string::npos) isLight[t] = 1;
+  // live edits (a tool preview on every mouse move): only the touched items' poles; the junctions are worked out
+  // again from all poles below (few)
+  static std::vector<uint32_t> touched;
+  if (!c.incomplete && c.generation == grid->generation && renderItemsTouchedSince(grid, c.itemsVersion, touched)) {
+    std::vector<Raw> fresh;
+    for (uint32_t i : touched)
+      if (i < g.items.size()) rawOf(g, tc, i, nullptr, fresh);
+    gridMergeTouched(c.raw, touched, fresh, [](Raw&, Raw*) {});
+    if (gridDebugItemCaches()) {  // the full walk below, compared
+      std::vector<Raw> all;
+      for (uint32_t i = 0; i < g.items.size(); ++i) rawOf(g, tc, i, nullptr, all);
+      bool same = all.size() == c.raw.size();
+      for (size_t k = 0; same && k < all.size(); ++k)
+        same = all[k].item == c.raw[k].item && all[k].pos.x == c.raw[k].pos.x && all[k].pos.z == c.raw[k].pos.z &&
+               all[k].face.x == c.raw[k].face.x && all[k].face.z == c.raw[k].face.z;
+      gridItemCacheChecked("traffic lights", same);
+    }
+  } else {
+    std::vector<uint8_t> isLight(tc.templates.size(), 0);
+    for (size_t t = 0; t < tc.templates.size(); ++t) isLight[t] = lightTemplate(tc.templates[t]);
+    c.raw.clear();
+    for (uint32_t i = 0; i < g.items.size(); ++i) rawOf(g, tc, i, &isLight, c.raw);
   }
-  struct Raw {
-    Vec3 pos, face;
-    Mat4 world;
-    const ObjectData* od = nullptr;
-  };
-  std::vector<Raw> raw;
-  for (uint32_t i = 0; i < g.items.size(); ++i) {
-    const GridData::Item& it = g.items[i];
-    if (it.removed || it.type >= tc.typeTemplate.size()) continue;
-    const int ti = tc.typeTemplate[it.type];
-    if (ti < 0 || !isLight[size_t(ti)]) continue;
-    const int div = itemDivision(g, tc, i);
-    if (div < 0) continue;
-    Raw r;
-    r.od = tc.templates[size_t(ti)].object->data.get();
-    r.world = tc.divisions[size_t(div)].world * itemPlacement(g, tc, i, div);
-    r.pos = transformPoint(r.world, Vec3{0, 0, 0});
-    const Vec3 f = transformPoint(r.world, Vec3{1, 0, 0});  // (the lenses look along the model's +x)
-    r.face = Vec3{f.x - r.pos.x, 0, f.z - r.pos.z};
-    raw.push_back(r);
-  }
+  c.generation = grid->generation;
+  c.itemsVersion = grid->itemsVersion;
+  c.incomplete = false;
+  const std::vector<Raw>& raw = c.raw;
   // junctions: the lights within 30 units of a light already in one (by 32-unit buckets)
   std::vector<int> junction(raw.size(), -1);
   std::map<std::pair<int, int>, std::vector<size_t>> bucket;
@@ -269,11 +298,8 @@ void addTrafficLights(Display& d, script::VM& vm, const std::vector<GridObj*>& g
     if (g->data && g->terrain && !g->data->items.empty()) grid = g;
   if (!grid || grid->terrain->viewMode == 0x180) return;  // (the underground view: none)
   Cache& c = caches()[grid];
-  if (c.generation != grid->generation || c.itemsVersion != grid->itemsVersion || c.incomplete) {
-    c.generation = grid->generation;
-    c.itemsVersion = grid->itemsVersion;
-    collect(vm, grid, c);
-  }
+  if (c.generation != grid->generation || c.itemsVersion != grid->itemsVersion || c.incomplete)
+    collect(vm, grid, c);  // (it takes the generation and version)
   if (c.lights.empty()) return;
   static const auto start = std::chrono::steady_clock::now();
   const float now = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();

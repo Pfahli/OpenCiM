@@ -6,6 +6,7 @@
 // then one gsMain tick (script threads, then the module tree, whose window renders and presents).
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -169,6 +170,17 @@ int main(int argc, char** argv) {
   // start show the same scene at the same frame (picture comparisons between builds)
   const char* fixedDtEnv = std::getenv("REGS_FIXED_DT");
   const float fixedDt = fixedDtEnv ? std::clamp(float(std::atof(fixedDtEnv)), 0.0f, 0.05f) : 0.0f;
+  // REGS_TEST_MOUSE_SWEEP=<first frame>,<x0>,<y0>,<x1>,<y1>,<frames> (tests, with --at actions): from that frame on the
+  // mouse moves every frame, back and forth between the two window points, <frames> frames each way (a tool preview
+  // following the mouse, docs/performance-audit.md C2)
+  struct {
+    long long first = -1;
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0, frames = 1;
+  } sweep;
+  if (const char* sw = std::getenv("REGS_TEST_MOUSE_SWEEP"))
+    if (std::sscanf(sw, "%lld,%d,%d,%d,%d,%d", &sweep.first, &sweep.x0, &sweep.y0, &sweep.x1, &sweep.y1, &sweep.frames) != 6)
+      sweep.first = -1;
+  sweep.frames = std::max(1, sweep.frames);
   while (!engine::host().quit && (maxFrames < 0 || frame < maxFrames)) {
     profilerFrame(frame);
     auto now = clock::now();
@@ -276,6 +288,17 @@ int main(int argc, char** argv) {
         e.y = my;
         input.push_back(e);
       }
+    }
+    if (d && sweep.first >= 0 && frame >= sweep.first) {
+      long long k = (frame - sweep.first) % (2 * sweep.frames);
+      float f = float(k <= sweep.frames ? k : 2 * sweep.frames - k) / float(sweep.frames);
+      mx = int(std::lround(float(sweep.x0) + float(sweep.x1 - sweep.x0) * f));
+      my = int(std::lround(float(sweep.y0) + float(sweep.y1 - sweep.y0) * f));
+      platform::InputEvent e;
+      e.type = platform::InputEvent::Type::MouseMove;
+      e.x = mx;
+      e.y = my;
+      engine::host().input.push_back(e);
     }
     if (d) engine::gamepadFrame(eng, dt, scripted.empty());  // the controller: cursor, buttons, camera
     engine::dispatchInput(eng);

@@ -127,4 +127,8 @@ std::vector<ExtraNightLight>& extraNightLights();
 void addNightLights(Display& d, script::VM& vm, const std::vector<GridObj*>& grids, script::Object* sky,
                     render::SceneView& v, render::ParticleDrawList& particles, std::vector<render::DrawItem>& items);
 
+// The items touched by live edits since `version` (gridItemsTouchedSince, engine/grid_edit.h) for the caches of the
+// night and traffic lights, which read the renderer's templates: false also while a type is not registered there yet.
+bool renderItemsTouchedSince(const GridObj* grid, uint64_t version, std::vector<uint32_t>& touched);
+
 }  // namespace regs::engine

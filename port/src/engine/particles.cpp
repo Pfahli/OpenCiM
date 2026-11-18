@@ -506,6 +506,7 @@ struct SimParticles {
     Vec3 base;
     float height = 0, radius = 0;
     uint32_t kind = 0;  // index into treeNames
+    uint32_t item = 0;
   };
   std::vector<Tree> trees;
   std::vector<std::string> treeNames;  // the trees' mesh names
@@ -703,6 +704,38 @@ void tickVehicleEmitters(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimState
 void tickItems(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimParticles& sp, const Vec3& eye, float dt) {
   if (!grid->data) return;
   const GridData& g = *grid->data;
+  static std::vector<uint32_t> touched;
+  if (sp.itemsGeneration == grid->generation && sp.itemsVersion != grid->itemsVersion &&
+      gridItemsTouchedSince(grid, sp.itemsVersion, touched)) {
+    // live edits (a tool preview on every mouse move): only the touched items; the others keep their timers
+    sp.itemsVersion = grid->itemsVersion;
+    std::vector<ItemEffects> fresh;
+    for (uint32_t i : touched) {
+      if (i >= g.items.size() || g.items[i].removed || g.items[i].type >= g.types.size()) continue;
+      auto t = grid->templates.find(g.types[g.items[i].type]);
+      Object* model = t == grid->templates.end() ? nullptr : t->second.get();
+      ModelEffects& fx = sp.itemModels[model];
+      if (!fx.resolved) resolveEffects(fx, model);
+      if (!fx.emitters.empty()) fresh.push_back({i, model, {}});
+    }
+    gridMergeTouched(sp.items, touched, fresh, [](ItemEffects& old, ItemEffects* now) {
+      if (now) now->timers = std::move(old.timers);
+    });
+    if (gridDebugItemCaches()) {  // the full walk below, compared (the item and its template)
+      std::vector<std::pair<uint32_t, Object*>> full, inc;
+      for (size_t i = 0; i < g.items.size(); ++i) {
+        const GridData::Item& it = g.items[i];
+        if (it.removed || it.type >= g.types.size()) continue;
+        auto t = grid->templates.find(g.types[it.type]);
+        Object* model = t == grid->templates.end() ? nullptr : t->second.get();
+        ModelEffects& fx = sp.itemModels[model];
+        if (!fx.resolved) resolveEffects(fx, model);
+        if (!fx.emitters.empty()) full.push_back({uint32_t(i), model});
+      }
+      for (const ItemEffects& e : sp.items) inc.push_back({e.item, e.model});
+      gridItemCacheChecked("particle items", full == inc);
+    }
+  }
   if (sp.itemsGeneration != grid->generation || sp.itemsVersion != grid->itemsVersion) {
     std::map<uint32_t, std::vector<float>> keep;  // timers of items that stay
     for (ItemEffects& it : sp.items) keep[it.item] = std::move(it.timers);
@@ -761,43 +794,85 @@ void tickItems(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimParticles& sp, 
 // the emitter's maxDistance (200 m when 0); none while the trees are hidden or in the underground view.
 constexpr size_t kMaxEmittingTrees = 500;
 
+struct TreeType {
+  int known = 0;  // 0 unknown, 1 not a tree, 2 tree
+  uint32_t kind = 0;
+  float height = 0, radius = 0;
+};
+
+// an item type as a tree emitter source (a new tree kind joins sp.treeNames)
+TreeType treeType(VM& vm, GridObj* grid, SimParticles& sp, uint16_t type) {
+  TreeType ti;
+  ti.known = 1;
+  auto t = grid->templates.find(grid->data->types[type]);
+  auto* o = t == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(t->second.get());
+  if (o && o->data && fieldInt(vm, o, u"type", 0) == 0x13) {  // GRID_ITEM_TREE
+    const render::MeshData& m = o->data->mesh;
+    ti.known = 2;
+    ti.height = m.boundsMax[1];
+    ti.radius = std::max({std::fabs(m.boundsMin[0]), std::fabs(m.boundsMax[0]), std::fabs(m.boundsMin[2]), std::fabs(m.boundsMax[2])});
+    auto n = std::find(sp.treeNames.begin(), sp.treeNames.end(), o->data->name);
+    ti.kind = uint32_t(n - sp.treeNames.begin());
+    if (n == sp.treeNames.end()) sp.treeNames.push_back(o->data->name);
+  }
+  return ti;
+}
+
+SimParticles::Tree makeTree(VM& vm, GridObj* grid, const TreeType& ti, uint32_t i) {
+  SimParticles::Tree tr;
+  tr.base = itemCentre(vm, grid, int(i));
+  tr.height = ti.height;
+  tr.radius = ti.radius;
+  tr.kind = ti.kind;
+  tr.item = i;
+  return tr;
+}
+
 void collectTrees(VM& vm, GridObj* grid, SimParticles& sp) {
   const GridData& g = *grid->data;
+  // live edits (a tool preview on every mouse move): only the touched items (the tree kinds only grow)
+  static std::vector<uint32_t> touched;
+  if (sp.treesGeneration == grid->generation && gridItemsTouchedSince(grid, sp.treesVersion, touched)) {
+    sp.treesVersion = grid->itemsVersion;
+    std::vector<SimParticles::Tree> fresh;
+    for (uint32_t i : touched) {
+      if (i >= g.items.size() || g.items[i].removed || g.items[i].type >= g.types.size()) continue;
+      TreeType ti = treeType(vm, grid, sp, g.items[i].type);
+      if (ti.known == 2 && ti.height > 0.5f) fresh.push_back(makeTree(vm, grid, ti, i));
+    }
+    gridMergeTouched(sp.trees, touched, fresh, [](SimParticles::Tree&, SimParticles::Tree*) {});
+    if (gridDebugItemCaches()) {  // the full walk below, compared (item, base and the kind's name)
+      std::vector<TreeType> types(g.types.size());
+      bool same = true;
+      size_t k = 0;
+      for (size_t i = 0; i < g.items.size() && same; ++i) {
+        const GridData::Item& it = g.items[i];
+        if (it.removed || it.type >= g.types.size()) continue;
+        TreeType& ti = types[it.type];
+        if (!ti.known) ti = treeType(vm, grid, sp, it.type);
+        if (ti.known != 2 || ti.height <= 0.5f) continue;
+        SimParticles::Tree t = makeTree(vm, grid, ti, uint32_t(i));
+        same = k < sp.trees.size() && sp.trees[k].item == t.item && sp.trees[k].base.x == t.base.x &&
+               sp.trees[k].base.y == t.base.y && sp.trees[k].base.z == t.base.z && sp.trees[k].height == t.height &&
+               sp.treeNames[sp.trees[k].kind] == sp.treeNames[t.kind];
+        ++k;
+      }
+      gridItemCacheChecked("tree emitters", same && k == sp.trees.size());
+    }
+    return;
+  }
   sp.trees.clear();
   sp.treeNames.clear();
   sp.treesGeneration = grid->generation;
   sp.treesVersion = grid->itemsVersion;
-  struct TypeInfo {
-    int known = 0;  // 0 unknown, 1 not a tree, 2 tree
-    uint32_t kind = 0;
-    float height = 0, radius = 0;
-  };
-  std::vector<TypeInfo> types(g.types.size());
+  std::vector<TreeType> types(g.types.size());
   for (size_t i = 0; i < g.items.size(); ++i) {
     const GridData::Item& it = g.items[i];
     if (it.removed || it.type >= g.types.size()) continue;
-    TypeInfo& ti = types[it.type];
-    if (!ti.known) {
-      ti.known = 1;
-      auto t = grid->templates.find(g.types[it.type]);
-      auto* o = t == grid->templates.end() ? nullptr : dynamic_cast<ObjectObj*>(t->second.get());
-      if (o && o->data && fieldInt(vm, o, u"type", 0) == 0x13) {  // GRID_ITEM_TREE
-        const render::MeshData& m = o->data->mesh;
-        ti.known = 2;
-        ti.height = m.boundsMax[1];
-        ti.radius = std::max({std::fabs(m.boundsMin[0]), std::fabs(m.boundsMax[0]), std::fabs(m.boundsMin[2]), std::fabs(m.boundsMax[2])});
-        auto n = std::find(sp.treeNames.begin(), sp.treeNames.end(), o->data->name);
-        ti.kind = uint32_t(n - sp.treeNames.begin());
-        if (n == sp.treeNames.end()) sp.treeNames.push_back(o->data->name);
-      }
-    }
+    TreeType& ti = types[it.type];
+    if (!ti.known) ti = treeType(vm, grid, sp, it.type);
     if (ti.known != 2 || ti.height <= 0.5f) continue;
-    SimParticles::Tree tr;
-    tr.base = itemCentre(vm, grid, int(i));
-    tr.height = ti.height;
-    tr.radius = ti.radius;
-    tr.kind = ti.kind;
-    sp.trees.push_back(tr);
+    sp.trees.push_back(makeTree(vm, grid, ti, uint32_t(i)));
   }
   if (debugParticles()) {
     LOG_INFO("particles: %zu trees of %zu kinds for the tree emitters", sp.trees.size(), sp.treeNames.size());
