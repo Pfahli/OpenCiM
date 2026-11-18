@@ -188,10 +188,11 @@ modes (the editor's roads, terrain and paint tools come later):
   16-point ring per boat and `collectBoatWakes` draws the ribbon with the emitter's `contrain.shader` material. Builds and
   runs on GL and Vulkan, but no wake has been seen on screen yet. `REGS_DEBUG_PARTICLES=1` logs every wake: in
   Vienna the 4 wakes are the background boats (movers 856-989, density 2/s, maxDistance 100000), all 820-955 units from
-  the camera when it follows water bus `REGS_DEBUG_FOLLOW=3:1` (mover 7), so they are culled at farZ 310. The water
-  bus itself gets no wake: either its mover is not flagged `boat` or its model has no `gsBoatContrain` child (check
-  `tickWakes`' skip conditions for line boats). Next: put the camera on a background boat, or fix the line-boat case,
-  and then check the ribbon's look (blend, alpha, width).
+  the camera when it follows water bus `REGS_DEBUG_FOLLOW=3:1` (mover 7), so they are culled at farZ 310. Fixed: the
+  wake used to need `Mover.boat`, which marks only background boats; now every mover whose model has a wake emitter
+  keeps one, and the water bus has its wake (12 points, 155 units from the camera; `port`'s test frame
+  `wake-fix-490` shows at most a faint streak behind it). Next: look at the ribbon closely (zoomed camera, moving
+  boat) on GL and Vulkan and check its blend, alpha and width (`planeSize`) against the original.
 - [ ] Fires as a simulation event (building pass, `docs/simulation/grid-traffic.md` §4.4).
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
   cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;

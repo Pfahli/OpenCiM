@@ -883,7 +883,8 @@ void testFire(VM& vm, GridObj* grid, SimParticles& sp) {
   LOG_INFO("particles: test fire at item %d (%d,%d): new item %d", item, it.x - 1, it.z - 1, fire);
 }
 
-// gsBoatContrain::emitParticle (L:0x081748b0), the ring part: each emission of a boat's wake emitter (the steady
+// gsBoatContrain::emitParticle (L:0x081748b0), the ring part, for every mover whose head unit's model has a wake
+// emitter (background boats and the water buses of the lines alike): each emission of a boat's wake emitter (the steady
 // stream of instanceMove, density per second) stores the emitter's placed position; custom0 of the ribbon is set
 // then: ((16 - count)/density + timer, 1/density, timer - count/density, 0), which contrain-alter.vertex turns into
 // the fade of each ring point by its age (v = its index) and the fade-in right behind the boat.
@@ -892,7 +893,7 @@ void tickWakes(VM& vm, SimState& s, SimParticles& sp, const Vec3& eye, float dt)
   const float timer = dd ? dd->effectTimer : 0.0f;
   for (size_t id = 0; id < s.movers.size(); ++id) {
     Mover& m = s.movers[id];
-    if (!m.live || !m.boat || m.parked || m.track.nodes.empty() || m.units.empty() || m.units[0].model < 0) {
+    if (!m.live || m.parked || m.track.nodes.empty() || m.units.empty() || m.units[0].model < 0) {
       sp.wakes.erase(id);
       continue;
     }
