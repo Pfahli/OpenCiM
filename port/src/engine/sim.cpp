@@ -69,14 +69,16 @@ bool vehicleSpawned(Object* o) {
   return v && s && v->mover >= 0 && s->movers[size_t(v->mover)].live;
 }
 
-float fieldFloat(VM& vm, const Object* o, const char16_t* name, float def) {
+float fieldFloat(VM& vm, const Object* o, const std::u16string& name, float def) {
   auto it = o->fieldValues.find(name);
   return it == o->fieldValues.end() || it->second.isNone() ? def : vm.toFloat(it->second);
 }
-int fieldInt(VM& vm, const Object* o, const char16_t* name, int def) {
+int fieldInt(VM& vm, const Object* o, const std::u16string& name, int def) {
   auto it = o->fieldValues.find(name);
   return it == o->fieldValues.end() || it->second.isNone() ? def : vm.toInt(it->second);
 }
+float fieldFloat(VM& vm, const Object* o, const char16_t* name, float def) { return fieldFloat(vm, o, std::u16string(name), def); }
+int fieldInt(VM& vm, const Object* o, const char16_t* name, int def) { return fieldInt(vm, o, std::u16string(name), def); }
 
 size_t Track::at(float s) const {
   if (nodes.empty()) return 0;

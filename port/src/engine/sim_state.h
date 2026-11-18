@@ -330,6 +330,9 @@ int rnd(SimState& s);
 float rndFloat(SimState& s, float a, float b);  // FUN_10083250: a + (b − a)·rand()/32767
 float fieldFloat(script::VM& vm, const script::Object* o, const char16_t* name, float def);
 int fieldInt(script::VM& vm, const script::Object* o, const char16_t* name, int def);
+// the same with a key kept by the caller (a literal over 7 characters builds a heap string for every lookup)
+float fieldFloat(script::VM& vm, const script::Object* o, const std::u16string& name, float def);
+int fieldInt(script::VM& vm, const script::Object* o, const std::u16string& name, int def);
 int modelFor(script::VM& vm, GridObj* grid, SimState& s, const std::string& name);
 float unitLength(const SimState& s, const Unit& u);
 // gsColorMap::getRandomColor: the model's paint for a seed (0 = no colour map)

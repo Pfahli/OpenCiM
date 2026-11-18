@@ -1427,10 +1427,12 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
   centreCells(s, toItem, x1, z1);
   float cs = s.graph.cellSize, w = cs / speed;
   size_t N = s.lineNodes.size();
-  std::vector<float> best(N, -1.0f);
-  std::vector<int> parent(N, -1);
-  std::vector<uint32_t> paid(N, 0);
-  std::vector<uint8_t> closed(N, 0);
+  // scratch kept between searches (one search per trip start, many per second at speed 10)
+  static thread_local std::vector<float> best;
+  static thread_local std::vector<int> parent;
+  static thread_local std::vector<uint32_t> paid;
+  static thread_local std::vector<uint8_t> closed;
+  best.assign(N, -1.0f), parent.assign(N, -1), paid.assign(N, 0), closed.assign(N, 0);
   struct E {
     float g;
     uint32_t paid;
@@ -1438,25 +1440,64 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
     bool operator>(const E& o) const { return g > o.g || (g == o.g && paid > o.paid); }
   };
   std::priority_queue<E, std::vector<E>, std::greater<E>> open;
-  auto stopCells = [&](int item, int& x, int& z) { centreCells(s, item, x, z); };
-  auto attr = [&](const LineStopState& st) { return st.stop ? fieldFloat(*s.vm, st.stop.get(), u"attractiveness", 1.0f) : 1.0f; };
-  auto quality = [&](const LineState& l) {
-    float a = l.object ? fieldFloat(*s.vm, l.object.get(), u"attractiveness", 1.0f) : 1.0f, mean = 0;
-    for (int vi : l.vehicles) mean += s.vehicles[size_t(vi)].attractiveness;
-    if (!l.vehicles.empty()) mean /= float(l.vehicles.size());
-    return a * mean / (1 + 0.01f * l.avgWait);
+  // the stops' and lines' script fields, the stop centres and a line's quality are read once per search: nothing
+  // changes them during it (field reads only, no script runs), so the values are the same as read at each use
+  static const std::u16string kAttractiveness = u"attractiveness", kCatchment = u"catchmentArea",
+                              kTicketPrice = u"ticketPrice", kActive = u"active";
+  struct NodeInfo {
+    int8_t usable = -1;  // −1 not yet known
+    bool centre = false;
+    int x = 0, z = 0;
   };
-  auto fare = [&](const LineState& l) {
-    float price = l.object ? fieldFloat(*s.vm, l.object.get(), u"ticketPrice", 0) : 0;
+  struct LineInfo {
+    bool qualityKnown = false, fareKnown = false;
+    float quality = 0, fare = 0;
+  };
+  static thread_local std::vector<NodeInfo> nodeInfo;
+  static thread_local std::vector<LineInfo> lineInfo;
+  nodeInfo.assign(N, NodeInfo());
+  lineInfo.assign(s.lines.size(), LineInfo());
+  auto stopCells = [&](int node, int& x, int& z) {
+    NodeInfo& ni = nodeInfo[size_t(node)];
+    if (!ni.centre) centreCells(s, nodeState(s, node).item, ni.x, ni.z), ni.centre = true;
+    x = ni.x, z = ni.z;
+  };
+  auto attr = [&](const LineStopState& st) { return st.stop ? fieldFloat(*s.vm, st.stop.get(), kAttractiveness, 1.0f) : 1.0f; };
+  auto quality = [&](int node) {
+    LineInfo& li = lineInfo[size_t(s.lineNodes[size_t(node)].first)];
+    if (!li.qualityKnown) {
+      const LineState& l = nodeLine(s, node);
+      float a = l.object ? fieldFloat(*s.vm, l.object.get(), kAttractiveness, 1.0f) : 1.0f, mean = 0;
+      for (int vi : l.vehicles) mean += s.vehicles[size_t(vi)].attractiveness;
+      if (!l.vehicles.empty()) mean /= float(l.vehicles.size());
+      li.quality = a * mean / (1 + 0.01f * l.avgWait);
+      li.qualityKnown = true;
+    }
+    return li.quality;
+  };
+  auto fareOf = [&](const LineState& l) {
+    float price = l.object ? fieldFloat(*s.vm, l.object.get(), kTicketPrice, 0) : 0;
     return std::max(price - 200.0f, 1.0f) * ps;
   };
+  auto fare = [&](int node) {
+    LineInfo& li = lineInfo[size_t(s.lineNodes[size_t(node)].first)];
+    if (!li.fareKnown) li.fare = fareOf(nodeLine(s, node)), li.fareKnown = true;
+    return li.fare;
+  };
   auto usable = [&](int node) {
-    const LineState& l = nodeLine(s, node);
-    const LineStopState& st = nodeState(s, node);
-    if (!l.object || st.item < 0 || !st.reachable || (st.flags & 1)) return false;
-    auto it = l.object->fieldValues.find(u"active");
-    bool active = it == l.object->fieldValues.end() || it->second.isNone() || s.vm->resolve(it->second).toBool();
-    return active && nextNode(s, node) >= 0 && !l.vehicles.empty();
+    NodeInfo& ni = nodeInfo[size_t(node)];
+    if (ni.usable < 0) {
+      const LineState& l = nodeLine(s, node);
+      const LineStopState& st = nodeState(s, node);
+      bool u = false;
+      if (l.object && st.item >= 0 && st.reachable && !(st.flags & 1)) {
+        auto it = l.object->fieldValues.find(kActive);
+        bool active = it == l.object->fieldValues.end() || it->second.isNone() || s.vm->resolve(it->second).toBool();
+        u = active && nextNode(s, node) >= 0 && !l.vehicles.empty();
+      }
+      ni.usable = u ? 1 : 0;
+    }
+    return ni.usable != 0;
   };
   // boarding candidates within the catchment of their departure stop
   for (size_t n = 0; n < N; ++n) {
@@ -1464,12 +1505,15 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
     const LineStopState& st = nodeState(s, int(n));
     const LineState& l = nodeLine(s, int(n));
     int sx, sz;
-    stopCells(st.item, sx, sz);
-    float catchment = st.stop ? fieldFloat(*s.vm, st.stop.get(), u"catchmentArea", 100.0f) : 100.0f;
+    stopCells(int(n), sx, sz);
+    float catchment = st.stop ? fieldFloat(*s.vm, st.stop.get(), kCatchment, 100.0f) : 100.0f;
     float dx = float(sx - x0), dz = float(sz - z0);
     if ((dx * dx + dz * dz) * cs * cs > catchment * catchment) continue;
-    float q = quality(l);
-    float g = w * std::sqrt(dx * dx + dz * dz) + 6 * rndFloat(s, 0, 1 - 0.8f * attr(st)) + rndFloat(s, 1, 2 - 0.8f * q) * st.cost + fare(l);
+    float q = quality(int(n));
+    // the two random terms in this order (as the build before named them; written out so no compiler may swap them)
+    float waitTerm = rndFloat(s, 0, 1 - 0.8f * attr(st));
+    float rideTerm = rndFloat(s, 1, 2 - 0.8f * q);
+    float g = w * std::sqrt(dx * dx + dz * dz) + 6 * waitTerm + rideTerm * st.cost + fare(int(n));
     uint32_t mask = 1u << l.type;
     if (best[n] < 0 || g < best[n]) {
       best[n] = g;
@@ -1489,7 +1533,7 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
     int arr = nextNode(s, e.node);
     const LineStopState& as = nodeState(s, arr);
     int ax, az;
-    stopCells(as.item, ax, az);
+    stopCells(arr, ax, az);
     if (std::abs(ax - x1) <= 50 && std::abs(az - z1) <= 50) {  // alight here and walk
       float dx = float(ax - x1), dz = float(az - z1), total = e.g + w * std::sqrt(dx * dx + dz * dz);
       if (bestNode < 0 || total < bestTotal) bestTotal = total, bestNode = e.node;
@@ -1502,17 +1546,17 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
       parent[size_t(n)] = e.node;
       open.push({g, mask, n});
     };
-    const LineState& l = nodeLine(s, e.node);
-    relax(arr, e.g + rndFloat(s, 1, 2 - 0.8f * quality(l)) * as.cost + 5.0f, e.paid);  // ride on
+    relax(arr, e.g + rndFloat(s, 1, 2 - 0.8f * quality(e.node)) * as.cost + 5.0f, e.paid);  // ride on
     for (int t : nodeState(s, e.node).transfers) {
       const LineStopState& ts = nodeState(s, t);
       const LineState& tl = nodeLine(s, t);
       int tx, tz;
-      stopCells(ts.item, tx, tz);
+      stopCells(t, tx, tz);
       float dx = float(tx - ax), dz = float(tz - az);
       uint32_t bit = 1u << tl.type;
-      float g = e.g + w * std::sqrt(dx * dx + dz * dz) + 6 * rndFloat(s, 2, 3 - 0.8f * attr(ts)) +
-                rndFloat(s, 1, 2 - 0.8f * quality(tl)) * ts.cost + ((e.paid & bit) ? 0.0f : fare(tl));
+      float waitTerm = rndFloat(s, 2, 3 - 0.8f * attr(ts));  // in this order, as above
+      float rideTerm = rndFloat(s, 1, 2 - 0.8f * quality(t));
+      float g = e.g + w * std::sqrt(dx * dx + dz * dz) + 6 * waitTerm + rideTerm * ts.cost + ((e.paid & bit) ? 0.0f : fare(t));
       relax(t, g, e.paid | bit);
     }
   }
@@ -1525,7 +1569,7 @@ bool transitRoute(SimState& s, int fromItem, int toItem, float speed, float ps, 
   uint32_t types = 0;
   for (int n : out.nodes) {
     const LineState& l = nodeLine(s, n);
-    if (!(types & (1u << l.type))) fareSum += fare(l), types |= 1u << l.type;
+    if (!(types & (1u << l.type))) fareSum += fare(n), types |= 1u << l.type;
   }
   return true;
 }
