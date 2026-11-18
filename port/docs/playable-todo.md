@@ -147,7 +147,8 @@ modes (the editor's roads, terrain and paint tools come later):
   quirk kept as in the original: `monthlyProfit` uses the previous month's fares (§2 of the spec).
 - [x] Demonstrations and parades: `gsGridItemController.activate`/`deactivate` set a per-item type override
   (marker hidden / none drawn); Vienna's demonstration crowd appears in front of the town hall
-  (`REGS_TEST_SCENARIO_CALL=60:start_demonstration=30`, the `=arg` form is new). Left: the lane/walk graph is not
+  (Vulkan, `REGS_TEST_SCENARIO_CALL=60:start_demonstration=30`, the `=arg` form is new) and is gone again when a
+  1-day demonstration ends (GL). Left: the lane/walk graph is not
   rebuilt on the call, picking ignores the override, the override is not saved. `setClusterData` (scenario 4) is
   ported (clusters.bmp, citizens pick workplaces and visit places in their home's cluster) but not run yet.
 - [ ] Still to run: the tutorial past its first tasks (needs building), scenarios 3–12 (scenario 4 for
