@@ -64,6 +64,21 @@ struct LaneGraph {
   // FUN_100e5fe0: the goal-biased lane search; the node sequence after start up to the goal, empty when unreachable.
   // cost = Σ length / speedLimit (seconds of travel)
   bool search(int start, int goal, bool ignoreTraffic, std::vector<int>& path, float& cost) const;
+
+ private:
+  // port: what search reads of each node, packed (the nodes are 150-byte records with two vectors; a search over
+  // the city touches tens of thousands of them): p0.x, p0.z, length / speedLimit, flags and the successors as one
+  // list. Made again when laneVersion changes; nodes added without a new version are the aircraft's and boats' inline
+  // nodes, which no lane links to (they are appended; a reused inline slot is never a successor, and a search from
+  // one has no successors in either copy). The goal's position is read from the node itself.
+  struct SearchNode {
+    float x, z, time;
+    uint32_t flags, first, count;
+  };
+  mutable std::vector<SearchNode> searchNodes_;
+  mutable std::vector<int> searchNext_;
+  mutable uint64_t searchVersion_ = ~0ull;
+  void refreshSearchNodes() const;
 };
 
 void bumpLaneVersion(LaneGraph& G);

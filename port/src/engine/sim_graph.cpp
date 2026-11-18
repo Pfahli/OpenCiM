@@ -332,12 +332,27 @@ int LaneGraph::resolve(uint32_t ref) const {
   return lane < list.size() ? list[lane] : -1;
 }
 
+void LaneGraph::refreshSearchNodes() const {
+  if (searchVersion_ != laneVersion || searchNodes_.size() > nodes.size()) {
+    searchNodes_.clear(), searchNext_.clear();
+    searchVersion_ = laneVersion;
+  }
+  for (size_t i = searchNodes_.size(); i < nodes.size(); ++i) {
+    const LaneNode& L = nodes[i];
+    searchNodes_.push_back({L.p0.x, L.p0.z, L.length / L.speedLimit, L.flags, uint32_t(searchNext_.size()), uint32_t(L.next.size())});
+    searchNext_.insert(searchNext_.end(), L.next.begin(), L.next.end());
+  }
+}
+
 bool LaneGraph::search(int start, int goal, bool ignoreTraffic, std::vector<int>& path, float& cost) const {
   path.clear();
   cost = 0;
   if (start < 0 || goal < 0) return false;
   if (start == goal) return true;
   size_t n = nodes.size();
+  refreshSearchNodes();
+  const SearchNode* sn = searchNodes_.data();
+  const int* succ = searchNext_.data();
   // scratch reused between searches: a node counts as discovered when its stamp is the current search's
   static thread_local std::vector<uint32_t> stamp;
   static thread_local std::vector<int> parent;
@@ -350,28 +365,33 @@ bool LaneGraph::search(int start, int goal, bool ignoreTraffic, std::vector<int>
     bool operator[](size_t i) const { return s[i] == v; }
     void set(size_t i) const { s[i] = v; }
   } discovered{stamp, serial};
+  // the open list: a binary heap with std::priority_queue's push and pop, its storage kept between searches
   using Entry = std::pair<float, int>;  // g, node
-  std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> open;
+  static thread_local std::vector<Entry> open;
+  open.clear();
+  auto push = [&](Entry e) { open.push_back(e), std::push_heap(open.begin(), open.end(), std::greater<Entry>()); };
   discovered.set(size_t(start));
-  open.push({0.0f, start});
+  push({0.0f, start});
   const LaneNode& gl = nodes[size_t(goal)];
-  auto viable = [&](int s) { return s == goal || !nodes[size_t(s)].next.empty(); };
+  auto viable = [&](int s) { return s == goal || sn[s].count != 0; };
   bool found = false;
   while (!open.empty()) {
-    auto [g, pi] = open.top();
-    open.pop();
+    std::pop_heap(open.begin(), open.end(), std::greater<Entry>());
+    auto [g, pi] = open.back();
+    open.pop_back();
     if (pi == goal) {
       found = true;
       break;
     }
-    const LaneNode& p = nodes[size_t(pi)];
-    for (int si : p.next) {
-      const LaneNode& s = nodes[size_t(si)];
+    const SearchNode& p = sn[pi];
+    for (uint32_t e = p.first, eEnd = p.first + p.count; e < eEnd; ++e) {
+      int si = succ[e];
+      const SearchNode& s = sn[si];
       if (discovered[size_t(si)] || (s.flags & 0x4000000) || !viable(si)) continue;
       // §4.2: travel time, cheaper towards the goal and away from the map centre
-      float dGoal = std::max(std::fabs(s.p0.x - gl.p0.x), std::fabs(s.p0.z - gl.p0.z));
-      float dCentre = std::max(std::fabs(s.p0.x), std::fabs(s.p0.z));
-      float c = s.length / s.speedLimit * (2.0f + 0.002f * dGoal - 0.001f * dCentre);
+      float dGoal = std::max(std::fabs(s.x - gl.p0.x), std::fabs(s.z - gl.p0.z));
+      float dCentre = std::max(std::fabs(s.x), std::fabs(s.z));
+      float c = s.time * (2.0f + 0.002f * dGoal - 0.001f * dCentre);
       if ((s.flags & kPathClassMask) == 0x700) c *= 0.4f;
       if ((s.flags & kPathIntersection) && !(p.flags & kPathIntersection)) c += 4.0f;
       if (s.flags & kPathLaneChange) c += 6.0f;
@@ -381,19 +401,19 @@ bool LaneGraph::search(int start, int goal, bool ignoreTraffic, std::vector<int>
       // §4.3 lookahead: a dead-end chain whose only way on is already taken is discovered but not expanded
       if (si != goal) {
         int live = 0, last = -1;
-        for (int k : s.next)
-          if (viable(k)) ++live, last = k;
-        if ((s.next.size() == 1 || (s.next.size() == 2 && live == 1)) && last >= 0 &&
-            (discovered[size_t(last)] || (nodes[size_t(last)].flags & 0x4000000)) && last != goal)
+        for (uint32_t f = s.first, fEnd = s.first + s.count; f < fEnd; ++f)
+          if (viable(succ[f])) ++live, last = succ[f];
+        if ((s.count == 1 || (s.count == 2 && live == 1)) && last >= 0 &&
+            (discovered[size_t(last)] || (sn[last].flags & 0x4000000)) && last != goal)
           continue;
       }
-      open.push({g + c, si});
+      push({g + c, si});
     }
   }
   if (!found) return false;
   for (int k = goal; k != start; k = parent[size_t(k)]) {
     path.push_back(k);
-    cost += nodes[size_t(k)].length / nodes[size_t(k)].speedLimit;
+    cost += sn[k].time;  // = length / speedLimit
   }
   std::reverse(path.begin(), path.end());
   return true;
