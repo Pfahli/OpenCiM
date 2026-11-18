@@ -20,7 +20,6 @@
 #include <iterator>
 #include <map>
 #include <mutex>
-#include <regex>
 
 namespace regs::render::vk {
 
@@ -28,27 +27,147 @@ namespace {
 
 std::once_flag g_init;
 
-// "in <type> <name>;" of a named attribute â†’ "layout(location = N) in <type> <name>;"
+// ---- plain scans for the declarations the rewrites below edit (they used to be std::regex; same matches) ----
+// A declaration starts at a line start: the start of the scan or the character after a '\n' (the regexes'
+// "(^|\n)"); "blank" is a space or tab, "word" is [A-Za-z0-9_].
+
+bool isBlank(char c) { return c == ' ' || c == '\t'; }
+bool isWord(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+size_t skipBlanks(const std::string& s, size_t i) {
+  while (i < s.size() && isBlank(s[i])) ++i;
+  return i;
+}
+size_t skipWord(const std::string& s, size_t i) {
+  while (i < s.size() && isWord(s[i])) ++i;
+  return i;
+}
+bool startsWith(const std::string& s, size_t i, const char* lit, size_t n) {
+  return s.size() >= i + n && s.compare(i, n, lit, n) == 0;
+}
+// the next line start at or after `from` (from itself counts: the start of a scan)
+size_t nextLineStart(const std::string& s, size_t from, bool fromCounts) {
+  if (fromCounts) return from;
+  size_t nl = s.find('\n', from);
+  return nl == std::string::npos ? std::string::npos : nl + 1;
+}
+
+// "[ \t]*in[ \t]+<type>[ \t]+<name>[ \t]*;" at line start p (name null: any word). Sets `in` to the keyword's position
+// and `end` past the ';'.
+bool inputDeclAt(const std::string& s, size_t p, const char* name, size_t nameLen, size_t& in, size_t& end) {
+  size_t k = skipBlanks(s, p);
+  if (!startsWith(s, k, "in", 2)) return false;
+  size_t j = k + 2, b = skipBlanks(s, j);
+  if (b == j) return false;
+  j = skipWord(s, b);
+  if (j == b) return false;
+  b = skipBlanks(s, j);
+  if (b == j) return false;
+  if (name) {
+    if (!startsWith(s, b, name, nameLen)) return false;
+    j = b + nameLen;
+  } else {
+    j = skipWord(s, b);
+    if (j == b) return false;
+  }
+  j = skipBlanks(s, j);
+  if (j >= s.size() || s[j] != ';') return false;
+  in = k;
+  end = j + 1;
+  return true;
+}
+
+// The first input declaration at a line start of s[from..], the scan starting at `from`.
+bool findInputDecl(const std::string& s, size_t from, const char* name, size_t nameLen, size_t& in, size_t& end) {
+  for (size_t p = from; p != std::string::npos && p <= s.size(); p = nextLineStart(s, p, false))
+    if (inputDeclAt(s, p, name, nameLen, in, end)) return true;
+  return false;
+}
+
+// "[ \t]*(out|in)[ \t]+(\w+)[ \t]+([\w \t,\[\]]+);" at line start p: the keyword's position, the type, the names and
+// the end past the ';'
+struct VaryingDecl {
+  size_t kw = 0, end = 0;
+  bool out = false;
+  std::string type, names;
+};
+bool isNameChar(char c) { return isWord(c) || isBlank(c) || c == ',' || c == '[' || c == ']'; }
+bool varyingDeclAt(const std::string& s, size_t p, VaryingDecl& d) {
+  size_t k = skipBlanks(s, p), j;
+  bool out;
+  if (startsWith(s, k, "out", 3)) out = true, j = k + 3;
+  else if (startsWith(s, k, "in", 2)) out = false, j = k + 2;
+  else return false;
+  size_t t0 = skipBlanks(s, j);
+  if (t0 == j) return false;
+  size_t t1 = skipWord(s, t0);
+  if (t1 == t0) return false;
+  size_t n0 = skipBlanks(s, t1);
+  if (n0 == t1) return false;
+  size_t n1 = n0;
+  while (n1 < s.size() && isNameChar(s[n1])) ++n1;
+  if (n1 > n0) {
+    if (n1 >= s.size() || s[n1] != ';') return false;
+  } else {
+    // nothing but blanks before the ';': the names take the last blank (the regex backtracked into the blanks)
+    if (n0 >= s.size() || s[n0] != ';' || n0 - t1 < 2) return false;
+    n0 = n0 - 1;
+  }
+  d.kw = k;
+  d.end = n1 + 1;
+  d.out = out;
+  d.type.assign(s, t0, t1 - t0);
+  d.names.assign(s, n0, n1 - n0);
+  return true;
+}
+bool findVaryingDecl(const std::string& s, size_t from, VaryingDecl& d) {
+  for (size_t p = from; p != std::string::npos && p <= s.size(); p = nextLineStart(s, p, false))
+    if (varyingDeclAt(s, p, d)) return true;
+  return false;
+}
+
+// "void[ \t]+main[ \t]*\([ \t]*(void)?[ \t]*\)" anywhere: its first occurrence [begin, end)
+bool findMainDecl(const std::string& s, size_t& begin, size_t& end) {
+  for (size_t v = s.find("void"); v != std::string::npos; v = s.find("void", v + 1)) {
+    size_t j = v + 4, b = skipBlanks(s, j);
+    if (b == j || !startsWith(s, b, "main", 4)) continue;
+    j = skipBlanks(s, b + 4);
+    if (j >= s.size() || s[j] != '(') continue;
+    j = skipBlanks(s, j + 1);
+    size_t close = j;
+    if (startsWith(s, j, "void", 4)) {
+      size_t k = skipBlanks(s, j + 4);
+      if (k < s.size() && s[k] == ')') close = k;
+    }
+    if (close >= s.size() || s[close] != ')') continue;
+    begin = v;
+    end = close + 1;
+    return true;
+  }
+  return false;
+}
+
+// "in <type> <name>;" of a named attribute → "layout(location = N) in <type> <name>;"
 std::string bindInputs(std::string src, const std::vector<std::pair<int, const char*>>& attribs) {
   for (const auto& [slot, name] : attribs) {
-    std::regex decl("(^|\\n)([ \\t]*)in([ \\t]+\\w+[ \\t]+" + std::string(name) + "[ \\t]*;)");
-    src = std::regex_replace(src, decl, "$1$2layout(location = " + std::to_string(slot) + ") in$3",
-                             std::regex_constants::format_first_only);
+    size_t in, end;
+    if (findInputDecl(src, 0, name, std::strlen(name), in, end))
+      src.insert(in, "layout(location = " + std::to_string(slot) + ") ");
   }
   // the other inputs (attributes no layout supplies, e.g. regs_MultiTexCoord5-7) get locations above the named ones,
   // so automatic locations never land on a named slot; the device feeds them GL's default (0, 0, 0, 1)
   int next = 8;
   for (const auto& [slot, name] : attribs) next = std::max(next, slot + 1);
-  static const std::regex other("(^|\\n)([ \\t]*)in([ \\t]+\\w+[ \\t]+\\w+[ \\t]*;)");
   std::string out;
-  std::smatch m;
-  auto it = src.cbegin();
-  while (std::regex_search(it, src.cend(), m, other)) {
-    out.append(it, m[0].first);
-    out += m[1].str() + m[2].str() + "layout(location = " + std::to_string(next++) + ") in" + m[3].str();
-    it = m[0].second;
+  size_t at = 0, in, end;
+  while (findInputDecl(src, at, nullptr, 0, in, end)) {
+    out.append(src, at, in - at);
+    out += "layout(location = " + std::to_string(next++) + ") ";
+    out.append(src, in, end - in);
+    at = end;
   }
-  out.append(it, src.cend());
+  out.append(src, at, std::string::npos);
   return out;
 }
 
@@ -58,55 +177,49 @@ std::string bindInputs(std::string src, const std::vector<std::pair<int, const c
 // table keyed by name; the fragment shader's first output gets location 0. Locations count GL's slots: a mat3 takes
 // 3, an array of n takes n.
 void matchVaryings(std::string& vs, std::string& fs) {
-  static const std::regex decl("(^|\\n)([ \\t]*)(out|in)[ \\t]+(\\w+)[ \\t]+([\\w \\t,\\[\\]]+);");
   std::map<std::string, int> loc;
   int next = 0;
   auto slots = [](const std::string& type) {
     if (type.rfind("mat", 0) == 0) return type.size() > 3 && type[3] >= '2' && type[3] <= '4' ? type[3] - '0' : 4;
     return 1;
   };
-  auto rewrite = [&](std::string& src, const char* keyword, bool fragmentOut) {
+  auto rewrite = [&](std::string& src, bool keywordOut, bool fragmentOut) {
     std::string out;
-    std::smatch m;
-    auto it = src.cbegin();
+    size_t at = 0;
     bool firstOut = true;
-    while (std::regex_search(it, src.cend(), m, decl)) {
-      out.append(it, m[0].first);
-      std::string kw = m[3].str(), type = m[4].str(), names = m[5].str();
-      bool mine = kw == keyword;
-      bool isOut = fragmentOut && kw == "out";
-      if ((mine || isOut) && names.find(',') == std::string::npos) {
-        std::string name = names, count = "1";
+    VaryingDecl d;
+    while (findVaryingDecl(src, at, d)) {
+      out.append(src, at, d.kw - at);
+      bool mine = d.out == keywordOut;
+      bool isOut = fragmentOut && d.out;
+      int where = -1;
+      if ((mine || isOut) && d.names.find(',') == std::string::npos) {
+        std::string name = d.names, count = "1";
         name.erase(0, name.find_first_not_of(" \t"));
         size_t lb = name.find('[');
         if (lb != std::string::npos) count = name.substr(lb + 1, name.find(']') - lb - 1), name = name.substr(0, lb);
         name.erase(name.find_last_not_of(" \t") + 1);
-        int at;
         if (isOut) {
-          at = firstOut ? 0 : -1;
+          where = firstOut ? 0 : -1;
           firstOut = false;
         } else {
           auto f = loc.find(name);
           if (f == loc.end()) {
             f = loc.emplace(name, next).first;
-            next += slots(type) * std::max(1, std::atoi(count.c_str()));
+            next += slots(d.type) * std::max(1, std::atoi(count.c_str()));
           }
-          at = f->second;
-        }
-        if (at >= 0) {
-          out += m[1].str() + m[2].str() + "layout(location = " + std::to_string(at) + ") " + m[0].str().substr(m[1].length() + m[2].length());
-          it = m[0].second;
-          continue;
+          where = f->second;
         }
       }
-      out += m[0].str();
-      it = m[0].second;
+      if (where >= 0) out += "layout(location = " + std::to_string(where) + ") ";
+      out.append(src, d.kw, d.end - d.kw);
+      at = d.end;
     }
-    out.append(it, src.cend());
+    out.append(src, at, std::string::npos);
     src = std::move(out);
   };
-  rewrite(vs, "out", false);  // the vertex outputs first: their order sets the locations
-  rewrite(fs, "in", true);
+  rewrite(vs, true, false);  // the vertex outputs first: their order sets the locations
+  rewrite(fs, false, true);
   // GLSL 3.30 allows locations on varyings only with this extension
   for (std::string* s : {&vs, &fs}) {
     size_t v = s->find("#version");
@@ -115,11 +228,11 @@ void matchVaryings(std::string& vs, std::string& fs) {
   }
 }
 
-// GL clip depth âˆ’1..1 â†’ Vulkan 0..1 after the shader's own main
+// GL clip depth −1..1 → Vulkan 0..1 after the shader's own main
 std::string remapDepth(std::string src) {
-  static const std::regex mainDecl("void[ \\t]+main[ \\t]*\\([ \\t]*(void)?[ \\t]*\\)");
-  if (!std::regex_search(src, mainDecl)) return src;
-  src = std::regex_replace(src, mainDecl, "void regs_vk_main()", std::regex_constants::format_first_only);
+  size_t begin, end;
+  if (!findMainDecl(src, begin, end)) return src;
+  src.replace(begin, end - begin, "void regs_vk_main()");
   src += "\nvoid main() {\n  regs_vk_main();\n  gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;\n}\n";
   return src;
 }
