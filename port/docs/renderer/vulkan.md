@@ -83,8 +83,16 @@ start-up. So:
    samplers get automatic bindings, `in`/`out` locations are matched by name across the two stages
    (`TProgram::mapIO`). Its reflection (`buildReflection`) gives every uniform's offset, type and array stride in that
    block, and every sampler's binding: that is what `uniformLocation(name)` returns on Vulkan.
-3. **Cache.** Compiling a few hundred variants costs seconds; SPIR-V is cached by a hash of the final GLSL text in
-   `Documents\OpenCiM\cache\spirv\` (a later step; the GL driver has its own cache today).
+3. **Cache.** Compiling a few hundred variants costs seconds (glslang, ~5-6 ms a program), so `vk::compileProgram`
+   keeps a disk cache in `<documents>\OpenCiM\cache\spirv\` (the OpenCiM folder, so it follows `--documents`): one
+   `.spv` file per program, named by a 64-bit hash of both GLSL sources, the attribute table, glslang's version and
+   `kCacheVersion` (`vk_shader.cpp`; bump it whenever the rewrites, the glslang options or the reflection change).
+   The file holds a second independent hash of the same key, a checksum, the SPIR-V of both stages and the reflection
+   the device needs (uniform offsets and types, sampler bindings, block size, vertex inputs, bindless). A missing,
+   corrupt, truncated or foreign entry is compiled anew and overwritten; files are written beside and renamed over.
+   `REGS_VK_CACHE=0` turns both disk caches (this one and the pipeline cache, §5) off. The device logs hits and
+   compiles at shutdown (`vulkan: SPIR-V cache: …`). The rewrites themselves are plain string scans (they were
+   `std::regex`; the scans match the same declarations, checked on every variant `regs-tool shaders` builds).
 4. The port's own built-in shaders (2D GUI, the default-shader fallback, post hooks) go the same way, so there is no
    separate offline step and no SPIR-V binaries in the repository.
 
@@ -116,11 +124,27 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
   blocks and for stream vertex data (GL's `BufferData(nullptr)` orphaning becomes "take new space in the ring").
 * **Draw state → pipelines.** Viewport, scissor, cull mode, front face, depth test/write/compare and depth bias are
   dynamic state; blend state, primitive topology, the vertex layout, the program, the attachment formats and the
-  sample count form a pipeline key, and pipelines are built on first use and cached (plus a `VkPipelineCache` saved
-  next to the SPIR-V cache).
+  sample count form a pipeline key, and pipelines are built on first use and kept for the session. They are created
+  through a `VkPipelineCache` read at device init from `<documents>\OpenCiM\cache\pipelines.bin` when its header
+  (`VkPipelineCacheHeaderVersionOne`) names this GPU's vendor id, device id and pipeline cache UUID (anything else
+  is dropped with a log line), and written back when it grew: after a map's first view was drawn ahead
+  (`Device::saveCaches`, from `regsPrewarmGrid`) and at shutdown. That pre-draw on the loading screen goes through the
+  real device, so it creates the first view's pipelines as well as its programs (`first view drawn ahead in … ms (N
+  shader programs, M pipelines)`). When mods register post hooks it draws the view a second time with the scene's
+  `regsPostHooks` on (restored after): the hooks switch the view to the style input with the hooks' data attachment
+  (RGBA16F + BGRA8, other pipelines), which the weather mod turns on a few seconds into play; with a cold pipeline
+  cache that frame made ~25 pipelines at once (0.3-0.4 s). The slow-frame log counts pipelines made in that frame;
+  `REGS_VK_LOG_PIPELINES=1` logs each pipeline made with its key, to find draw-time creation.
+* **Recording a draw** skips what the command buffer already holds: the device remembers the bound pipeline, the
+  dynamic states, the vertex and index buffer binds and, per binding, the descriptors last pushed for the current
+  program's layout, and records only what differs (push descriptors keep what an earlier push with the same layout
+  wrote). The record is cleared when a command buffer or a rendering pass begins. The pipeline key is not rebuilt or
+  hashed while the program, vertex layout, primitive, blend, framebuffer and colour-1 mask stay the same and no image
+  or framebuffer was remade. `REGS_VK_RECORD_ALL=1` records everything on every draw (for A/B comparisons).
 * **Uniforms:** each program keeps a CPU copy of its default block; `setUniform` writes into it at the reflected
-  offset (std140, mat3 as three vec4 columns); a draw copies the block into the frame's ring and binds it at a
-  dynamic offset. Sampler uniforms (`texture0` = unit 0 …) are remembered as unit numbers, and a draw pushes the
+  offset (std140, mat3 as three vec4 columns); a draw copies the block into the frame's ring and pushes it as a
+  uniform buffer descriptor (`VK_KHR_push_descriptor`). A block unchanged since its last copy in the same frame
+  reuses that copy (writes that do not change a byte do not count as changes). Sampler uniforms (`texture0` = unit 0 …) are remembered as unit numbers, and a draw pushes the
   images bound to those units (GL's 16 units are emulated as a table in the device).
 * **Targets:** dynamic rendering (`vkCmdBeginRendering`) on the bound target's attachments. Anything that cannot
   happen inside rendering (a texture upload, a blit, a resolve, a readback) ends the current rendering, records the
@@ -176,7 +200,7 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
 | 3b | glslang in the build; programs, uniforms, textures, buffers: the 2D GUI (main menu readable) | done (2026-11-17): Vulkan-Headers and glslang in `third_party/` (owner's OK; `third_party/README.md` has the licences). The main menu matches OpenGL except its animated spot |
 | 3c | 3D: meshes, the default shader and the combiner variants, render targets (the menu's trams, terrain, objects) | done: the Vienna save and the map editor match OpenGL; `regs-tool shaders` with `REGS_RENDERER=vulkan` compiles the same 3 700 of 3 814 variants as OpenGL (the same 114 terrain/water variants fail in both, with flag sets the game never uses) |
 | 3d | water, shadows (depth targets, compare samplers), MSAA, bloom and the post effects, particles, night lights, the mods' hooks | checked against OpenGL: shadows, 4× MSAA, bloom with auto-exposure, colour style, lens blur (distance), night lights at 22:00, the mods' shader hooks (weather mod: snow cover with the surface, traffic and footprint maps). Not yet checked side by side: water close up, particles, tilt-shift |
-| 3e | parity check on the Vienna save; SPIR-V and pipeline caches | parity: remaining differences are 1-8 levels of texture-filtering noise (the drivers' anisotropic sampling), in about half the pixels. Caches not done (each start compiles the programs again, a few seconds) |
+| 3e | parity check on the Vienna save; SPIR-V and pipeline caches | parity: remaining differences are 1-8 levels of texture-filtering noise (the drivers' anisotropic sampling), in about half the pixels. Caches done (2026-11-18): SPIR-V (§3) and `VkPipelineCache` (§5) on disk |
 | 4 | Beyond parity: TAA, upscaling, raytracing, frame generation, DLSS (§9) | §9 |
 
 How the Vulkan picture was brought to parity (for whoever touches `vk_shader.cpp`): the game's combiner shaders
@@ -453,4 +477,9 @@ What it says:
   skinned casters, so the render CPU drops by ~0.5 ms, while the rays add ~1-2 ms of GPU time the GPU has to spare.
 * **Raytraced AO adds ~2 ms of GPU at 1440p** (with shadows and TAA 6.4 ms in all), still under the CPU's frame time.
 * **Loading:** the first view is drawn ~0.4 s later under Vulkan (973 vs 563 ms), glslang compiling the programs; a
-  SPIR-V cache (§8 step 3e) would remove that.
+  SPIR-V cache (§8 step 3e) would remove that. Done 2026-11-18 (SPIR-V and pipeline caches, §3 and §5), 1920×1080,
+  same machine: "first view drawn ahead" Berlin 1.55-1.75 s before, 0.56-0.64 s with both caches (1.8 s with empty
+  caches, now including the post-hook target's pipelines); Vienna 1.86 s before, 0.52-0.65 s with the caches (OpenGL:
+  0.8 s). The NVIDIA driver keeps its own shader cache, so "empty caches" is not a cold driver. Draw recording with
+  state skipping (§5) costs ~0.7 ms less render CPU per Berlin frame than recording everything
+  (`REGS_VK_RECORD_ALL=1`, three alternating pairs: 6.2-6.5 vs 6.8-7.2 ms).
