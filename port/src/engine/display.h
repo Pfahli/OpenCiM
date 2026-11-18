@@ -136,7 +136,7 @@ int placeControl(script::VM& vm, ControlObj* c, float l, float t, float w, float
 
 // The display of the running game, or null when headless.
 Display* display();
-// The graphics device keeps its linked programs in <user folder>cachegl (OpenGL program binaries; REGS_NO_PROGRAM_CACHE=1
+// The graphics device keeps its linked programs in <user folder>\cache\gl (OpenGL program binaries; REGS_NO_PROGRAM_CACHE=1
 // turns it off). Called when the device opens and when the scripts set the user folder, whichever comes last.
 void useProgramCache();
 

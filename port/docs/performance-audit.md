@@ -173,3 +173,26 @@ Next by the new profile (Berlin, Vulkan): the stop bubbles still spend ~13 % in 
 (`placeTracer` reading about 15 fields by name per bubble per frame; A11 and a per-frame camera cache), the
 Vulkan draw path (~16 %, the state and descriptor skipping of A4), `stepCitizens` (~14 %), and the Vulkan hitches
 (still up to 720 ms; pipeline and SPIR-V caches).
+
+## Results of the second round (2026-11-18): B3, B4, B7
+
+B7: `writePackage` takes a snapshot of the files (memory files share their buffer), builds and writes the package on one
+background thread (`<file>.tmp`, then renamed over the old file) and shows the package's entries from the snapshot at
+once; `Engine::frame` mounts only the finished package, no rescan; `rescan()` and the exit wait for writes. The
+suspected bug was real by the code: with asynchronous writes (the autosaves) `write()` only started the thread, so the
+rescan right after it could open a half-written file ("size mismatch", the save missing from the lists) or the old
+file whose directory no longer matched the data being written over it. It did not show in 17 test autosaves here (the
+rescan takes ~20 ms, the write usually a few ms; one background write took 88 ms). Main thread of a Berlin save
+(`REGS_DEBUG_SAVE_AT`): 507 to 82 ms (Vulkan), 449 to 74 ms (OpenGL); the autosave tick 460 ms to under 250 ms. The
+written save is the old build's byte for byte (only the wall-clock `$saveTime` differs) and reloads with the same counts.
+
+B4: each shader template component is patched, converted and compiled once; the variants run that code with the flags
+set as script variables (`VM::compileSource` / `loadCompiled`). All 3,814 variants of `regs-tool shaders --dump` are
+byte for byte the same; expansion 2593 to 320 ms.
+
+B3: OpenGL queues the programs a draw list misses (`gpu::Device::queueProgram`, `assignPrograms`) before it asks for
+any status, with `GL_KHR_parallel_shader_compile` on; linked programs are kept as driver binaries in
+`<user folder>\cache\gl\<driver>\`. Berlin, OpenGL, RTX 3080, first view (67 programs) with a private empty driver
+cache (`__GL_SHADER_DISK_CACHE_PATH`): 34.5 s before, 40.8 s one by one, 13.1 s batched, 3.7 s with the program
+binaries; with the driver's cache warm 0.70 s before, 0.59 s now, 0.55 s with the binaries. Vulkan first view: 1.6-2.3 s
+before, 1.5-2.0 s now (only the template part applies; its pipelines are the Vulkan cache item above).
