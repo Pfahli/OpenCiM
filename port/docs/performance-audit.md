@@ -409,5 +409,5 @@ Vulkan drew no headlight pools into the light map). Merged build, Berlin with bl
 `REGS_DEBUG_WALK_COMPARE=1` and `REGS_DEBUG_ITEM_CACHES=1` on both renderers: no differences logged, no errors.
 Left: `restampWalk` after big edits, the script compile cache (B8), the ground height per q-cell in the pedestrian
 search, the few pipelines particles, post quads and the GUI still make at first draw, the editor ground overlay and
-tunnel count rebuilt in full while shown, and a real optional item hidden by a preview staying hidden afterwards
-(same in the old build).
+tunnel count rebuilt in full while shown. A real optional item a preview hid stayed hidden afterwards (in the old build too): fixed, removing a required item now
+clears the hidden flag of the optional items around it and checks them again, as gsGrid::removeObject does.

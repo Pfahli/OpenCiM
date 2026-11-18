@@ -19,6 +19,7 @@
 #include "engine/interaction.h"
 #include "engine/scene3d.h"
 #include "engine/sim.h"
+#include "engine/tools.h"
 
 namespace regs::engine {
 
@@ -275,6 +276,29 @@ void removeItem(VM& vm, GridObj* grid, EditState& st, uint32_t index, int depth)
   }
   touchItem(st, it);
   st.removed.push_back(index);
+  // optional items this one hid come back: around a removed required item, every optional item that is hidden gets
+  // its flag (and the red mark) cleared and its conflict check run again, which hides it once more if something else
+  // still covers it (gsGrid::removeObject L:0x08147c60: flags & 0x600000 → & 0xffbffdff, checkConflict). Without
+  // it a street lamp or tree a moving preview passed over stayed hidden for good.
+  if (!(shapeOf(st, it).flags & kFlagOptional)) {
+    GridItemShape s = shapeOf(st, it);
+    const int x0 = it.x, z0 = it.z, x1 = it.x + s.sx, z1 = it.z + s.sz;  // edges touching count, as in the engine
+    std::vector<uint32_t> hidden;
+    forItemsNear(st, x0 - 1, z0 - 1, x1, z1, [&](uint32_t o) {
+      const GridData::Item& ot = g.items[o];
+      if (o == index || ot.removed || !(ot.flags & kFlagHidden) || !(shapeOf(st, ot).flags & kFlagOptional)) return;
+      GridItemShape os = shapeOf(st, ot);
+      if (ot.x <= x1 && x0 <= ot.x + os.sx && ot.z <= z1 && z0 <= ot.z + os.sz) hidden.push_back(o);
+    });
+    for (uint32_t o : hidden) {
+      GridData::Item& ot = g.items[o];
+      ot.flags &= ~(kFlagHidden | 0x200u);
+      gridEditItemChanged(grid, o);
+      gridCheckConflict(vm, grid, o, {});
+      GridItemShape os = shapeOf(st, ot);
+      gridEditCellsChanged(grid, ot.x, ot.z, ot.x + os.sx - 1, ot.z + os.sz - 1, false);
+    }
+  }
   // children lose their parent; the non-temporary ones go with it (gsGrid::removeObject L:0x08147c60)
   auto kids = st.children.find(index);
   if (kids == st.children.end()) return;
