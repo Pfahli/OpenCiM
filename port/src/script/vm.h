@@ -113,6 +113,12 @@ class VM {
   // ---- scripts ----
   // load / load g :: path (semantics.md §6): always returns a script object (empty after any error).
   Value load(const std::u16string& path, const LoadOptions& opt = {});
+  // load() in two halves, for source compiled once and run many times (the shader templates, engine/shaders.cpp):
+  // compileSource parses and compiles (null after an error, reported as load reports it; no extensions applied),
+  // loadCompiled creates the object, links, lets init set script variables, then runs the top-level code at once.
+  Ref<Code> compileSource(const std::u16string& source, const std::u16string& path);
+  Value loadCompiled(const Ref<Code>& code, const std::u16string& path, const LoadOptions& opt,
+                     const std::function<void(Object*)>& init = {});
   // merges the extensions of a game script (<root><path> for each of extensionRoots, in order) into its source
   // before compiling (see vm.cpp)
   void extendSource(const std::u16string& path, std::u16string& source);
