@@ -90,7 +90,8 @@ frames), `REGS_DEBUG_SAVE_AT=<ticks>:<name>` (saves the game after that many sim
 `REGS_DEBUG_ECONOMY=1` (after every month and year: the money, each book entry, loans, reputation, company value,
 the annual report's inputs and the objectives, and whether the money moved exactly by the month's books;
 `docs/simulation/economy.md`), `REGS_TEST_SCENARIO_CALL=<ticks>:<function>[,…]` (calls those scenario functions,
-e.g. `start_sandbox_task90`, through `MAIN.$scenario.callFunction` after that many simulation ticks),
+e.g. `start_sandbox_task90`, through `MAIN.$scenario.callFunction` after that many simulation ticks; `name=n` passes
+the integer n instead of 0, e.g. `start_demonstration=30` for a 30-day demonstration),
 `REGS_DEBUG_FOLLOW=<line type>[:n]` (the main camera follows the n-th line vehicle of that transport type, given as
 a number: 0 bus, 1 tram, 2 metro, 3 boat, 4 helicopter; a screenshot burst `follow-turn-<n>.png` when it turns round,
 `follow-bustram-<n>.png` when a followed bus halts at a tram stop), `REGS_DEBUG_CAMERA=<item>` (puts the camera on that
