@@ -819,6 +819,17 @@ When the vehicle has not advanced a unit for **30 s** of step 2 (the 30 s restar
    (`gsTransportVehicle`, event id 14); the port's extension of `metro/ui/linepanel/linepanel.script` turns it into a
    ticker message (`$regs_newsticker_jamMoved_text` in `port/data/regs/strings/`).
 
+**Giving way to the waiting marker, compared with the original (2026-11-18, not solved).** The port's claim code
+matches the original where it was compared: `canEnter` is `FUN_100e14b0` (a marked node blocks unless it is a 0x20
+node or the claimer ignores marks; a crossing blocks when another holds it, when it is marked and marks are not
+ignored, or when it is a blocker), and the marker is set by a line vehicle (flags 0x200) or on a 0x20 node when the
+claim fails (`0x1010de50.c`, claim loop). The one difference is in the "ignore marks" test (`FUN_100e15d0`, the
+port's `isMarked`): the original tests the head node, the occupied queue entries 1 … occupiedCount − 1 and, if none
+is marked, also the first queued entry past them when it is a junction node (0x20); line vehicles always ignore.
+The port tests the held nodes only. So the original's cars ignore the marker more often, not less, and this does not
+explain the trams waiting at Berlin's busy junctions. Not compared yet: the follow-the-leader branch of the claim
+loop (a node held by another vehicle whose node field +0x7c is 0 is followed instead of failing, same loop).
+
 Saves: the relief state is not saved. A vehicle saved while waiting for its respawn platform has no agent in the save
 and spawns at the first free platform of its line after loading (§4.2); turned cars are ordinary traffic with their
 new route; a vehicle saved in step 2 loads standing where it was and is detected again 120 s later.

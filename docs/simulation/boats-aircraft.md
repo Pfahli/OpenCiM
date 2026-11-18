@@ -172,7 +172,8 @@ with the node at the next rebuild. Typical case: the dock platform (`objects/sta
   despawned on the next manager tick (§4.5), both in the running game and after loading that save; water buses
   re-path (transport.md §4.6). Confirmed in the samples: **every** boat and water-bus agent standing on a lattice
   node carries flag 1 (Cim2 10 agents, berlin 13, vienna 7); water buses on dock nodes do not *obs (scratchpad
-  `boatcheck.mjs`)*.
+  `boatcheck.mjs`)*. Port: the boats of the original's saves are not placed at load (flag 1, the same result one
+  tick early); the port's own saves write no flag 1 and keep their boats (README "deviates on purpose").
 * **Q5** `blockIsOpenWater` ignores heights; a 4×4 block of flagged cells anywhere (even a lake) gets lanes, but only
   border lanes carry START/END, so lakes never get boats *inf*.
 
