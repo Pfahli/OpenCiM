@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "audio/audio.h"
+#include "core/inflate.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
@@ -124,6 +125,36 @@ int cmdVfs(int argc, char** argv) {
       }
     std::fprintf(stderr, "read %llu bytes in %lld ms, %zu failures\n", (unsigned long long)bytes,
                  (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t1).count(), bad);
+    return bad ? 1 : 0;
+  }
+  if (sub == "inflate-bench") {
+    // the inflater alone: up to 400 MB of packed entries read into memory first, then inflated and timed
+    std::vector<std::pair<std::vector<uint8_t>, uint32_t>> packed;
+    size_t total = 0;
+    for (auto& a : vfs.archives()) {
+      FILE* f = _wfopen(a.file.wstring().c_str(), L"rb");
+      if (!f) continue;
+      for (auto& e : a.entries) {
+        if (e.tag != Archive::kZlib || total > (400u << 20)) continue;
+        std::vector<uint8_t> p(e.packedSize);
+        if (_fseeki64(f, e.offset, SEEK_SET) == 0 && std::fread(p.data(), 1, p.size(), f) == p.size()) {
+          total += p.size();
+          packed.emplace_back(std::move(p), e.size);
+        }
+      }
+      std::fclose(f);
+    }
+    std::vector<uint8_t> out;
+    uint64_t bytes = 0;
+    size_t bad = 0;
+    auto t1 = std::chrono::steady_clock::now();
+    for (auto& [p, size] : packed) {
+      if (!zlibInflate(p, out, size) || out.size() != size) ++bad;
+      bytes += out.size();
+    }
+    double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
+    std::printf("inflated %zu entries, %zu MB packed -> %llu MB in %.0f ms (%.0f MB/s out), %zu failures\n", packed.size(),
+                total >> 20, (unsigned long long)(bytes >> 20), s * 1000, double(bytes) / 1048576.0 / s, bad);
     return bad ? 1 : 0;
   }
   if (sub == "heads") {

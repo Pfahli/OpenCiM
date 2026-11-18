@@ -13,8 +13,9 @@ bool zlibInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t 
 // decoded). False when the input ends or turns corrupt before that many bytes, or the stream is shorter.
 bool zlibInflateHead(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t limit);
 
-// Raw DEFLATE (RFC 1951) decoder.
+// Raw DEFLATE (RFC 1951) decoder; appends to out. sizeHint, when non-zero, the expected output size.
 bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out);
+bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t sizeHint);
 
 uint32_t adler32(std::span<const uint8_t> data);
 
