@@ -129,7 +129,10 @@ whose file name contains the text are heard, e.g. `ngine` or `Church bells`, so 
 saves with every transport type: `node tools/gstool.mjs pack samples/saves/vienna "<documents>/OpenCiM/saves/vienna.gs"`
 (keep the folder name: the save's `level.scenario` points at it), `REGS_DEBUG_SIM=1` (logs the stop cycle, which tram
 stops bus lines may take, replays the saved traffic routes, and logs each level crossing near the camera as its
-barriers go down or up, with the trains holding it and the cars waiting), `REGS_NO_SIM=1` (simulation off).
+barriers go down or up, with the trains holding it and the cars waiting), `REGS_DEBUG_SIM_DIGEST=<n>` (every n citizen
+steps one log line with the random stream and hashes of the citizens, pedestrians and their walk animation, movers,
+line vehicles and stops; with `REGS_FIXED_DT` two builds started the same way must print the same lines),
+`REGS_NO_SIM=1` (simulation off).
 Particles (`docs/renderer/particles.md` §6): `REGS_NO_PARTICLES=1` (none emitted or drawn), `REGS_DEBUG_PARTICLES=1`
 (items with emitters, live/drawn counts and CPU times; `=2` draws them opaque magenta), `REGS_TEST_BREAKDOWN=<s>` (the
 followed vehicle breaks down after that much simulated time), `REGS_TEST_FIRE=<item>` (a fire at that item),

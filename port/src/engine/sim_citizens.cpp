@@ -2300,6 +2300,70 @@ void loadCitizens(VM& vm, GridObj* grid, SimState& s, const std::vector<uint8_t>
            loaded, waiting, riding, homes, free, droppedHomes, s.characters.size() - s.freeCharacters.size());
 }
 
+namespace {
+
+const std::string& characterAnimName(const Character& ch, bool current) { return current ? ch.anim.current : ch.anim.previous; }
+
+// FNV-1a over the state the citizen step reads and writes (REGS_DEBUG_SIM_DIGEST)
+struct Digest {
+  uint64_t h = 1469598103934665603ull;
+  void bytes(const void* p, size_t n) {
+    for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const uint8_t*>(p)[i]) * 1099511628211ull;
+  }
+  template <class T> void add(const T& v) { bytes(&v, sizeof v); }
+  void add(const std::string& v) { add(v.size()), bytes(v.data(), v.size()); }
+  void add(const Vec3& v) { add(v.x), add(v.y), add(v.z); }
+};
+
+void logSimDigest(SimState& s, long long step) {
+  Digest cit, chars, anim, cars, lines;
+  int alive = 0, walkers = 0;
+  for (const Citizen& c : s.citizens) {
+    cit.add(c.alive);
+    if (!c.alive) continue;
+    ++alive;
+    for (int v : {int(c.flags), int(c.id), int(c.tripQueue), int(c.usedTransport), c.cycleTimer, c.waitTime, c.character,
+                  c.car, c.lineNode, c.vehicle, c.home, c.work, c.start, c.target, c.charModel, c.carModel, c.driveStart,
+                  c.driveEnd, int(c.hasRoute), int(c.toCar), c.replanFrom, c.route.leg})
+      cit.add(v);
+    cit.add(c.route.cost);
+    cit.add(c.route.nodes.size());
+    for (int n : c.route.nodes) cit.add(n);
+  }
+  for (const Character& ch : s.characters) {
+    chars.add(ch.alive);
+    if (!ch.alive) continue;
+    ++walkers;
+    chars.add(ch.model), chars.add(ch.citizen), chars.add(ch.next), chars.add(ch.pos), chars.add(ch.yaw);
+    chars.add(ch.speed), chars.add(ch.virtualLeft), chars.add(ch.goal), chars.add(ch.animal);
+    chars.add(ch.path.size());
+    for (uint32_t q : ch.path) chars.add(q);
+    anim.add(characterAnimName(ch, true)), anim.add(characterAnimName(ch, false));
+    for (float f : {ch.anim.currentPos, ch.anim.previousPos, ch.anim.fade, ch.anim.currentFactor, ch.anim.previousFactor})
+      anim.add(f);
+  }
+  for (const Mover& m : s.movers) {
+    cars.add(m.live);
+    if (!m.live) continue;
+    cars.add(m.dist), cars.add(m.speed), cars.add(m.citizen), cars.add(m.parked);
+  }
+  for (const VehicleState& v : s.vehicles) lines.add(v.passengerCount), lines.add(v.boardingReserved), lines.add(v.passengersTransported);
+  for (const LineState& l : s.lines) {
+    lines.add(l.avgWait);
+    for (const LineStopState& st : l.stops) {
+      lines.add(st.waiting), lines.add(st.passengersTransported), lines.add(st.waitingTime);
+      for (int k = 0; k < 3; ++k) lines.add(st.mood[k]);
+    }
+  }
+  LOG_INFO("sim digest %lld: seed %08x, citizens %d %016llx, walkers %d %016llx anim %016llx, movers %016llx, lines %016llx; "
+           "trips %d boarded %d alighted %d cars %d walks %d failed %d",
+           step, s.seed, alive, (unsigned long long)cit.h, walkers, (unsigned long long)chars.h, (unsigned long long)anim.h,
+           (unsigned long long)cars.h, (unsigned long long)lines.h, s.trips, s.boarded, s.alighted, s.carsSpawned,
+           s.walkPaths, s.walkFailed);
+}
+
+}  // namespace
+
 void stepCitizens(VM& vm, SimState& s, float dt) {
   if (!s.citizensLoaded || !s.citizensModule || !s.citizensModule->enabled()) return;
   // every free home slot gets a citizen (§2.2)
@@ -2336,6 +2400,12 @@ void stepCitizens(VM& vm, SimState& s, float dt) {
   stepAnimals(vm, s, dt);
   for (Character& ch : s.characters)
     if (ch.alive && ch.animal != 1) stepCharacter(s, ch, dt);
+  // REGS_DEBUG_SIM_DIGEST=<n> (tests): every n citizen steps a digest of the simulation state (the random stream, the
+  // citizens, pedestrians with their walk animation, movers, line vehicles and stops, the trip counters), so two builds
+  // run with REGS_FIXED_DT from the same start can be compared step by step
+  static const int digestEvery = regs::envVar("REGS_DEBUG_SIM_DIGEST") ? std::atoi(regs::envVar("REGS_DEBUG_SIM_DIGEST")) : 0;
+  static long long digestSteps = 0;
+  if (digestEvery > 0 && ++digestSteps % digestEvery == 0) logSimDigest(s, digestSteps);
   // REGS_DEBUG_VISITS (2026-11-16): every 30 grid-seconds the share of the items the port carries (kItemPortHidden: the
   // OSM import's visitors at sights and in its procedural buildings) in the pools and in the citizens' homes, jobs and
   // trips
