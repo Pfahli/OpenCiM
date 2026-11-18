@@ -204,7 +204,9 @@ Vec3 ParticleEmitterObj::parentGlobal(VM& vm) const {
   // gs3DElement::getGlobalPos without the parent's rotation: emitters sit under the scene, a template or another
   // emitter (scripted ones never rotate their parents)
   Object* p = parent;
-  if (!p || p->cls->isA(vm.findClass("gsScene"))) return {};
+  static const ClassInfo* sceneClass = nullptr;  // once found (the one VM keeps its classes for the whole run)
+  if (!sceneClass) sceneClass = vm.findClass("gsScene");
+  if (!p || p->cls->isA(sceneClass)) return {};
   if (auto* e = dynamic_cast<ParticleEmitterObj*>(p)) return e->globalPos(vm);
   auto g = p->fieldValues.find(u"globalPos");
   if (g != p->fieldValues.end() && g->second.type() == VT::Vector) return vecOf(g->second);

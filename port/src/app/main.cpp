@@ -165,10 +165,15 @@ int main(int argc, char** argv) {
   auto last = clock::now();
   long long frame = 0;
   int mx = 0, my = 0;
+  // REGS_FIXED_DT=<seconds> (tests): every frame advances by this step whatever it took, so two runs of a scripted
+  // start show the same scene at the same frame (picture comparisons between builds)
+  const char* fixedDtEnv = std::getenv("REGS_FIXED_DT");
+  const float fixedDt = fixedDtEnv ? std::clamp(float(std::atof(fixedDtEnv)), 0.0f, 0.05f) : 0.0f;
   while (!engine::host().quit && (maxFrames < 0 || frame < maxFrames)) {
     profilerFrame(frame);
     auto now = clock::now();
     float dt = std::clamp(std::chrono::duration<float>(now - last).count(), 0.0001f, 0.05f);
+    if (fixedDt > 0) dt = fixedDt;
     last = now;
     auto& input = engine::host().input;
     input.clear();

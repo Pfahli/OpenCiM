@@ -706,10 +706,19 @@ uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, s
   return prog;
 }
 
-const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
-  auto it = locs_.find(prog);
-  if (it != locs_.end()) return it->second;
-  ProgramLocs& l = locs_[prog];
+Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
+  ProgramLocs* found;
+  if (prog < kLocsDirect) {
+    if (prog < locs_.size() && locs_[prog]) return *locs_[prog];
+    if (prog >= locs_.size()) locs_.resize(size_t(prog) + 1);
+    locs_[prog] = std::make_unique<ProgramLocs>();
+    found = locs_[prog].get();
+  } else {
+    auto it = locsFar_.find(prog);
+    if (it != locsFar_.end()) return it->second;
+    found = &locsFar_[prog];
+  }
+  ProgramLocs& l = *found;
   auto at = [&](const std::string& n) { return dev().uniformLocation(prog, n.c_str()); };
   l.mv = at("regs_ModelViewMatrix");
   l.proj = at("regs_ProjectionMatrix");
@@ -849,13 +858,13 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
 // the shader hooks' uniforms and maps (units 8-14) for a program in use: the view's inverse, eye, timer, the mods'
 // uniforms (regsShaderUniform) and the engine's maps
 void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
-  const ProgramLocs& l = locs(prog);
+  ProgramLocs& l = locs(prog);
   Mat4 inv = inverse(v.proj * v.view);
   dev().uniformMatrix4fv(l.hookInvViewProj, 1, inv.m);
   dev().uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
   dev().uniform1f(l.hookTime, v.timer);
   dev().uniform1f(l.hookNight, v.night[3]);
-  ProgramLocs& lw = locs_[prog];
+  ProgramLocs& lw = l;
   for (const auto& [name, value] : shaderHookUniforms()) {
     auto it = lw.hookUniforms.find(name);
     if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, dev().uniformLocation(prog, name.c_str())).first;
@@ -880,8 +889,7 @@ void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
 }
 
 void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
-                              uint32_t prog, float alphaRef) {
-  const ProgramLocs& l = locs(prog);
+                              const ProgramLocs& l, float alphaRef) {
   dev().uniform1f(l.alphaRef, alphaRef);  // glAlphaFunc(GREATER, ref) of the queue
   const float es = v.emissionScale;
   dev().uniform4f(l.matEmission, m.emission[0] * es, m.emission[1] * es, m.emission[2] * es, m.emission[3]);
@@ -941,7 +949,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   // per bone group: the palette's skin matrices (invBind · world; identity = bind pose), then its index range
   // (gsHWSkinSubMesh_OGL draw 0x10054140)
   static const Mat4 identity;
-  std::vector<float> palette;
+  std::vector<float>& palette = palette_;
   for (const GpuMesh::Part::SkinGroup& g : p.groups) {
     palette.clear();
     for (uint16_t b : g.palette) {
@@ -988,6 +996,7 @@ void Renderer3D::setupFallback(const SceneView& v) {
 }
 
 void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
+  const uint64_t view = ++viewSerial_;  // each program's per-view uniforms once per call (ProgramLocs::setupView)
   static const GpuMaterial fallbackMaterial;
   auto materialOf = [&](const DrawItem& it, const GpuMesh::Part& p) -> const GpuMaterial& {
     size_t m = it.layerMaterial >= 0 ? size_t(it.layerMaterial) : size_t(p.material);
@@ -1006,6 +1015,65 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     uint32_t program;
   };
   std::vector<Q> opaque, tested, blended;
+  // shadow-map pass: the light's clip sides as world-space planes (SceneView::casterClip), n·x + d ≥ 0 inside, n unit
+  struct Plane {
+    Vec3 n;
+    float d;
+  };
+  Plane casterPlanes[2][4];
+  const int casterVolumes = shadowPass ? std::clamp(v.casterClipCount, 0, 2) : 0;
+  for (int k = 0; k < casterVolumes; ++k) {
+    const Mat4& c = v.casterClip[k];
+    for (int s = 0; s < 4; ++s) {  // w + x, w − x, w + y, w − y
+      const int row = s / 2;
+      const float sign = s % 2 ? -1.0f : 1.0f;
+      Vec3 n{c.at(3, 0) + sign * c.at(row, 0), c.at(3, 1) + sign * c.at(row, 1), c.at(3, 2) + sign * c.at(row, 2)};
+      float d = c.at(3, 3) + sign * c.at(row, 3), len = std::sqrt(dot(n, n));
+      casterPlanes[k][s] = len > 0 ? Plane{n * (1.0f / len), d / len} : Plane{{0, 0, 0}, 1.0f};  // degenerate: never out
+    }
+  }
+  // the largest column of a matrix's 3×3: how much it can grow a radius
+  auto scaleOf = [](const Mat4& m) {
+    float s = 0;
+    for (int c = 0; c < 3; ++c) s = std::max(s, m.at(0, c) * m.at(0, c) + m.at(1, c) * m.at(1, c) + m.at(2, c) * m.at(2, c));
+    return std::sqrt(s);
+  };
+  // true when the part cannot reach the shadow map. Its bound: the part's sphere through the item's world matrix plus a
+  // margin for vertex animation (tree sway moves a 30 m tree's top by about 5 m); a skinned part's posed vertices are
+  // blends of the vertex through its bones' skin matrices, so they lie in the hull of the sphere through each bone
+  // of its palettes, and a side cuts the part away only when it cuts away every one of those spheres
+  constexpr float kCasterMargin = 10.0f;
+  std::vector<std::pair<Vec3, float>> casterSpheres;
+  auto casterOut = [&](const DrawItem& it, const GpuMesh::Part& p) {
+    const float ws = scaleOf(it.world);
+    casterSpheres.clear();
+    if (!p.groups.empty() && it.bones) {
+      for (const GpuMesh::Part::SkinGroup& g : p.groups)
+        for (uint16_t b : g.palette) {
+          if (b < it.bones->size()) {
+            const Mat4& s = (*it.bones)[b];
+            casterSpheres.push_back({transformPoint(it.world, transformPoint(s, p.center)), p.radius * scaleOf(s) * ws});
+          } else {
+            casterSpheres.push_back({transformPoint(it.world, p.center), p.radius * ws});  // identity: the bind pose
+          }
+        }
+    }
+    if (casterSpheres.empty()) casterSpheres.push_back({transformPoint(it.world, p.center), p.radius * ws});
+    for (int k = 0; k < casterVolumes; ++k) {
+      bool out = false;
+      for (int s = 0; s < 4 && !out; ++s) {
+        const Plane& pl = casterPlanes[k][s];
+        out = true;
+        for (const auto& [c, r] : casterSpheres)
+          if (dot(pl.n, c) + pl.d >= -(r + kCasterMargin)) {
+            out = false;
+            break;
+          }
+      }
+      if (!out) return false;  // inside (or across) this volume
+    }
+    return casterVolumes > 0;
+  };
   for (const DrawItem& it : items) {
     if (!it.mesh || (it.shadowOnly && !shadowPass)) continue;
     for (const auto& p : it.mesh->parts) {
@@ -1020,6 +1088,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
       if (shadowPass && v.shadowMapLeftovers && !(m.flags & kMatAlphaBlend) && m.surfaceClass != kSurfaceFoliage &&
           p.groups.empty())
         continue;
+      if (casterVolumes && casterOut(it, p)) continue;
       Vec3 dv = transformPoint(it.world, p.center) - v.eye;
       // MATERIAL_ZERO_RADIUS (water): radius −100, so it sorts before other blended parts nearby (terrain.md §6.4)
       float radius = (m.flags & 0x02000000u) ? -100.0f : p.radius;
@@ -1041,6 +1110,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     dev().bindTexture(kNightMapUnit, v.lampMap ? v.lampMap : v.carMap);
   }
   uint32_t current = 0;
+  ProgramLocs* locsCurrent = nullptr;  // locs(current) for a combiner program
   const DrawItem* bound = nullptr;
   gpu::Blend blendSrc = gpu::Blend::SrcAlpha, blendDst = gpu::Blend::OneMinusSrcAlpha;
   // opaque: no alpha test; alpha-tested: GREATER 0.2 with depth writes; blended and decals: GREATER 0.001 without
@@ -1077,8 +1147,19 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         current = prog;
         bound = nullptr;
         dev().useProgram(prog);
-        if (e.program) setupProgram(v, prog);
-        else setupFallback(v);
+        if (e.program) {
+          // the per-view uniforms once per program and view: they stay in the program while others draw, and the
+          // units hookState binds hold this view's maps for the whole call (the draws bind units 0-5 only)
+          locsCurrent = &locs(prog);
+          // REGS_DEBUG_PROGRAM_SETUP: on every program switch, as before (comparisons)
+          static const bool setupEverySwitch = regs::envVar("REGS_DEBUG_PROGRAM_SETUP") != nullptr;
+          if (locsCurrent->setupView != view || setupEverySwitch) {
+            setupProgram(v, prog);
+            locsCurrent->setupView = view;
+          }
+        } else {
+          setupFallback(v);
+        }
       }
       if (e.it != bound) {
         bound = e.it;
@@ -1086,7 +1167,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         float nm[9];
         normalMatrix(mv, nm);
         if (e.program) {
-          const ProgramLocs& l = locs(prog);
+          const ProgramLocs& l = *locsCurrent;
           Mat4 mvp = v.proj * mv;
           dev().uniformMatrix4fv(l.mv, 1, mv.m);
           dev().uniformMatrix4fv(l.mvp, 1, mvp.m);
@@ -1098,7 +1179,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         }
         dev().bindVertexInput(e.it->mesh->vao);
       }
-      if (e.program) drawCombined(v, *e.it, *e.p, m, prog, ref);
+      if (e.program) drawCombined(v, *e.it, *e.p, m, *locsCurrent, ref);
       else drawPart(v, *e.it, *e.p);
     }
   };

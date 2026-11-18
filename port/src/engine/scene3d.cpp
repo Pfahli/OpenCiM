@@ -97,7 +97,12 @@ Mat4 worldOf(VM& vm, Object* o) {
   return translation(p) * rotation(conjugate(q)) * scaling(sc);
 }
 
-bool isFloatingCamera(VM& vm, Object* cam) { return cam->cls->isA(vm.findClass("gsFloatingCamera")); }
+bool isFloatingCamera(VM& vm, Object* cam) {
+  // asked per stop bubble per frame: the class once found (the one VM keeps its classes for the whole run)
+  static const ClassInfo* floating = nullptr;
+  if (!floating) floating = vm.findClass("gsFloatingCamera");
+  return cam->cls->isA(floating);
+}
 
 Quat slerp(Quat a, Quat b, float t) {  // shortest arc, a at t = 0
   float d = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
@@ -287,13 +292,20 @@ void assignPrograms(Display& d, VM& vm, std::vector<DrawItem>& items, uint32_t e
         if (!m.hasProgramFor(env)) m.setProgram(env, programFor(d, vm, m.shader, m.flags, env, m.meshFlags, m.surfaceClass));
 }
 
+// the classes collect() tests every scene node against, looked up once per frame (VM::findClass is a map lookup by
+// name with a temporary string)
+struct SceneClasses {
+  const ClassInfo* sky = nullptr;
+  const ClassInfo* sun = nullptr;
+};
+
 // collects the drawable objects, suns, grids and the sky (fog) of a scene subtree
 void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std::vector<Object*>& suns,
-             std::vector<GridObj*>& grids, Object*& sky) {
+             std::vector<GridObj*>& grids, Object*& sky, const SceneClasses& classes) {
   for (auto& k : node->children) {
     Object* c = k.get();
     if (c->destroyed) continue;
-    if (c->cls->isA(vm.findClass("gsSky")) && c->enabled()) sky = c;  // fog applies even when the dome is hidden
+    if (c->cls->isA(classes.sky) && c->enabled()) sky = c;  // fog applies even when the dome is hidden
     if (!c->visible()) continue;
     if (auto* g = dynamic_cast<GridObj*>(c)) grids.push_back(g);
     if (auto* o = dynamic_cast<ObjectObj*>(c); o && o->data && isSkinnedModel(vm, o)) {
@@ -322,8 +334,8 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
       it.surfaceClass = kSurfaceOverlay;
       items.push_back(it);
     }
-    if (c->cls->isA(vm.findClass("gsSun"))) suns.push_back(c);
-    collect(d, vm, c, items, suns, grids, sky);
+    if (c->cls->isA(classes.sun)) suns.push_back(c);
+    collect(d, vm, c, items, suns, grids, sky, classes);
   }
 }
 
@@ -523,7 +535,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   std::vector<Object*> suns;
   std::vector<GridObj*> grids;
   Object* sky = nullptr;
-  { auto ts_ = std::chrono::steady_clock::now(); collect(d, vm, scene, items, suns, grids, sky); gPhaseSeconds[1] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+  const SceneClasses sceneClasses{vm.findClass("gsSky"), vm.findClass("gsSun")};
+  { auto ts_ = std::chrono::steady_clock::now(); collect(d, vm, scene, items, suns, grids, sky, sceneClasses); gPhaseSeconds[1] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
 
   SceneView v;
   v.timer = d.effectTimer;
@@ -642,6 +655,15 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         lv.lights.clear();
         lv.fog = false;
         lv.shadowMapLeftovers = rayShadows;
+        // the main camera's list keeps its LOD and order; parts that cannot reach the map are dropped: outside the
+        // light's clip sides as the shadow programs warp them (gl_Position = shadowWarp · clip, shadows.md §4.4) and
+        // as a program without the warp would draw them (REGS_DEBUG_NO_CASTER_CULL: every part, for comparisons)
+        static const bool noCasterCull = regs::envVar("REGS_DEBUG_NO_CASTER_CULL") != nullptr;
+        if (!noCasterCull) {
+          lv.casterClipCount = 2;
+          lv.casterClip[0] = fit.warp * fit.lightProj * fit.lightView;
+          lv.casterClip[1] = fit.lightProj * fit.lightView;
+        }
         assignPrograms(d, vm, items, lv.env);
         if (v.particles) prepareParticlePrograms(d, vm, particles, lv.env);
         d.r3d().begin(map, 0, 0, map->width, map->height, 0, false, bw, bh);
