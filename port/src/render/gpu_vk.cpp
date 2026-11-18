@@ -2608,7 +2608,13 @@ VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
   if (VkResult r = vkCreateGraphicsPipelines(dev_, pipeCache_, 1, &gci, nullptr, &pipe); r != VK_SUCCESS)
     LOG_ERROR("vulkan: %s", vkError("vkCreateGraphicsPipelines", r).c_str());
   ++pipelinesCreated_;
-  pipelineMs_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  const double took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  pipelineMs_ += took;
+  static const bool logPipelines = regs::envVar("REGS_VK_LOG_PIPELINES") != nullptr;
+  if (logPipelines)  // REGS_VK_LOG_PIPELINES: each pipeline made, with its key (where draw-time creation happens)
+    LOG_INFO("vulkan: pipeline %d in %.1f ms: program %u layout %d prim %d blend %d %d-%d fb %u colour %d depth %d samples %d colour1 %d/%d",
+             pipelinesCreated_, took, key.program, key.layout, int(key.prim), int(key.blendOn), int(key.src), int(key.dst),
+             boundFb_, int(key.color), int(key.depth), key.samples, int(key.color1), key.mask1);
   pipelines_[key] = pipe;
   return pipe;
 }

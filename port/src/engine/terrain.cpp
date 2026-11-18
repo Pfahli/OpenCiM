@@ -1628,6 +1628,29 @@ void registerTerrainNatives(VM& vm) {
           v.setMember(self, u"scene", v.resolve(*scene));
           v.setMember(self, u"camera", v.resolve(*camera));
           renderViewportScene(*d, v, vp);
+          // the mods' post hooks switch the view to another scene target (the style input with the hooks' data
+          // attachment) once their script turns them on, a few seconds into play; with a cold pipeline cache that
+          // frame made ~25 pipelines at once (~0.3 s on Vulkan). Drawn once more with the hooks on, those are made
+          // here too; the scene's own setting is restored after.
+          Object* so = v.resolve(*scene).object();
+          if (so && render::postHooksRegistered()) {
+            auto it = so->fieldValues.find(u"regsPostHooks");
+            const bool had = it != so->fieldValues.end();
+            const Value before = had ? it->second : Value();
+            if (!had || v.toFloat(v.resolve(before)) <= 0.0f) {
+              struct Restore {
+                Object* o;
+                bool had;
+                Value before;
+                ~Restore() {
+                  if (had) o->fieldValues[u"regsPostHooks"] = before;
+                  else o->fieldValues.erase(u"regsPostHooks");
+                }
+              } restore{so, had, before};
+              so->fieldValues[u"regsPostHooks"] = Value::real(1.0f);
+              renderViewportScene(*d, v, vp);
+            }
+          }
           v.setMember(self, u"scene", oldScene);
           v.setMember(self, u"camera", oldCamera);
         } catch (const ScriptError&) {
