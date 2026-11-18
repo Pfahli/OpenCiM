@@ -212,6 +212,27 @@ joined (12 turn lanes), test cars round both without jams.
 - A two-way street's track running the same way joins a one-way street's track (the one-lane track swings over to it).
 - Drags of the game's track tool across a curve are red; street tracks meeting a curve with tracks are joined.
 
+### Level crossings (grid railway, 2026-11-18)
+
+The game has one level crossing, `track_double_cross_small` (a small road at right angles over the double track; the
+railway tool lays it where the track crosses such a road, and so does the road tool across a track). On the owner's
+request the port adds the rest, all at right angles on the grid (engine/crossing_templates.cpp builds their templates
+from the game's meshes, paths and skeleton when the road envset registers the sources; engine/tool_tracks.cpp lays
+them):
+
+| Piece | Where | Made of |
+|---|---|---|
+| tram tracks over the crossing | the tram tool on a crossing, or the railway across a street with tram tracks (the street's track is laid again on the crossing) | `tram_small_cross`: the street's straight tram piece raised over the crossing's hump (0.65 over the rails), mesh and tram lanes; SPECIAL0 in its key |
+| `track_double_cross_large` | the railway tool across a straight large road (on the road's own block) | the crossing's mesh stretched ×2 across the road (its asphalt and pavements are half the large road's; posts and signals moved out, not widened), the large road's mesh beside it, barriers twice as long on posts moved out to the pavements (a copy of the skeleton and its take), the large road's four lanes over the hump, the two tracks, the large road's walk map; 8 × 8 cells like the road piece |
+| `track_double_half` | the free half of the track blocks before and after a large crossing (it covers half of each) | half the straight double track (2 cells), SPECIAL0 |
+| `track_double_cross_alley0..3` | the railway tool across a straight alley (the alley cells under the track bed go) | the track block with the footpath over the bed at the alley's row (the variant), two barriers as wide as the path on the alley either side of the bed, the crossing's signals and bell; the path's row walkable |
+
+All of them are door items as the game's crossing (CROSS_TRACK, its barrier timing and bell): the barriers come down
+while a train holds one of the piece's track lanes, and cars and trams wait because their lanes cross the track lanes.
+Pedestrians are not held at a crossing (as in the game). Maps with these pieces do not load in the original game.
+Not done: crossings at an angle, avenues and express roads, the road tool laying a large road or an alley across an
+existing track (only the railway tool makes those two).
+
 ### Minimap
 
 Curves and junctions are drawn as road cells (a cell counts where its centre lies on the road; footpaths at least one

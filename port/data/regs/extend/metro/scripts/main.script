@@ -31,6 +31,18 @@ function loadSandboxScenario($mapName = "") {
     }
   }
   regsBaseLoadSandboxScenario($mapName);
+  // port: a game started without the sandbox page (the editor's "Speichern & Spielen", REGS_START=map:) begins in the
+  // map's earliest start year, the first year the sandbox page offers for it; the original took sandbox.scenario's 1920
+  if (!$submenu && MAIN.$campaign.$campaign.$startDate == 0) {
+    $regsMapScenario = changeFileExt(MAIN.$gridFileName, ".scenario");
+    if (file_exists($regsMapScenario)) {
+      $regsS = load "/"+$regsMapScenario;
+      if (defined $regsS.$currentDate) {
+        if ($regsS.$currentDate > MAIN.$scenario.$scenario.$currentDate) MAIN.$scenario.$scenario.$currentDate = $regsS.$currentDate;
+      }
+      delete $regsS;
+    }
+  }
 }
 
 // the note after an original's name, in the current language: "(from Cities in Motion)"

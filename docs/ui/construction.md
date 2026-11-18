@@ -230,20 +230,40 @@ per map (`buildHighlightOverlay`, `grid_items.cpp`), drawn with the grid's posit
 do not reach the simulation (`grid_edit.cpp`). `REGS_DEBUG_HIGHLIGHT=1` highlights the cells and item under the cursor
 in any mode (overlay test).
 
-Deviations: the pairwise conflict test (`gridItemsConflict`, `grid_edit.cpp`) follows `gsGridItem::checkConflict`
+The pairwise conflict test (`gridItemsConflict`, `grid_edit.cpp`) follows `gsGridItem::checkConflict`
 (`L:0x08183aa0`: relations, stop rules, tram tracks on their road's layer, bridges, tunnels, pillars, ground pieces
-meeting at their corners, height ranges) but does not read the templates' per-cell masks (+0x274), so overlapping
-covered cells always conflict; no timeline actions or undo are recorded (the game has no timeline object).
+meeting at their corners with `getY` / `pointCover` deciding which corners a diagonal piece has, height ranges), and
+at the end the templates' per-cell masks (+0x274, their walk maps turned with the item): two items share a cell when
+in every q-cell one of them is pavement or open ground (codes 2, 3), an item without a walk map shares nothing.
+Placed items clear optional details as `removeOverlappingOptionalObjects` (`L:0x081481b0`, from addObject /
+mountObject): items that cover the ground without being optional or that have lanes; candidates optional, not
+previews, pillars or generated parts; heights must overlap; flag 0x1000000 also clears trees within 3 cells. Check
+(2026-11-18, `REGS_DEBUG_CONFLICTS=1`): among Vienna's 72 845 items the test finds 129 conflicting pairs (optional
+fences, hedges and trees beside buildings), down from 2 240 (alley corners) before `pointCover`; 5 036 overlapping
+pairs are decided by the masks, all of which the test without them called conflicts.
 
 **Tracks** (§6-§9) are `port/src/engine/tool_tracks.cpp` (modes 6 and 0x11, `toolBlocks().track` / `.road`). A
 preview is built as a list of pieces (as the engine's loose items) and added to the map as TEMP items in one batch;
 rebuilding a 50-block preview takes 2-4 ms. `toolBlocks().track(x, z, conn, a, b, type, y)` appends to the calling
 tool's `newItems` (variation: the player's `toolType`). Deviations:
-* `createRoadBlock` (`L:0x08190700`, roads: editor only; the game's objects have no road parts) lays the plain piece
-  of the connections without joining its neighbours. The double track (createTrackBlock type 9) laid straight across a
-  straight small road on its block becomes the road's crossing piece (`L:0x08195400.c:510-546`: type 2 with the
-  track's connections and SPECIAL0, `track_double_cross_small`, the level crossing), replacing the road. The
-  editor's bridge and tunnel modes (0xb, 0xc) are ported as `moveLayBridge` (L:0x0819f2a0.c:738-1372): ramps or
+* `createRoadBlock` (`L:0x08190700`, roads: editor only; the game's objects have no road parts) joins at the ends of a
+  drag as the original (`:483-870`): roads of types 2-7 join each other in the narrower road's connection byte (small
+  0, large 1, avenue 2, express 3; the small tools always byte 0), wide roads 8 cells apart, and a small road ending
+  beside a straight wide road joins it at the half of its 8 cells that the cursor is on (mouseMoveLayRoad's block
+  half, `:130-131`, the `variant` argument: bit 0 the low x half, bit 1 the low z half). Deviation: a road on the
+  block merges anywhere along the drag, not only at its ends (junctions where a road crosses one). The elevated ramp
+  clears the items under it by a cell and keeps within half a cell of its neighbours both ways (`:413-527`). Not
+  ported: the original's own map-edge pieces (x = −4 and the map's width). Checked in the editor (testmap, 2026-11-18):
+  a small road into a large road's side (`road_large_small_j3`), one at the half (`road_small_turn45l` into
+  `road_large_small_j3cr`).
+* Level crossings: the double track (createTrackBlock type 9) laid straight across a straight small road on its block
+  becomes the road's crossing piece (`L:0x08195400.c:510-546`: type 2 with the track's connections and SPECIAL0,
+  `track_double_cross_small`, the level crossing), replacing the road; a small road laid straight across a double
+  track does the same (createRoadBlock `:876-907`). Port (owner's request, 2026-11-18): the crossing takes tram
+  tracks (the tram tool ignores its DISABLE_TRAM and lays `tram_small_cross`, raised over the hump), a street's tram
+  track is laid again on the crossing that replaces the street, and the railway tool lays port-made crossings across
+  large roads and alleys (`port/docs/building-tools.md` "Level crossings", engine/crossing_templates.cpp).
+* The editor's bridge and tunnel modes (0xb, 0xc) are ported as `moveLayBridge` (L:0x0819f2a0.c:738-1372): ramps or
   portals at the ends (connections2 = the block's connections, flags BRIDGE/TUNNEL | SLOPE_1p2, wide roads 1p4), spans
   between (several blocks per span when the design's gap template is wider), then one height for all: the highest a
   span needs to clear what is under it by a cell, for tunnels the lowest below what is over it. Port: straight drags

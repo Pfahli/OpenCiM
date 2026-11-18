@@ -345,7 +345,7 @@ int findPlace(SimState& s, const Citizen& c, int type) {
 // in the four orientations (gsGridObject::loadFromFile L:0x0817f650.c:65-260)
 std::map<const Object*, std::vector<uint32_t>> walkMaps;
 
-const std::vector<uint32_t>* walkMap(SimState& s, ObjectObj* tpl, int w, int l) {
+const std::vector<uint32_t>* walkMapOf(VM& vm, ObjectObj* tpl, int w, int l) {
   auto known = walkMaps.find(tpl);
   if (known != walkMaps.end()) return known->second.empty() ? nullptr : &known->second;
   auto& out = walkMaps[tpl];
@@ -355,7 +355,7 @@ const std::vector<uint32_t>* walkMap(SimState& s, ObjectObj* tpl, int w, int l) 
   std::vector<uint8_t> file;
   int bw = 0, bh = 0;
   std::vector<uint32_t> px;
-  if (!s.vm->vfs().read(path.substr(0, dot) + ".bmp", file) || !parseBmp(file, bw, bh, px) || bw < w * 4 || bh < l * 4) return nullptr;
+  if (!vm.vfs().read(path.substr(0, dot) + ".bmp", file) || !parseBmp(file, bw, bh, px) || bw < w * 4 || bh < l * 4) return nullptr;
   // orientation 0 as stored (rows top-down here); the item rotation is applied when stamping
   out.assign(size_t(w) * size_t(l), 0);
   for (int cz = 0; cz < l; ++cz)
@@ -371,6 +371,19 @@ const std::vector<uint32_t>* walkMap(SimState& s, ObjectObj* tpl, int w, int l) 
     }
   return &out;
 }
+
+}  // namespace
+
+// port-made templates (engine/crossing_templates.cpp): their walk map given in place of a <stem>.bmp
+void setPortWalkMap(const Object* tpl, std::vector<uint32_t> words) { walkMaps[tpl] = std::move(words); }
+
+// a template's walk map (w × l cells of 16 two-bit q-cell codes, as stored), null when it has none (engine/grid_edit.cpp:
+// the conflict test's per-cell masks)
+const std::vector<uint32_t>* templateWalkMap(VM& vm, ObjectObj* tpl, int w, int l) { return walkMapOf(vm, tpl, w, l); }
+
+namespace {
+
+const std::vector<uint32_t>* walkMap(SimState& s, ObjectObj* tpl, int w, int l) { return walkMapOf(*s.vm, tpl, w, l); }
 
 // <stem>-y.bmp of a template: per cell the walk height offset R·2 − negHeight·256 (L:0x0817f650.c:262-300); the
 // stamping puts such items on a layer of their own

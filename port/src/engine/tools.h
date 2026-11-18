@@ -135,6 +135,9 @@ void toolSoftenArea(GridObj* grid, int cx, int cz, int r);
 // whole drag has templates and no conflicts. The player's tool fields are restored afterwards.
 bool toolLayRoad(script::VM& vm, ControlObj* player, GridObj* grid, int editMode, int toolMode, int x0, int z0, int x1,
                  int z1);
+// tests: a straight line of double track (editMode 6, toolMode 6) or tram track (0x11) along one axis, as toolLayRoad
+bool toolLayLine(script::VM& vm, ControlObj* player, GridObj* grid, int editMode, int toolMode, int x0, int z0, int x1,
+                 int z1);
 // port (OpenStreetMap import): a whole road network at once. blocks: block corner (multiples of 4 cells) → connection
 // mask, one byte per road kind (small, large, avenue, express; the 8 direction bits as the road tool's); neighbours
 // must carry the matching opposite bits. Masks without a game piece lose connections (on both sides) until one fits.

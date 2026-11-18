@@ -111,4 +111,13 @@ void registerPathNatives(script::VM& vm);
 // loadGridObject: the template's mesh is loaded, its locator paths come before the onLoaded edits
 void markTemplateMeshLoaded(script::VM& vm, script::Object* tpl);
 
+// a template's paths in its object space (name order), and the whole path map replaced (port-made templates)
+struct TemplatePathDef {
+  std::string name;
+  uint32_t flags = 0;
+  render::Vec3 p0, p1, f0, f1;
+};
+std::vector<TemplatePathDef> templatePathDefs(script::VM& vm, script::Object* tpl);
+void setTemplatePaths(script::VM& vm, script::Object* tpl, const std::vector<TemplatePathDef>& paths);
+
 }  // namespace regs::engine

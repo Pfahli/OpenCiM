@@ -11,6 +11,7 @@
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
+#include "engine/crossing_templates.h"
 #include "engine/curve_roads.h"
 #include "engine/paint_edges.h"
 #include "engine/proc_buildings.h"
@@ -292,6 +293,7 @@ void registerGridNatives(VM& vm) {
       markTemplateMeshLoaded(v, o);  // the locator paths, before onLoaded's setPathFlags
       if (o->data) v.fireEvent(o, u"onLoaded", {});
     }
+    portCrossingTemplates(v, g, name);  // port: the crossing pieces made from the game's (crossing_templates.h)
     return Value::heap(VT::Object, t.get());
   });
   // setTextureVariation(n, material): the material that replaces the non-0x08000000 submesh materials of merged

@@ -23,7 +23,10 @@ modes (the editor's roads, terrain and paint tools come later):
   roads, alleys, straight, diagonal, junctions where a road crosses one, dead ends; `createRoadBlock` joins with the
   track tools' rules, not the original's own map-edge and ramp code. Bridges and tunnels (modes 0xb, 0xc) are
   `moveLayBridge`; the double track laid across a small road becomes the level crossing (checked in the editor on
-  testmap, `port/run/gaps/double-track-crossing.png`). Still open: the ramps' heights, half-block road ends.
+  testmap, `port/run/gaps/double-track-crossing.png`), and so does a small road laid across the track. The road joins
+  follow the original (roads of different kinds join, a small road ends beside a wide one at the half the cursor is
+  on, the elevated ramp's heights); checked in the editor. Port (owner's request): level crossings with tram tracks,
+  across large roads and across alleys (`port/docs/building-tools.md` "Level crossings").
 - [x] The underground view (`GRID_VIEW_UNDERGROUND`, `docs/renderer/underground.md`): the minimap's layer button, the
   "U" key and the subway tool switch it as in the original; the map turns into bare earth with pits 24 m deep around
   the tunnel items, in which the subway tracks, underground stations with their stairs and halls, metro trains on
@@ -50,8 +53,9 @@ modes (the editor's roads, terrain and paint tools come later):
   LOCK_GROUND items, the lane graph and walk map (simulation hooks), picking, the minimap raster with its transport
   marks (`docs/ui/minimap.md` §2.4, §3.2: stops and line legs from the live simulation, black edge and type colour;
   Vienna's tram, metro, water bus and helicopter lines checked in the minimap texture; the bridge and tunnel pieces'
-  sampling step is the port's, 4 per piece). Still open: the full `checkConflict` and
-  `removeOverlappingOptionalObjects` rules (simplified today), undo.
+  sampling step is the port's, 4 per piece), the full `checkConflict` (walk-map masks, diagonal corners) and
+  `removeOverlappingOptionalObjects` rules (2026-11-18; checked on Vienna's own items, construction.md §10). Still
+  open: undo of live edits.
 
 ## 2. Lines and vehicles
 
@@ -76,8 +80,15 @@ modes (the editor's roads, terrain and paint tools come later):
 - [x] City growth: `gsGridTimeline` (`engine/timeline.cpp`, `docs/save-format/lines-timeline.md`): sandbox starts
   replay the history up to the start year (Berlin 1980: 21 403 actions in under 1 s), each game day applies its
   actions and previews the next 182 days (construction sites), saves write the timeline, terrain and network from
-  the live map. Still open: brush falloff and water edges checked against the original, the editor's timeline UI.
-- [ ] New maps from the editor and the scenario start dates (the sandbox start year now comes from the map).
+  the live map. Brush falloff and water edges checked against the original (2026-11-18, `applyBrush` against
+  L:0x081a3ce0: the falloff's sin in double as the editor's tool, the ruin amount in double, the water edges once
+  after all points of an action). Still open: the editor's timeline UI.
+- [x] New maps from the editor and the scenario start dates: the new-map dialog's earliest start year goes into the
+  map's .scenario (`currentDate`), the sandbox page offers it as the first year, and (port, 2026-11-18) a game
+  started without the sandbox page (the editor's "Speichern & Spielen") begins in it instead of sandbox.scenario's
+  1920 (`data/regs/extend/metro/scripts/main.script` loadSandboxScenario). Checked: a new 128-cell map with 1940,
+  saved and played from the editor, starts "Januar 2 1940". Open: the year field of the new-map dialog takes no
+  clicks or typing (only its arrows, in steps of 10).
 
 ## 4. Simulation gaps
 

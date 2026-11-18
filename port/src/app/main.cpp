@@ -18,9 +18,11 @@
 #include "core/text.h"
 #include "engine/display.h"
 #include "engine/engine.h"
+#include "engine/gui.h"
 #include "engine/host.h"
 #include "engine/input.h"
 #include "engine/platform.h"
+#include "engine/tools.h"
 #include "engine/user_folders.h"
 
 #if defined(_WIN32)
@@ -275,6 +277,32 @@ int main(int argc, char** argv) {
               vm.call(vm.getMember(ui, fn), {arg});
             }
           } catch (...) {
+          }
+          continue;
+        } else if (sc.action == "road" || sc.action == "track" || sc.action == "tram") {
+          // road:editMode,toolMode,x0,z0,x1,z1 lays a road drag between two blocks (cells) with the editor's road tool;
+          // track:x0,z0,x1,z1 a straight double track, tram:x0,z0,x1,z1 a straight tram track (tests: on MAIN.$player,
+          // the grid player); the log says whether it was laid
+          int em = 0, tm = 0, x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+          if (sc.action == "road") std::sscanf(sc.arg.c_str(), "%d,%d,%d,%d,%d,%d", &em, &tm, &x0, &z0, &x1, &z1);
+          else std::sscanf(sc.arg.c_str(), "%d,%d,%d,%d", &x0, &z0, &x1, &z1), em = sc.action == "track" ? 6 : 0x11, tm = sc.action == "track" ? 6 : 0;
+          try {
+            auto& vm = eng.vm();
+            const char* result = "no MAIN";
+            if (script::Value* main = vm.findGlobal(u"MAIN")) {
+              result = "no grid player (MAIN.$player)";
+              if (auto* p = dynamic_cast<engine::ControlObj*>(vm.resolve(vm.getMember(*main, u"$player")).object())) {
+                result = "no grid";
+                if (engine::GridObj* g = engine::toolGrid(vm, p))
+                  result = (sc.action == "road" ? engine::toolLayRoad(vm, p, g, em, tm, x0, z0, x1, z1)
+                                                : engine::toolLayLine(vm, p, g, em, tm, x0, z0, x1, z1))
+                               ? "laid"
+                               : "not laid (conflict or no piece)";
+              }
+            }
+            LOG_INFO("%s %s: %s", sc.action.c_str(), sc.arg.c_str(), result);
+          } catch (const std::exception& ex) {
+            LOG_WARN("road %s: %s", sc.arg.c_str(), ex.what());
           }
           continue;
         } else if (sc.action == "ui") {  // ui:off draws the scene only (screenshots without the interface), ui:on back

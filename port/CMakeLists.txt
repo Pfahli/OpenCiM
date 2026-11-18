@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 project(regs VERSION 0.2.0 LANGUAGES CXX)
 
 # ReGS: a from-source reimplementation of the GSystem engine that runs Cities in Motion from an installed copy.
@@ -75,6 +75,7 @@ add_library(regs_engine STATIC
   src/engine/proc_buildings.cpp
   src/engine/tool_terrain.cpp
   src/engine/tool_tracks.cpp
+  src/engine/crossing_templates.cpp
   src/engine/grid_save.cpp
   src/engine/grid_edit.cpp
   src/engine/timeline.cpp

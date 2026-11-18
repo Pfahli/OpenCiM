@@ -1249,4 +1249,27 @@ void markTemplateMeshLoaded(VM& vm, Object* tpl) {
   if (PathSetObj* set = pathSet(vm, tpl, true)) set->ops.push_back({PathSetObj::Op::Locators, {}, 0, {}});
 }
 
+std::vector<TemplatePathDef> templatePathDefs(VM& vm, Object* tpl) {
+  std::vector<TemplatePathDef> out;
+  auto* o = dynamic_cast<ObjectObj*>(tpl);
+  PathSetObj* set = o ? pathSet(vm, tpl, true) : nullptr;
+  if (!set) return out;
+  buildPaths(vm, o, set);
+  for (const auto& [name, r] : set->paths) out.push_back({name, r.flags, r.p0, r.p1, r.f0, r.f1});
+  return out;
+}
+
+void setTemplatePaths(VM& vm, Object* tpl, const std::vector<TemplatePathDef>& paths) {
+  PathSetObj* set = pathSet(vm, tpl, true);
+  if (!set) return;
+  set->ops.clear();
+  set->paths.clear();
+  for (const TemplatePathDef& p : paths) {
+    PathRecord r;
+    r.flags = p.flags, r.p0 = p.p0, r.p1 = p.p1, r.f0 = p.f0, r.f1 = p.f1;
+    set->paths[p.name] = r;
+  }
+  set->built = true;
+}
+
 }  // namespace regs::engine
