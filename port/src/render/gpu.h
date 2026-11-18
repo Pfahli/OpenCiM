@@ -73,6 +73,11 @@ class Device {
   virtual void setAnisotropy(uint32_t tex, float a) = 0;  // 1 = off; clamped to maxAnisotropy() by the caller
   // Level 0's red channel as floats (w·h values).
   virtual void readTextureRed(uint32_t tex, int w, int h, float* out) = 0;
+  // The same without waiting for the GPU, for a value that is wanted a frame or two later: queueReadRed records a copy
+  // of level 0's red channel (w·h values) and returns; takeReadRed hands out the newest copy of that texture the GPU has
+  // finished since the last take (true), or returns false while there is none. Destroying the texture drops its copies.
+  virtual void queueReadRed(uint32_t tex, int w, int h) = 0;
+  virtual bool takeReadRed(uint32_t tex, std::vector<float>& out) = 0;
   virtual void destroyTexture(uint32_t tex) = 0;
   // An existing texture is defined anew under the same handle (size and levels follow from the texImage calls after it).
   virtual void redefineTexture(uint32_t tex, int levels) {}

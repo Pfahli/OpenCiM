@@ -24,6 +24,8 @@ using GLchar = char;
 using GLubyte = unsigned char;
 using GLsizeiptr = std::ptrdiff_t;
 using GLintptr = std::ptrdiff_t;
+using GLuint64 = unsigned long long;
+using GLsync = struct GLsyncObject*;
 
 enum : GLenum {
   ZERO = 0, ONE = 1, TRIANGLES = 0x0004, LINES = 0x0001,
@@ -50,6 +52,8 @@ enum : GLenum {
   TEXTURE_COMPARE_MODE = 0x884C, TEXTURE_COMPARE_FUNC = 0x884D, COMPARE_REF_TO_TEXTURE = 0x884E,
   READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9, MAX_SAMPLES = 0x8D57, NEAREST_MIPMAP_NEAREST = 0x2700,
   COLOR = 0x1800, COLOR_ATTACHMENT1 = 0x8CE1,
+  PIXEL_PACK_BUFFER = 0x88EB, STREAM_READ = 0x88E1, SYNC_GPU_COMMANDS_COMPLETE = 0x9117, SYNC_FLUSH_COMMANDS_BIT = 0x1,
+  ALREADY_SIGNALED = 0x911A, CONDITION_SATISFIED = 0x911C, WAIT_FAILED = 0x911D,
 };
 
 #define REGS_GL_FUNCS(X)                                                                                    \
@@ -138,7 +142,11 @@ enum : GLenum {
   X(void, DeleteVertexArrays, GLsizei, const GLuint*)                                                       \
   X(void, GenQueries, GLsizei, GLuint*)                                                                     \
   X(void, QueryCounter, GLuint, GLenum)                                                                     \
-  X(void, GetQueryObjectui64v, GLuint, GLenum, unsigned long long*)
+  X(void, GetQueryObjectui64v, GLuint, GLenum, unsigned long long*)                                         \
+  X(void, GetBufferSubData, GLenum, GLintptr, GLsizeiptr, void*)                                            \
+  X(GLsync, FenceSync, GLenum, GLbitfield)                                                                  \
+  X(GLenum, ClientWaitSync, GLsync, GLbitfield, GLuint64)                                                   \
+  X(void, DeleteSync, GLsync)
 
 #define REGS_GL_DECLARE(ret, name, ...) using PFN_##name = ret(REGS_GLAPI*)(__VA_ARGS__); extern PFN_##name name;
 REGS_GL_FUNCS(REGS_GL_DECLARE)

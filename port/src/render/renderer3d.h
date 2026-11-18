@@ -308,6 +308,10 @@ class Renderer3D {
                 bool multiply = false, const float* custom2 = nullptr);
   // The red channel of a float texture (glGetTexImage(GL_RED, GL_FLOAT)), w·h values.
   void readRed(uint32_t texture, int w, int h, std::vector<float>& out);
+  // The same without waiting for the GPU: queueRed starts a copy, takeRed gives the newest finished one (false: none
+  // has finished since the last take). gpu::Device::queueReadRed / takeReadRed.
+  void queueRed(uint32_t texture, int w, int h);
+  bool takeRed(uint32_t texture, std::vector<float>& out);
   // Starts drawing into a target (or the back buffer when null) inside the pixel rect; clears depth, and colour
   // when clearColor is set (to clearArgb with alpha 0 so the GUI can composite the result).
   void begin(const RenderTarget* t, int x, int y, int w, int h, uint32_t clearArgb, bool clearColor, int backW, int backH);

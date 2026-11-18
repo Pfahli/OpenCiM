@@ -489,6 +489,10 @@ void Renderer3D::readRed(uint32_t texture, int w, int h, std::vector<float>& out
   dev().readTextureRed(texture, w, h, out.data());
 }
 
+void Renderer3D::queueRed(uint32_t texture, int w, int h) { dev().queueReadRed(texture, w, h); }
+
+bool Renderer3D::takeRed(uint32_t texture, std::vector<float>& out) { return dev().takeReadRed(texture, out); }
+
 void Renderer3D::destroyTarget(RenderTarget& t) {
   gpu::Device& d = dev();
   if (t.msFbo) d.destroyFramebuffer(t.msFbo);

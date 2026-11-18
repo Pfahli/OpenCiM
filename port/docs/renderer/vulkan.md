@@ -164,7 +164,9 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
   `blitColor1` resolves (multisampled source) or copies it, bottom-left w×h. Wet ground mirrors in rain on both engines
   (Vienna, `REGS_TEST_WEATHER=rain`, `REGS_DEBUG_WEATHER=4` shows the same film, puddles and hits).
 * **Readback:** `readPixels` and `readTexture` wait for the GPU (as GL does). The bloom's per-frame 64×32 luminance read
-  (bloom.md) is the one hot path; it can later read the previous frame's copy without waiting.
+  (bloom.md), the one hot path, does not: `queueReadRed` copies into the frame's ring and `takeReadRed` converts the
+  copy once that frame's fence has passed (the previous frame's, usually; at the latest when the slot comes round).
+  GL does the same with a ring of pixel pack buffers and fences.
 * **Present:** FIFO when vsync is on, else MAILBOX or IMMEDIATE; window resize and the graphics page's mode changes
   recreate the swapchain (the textures and programs stay, as with GL's context).
 

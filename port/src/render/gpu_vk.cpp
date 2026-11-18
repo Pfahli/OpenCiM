@@ -61,7 +61,8 @@ namespace {
   X(vkDestroyDevice) X(vkGetDeviceQueue) X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) \
   X(vkAcquireNextImageKHR) X(vkQueuePresentKHR) X(vkQueueSubmit2) X(vkDeviceWaitIdle) X(vkCreateCommandPool)        \
   X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkResetCommandPool) X(vkBeginCommandBuffer)                 \
-  X(vkEndCommandBuffer) X(vkCreateFence) X(vkDestroyFence) X(vkWaitForFences) X(vkResetFences) X(vkCreateSemaphore)  \
+  X(vkEndCommandBuffer) X(vkCreateFence) X(vkDestroyFence) X(vkWaitForFences) X(vkResetFences) X(vkGetFenceStatus)  \
+  X(vkCreateSemaphore)                                                                                               \
   X(vkDestroySemaphore) X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements) X(vkBindImageMemory)      \
   X(vkCreateImageView) X(vkDestroyImageView) X(vkCreateBuffer) X(vkDestroyBuffer) X(vkGetBufferMemoryRequirements)   \
   X(vkBindBufferMemory) X(vkAllocateMemory) X(vkFreeMemory) X(vkMapMemory) X(vkUnmapMemory) X(vkCreateSampler)       \
@@ -332,6 +333,8 @@ class VkDeviceImpl final : public Device {
     if (Tex* t = texture(tex)) t->aniso = a, t->vkSampler = VK_NULL_HANDLE;
   }
   void readTextureRed(uint32_t tex, int w, int h, float* out) override;
+  void queueReadRed(uint32_t tex, int w, int h) override;
+  bool takeReadRed(uint32_t tex, std::vector<float>& out) override;
   void destroyTexture(uint32_t tex) override { releaseTexture(tex); }
   void redefineTexture(uint32_t tex, int levels) override {
     if (Tex* t = texture(tex)) t->levelsHint = std::max(1, levels), freeImage(*t);  // level 0's texImage makes it anew
@@ -627,6 +630,14 @@ class VkDeviceImpl final : public Device {
     size_t ringCurrent = 0;
     Accel tlas;  // this frame's scene for ray queries
     bool tlasBuilt = false;
+    // queueReadRed's copies recorded in this frame: texels in the ring, converted once the frame's fence has passed
+    struct RedRead {
+      uint32_t tex = 0;
+      size_t count = 0;
+      Format format = Format::None;
+      const uint8_t* texels = nullptr;
+    };
+    std::vector<RedRead> reads;
   };
   struct State {
     std::array<int, 4> vp{0, 0, 1, 1}, sc{0, 0, 1, 1};
@@ -692,6 +703,10 @@ class VkDeviceImpl final : public Device {
   void releaseTexture(uint32_t h) {
     Tex* t = texture(h);
     if (!t) return;
+    redDone_.erase(h);  // its asynchronous reads go with it (a new texture may get the handle)
+    for (Frame& f : frames_)
+      f.reads.erase(std::remove_if(f.reads.begin(), f.reads.end(), [h](const Frame::RedRead& r) { return r.tex == h; }),
+                    f.reads.end());
     freeImage(*t);
     *t = Tex{};
   }
@@ -722,6 +737,9 @@ class VkDeviceImpl final : public Device {
   // frames, commands, rings
   VkCommandBuffer cmd() { return frames_[frame_].cmd; }
   void later(std::function<void()> f) { frames_[frame_].garbage.push_back(std::move(f)); }
+  // a frame's queueReadRed copies after its fence has passed: into redDone_ (before the ring is handed out again)
+  void harvestReads(Frame& f);
+  bool copyLevel0(uint32_t tex, int& w, int& h, Format& format, const uint8_t*& texels);
   bool ringAlloc(VkDeviceSize bytes, VkDeviceSize align, VkBuffer& buf, VkDeviceSize& off, uint8_t*& ptr);
   void beginCommands();
   void submitAndWait();  // ends rendering, submits what was recorded, waits, and starts a new command buffer
@@ -766,6 +784,11 @@ class VkDeviceImpl final : public Device {
   std::vector<VkSemaphore> presentReady_;  // per swapchain image
   std::array<Frame, kFrames> frames_;
   size_t frame_ = 0;
+  struct RedDone {
+    std::vector<float> px;
+    bool fresh = false;  // not taken yet
+  };
+  std::unordered_map<uint32_t, RedDone> redDone_;  // the newest finished queueReadRed copy by texture
   uint64_t frameCount_ = 1;
   bool recording_ = false;
 
@@ -1603,6 +1626,7 @@ void VkDeviceImpl::submitAndWait() {
   }
   vkWaitForFences(dev_, 1, &f.fence, VK_TRUE, UINT64_MAX);
   vkResetFences(dev_, 1, &f.fence);
+  harvestReads(f);
   // everything recorded so far has run: the ring can start over (stream buffers written this frame keep their data:
   // their regions are not handed out again before the next submit, which only happens after they were consumed)
   for (auto& g : f.garbage) g();
@@ -1738,6 +1762,7 @@ void VkDeviceImpl::presentTail() {
   Frame& n = frames_[frame_];
   vkWaitForFences(dev_, 1, &n.fence, VK_TRUE, UINT64_MAX);
   vkResetFences(dev_, 1, &n.fence);
+  harvestReads(n);
   for (auto& g : n.garbage) g();
   n.garbage.clear();
   for (auto& c : n.ring) c.used = 0;
@@ -2145,30 +2170,91 @@ VkSampler VkDeviceImpl::samplerFor(Tex& t, bool shadow) {
   return own ? (t.vkSampler = smp) : smp;
 }
 
-void VkDeviceImpl::readTextureRed(uint32_t tex, int w, int h, float* out) {
-  Tex* t = texture(tex);
-  if (!t || !t->image) return;
-  size_t bpp = t->format == Format::RGBA16F ? 8 : t->format == Format::RGBA32F ? 16 : t->format == Format::R8 ? 1 : 4;
-  VkBuffer buf;
-  VkDeviceSize off;
-  uint8_t* ptr;
-  w = std::min(w, t->w), h = std::min(h, t->h);
-  if (!ringAlloc(size_t(w) * size_t(h) * bpp, 16, buf, off, ptr)) return;
-  endRendering();
-  VkBufferImageCopy c{};
-  c.bufferOffset = off;
-  c.imageSubresource = {aspectOf(*t), 0, 0, 1};
-  c.imageExtent = {uint32_t(w), uint32_t(h), 1};
-  vkCmdCopyImageToBuffer(cmd(), t->image, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &c);
-  submitAndWait();
-  for (size_t i = 0; i < size_t(w) * size_t(h); ++i) {
-    switch (t->format) {
+namespace {
+
+// the red channel of n texels copied out of an image of this format
+void redOfTexels(Format format, const uint8_t* ptr, size_t n, float* out) {
+  for (size_t i = 0; i < n; ++i) {
+    switch (format) {
       case Format::RGBA16F: out[i] = halfToFloat(reinterpret_cast<const uint16_t*>(ptr)[i * 4]); break;
       case Format::RGBA32F: out[i] = reinterpret_cast<const float*>(ptr)[i * 4]; break;
       case Format::R8: out[i] = ptr[i] / 255.0f; break;
       default: out[i] = ptr[i * 4 + 2] / 255.0f; break;  // B8G8R8A8: red is the third byte
     }
   }
+}
+
+}  // namespace
+
+// level 0 (w×h, clamped to the texture) into this frame's ring; false when the texture or the ring has nothing
+bool VkDeviceImpl::copyLevel0(uint32_t tex, int& w, int& h, Format& format, const uint8_t*& texels) {
+  Tex* t = texture(tex);
+  if (!t || !t->image) return false;
+  size_t bpp = t->format == Format::RGBA16F ? 8 : t->format == Format::RGBA32F ? 16 : t->format == Format::R8 ? 1 : 4;
+  VkBuffer buf;
+  VkDeviceSize off;
+  uint8_t* ptr;
+  w = std::min(w, t->w), h = std::min(h, t->h);
+  if (w <= 0 || h <= 0 || !ringAlloc(size_t(w) * size_t(h) * bpp, 16, buf, off, ptr)) return false;
+  endRendering();
+  VkBufferImageCopy c{};
+  c.bufferOffset = off;
+  c.imageSubresource = {aspectOf(*t), 0, 0, 1};
+  c.imageExtent = {uint32_t(w), uint32_t(h), 1};
+  vkCmdCopyImageToBuffer(cmd(), t->image, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &c);
+  // the copy's writes visible to the host once the fence has passed
+  VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+  mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+  mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+  mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+  mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+  VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+  di.memoryBarrierCount = 1;
+  di.pMemoryBarriers = &mb;
+  vkCmdPipelineBarrier2(cmd(), &di);
+  format = t->format;
+  texels = ptr;
+  return true;
+}
+
+void VkDeviceImpl::readTextureRed(uint32_t tex, int w, int h, float* out) {
+  Format format;
+  const uint8_t* texels;
+  if (!copyLevel0(tex, w, h, format, texels)) return;
+  submitAndWait();
+  redOfTexels(format, texels, size_t(w) * size_t(h), out);
+}
+
+// The copy goes into the current frame's ring. Its fence has passed by the time the frame slot comes round again
+// (presentTail waits for it), and usually already one frame later, when takeReadRed finds the previous frame's fence
+// signalled: the result arrives one frame after the copy, two when the GPU is a whole frame behind.
+void VkDeviceImpl::queueReadRed(uint32_t tex, int w, int h) {
+  Format format;
+  const uint8_t* texels;
+  if (!copyLevel0(tex, w, h, format, texels)) return;
+  frames_[frame_].reads.push_back({tex, size_t(w) * size_t(h), format, texels});
+}
+
+bool VkDeviceImpl::takeReadRed(uint32_t tex, std::vector<float>& out) {
+  for (size_t i = 0; i < kFrames; ++i) {  // the other frame slots: submitted, their fences reset only when reused
+    Frame& f = frames_[i];
+    if (i != frame_ && !f.reads.empty() && vkGetFenceStatus(dev_, f.fence) == VK_SUCCESS) harvestReads(f);
+  }
+  auto it = redDone_.find(tex);
+  if (it == redDone_.end() || !it->second.fresh) return false;
+  it->second.fresh = false;
+  out = it->second.px;
+  return true;
+}
+
+void VkDeviceImpl::harvestReads(Frame& f) {
+  for (const Frame::RedRead& r : f.reads) {  // in recording order: the newest copy of a texture wins
+    RedDone& d = redDone_[r.tex];
+    d.px.resize(r.count);
+    redOfTexels(r.format, r.texels, r.count, d.px.data());
+    d.fresh = true;
+  }
+  f.reads.clear();
 }
 
 // ---------------------------------------------------------------------------------------------------------------

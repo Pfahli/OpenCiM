@@ -276,3 +276,29 @@ caused by shaders or pipelines in the measured runs; render CPU about 0.7 ms (10
 (After-numbers from one merged run each with `REGS_FIXED_DT=0.016`; other sessions were running.) Left: the
 pedestrian A* (it must find exactly the same paths), bloom's per-frame readback wait, Vulkan programs still built one
 by one, the editor's tool-preview rescans (C2), `restampWalk` after big edits, and the script compile cache (B8).
+
+## Bloom readback (2026-11-18)
+
+The bloom's 64×32 luminance read no longer waits for the GPU (`gpu::Device::queueReadRed` / `takeReadRed`, used by
+`bloomFinish` in `effects.cpp`). Vulkan copies into the frame's ring and converts the copy once that frame's fence has
+passed: the previous frame's fence when it is already signalled, at the latest when `presentTail` waits for the slot
+(one frame of delay, two when the GPU is a frame behind). OpenGL reads into a ring of four pixel pack buffers, each
+with a `glFenceSync`, polled with a zero timeout; the newest finished one is used. The measurement `m` now lags one or
+two frames more than in the engine; `E` follows it with a 1 s half-life, so the picture does not change visibly.
+
+Berlin, 1920x1080, `$bloom = true`, `REGS_BENCH=300:1400`, RTX 3080, old and new builds alternated:
+
+| | fps old | fps new | render CPU ms old | new | GPU ms median old | new |
+|---|---|---|---|---|---|---|
+| Vulkan, run 1 | 44.8 | 96.4 | 15.28 | 5.64 | 7.83 | 2.97 |
+| Vulkan, run 2 | 73.1 | 115.4 | 9.55 | 4.70 | 5.78 | 2.65 |
+| Vulkan, run 3 | 72.1 | 114.3 | 9.68 | 4.71 | 6.14 | 2.62 |
+| OpenGL, run 1 | 70.4 | 78.6 | 7.88 | 6.55 | 5.32 | 4.13 |
+| OpenGL, run 2 | 69.6 | 78.8 | 8.37 | 6.94 | 5.42 | 4.20 |
+
+With bloom off nothing changed (Vulkan 116.6 / 117.1 fps, OpenGL 89.1 / 89.3 fps). On Vulkan bloom now costs about
+2 fps instead of about 45; the old GPU time included the idle gap at the wait inside the frame. Screenshots at frame
+900 (`REGS_FIXED_DT=0.016`): with bloom on, 3.3 % of the pixels differ by one step of 255 from the old build on both
+renderers (mean brightness 66.36 → 66.35, the extra frame of exposure delay); two runs of the old build differ by
+0.2-0.4 % of the pixels (moving objects). With bloom off, the old and new pictures are the same. The Vulkan
+validation layer is not installed on this PC, so that check was not run.

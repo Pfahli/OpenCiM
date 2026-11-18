@@ -1,6 +1,7 @@
 // The OpenGL 3.3 core device (docs/renderer/vulkan.md §2): every call goes straight to GL, so the picture is exactly
 // what the renderer drew when it called GL itself.
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -209,7 +210,55 @@ class GlDevice final : public Device {
     gl::GetTexImage(gl::TEXTURE_2D, 0, gl::RED, gl::FLOAT, out);
     gl::BindTexture(gl::TEXTURE_2D, 0);
   }
+  // a ring of pixel pack buffers per texture, each with a fence: glGetTexImage into a free one returns at once, the
+  // copy is read when its fence has passed (polled with a zero timeout). When every buffer is still in flight (the GPU
+  // is kRedReads frames behind) this frame's copy is left out rather than waited for.
+  void queueReadRed(uint32_t tex, int w, int h) override {
+    if (!tex || w <= 0 || h <= 0) return;
+    auto& ring = redReads_[tex];
+    RedRead* slot = nullptr;
+    for (RedRead& r : ring)
+      if (!r.fence) { slot = &r; break; }
+    if (!slot) return;
+    gl::GLsizeiptr bytes = gl::GLsizeiptr(w) * h * gl::GLsizeiptr(sizeof(float));
+    if (!slot->pbo) gl::GenBuffers(1, &slot->pbo);
+    gl::BindBuffer(gl::PIXEL_PACK_BUFFER, slot->pbo);
+    if (slot->bytes != bytes) gl::BufferData(gl::PIXEL_PACK_BUFFER, slot->bytes = bytes, nullptr, gl::STREAM_READ);
+    bindForEdit(tex);
+    gl::PixelStorei(gl::PACK_ALIGNMENT, 4);
+    gl::GetTexImage(gl::TEXTURE_2D, 0, gl::RED, gl::FLOAT, nullptr);  // offset 0 in the bound pack buffer
+    gl::BindTexture(gl::TEXTURE_2D, 0);
+    gl::BindBuffer(gl::PIXEL_PACK_BUFFER, 0);  // glReadPixels elsewhere writes to client memory again
+    slot->fence = gl::FenceSync(gl::SYNC_GPU_COMMANDS_COMPLETE, 0);
+    slot->serial = ++redSerial_;
+  }
+  bool takeReadRed(uint32_t tex, std::vector<float>& out) override {
+    auto it = redReads_.find(tex);
+    if (it == redReads_.end()) return false;
+    RedRead* newest = nullptr;
+    for (RedRead& r : it->second) {
+      if (!r.fence) continue;
+      gl::GLenum s = gl::ClientWaitSync(r.fence, gl::SYNC_FLUSH_COMMANDS_BIT, 0);
+      if (s != gl::ALREADY_SIGNALED && s != gl::CONDITION_SATISFIED && s != gl::WAIT_FAILED) continue;
+      gl::DeleteSync(r.fence);
+      r.fence = nullptr;
+      if (s != gl::WAIT_FAILED && (!newest || r.serial > newest->serial)) newest = &r;  // older finished ones: dropped
+    }
+    if (!newest) return false;
+    out.resize(size_t(newest->bytes) / sizeof(float));
+    gl::BindBuffer(gl::PIXEL_PACK_BUFFER, newest->pbo);
+    gl::GetBufferSubData(gl::PIXEL_PACK_BUFFER, 0, newest->bytes, out.data());
+    gl::BindBuffer(gl::PIXEL_PACK_BUFFER, 0);
+    return true;
+  }
   void destroyTexture(uint32_t tex) override {
+    if (auto it = redReads_.find(tex); it != redReads_.end()) {
+      for (RedRead& r : it->second) {
+        if (r.fence) gl::DeleteSync(r.fence);
+        if (r.pbo) gl::DeleteBuffers(1, &r.pbo);
+      }
+      redReads_.erase(it);
+    }
     if (tex) gl::DeleteTextures(1, &tex);
   }
   int videoMemoryInUseMB() override {
@@ -607,6 +656,15 @@ class GlDevice final : public Device {
   };
   Timing timing_[4];
   int timingSlot_ = 0;
+  static constexpr int kRedReads = 4;  // queueReadRed's buffers per texture
+  struct RedRead {
+    uint32_t pbo = 0;
+    gl::GLsync fence = nullptr;  // set while the copy is in flight or finished but not taken
+    gl::GLsizeiptr bytes = 0;
+    uint64_t serial = 0;
+  };
+  std::unordered_map<uint32_t, std::array<RedRead, kRedReads>> redReads_;  // by texture
+  uint64_t redSerial_ = 0;
   double gpuMs_ = -1;
   std::vector<uint8_t> cube_;  // per texture name: a cube map
   std::unordered_map<uint32_t, Queued> queuedPrograms_;  // by program

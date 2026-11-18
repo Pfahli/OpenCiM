@@ -706,13 +706,21 @@ void bloomFinish(Display& d, VM& vm, Object* bloom, int x, int y, int w, int h, 
     into(s.a[i]);
     r.drawQuad(s.blur, &s.b[i].color, 1, cv, uv, rect);
   }
-  // measurement for the next frame: RMS of the red channel over the whole 64×32 level
+  // measurement for the next frame: RMS of the red channel over the whole 64×32 level. Port: read without waiting for
+  // the GPU (the engine's glGetTexImage stalled until the shadow and scene passes had run). The copy queued here is
+  // taken by a later frame: Vulkan one frame later, two when the GPU is a frame behind; OpenGL when its fence has
+  // passed, usually one frame later as well (at most four copies in flight). So m lags the scene by one or two frames
+  // more than in the engine, and keeps its value (0 from the start, as the ctor's) until the first copy arrives. E
+  // follows m with a 1 s half-life (bloomTick), so a frame of extra delay moves E by about 1 % of one frame's change
+  // in m at 60 fps: not visible (bloom.md §4, quirk 6). Only a script's scale = -1 uses m directly; none does.
   std::vector<float> px;
-  r.readRed(s.a[3].color, s.a[3].width, s.a[3].height, px);
-  double sum = 0;
-  for (float v : px) sum += v;
-  float m = float(std::sqrt(sum / 2048.0));
-  s.measured = (m > 100000.0f || !(m > 0.0f)) ? 1.0f : m;
+  if (r.takeRed(s.a[3].color, px)) {
+    double sum = 0;
+    for (float v : px) sum += v;
+    float m = float(std::sqrt(sum / 2048.0));
+    s.measured = (m > 100000.0f || !(m > 0.0f)) ? 1.0f : m;
+  }
+  r.queueRed(s.a[3].color, s.a[3].width, s.a[3].height);
   // pass 10: weighted sum of the four levels into B0
   into(s.b[0]);
   const uint32_t levels[4] = {s.a[0].color, s.a[1].color, s.a[2].color, s.a[3].color};
