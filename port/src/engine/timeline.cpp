@@ -427,7 +427,8 @@ void applyBrush(Apply& ap, const Action& a, bool preview) {
   };
   auto falloff = [&](int d2) {
     float r2 = r * r > 0 ? float(r * r) : 1.0f;
-    return float(std::sin((float(d2) / r2 + 0.5f) * 3.1415927f)) * 0.5f + 0.5f;
+    // the argument in float, sin in double, the result back to float (L:0x081a3ce0.c:95-100), as the editor's tool
+    return float(std::sin(double((float(d2) / r2 + 0.5f) * 3.1415927f))) * 0.5f + 0.5f;
   };
   bool heights = type >= 19 && type <= 21;
   for (auto [px, pz] : a.points) {
@@ -442,7 +443,8 @@ void applyBrush(Apply& ap, const Action& a, bool preview) {
           if (type == 20) {
             g.height[c] = int16_t(std::max(-0x600, int(std::nearbyint(float(a.strength) * f)) + g.height[c]));
           } else if (!(g.flags[c] & 0x28)) {
-            int wear = int(std::nearbyint(float(a.strength) * f * 0.0001f * float((std::rand() & 0x1f) + 0x44))) +
+            // the 0.0001 is a double: the product is taken in double (:112-113)
+            int wear = int(std::nearbyint(double(float(a.strength) * f) * 0.0001 * double((std::rand() & 0x1f) + 0x44))) +
                        (g.flags[c] & 7);
             g.flags[c] = uint16_t((g.flags[c] & 0xFFF8) | std::clamp(wear, 0, 7));
           }
@@ -492,7 +494,12 @@ void applyBrush(Apply& ap, const Action& a, bool preview) {
           }
         }
     }
-    if (heights)  // water stays only where a corner is below the water level
+    gridEditCellsChanged(ap.grid, px - r - 1, pz - r - 1, px + r + 2, pz + r + 2, heights);
+  }
+  // the water edges, once every point has changed the heights (:380-426): water stays only where a corner is below
+  // the water level
+  if (heights)
+    for (auto [px, pz] : a.points)
       for (int dz = -r; dz <= r + 1; ++dz)
         for (int dx = -r; dx <= r + 1; ++dx) {
           int x = px + dx, z = pz + dz;
@@ -503,8 +510,6 @@ void applyBrush(Apply& ap, const Action& a, bool preview) {
           int16_t h3 = x < g.width - 1 && z < g.length - 1 ? g.height[c + size_t(g.width) + 1] : g.height[c];
           if (h1 > -0x141 && h2 > -0x141 && h3 > -0x141) g.flags[c] &= 0xDFFF;
         }
-    gridEditCellsChanged(ap.grid, px - r - 1, pz - r - 1, px + r + 2, pz + r + 2, heights);
-  }
 }
 
 void applyAction(Apply& ap, const Action& a, bool preview) {
