@@ -271,8 +271,8 @@ target_include_directories(regs-tool PRIVATE third_party/miniaudio)
 target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
 
 # the game
-add_executable(regs src/app/main.cpp src/tools/crash_win32.cpp)
-target_link_libraries(regs PRIVATE regs_engine dbghelp)
+add_executable(regs src/app/main.cpp src/tools/crash_win32.cpp src/tools/profiler_win32.cpp)
+target_link_libraries(regs PRIVATE regs_engine dbghelp winmm)
 # the port's own game files (menu pages, strings, script extensions), mounted over the install from data/ next to the
 # executable; copied on every build (also when only data/ changed and nothing relinks)
 # Built-in mods (data/mods, disabled until listed in the user's mods.json) come along; the weather mod's seamless loops

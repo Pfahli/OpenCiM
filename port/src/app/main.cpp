@@ -26,6 +26,12 @@
 #include <windows.h>
 #endif
 
+#if defined(_WIN32)
+void profilerFrame(long long frame);  // tools/profiler_win32.cpp: REGS_PROFILE=<first frame>:<frames>:<report file>
+#else
+inline void profilerFrame(long long) {}
+#endif
+
 using namespace regs;
 namespace fs = std::filesystem;
 
@@ -160,6 +166,7 @@ int main(int argc, char** argv) {
   long long frame = 0;
   int mx = 0, my = 0;
   while (!engine::host().quit && (maxFrames < 0 || frame < maxFrames)) {
+    profilerFrame(frame);
     auto now = clock::now();
     float dt = std::clamp(std::chrono::duration<float>(now - last).count(), 0.0001f, 0.05f);
     last = now;
