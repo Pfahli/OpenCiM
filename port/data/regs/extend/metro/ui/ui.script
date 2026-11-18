@@ -2,9 +2,66 @@
 // the middle of the screen for three seconds) stays away while an autosave runs (MAIN.$regsQuietStatus, set by the
 // game's and the editor's autosave: owner's request 2026-11-15, the box every few minutes got in the way). Instead a
 // small floppy disk blinks in the top right corner (regsShowSaveIcon; owner's request 2026-11-16).
+// Number fields (createNumberEdit: the start year of a new map and of a sandbox game, …) take a click and typing as
+// well as their arrows (owner's request 2026-11-19): a click opens an edit control over the value; Enter, a click
+// elsewhere or leaving it takes the typed number (clamped to the field's range, as the arrows do), Escape keeps the old
+// value. Digits only. The original fields were arrows only.
 //@rename showStatusMessage regsBaseShowStatusMessage
+//@rename createNumberEdit regsBaseCreateNumberEdit
 
 //@base
+
+function createNumberEdit($parent, $x, $y, $w, $h, $min = 0, $max = 100, $step = 5, $pattern = "%0", $default = 0) {
+  $edit = regsBaseCreateNumberEdit($parent, $x, $y, $w, $h, $min, $max, $step, $pattern, $default);
+  $edit.$regsTyping = null;
+  $edit.$regsSelf = $edit;  // the handler reaches the field through its own members (.)
+  event $edit.mouseDown::["MouseLeft"]() {
+    regsNumberEditType(.$regsSelf);
+  }
+  return $edit;
+}
+
+// the edit control over a number field (its arrows stay usable to its right)
+function regsNumberEditType($edit) {
+  if ($edit.$regsTyping) return;
+  with ($edit.$regsTyping = new_editControl($edit)) {
+    .setRect(0, 0, $edit.clientWidth - 18, $edit.height);
+    .background = 0xC0303030;
+    .setMargins(2, 5, 2, 2);
+    setTextFont(current);
+    .caretColor = 0xFFFFFFFF;
+    .maxLength = 9;
+    .text = string($edit.$value);
+    .selStart = 0;
+    .selLength = #.text;
+    .visible = true;
+    .$field = $edit;
+    event .onCheckInput::($key) {
+      .rejectInput = !($key >= '0' && $key <= '9' || ($key == '-' && .$field.$min < 0));
+    }
+    event .keyDown::["Enter"]() {
+      regsNumberEditDone(.$field, true);
+    }
+    event .keyDown::["Esc"]() {
+      regsNumberEditDone(.$field, false);
+    }
+    event .onDeactivate::() {
+      regsNumberEditDone(.$field, true);
+    }
+    .active = true;  // the keyboard focus
+  }
+}
+
+function regsNumberEditDone($edit, $take) {
+  $t = $edit.$regsTyping;
+  if (!$t) return;
+  $edit.$regsTyping = null;
+  if ($take && $t.text != "" && $t.text != "-") {
+    $edit.$value = clamp(int($t.text), $edit.$min, $edit.$max);
+    $edit.$action();
+  }
+  delete $t;
+}
 
 function showStatusMessage($text) {
   if (MAIN.$regsQuietStatus : false) return;

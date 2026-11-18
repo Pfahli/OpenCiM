@@ -87,8 +87,8 @@ modes (the editor's roads, terrain and paint tools come later):
   map's .scenario (`currentDate`), the sandbox page offers it as the first year, and (port, 2026-11-18) a game
   started without the sandbox page (the editor's "Speichern & Spielen") begins in it instead of sandbox.scenario's
   1920 (`data/regs/extend/metro/scripts/main.script` loadSandboxScenario). Checked: a new 128-cell map with 1940,
-  saved and played from the editor, starts "Januar 2 1940". Open: the year field of the new-map dialog takes no
-  clicks or typing (only its arrows, in steps of 10).
+  saved and played from the editor, starts "Januar 2 1940". Port: number fields (the start years) also take a
+  click and typing (ui.script extension; Enter or a click elsewhere takes the value, clamped, Escape keeps the old one).
 
 ## 4. Simulation gaps
 
