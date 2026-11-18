@@ -884,8 +884,21 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
   static thread_local uint32_t serial = 0;
   const size_t cells = size_t(W) * size_t(L) * size_t(K);
   if (stamp.size() < cells) cost.resize(cells), parent.resize(cells), stamp.resize(cells, 0), height.resize(cells);
-  if (++serial == 0) std::fill(stamp.begin(), stamp.end(), 0u), serial = 1;
+  // the ground layer's height per q-cell of the box, made on first use: up to eight neighbours ask for it
+  static thread_local std::vector<float> groundY;
+  static thread_local std::vector<uint32_t> groundStamp;
+  const size_t boxCells = size_t(W) * size_t(L);
+  if (groundStamp.size() < boxCells) groundY.resize(boxCells), groundStamp.resize(boxCells, 0);
+  if (++serial == 0) {
+    std::fill(stamp.begin(), stamp.end(), 0u), std::fill(groundStamp.begin(), groundStamp.end(), 0u);
+    serial = 1;
+  }
   auto known = [&](int q) { return stamp[size_t(q)] == serial; };  // else as cost −1, parent −1
+  auto groundHeight = [&](int x, int z) {  // = layerHeight(s, x, z)
+    size_t i = size_t(z - z0) * size_t(W) + size_t(x - x0);
+    if (groundStamp[i] != serial) groundStamp[i] = serial, groundY[i] = layerHeight(s, x, z);
+    return groundY[i];
+  };
   using E = std::pair<float, int>;
   static thread_local std::vector<E> open;
   open.clear();
@@ -926,7 +939,7 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
       if (nx < s.walk.width * 4 && nz < s.walk.length * 4) {
         ground = s.walk.code(nx, nz);
         if (ground) {
-          gy = layerHeight(s, nx, nz), gyKnown = true;
+          gy = groundHeight(nx, nz), gyKnown = true;
           if (std::abs(gy - y) <= 160.0f) nl = 0;
         }
         if (nl < 0)
@@ -946,7 +959,7 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
       if (nl < 0 && !end) continue;
       nl = std::max(nl, 0);
       if (nl >= K) continue;
-      if (nl == 0) v = ground, ny = gyKnown ? gy : layerHeight(s, nx, nz);
+      if (nl == 0) v = ground, ny = gyKnown ? gy : groundHeight(nx, nz);
       float c = (d < 4 ? 1.0f : 1.4142135f) + 0.05f * std::abs(ny - y);
       if (v == 1) c *= 3;
       else if (v == 3) c *= 4;
