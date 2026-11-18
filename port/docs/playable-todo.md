@@ -113,8 +113,9 @@ modes (the editor's roads, terrain and paint tools come later):
   the engine turns them (half a turn off the mesh, `docs/simulation/pathfinding.md` §1.4; it was 10.7 % with the
   turn of the mesh). That also puts the waiters of underground and elevated metro stations on their platforms (they
   stood at street level), reached by the stations' stairs. Re-measured 2026-11-18 (6000 frames at speed 3, debug
-  sim log): Vienna 10 of 6319 (0.16 %, all in one enclosed spot), Berlin 6 of 4465 (0.13 %); every failed walk's goal
-  is a blocked q-cell (code 0), which is the lead to follow. Cim2 not re-measured (no Cim2 save in the test
+  sim log): Vienna 10 of 6319 (0.16 %), all starting at street level inside the footprint of one elevated metro
+  station (the lead to follow: who is put on the ground there instead of the platform layer); Berlin 6 of 4465
+  (0.13 %), a tram platform with marker props and three house-to-house walks. Cim2 not re-measured (no Cim2 save in the test
   documents; was 1.7 %). Left from before: the sunken park's stairs prop (no walk map, blocks its cell), a hotel
   enclosed by bushes.
 - [ ] Metro trains at the turn of a line (end stations) stop with their front at the platform instead of their

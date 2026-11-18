@@ -521,12 +521,14 @@ street level.) The search runs in the ends' box plus 16 cells first and, without
 original's phase-1 range of ±100 cells around the goal. Failed walks (Vienna, ~7000 frames at speed 3 with
 `REGS_DEBUG_SIM=1`): 408 of 3807 paths with the maps half a turn off, 22 of 4555 with the maps as the engine turns
 them. Re-measured 2026-11-18 (Vienna, 6000 frames at speed 3): 10 of 6319 (0.16 %), all in one place: walks from
-open q-cells (code 3) at x 1427-1428, z 1821-1896 (cell x 356-357, z 455-474) to the q-cells (1427,1854) and (1427,1821),
-which are blocked (code 0); both searches end after 4 expanded cells, so the starts are enclosed too (not traced
-what item it is). Berlin, same run length: 6 of 4465 (0.13 %), from four places, e.g. (2432,2488) → (2444,2533)
-after 420 858 expanded cells. In both cities **every failed walk ends on a blocked q-cell** (code 0), so the next
-step is to find where those goals come from (door or stop cells inside their item's blocked area) and whether the
-original snaps such a goal to open ground. Earlier notes: Cim2's sunken park (its stairs prop has no walk map and blocks its cell, so the original cannot
+q-cells x 1427-1428, z 1821-1896 at street level (L0) to (1427,1854) and (1427,1821), all under the elevated metro
+station `station_metroe0`/`station_metroe0b` (height 1024) over `road_large_basic`. Both searches end after 4
+expanded cells: the starts are street-level q-cells enclosed inside the station's footprint, so these pedestrians
+start on the ground under the station instead of on its platform layer (who they are, waiters or alighting riders,
+not traced). Berlin, same run length: 6 of 4465 (0.13 %) from four places: a tram `platform` with `marker4`/`marker6`
+props (both directions), and from houses to houses (`cityhouse03` → `cornerhouse04`, `cornerhouse04` →
+`diagonalhouse3b`) after 19 000 to 420 000 expanded cells. (The goal q-cell is entered whatever its code; the
+logged goal code is the ground layer's.) Earlier notes: Cim2's sunken park (its stairs prop has no walk map and blocks its cell, so the original cannot
 reach it either) and a hotel enclosed by bush props.
 
 ---
