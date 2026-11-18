@@ -14,9 +14,18 @@ namespace regs::script {
 // Hash maps keyed by std::u16string that find a std::u16string_view or a literal without building a key string
 // (C++20 heterogeneous lookup: find, count, contains, equal_range). The view's std::hash equals the string's, so
 // buckets and iteration order are those of std::unordered_map<std::u16string, V>.
+// A key with its hash worked out once (U16Hash of the text), for lookups repeated with the same name.
+struct U16Key {
+  std::u16string_view text;
+  size_t hash;
+};
+inline bool operator==(const std::u16string& a, const U16Key& b) { return std::u16string_view(a) == b.text; }
+inline bool operator==(const U16Key& a, const std::u16string& b) { return a.text == std::u16string_view(b); }
+
 struct U16Hash {
   using is_transparent = void;
   size_t operator()(std::u16string_view s) const noexcept { return std::hash<std::u16string_view>{}(s); }
+  size_t operator()(const U16Key& k) const noexcept { return k.hash; }
 };
 template <typename V>
 using U16Map = std::unordered_map<std::u16string, V, U16Hash, std::equal_to<>>;

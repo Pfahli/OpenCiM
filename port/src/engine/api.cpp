@@ -37,8 +37,9 @@ void addField(ClassInfo* c, const std::u16string& name, int type, bool readOnly)
   f.name = name;
   f.type = type;
   f.readOnly = readOnly;
-  f.get = [name, type](VM&, Object* o) {
-    auto it = o->fieldValues.find(name);
+  // the stored value under the field's name, its hash worked out once
+  f.get = [name, type, hash = U16Hash{}(name)](VM&, Object* o) {
+    auto it = o->fieldValues.find(U16Key{name, hash});
     return it == o->fieldValues.end() ? defaultFor(type) : it->second;
   };
   f.set = [name, type](VM&, Object* o, const Value& v) { o->fieldValues[name] = coerce(type, v); };
