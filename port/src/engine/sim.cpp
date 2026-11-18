@@ -1304,7 +1304,7 @@ void loadTraffic(VM& vm, SimState& s, const std::vector<SavedAgent>& agents, std
   std::vector<uint8_t> trailer(agents.size(), 0);
   for (const SavedAgent& a : agents)
     if (a.nextCar >= 1 && a.nextCar <= agents.size()) trailer[a.nextCar - 1] = 1;
-  int moving = 0, parked = 0, skipped = 0;
+  int moving = 0, parked = 0, skipped = 0, boatsDropped = 0;
 for (size_t ai = 0; ai < agents.size(); ++ai) {
     const SavedAgent& a = agents[ai];
     if ((a.flags & 0x200) || a.prevCar || trailer[ai] || (a.flags & 5) == 5 || a.model < 0) continue;  // line vehicles, trailers, invalid
@@ -1352,6 +1352,14 @@ for (size_t ai = 0; ai < agents.size(); ++ai) {
       drop();
       continue;
     }
+    // save quirk Q4 (boats-aircraft.md §2.7, §4.5): the original's save rebuilds the water lanes and marks every
+    // agent on them with flag 1, which its boat manager despawns on the next tick, after loading too. The port
+    // writes no flag 1 (its own saves keep their boats), so this only drops the boats of the original's saves.
+    if (selfDriving && (a.flags & 1) && (G.nodes[size_t(head)].flags & 0x1000ff00) == kPathWater) {
+      drop();
+      ++boatsDropped;
+      continue;
+    }
     int id = newMover(s);
     Mover& m = s.movers[size_t(id)];
     for (const SavedAgent* c : chain) {
@@ -1397,8 +1405,8 @@ for (size_t ai = 0; ai < agents.size(); ++ai) {
   for (std::vector<Unit>& c : s.roadConsists)
     for (Unit& u : c) u.tint = 0;
   s.roadTarget = s.roadLive;
-  LOG_INFO("traffic: %d moving vehicles (%d trains), %d parked, %d not placed (water and air lanes)", moving, s.trainsLive,
-           parked, skipped);
+  LOG_INFO("traffic: %d moving vehicles (%d trains, %d boats), %d parked, %d not placed (%d boats with flag 1)", moving,
+           s.trainsLive, s.boatsLive, parked, skipped, boatsDropped);
 }
 
 // the traffic sources: road trip ends and the train entry/exit sets (pathfinding.md §2.5)
