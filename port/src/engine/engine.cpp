@@ -116,6 +116,7 @@ bool Engine::init(const std::u16string& initScript) {
 
 void Engine::frame(float dt) {
   ++frames_;
+  vfs_.finishWrites();  // packages written in the background since the last frame mount now (Vfs::writePackage)
   if (Display* d = display()) d->advanceEffectTimer(dt);
   // REGS_LOG_TIME (measurements): ticks over 250 ms are logged with the script threads' share (an autosave, the
   // save of REGS_DEBUG_SAVE_AT); the render's own slow frames are logged by Display::renderFrame

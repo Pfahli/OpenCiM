@@ -927,6 +927,7 @@ int main(int argc, char** argv) {
     else if (cmd == "png-diff") rc = cmdPngDiff(argc, argv);
     else if (cmd == "upscale-check") rc = cmdUpscaleCheck(argc, argv);
     else if (cmd == "ddspng") rc = cmdDdsPng(argc, argv);
+    Vfs::waitForWrites();  // packages of writePackage still being written (a scripted save in "run")
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

@@ -424,19 +424,27 @@ void registerCoreNatives(VM& vm) {
     return Value();
   });
   // writePackage(path, files) (L:0x081058b0): the files (usually memory/…) bundled under their names into a GS10
-  // archive at path (userdata only), which the file system then shows as the folder path minus ".gs"
+  // archive at path (userdata only), which the file system then shows as the folder path minus ".gs". The engine
+  // compresses and writes it here and rescans; the port takes a snapshot of the files (memory files are shared, not
+  // copied), compresses and writes on a background thread and shows the package's entries at once from the
+  // snapshot, until the written file is mounted in their place (Vfs::writePackage)
   implementGlobal(vm, u"writePackage", [](VM& v, Object*, int, const Value* a) {
-    std::vector<std::pair<std::string, std::vector<uint8_t>>> files;
+    auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::pair<std::string, Vfs::Bytes>> files;
+    size_t bytes = 0;
     if (ArrayObj* arr = deref(a[1]).array())
       for (auto& x : arr->items) {
         std::string src = u8(deref(x).toString());
-        std::vector<uint8_t> data;
-        if (!v.vfs().read(src, data)) v.error("File \"" + src + "\" not found!");
+        Vfs::Bytes data = v.vfs().share(src);
+        if (!data) v.error("File \"" + src + "\" not found!");
+        bytes += data->size();
         files.emplace_back(src.substr(src.find_last_of('/') + 1), std::move(data));
       }
     std::string path = u8(deref(a[0]).toString());
-    if (!v.vfs().write(path, buildPackage(files))) LOG_ERROR("writePackage: cannot write %s", path.c_str());
-    v.vfs().rescan();  // the engine adds the package's entries to the file table at once
+    size_t count = files.size();
+    if (!v.vfs().writePackage(path, std::move(files))) LOG_ERROR("writePackage: cannot write %s", path.c_str());
+    LOG_INFO("writePackage %s: %zu files, %.1f MB, %.1f ms on the main thread", path.c_str(), count, double(bytes) / 1048576.0,
+             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     return Value();
   });
   implementGlobal(vm, u"list_files", [](VM& v, Object*, int argc, const Value* a) {

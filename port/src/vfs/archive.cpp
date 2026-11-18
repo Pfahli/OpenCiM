@@ -183,7 +183,19 @@ std::string Archive::virtualPrefix(const std::string& relPathNoExt) const {
   return parentPrefix.value_or("") + relPathNoExt + "/";
 }
 
+std::string packageEntryName(const std::string& name) {
+  char fixed[128] = {};
+  std::memcpy(fixed, name.data(), std::min<size_t>(name.size(), 127));
+  return fixedString(reinterpret_cast<const uint8_t*>(fixed), 128);
+}
+
 std::vector<uint8_t> buildPackage(const std::vector<std::pair<std::string, std::vector<uint8_t>>>& files) {
+  std::vector<std::pair<std::string, std::span<const uint8_t>>> views;
+  for (const auto& [name, data] : files) views.emplace_back(name, std::span<const uint8_t>(data));
+  return buildPackage(views);
+}
+
+std::vector<uint8_t> buildPackage(const std::vector<std::pair<std::string, std::span<const uint8_t>>>& files) {
   std::vector<uint8_t> out;
   auto put = [&](uint32_t v) {
     for (int i = 0; i < 4; ++i) out.push_back(uint8_t(v >> (8 * i)));

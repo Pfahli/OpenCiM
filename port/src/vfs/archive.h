@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -53,5 +54,9 @@ bool isValidPackage(const std::filesystem::path& path);
 // writePackage's archive (gsFunction_writePackage L:0x081058b0): root, directory with one entry per file (magic = the
 // file's first 4 bytes, offsets from the root body), the zlib-compressed data back to back, no trailer.
 std::vector<uint8_t> buildPackage(const std::vector<std::pair<std::string, std::vector<uint8_t>>>& files);
+std::vector<uint8_t> buildPackage(const std::vector<std::pair<std::string, std::span<const uint8_t>>>& files);
+// The name an entry of buildPackage is listed under when the package is opened (at most 127 bytes, read back as
+// Windows-1252)
+std::string packageEntryName(const std::string& name);
 
 }  // namespace regs
