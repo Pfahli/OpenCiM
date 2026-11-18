@@ -442,28 +442,6 @@ void makeLargeCross(VM& vm, GridObj* g, ObjectObj* cross, ObjectObj* large) {
   if (!o) return;
   const float kz = 2.0f, kArm = 2.0f;  // the large road is twice as wide (asphalt 12, pavements 6); two lanes a side
   const Rig r = crossingRig(*sk->data, cross->data->mesh);
-  // the crossing's end ramp over the track bed (its surface falls from the pavement to the ballast over the last units,
-  // where its rails have ended): kept at its own width at the large crossing's ends; the asphalt (|z| ≤ 3) doubles and
-  // the pavement takes the rest
-  float flatEnd = 0;
-  {
-    const MeshData& cm = cross->data->mesh;
-    for (uint32_t i = 0; i < cm.vertexCount(); ++i) {
-      V v = readV(cm, i);
-      if (r.barrier[size_t(r.dominant(v))] || std::fabs(v.p.x) > 3.0f || std::fabs(v.p.z) > 6.0f) continue;
-      if (v.p.y >= -0.05f && v.p.y < 0.3f) flatEnd = std::max(flatEnd, std::fabs(v.p.z));
-    }
-  }
-  const float ramp = flatEnd > 3.5f && flatEnd < 5.95f ? 6.0f - flatEnd : 0.0f;
-  auto stretch = [ramp](float z, float& k) {
-    float a = std::fabs(z), s = z < 0 ? -1.0f : 1.0f;
-    if (a <= 3.0f) return k = 2.0f, z * 2.0f;
-    if (a <= 6.0f - ramp) {
-      k = (6.0f - ramp) / (3.0f - ramp);
-      return s * (6.0f + (a - 3.0f) * k);
-    }
-    return k = 1.0f, s * (a + 6.0f);
-  };
   std::vector<Vec3> pivot2(r.nb);
   for (size_t b = 0; b < r.nb; ++b) pivot2[b] = {r.pivot[b].x, r.pivot[b].y, r.pivot[b].z * kz};
 
@@ -476,12 +454,13 @@ void makeLargeCross(VM& vm, GridObj* g, ObjectObj* cross, ObjectObj* large) {
     int b = r.dominant(v);
     if (r.barrier[size_t(b)]) {  // the arm twice as long, its pivot out on the large road's pavement
       moveBarrierVertex(v, r, b, pivot2[size_t(b)], kArm);
-    } else if (v.p.y > 0.3f && std::fabs(v.p.z) > 3.2f) {  // posts and signals on the pavements: moved, not widened
+    } else if (std::fabs(v.p.z) > 3.2f && (v.p.y > 0.6f || (std::fabs(v.p.x) > 3.3f && v.p.y > 0.3f))) {
+      // posts and signals on the pavements (beside the track bed, or above its rails): moved, not widened
       int s = r.barrierOn(v.p.z);
       if (s >= 0) v.p.z += pivot2[size_t(s)].z - r.pivot[size_t(s)].z;
     } else {
-      float k = kz;
-      v.p.z = stretch(v.p.z, k);
+      const float k = kz;
+      v.p.z *= k;
       v.n = render::normalize(Vec3{v.n.x, v.n.y, v.n.z / k});
       Vec3 t = render::normalize(Vec3{v.tan[0], v.tan[1], v.tan[2] * k});
       v.tan[0] = t.x, v.tan[1] = t.y, v.tan[2] = t.z;
@@ -528,8 +507,8 @@ void makeLargeCross(VM& vm, GridObj* g, ObjectObj* cross, ObjectObj* large) {
   o->fieldValues[u"connections"] = Value::integer(int32_t(0x11004400u));
   o->fieldValues[u"offsetx"] = Value::integer(-2);
   o->fieldValues[u"offsetz"] = Value::integer(-2);
-  LOG_INFO("port crossings: track_double_cross_large (%zu tris, %zu paths, static bone %d, end ramp %.2f)",
-           data->mesh.indices.size() / 3, paths.size(), r.staticBone, ramp);
+  LOG_INFO("port crossings: track_double_cross_large (%zu tris, %zu paths, static bone %d)", data->mesh.indices.size() / 3,
+           paths.size(), r.staticBone);
 }
 
 // track_double_half: half a straight double track (2 cells), for the track blocks a large crossing covers half of;
