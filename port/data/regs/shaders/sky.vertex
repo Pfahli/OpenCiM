@@ -1,0 +1,7 @@
+// ReGS sky (sky.shader): the dome sits at the eye, so a vertex's direction is the view direction to it
+varying vec3 skyDir;
+
+void main(void) {
+  gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+  skyDir = gl_Vertex.xyz;
+}

@@ -34,7 +34,10 @@ class ObjectObj : public script::Object {
 void cameraFrame(script::VM& vm, script::Object* cam, render::Vec3& eye, render::Vec3& look, render::Vec3& up);
 // The near and far plane of a viewport looking through a camera, as the 3D pass uses them (before the port's view
 // distance option).
-void viewDepthRange(script::VM& vm, script::Object* viewport, script::Object* cam, float& nearZ, float& farZ);
+// gameFar (when given): the far distance the game itself asked for, before the port reaches farther toward the
+// horizon (the fog is stretched by farZ / gameFar)
+void viewDepthRange(script::VM& vm, script::Object* viewport, script::Object* cam, float& nearZ, float& farZ,
+                    float* gameFar = nullptr);
 
 // .object files by resolved VFS path, loaded once (null when missing or invalid).
 std::shared_ptr<const render::ObjectData> loadObjectCached(script::VM& vm, const std::string& path);

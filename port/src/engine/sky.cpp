@@ -359,6 +359,87 @@ void addSkyItems(Display& d, VM& vm, Object* skyObj, const std::vector<Object*>&
   }
 }
 
+// port (owner 2026-11-19: "the drawing distance is too low when the camera is close to the ground ... add a skybox";
+// "blue skies when it's sunny, grey skies when it's raining, dark skies with stars and moon at night"; "more
+// realistic"): the game switches its sky off (engine.script: visible = false) and shows the viewport's dark background
+// colour, which its own camera, always looking down, never saw. With the port's tilt and far view the horizon shows,
+// so the main game sky gets the port's own dome (regs/shaders/sky.shader). Its colours: clear blue by day, grey and
+// closed over as the weather mod's rain or snow sets in (read from the scene's atmosphere), a warm horizon toward a
+// low sun, dark blue with stars and the moon at night; the bottom band takes the scene's fog colour. REGS_NO_SKY=1
+// leaves it out.
+void addPortSky(Display& d, VM& vm, Object* skyObj, const std::vector<Object*>& suns, const Vec3& eye, float farDistance,
+                const float* fogColor, float overcast, float lightScale, std::vector<DrawItem>& items) {
+  static const bool noSky = regs::envVar("REGS_NO_SKY") != nullptr;
+  auto* sky = dynamic_cast<SkyObj*>(skyObj);
+  if (noSky || !sky || sky->visible() || mainVar(vm, u"sky") != skyObj) return;
+  static std::shared_ptr<GpuMesh> mesh;
+  static std::vector<GpuMaterial> material(1);
+  if (!mesh) {
+    mesh = std::make_shared<GpuMesh>(d.r3d().upload(domeMesh(12)));
+    material[0].flags = kMatNoShadow;
+    material[0].shader = "regs/shaders/sky.shader";
+  }
+  // the real time of day: the day/night cycle's own (at night it turns the scene clock by half a day, so the game's
+  // sun lights the town as the moon), else the scene clock's. The moon stands where that night light comes from.
+  Vec3 sunDir{0.3f, 0.6f, 0.7f}, moonDir{-0.3f, 0.5f, -0.7f};
+  double seconds = 0;
+  if (!suns.empty()) {
+    Object* sun = suns[0];
+    float lat = floatOr(vm, fieldOf(vm, sun, u"latitude"), kPi / 4);
+    float day01 = sky->dn.on ? float(sky->dn.hours / 24.0) : dayFraction(vm, sun);
+    sunDir = rotate(conjugate(sunOrientation(day01, lat)), {0, 0, 1});
+    moonDir = rotate(conjugate(sunOrientation(std::fmod(day01 + 0.5f, 1.0f), lat)), {0, 0, 1});
+    seconds = (sky->dn.on ? sky->dn.hours : double(day01) * 24.0) * 3600.0;
+  }
+  const float e = sunDir.y, o = std::clamp(overcast, 0.0f, 1.0f), lit = std::clamp(lightScale, 0.4f, 1.2f);
+  auto smooth = [](float a, float b, float x) {
+    float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+    return t * t * (3 - 2 * t);
+  };
+  const float day = smooth(-0.10f, 0.10f, e);
+  const float dusk = std::clamp(1.0f - std::fabs(e - 0.03f) / 0.2f, 0.0f, 1.0f) * (1.0f - 0.8f * o);
+  auto mix3 = [](const float* a, const float* b, float t, float* out) {
+    for (int k = 0; k < 3; ++k) out[k] = a[k] + (b[k] - a[k]) * t;
+  };
+  // zenith and horizon: clear and overcast, by night and by day
+  const float clearDayZ[3] = {0.18f, 0.38f, 0.76f}, clearDayH[3] = {0.68f, 0.79f, 0.92f};
+  const float overDayZ[3] = {0.55f * lit, 0.57f * lit, 0.61f * lit}, overDayH[3] = {0.67f * lit, 0.68f * lit, 0.70f * lit};
+  const float clearNightZ[3] = {0.005f, 0.009f, 0.024f}, clearNightH[3] = {0.030f, 0.040f, 0.075f};
+  const float overNightZ[3] = {0.028f, 0.029f, 0.034f}, overNightH[3] = {0.045f, 0.046f, 0.052f};
+  float dz[3], dh[3], nz[3], nh[3], zen[3], hor[3];
+  mix3(clearDayZ, overDayZ, o, dz);
+  mix3(clearDayH, overDayH, o, dh);
+  mix3(clearNightZ, overNightZ, o, nz);
+  mix3(clearNightH, overNightH, o, nh);
+  mix3(nz, dz, day, zen);
+  mix3(nh, dh, day, hor);
+  for (float& z : zen) z *= 1.0f - 0.3f * dusk;  // the sky overhead deepens as the sun goes down
+  GpuMaterial& g = material[0];
+  const float strength = day * (1.0f - 0.85f * o);
+  const float stars = (1.0f - day) * (1.0f - o);
+  const float cloudBright = (0.035f + (0.95f - 0.035f) * day) * (1.0f - 0.38f * o) * lit;
+  const Vec3 moon = moonDir;
+  const float moonVis = (1.0f - day) * std::clamp(moon.y * 5.0f, 0.0f, 1.0f);
+  float fog[3] = {hor[0], hor[1], hor[2]};
+  if (fogColor) fog[0] = fogColor[0], fog[1] = fogColor[1], fog[2] = fogColor[2];
+  const float drift = float(std::fmod(seconds * 0.0006, 1000.0));
+  const float c[7][4] = {{sunDir.x, sunDir.y, sunDir.z, strength},
+                         {zen[0], zen[1], zen[2], 0.40f + (0.97f - 0.40f) * o},
+                         {hor[0], hor[1], hor[2], stars},
+                         {fog[0], fog[1], fog[2], cloudBright},
+                         {moon.x, moon.y, moon.z, moonVis},
+                         {1.0f, 0.50f, 0.22f, dusk},
+                         {drift, drift * 0.37f, 0, 0}};
+  for (int k = 0; k < 7; ++k)
+    for (int j = 0; j < 4; ++j) g.custom[k][j] = c[k][j];
+  DrawItem it;
+  it.mesh = mesh.get();
+  it.materials = &material;
+  it.world = translation(eye) * scaling(0.99f * farDistance);
+  it.surfaceClass = kSurfaceOverlay;
+  items.push_back(it);
+}
+
 float skyEmissionScale(Object* skyObj) {
   auto* sky = dynamic_cast<SkyObj*>(skyObj);
   if (!sky || !sky->dn.on) return 1.0f;

@@ -56,3 +56,18 @@ factor 1.2), a held rotate key turns continuously and snaps ahead on release, th
 turn and snap, a pinch zooms about its centre, a two-finger pan moves the map; with the option off the keys and wheel
 step as in the original and gestures do nothing. Not checked on real hardware: a touchscreen and a precision
 touchpad's twist (only simulated events).
+
+## Far view and sky (2026-11-19)
+
+The game's far plane is 160 + zoom units (`setCameraPos`), made for its own fixed tilt. Tilted toward the horizon
+(the controller's or the gestures' tilt), the top of the view meets the ground much farther away or not at all, and
+the town ended in fog a few hundred units off. `viewDepthRange` (engine/scene3d.cpp) now reaches the ground under the
+top edge of the view (+15 %), up to 4000 units at the horizon, and only where that is past the game's own far plane,
+so the game's own views keep their far plane and fog exactly; the fog is stretched by the same factor.
+
+Above the horizon the game showed only the viewport's dark background (its sky is switched off in engine.script). The
+port draws its own dome there (`addPortSky`, engine/sky.cpp, with regs/shaders/sky.shader): blue by day, grey and
+closed over under the weather mod's rain or snow (read from the scene's atmosphere: `regsLightDesaturate`,
+`regsFogScale`, `regsLightScale`), a warm horizon toward a low sun, stars and the moon at night (the moon where the
+day/night cycle's night light comes from), drifting clouds shaded from the sun's side, and the scene's fog colour
+along the horizon so the fogged town meets the sky. `REGS_NO_SKY=1` leaves it out.

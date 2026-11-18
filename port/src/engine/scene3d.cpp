@@ -597,7 +597,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   v.eye = eye;
   v.view = lookAt(eye, look, up);
   float nearZ, farZ;
-  viewDepthRange(vm, vp, cam, nearZ, farZ);
+  float gameFar = 0;
+  viewDepthRange(vm, vp, cam, nearZ, farZ, &gameFar);
   // port graphics options (settings regsViewDistance / regsDetailDistance, 1 = the original): the map view reaches
   // farther and keeps near detail longer; the shadow fit below keeps the original distance
   float viewScale = 1, detailScale = 1;
@@ -621,10 +622,24 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       v.fog = true;
       v.fogStart = floatOr(vm, fieldOf(vm, sky, u"fogOffset"), 0.0f);
       v.fogEnd = dist;
+      // a view reaching farther than the game's (viewDepthRange: toward the horizon) stretches the fog as much, so the
+      // town fades into haze at the new distance instead of ending where the game's view did
+      if (gameFar > 0 && farZ > gameFar) {
+        const float stretch = farZ / gameFar;
+        v.fogStart *= stretch;
+        v.fogEnd *= stretch;
+      }
     }
     v.emissionScale = skyEmissionScale(sky);  // port day/night cycle (engine/sky.cpp)
   }
-  applyAtmosphere(atmosphereOf(vm, scene), v);  // the port's atmosphere fields of the scene (mods: weather)
+  const Atmosphere atm = atmosphereOf(vm, scene);
+  applyAtmosphere(atm, v);  // the port's atmosphere fields of the scene (mods: weather)
+  {
+    // the port's sky (engine/sky.cpp addPortSky): overcast from the weather's greyer light (rain, 0.45 at full) and
+    // its nearer fog beyond what the rain explains (snow)
+    const float overcast = std::clamp(atm.desaturate / 0.45f + std::max(0.0f, (1.0f - atm.fogScale) - atm.desaturate * 0.55f) / 0.3f, 0.0f, 1.0f);
+    addPortSky(d, vm, sky, suns, eye, farZ * viewScale, v.fog ? v.fogColor : nullptr, overcast, atm.light, items);
+  }
   // the debug camera (REGS_DEBUG_TOPDOWN) high up: the fog starts where the game camera's would, behind the eye's
   // distance to its point (installer shots, 2026-11-17: 1000 units up the town was all fog colour)
   if (const char* td = regs::envVar("REGS_DEBUG_TOPDOWN"); td && *td && v.fog) {
@@ -830,7 +845,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
 
 void cameraFrame(VM& vm, Object* cam, Vec3& eye, Vec3& look, Vec3& up) { cameraView(vm, cam, eye, look, up); }
 
-void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ) {
+void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ, float* gameFar) {
   // near = max(viewport, camera), far = min (camera −1 = use the viewport's)
   nearZ = floatOr(vm, fieldOf(vm, vp, u"minDistance"), 0.1f);
   farZ = floatOr(vm, fieldOf(vm, vp, u"maxDistance"), 400.0f);
@@ -852,6 +867,29 @@ void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ) 
     // camera 1000 units up looking at nothing)
     if (const char* td = regs::envVar("REGS_DEBUG_TOPDOWN"); td && *td) want = 2.0f, farZ = std::max(farZ, 8000.0f);
     nearZ = std::min(nearZ, want);
+  }
+  if (gameFar) *gameFar = farZ;
+  // port (owner 2026-11-19: "the drawing distance is too low when the camera is close to the ground"): the game's far
+  // plane, 160 + zoom units (setCameraPos), fits its own fixed tilt. Tilted toward the horizon (the controller's or
+  // the gestures' tilt) or zoomed in low, the top of the view meets the ground much farther away, or above the
+  // horizon not at all, and the town ended in fog a few hundred units off. The far plane now reaches the ground under
+  // the top edge of the view (its depth along the view axis, +15 %), up to kHorizonFar when that edge looks at or
+  // over the horizon; never nearer than the game's own
+  if (isFloatingCamera(vm, cam) && cam->fieldValues.count(u"<offset>")) {
+    constexpr float kHorizonFar = 4000.0f;  // past a 1280-cell map's far corner from its middle (2715 units)
+    Vec3 eye, look, up;
+    cameraView(vm, cam, eye, look, up);
+    const Vec3 dir = look - eye;
+    const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (len > 0.001f) {
+      const float pitch = std::asin(std::clamp(-dir.y / len, -1.0f, 1.0f));  // below the horizon: positive
+      const float half = floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f;
+      const float top = pitch - half, height = std::max(1.0f, eye.y - look.y);
+      // only where the view truly reaches past the game's own far plane: its own views (zoom 75-500 at its tilt) keep
+      // their far plane and fog exactly
+      const float need = top > 0.01f ? height / std::sin(top) * std::cos(half) : kHorizonFar;
+      if (need > farZ) farZ = std::min(need * 1.15f, kHorizonFar);
+    }
   }
 }
 

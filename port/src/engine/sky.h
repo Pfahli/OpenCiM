@@ -17,6 +17,14 @@ class ControlObj;
 void addSkyItems(Display& d, script::VM& vm, script::Object* sky, const std::vector<script::Object*>& suns,
                  const render::Vec3& eye, float farDistance, std::vector<render::DrawItem>& items);
 
+// The port's own sky (owner 2026-11-19) where the game's sky is switched off: a dome at the eye with
+// regs/shaders/sky.shader, blue by day, grey under rain or snow (overcast 0..1 from the scene's atmosphere, lightScale
+// its light), a warm horizon toward a low sun, stars and the moon at night; fogColor (rgb, may be null) for the band
+// along the horizon. REGS_NO_SKY=1 leaves it out.
+void addPortSky(Display& d, script::VM& vm, script::Object* sky, const std::vector<script::Object*>& suns,
+                const render::Vec3& eye, float farDistance, const float* fogColor, float overcast, float lightScale,
+                std::vector<render::DrawItem>& items);
+
 // The emission factor of the port's day/night cycle for a scene with this sky: 1 by day and without the cycle (the
 // engine's constant self-illumination), up to kNightEmission at night so the illumination maps (lit windows, lamp
 // heads, signs) stand out.
