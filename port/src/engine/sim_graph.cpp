@@ -5,6 +5,7 @@
 #include "core/env.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -576,6 +577,7 @@ void addRailTwin(LaneGraph& G, int ni, std::vector<int>& list, std::vector<int>&
 // rail twin starting within 14 units ahead (going on the same way), and from a rail twin's end to a street tram lane
 // that starts there without a predecessor. Ends that meet (within 0.1) link by themselves (insertNode).
 void linkTramsToRail(LaneGraph& G) {
+  bumpLaneVersion(G);
   removeNodeList(G, G.railLinks);
   G.railLinks.clear();
   std::vector<int> found, scratch;
@@ -785,7 +787,13 @@ void removeItemNodes(LaneGraph& G, uint32_t item) {
   removeNodeList(G, G.itemNodes[item]);
 }
 
+void bumpLaneVersion(LaneGraph& G) {
+  static std::atomic<uint64_t> counter{0};
+  G.laneVersion = ++counter;
+}
+
 void removeNodeList(LaneGraph& G, std::vector<int>& list) {
+  if (!list.empty()) bumpLaneVersion(G);
   std::vector<int> found;
   float cs = G.cellSize;
   for (int ni : list) {

@@ -143,7 +143,7 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
     c[0] = uint16_t(start & 0xffff), c[1] = uint16_t(start >> 16), c[2] = uint16_t(near), c[3] = uint16_t(count);
     a = b;
   }
-  t.graphNodes = g.nodes.size();
+  t.laneVersion = g.laneVersion;
   t.lanesBuilt = true;
   t.lanesUploaded = false;
   t.laneCurvesDirty = true;
@@ -341,7 +341,9 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     t.troddenDirty.assign(size_t(t.troddenTilesW) * size_t(t.troddenTilesH), 0);
   }
   TrafficMaps& t = *s.trafficMaps;
-  if (!t.lanesBuilt || t.graphNodes != s.graph.nodes.size()) {
+  // the lanes again when they changed (an aircraft's or boat's inline node is none: the node count alone would repaint
+  // for each of them)
+  if (!t.lanesBuilt || t.laneVersion != s.graph.laneVersion) {
     paintLanes(t, s.graph);
     if (regs::envVar("REGS_DEBUG_TRAFFIC_MAPS")) {  // where the parked cars are (for close-up checks)
       int parked = 0;

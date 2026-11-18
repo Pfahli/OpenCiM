@@ -42,7 +42,7 @@ struct TrafficMaps {
   std::vector<float> listIds;      // the lists: lane numbers, nearest first
   uint32_t cellBase = 0;  // the lane texture's first texel of the cells (gridTrafficMaps)
   bool lanesBuilt = false, lanesUploaded = false;
-  size_t graphNodes = 0;
+  uint64_t laneVersion = 0;      // the LaneGraph::laneVersion painted
   std::vector<int32_t> laneId;   // per graph node: its lane number in the maps (−1: not a painted lane)
   std::vector<int> laneNodes;    // per lane number: the graph node
   // lane traffic
