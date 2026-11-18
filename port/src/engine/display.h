@@ -56,6 +56,9 @@ class Display {
 
   // GL texture for a script texture, uploaded from its file on first use (0 when it cannot be loaded).
   uint32_t texture(script::VM& vm, TextureObj* t);
+  // texture() for many at once (a map's materials): the files are read and decoded on worker threads, the uploads
+  // stay on this thread. Already uploaded ones are skipped.
+  void uploadTextures(script::VM& vm, const std::vector<TextureObj*>& textures);
 
   // Upscaled textures (setting regsTextureUpscale, docs/renderer/texture-upscaling.md): while on, textures come from
   // the cache below the OpenCiM folder when it holds them; missing ones are made by a background thread and swapped
@@ -99,6 +102,8 @@ class Display {
   struct UpscaleJob;  // display.cpp
   void syncTextureUpscale(script::VM& vm);
   bool loadTextureImage(script::VM& vm, TextureObj* t, render::Image& img, std::string* err);
+  struct DecodedTexture;  // display.cpp: read and decoded ahead by uploadTextures, taken by loadTextureImage
+  std::map<TextureObj*, DecodedTexture*> decoded_;
   std::unique_ptr<UpscaleJob> upscaleJob_;
   bool upscaleOn_ = false;
   std::chrono::steady_clock::time_point upscalePoll_;

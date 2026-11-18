@@ -102,20 +102,22 @@ bool inflateBlock(BitReader& br, std::vector<uint8_t>& out, const Huffman& lit, 
 // the stream up to its last block, or until the output holds `limit` bytes (then true, the output possibly longer)
 bool inflateStream(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t limit) {
   BitReader br{in.data(), in.data() + in.size()};
-  static Huffman fixedLit, fixedDist;
-  static bool fixedReady = false;
-  if (!fixedReady) {
-    uint8_t l[288];
-    std::memset(l, 8, 144);
-    std::memset(l + 144, 9, 112);
-    std::memset(l + 256, 7, 24);
-    std::memset(l + 280, 8, 8);
-    fixedLit.build(l, 288);
-    uint8_t d[30];
-    std::memset(d, 5, 30);
-    fixedDist.build(d, 30);
-    fixedReady = true;
-  }
+  struct Fixed {
+    Huffman lit, dist;
+    Fixed() {
+      uint8_t l[288];
+      std::memset(l, 8, 144);
+      std::memset(l + 144, 9, 112);
+      std::memset(l + 256, 7, 24);
+      std::memset(l + 280, 8, 8);
+      lit.build(l, 288);
+      uint8_t d[30];
+      std::memset(d, 5, 30);
+      dist.build(d, 30);
+    }
+  };
+  static const Fixed fixed;  // made once, thread-safe: worker threads inflate in parallel
+  const Huffman &fixedLit = fixed.lit, &fixedDist = fixed.dist;
   int last;
   do {
     if (out.size() >= limit) return true;

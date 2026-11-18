@@ -16,6 +16,7 @@
 #include "engine/grid.h"
 #include "engine/curve_roads.h"
 #include "engine/grid_render.h"
+#include "engine/gui.h"
 #include "engine/night_lights.h"
 #include "engine/scene3d.h"
 #include "engine/skinning.h"
@@ -155,6 +156,13 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
         objs.emplace_back(o->data.get(), o->pendingPath);
     }
     prepareWindowMasks(d, vm, objs);
+    // the textures of their materials, decoded on worker threads and uploaded here, before objectMaterial takes them
+    std::vector<TextureObj*> textures;
+    for (const auto& [od, path] : objs)
+      for (const MaterialDef& m : od->materials)
+        for (const std::string& p : m.textures)
+          textures.push_back(dynamic_cast<TextureObj*>(getTexture(vm, utf8ToUtf16(p)).get()));
+    d.uploadTextures(vm, textures);
   }
   for (size_t t = tc.typeTemplate.size(); t < g.types.size(); ++t) {
     tc.typeTemplate.push_back(-1);

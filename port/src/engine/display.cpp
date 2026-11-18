@@ -4,6 +4,7 @@
 #include "core/env.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "core/log.h"
@@ -247,6 +249,54 @@ size_t imageBytes(const render::Image& img) {
 }
 }  // namespace
 
+struct Display::DecodedTexture {
+  std::string path;
+  std::vector<uint8_t> data;  // kept for the upscale cache's check only
+  render::Image img;
+  bool read = false, parsed = false;
+  std::string err;
+};
+
+void Display::uploadTextures(VM& vm, const std::vector<TextureObj*>& textures) {
+  const auto t0 = std::chrono::steady_clock::now();
+  std::vector<TextureObj*> todo;
+  std::set<TextureObj*> seen;
+  for (TextureObj* t : textures)
+    if (t && !t->gl && !t->renderTarget && !t->path.empty() && t->path[0] != u'<' && seen.insert(t).second)
+      todo.push_back(t);
+  const Vfs& vfs = vm.vfs();
+  const bool keepData = upscaleOn_;
+  const unsigned n = std::clamp(std::thread::hardware_concurrency(), 1u, 8u);
+  // in batches, so that only one batch of decoded images waits for its upload at a time
+  const size_t kBatch = 64;
+  std::vector<DecodedTexture> batch;
+  for (size_t from = 0; from < todo.size(); from += kBatch) {
+    const size_t count = std::min(kBatch, todo.size() - from);
+    batch.assign(count, DecodedTexture());
+    for (size_t i = 0; i < count; ++i) batch[i].path = utf16ToUtf8(todo[from + i]->path);
+    std::atomic<size_t> next{0};
+    std::vector<std::thread> workers;
+    for (size_t k = 0; k < std::min<size_t>(n, count); ++k)
+      workers.emplace_back([&] {  // Vfs::read only reads; nothing rescans or writes the file system meanwhile
+        for (size_t i; (i = next++) < count;) {
+          DecodedTexture& dt = batch[i];
+          dt.read = vfs.read(dt.path, dt.data);
+          dt.parsed = dt.read && render::parseDds(dt.data, dt.img, &dt.err);
+          if (!keepData) std::vector<uint8_t>().swap(dt.data);
+        }
+      });
+    for (auto& w : workers) w.join();
+    for (size_t i = 0; i < count; ++i) {  // texture() as on first use, its image taken from the batch
+      decoded_[todo[from + i]] = &batch[i];
+      texture(vm, todo[from + i]);
+      decoded_.erase(todo[from + i]);
+    }
+  }
+  if (!todo.empty())
+    LOG_INFO("textures: %zu decoded on worker threads and uploaded in %.0f ms", todo.size(),
+             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
 uint32_t Display::texture(VM& vm, TextureObj* t) {
   if (t->gl) return t->gl;
   if (t->renderTarget) {
@@ -299,6 +349,21 @@ bool Display::loadTextureImage(VM& vm, TextureObj* t, render::Image& img, std::s
   std::vector<uint8_t> data;
   std::string path = utf16ToUtf8(t->path);
   t->upscaled = false;
+  if (auto it = decoded_.find(t); it != decoded_.end()) {  // read and decoded ahead (uploadTextures)
+    DecodedTexture& dt = *it->second;
+    if (!dt.read) return false;
+    if (upscaleOn_ && !host().userFolder.empty() && !dt.data.empty() &&
+        texup::loadCached(texup::cacheRoot(host().userFolder), path, dt.data, img)) {
+      t->upscaled = true;
+      return true;
+    }
+    if (!dt.parsed) {
+      if (err) *err = dt.err;
+      return false;
+    }
+    img = std::move(dt.img);
+    return true;
+  }
   if (!vm.vfs().read(path, data)) return false;
   // the cached upscale only when it was made from exactly these bytes (a changed file shows its original)
   if (upscaleOn_ && !host().userFolder.empty() && texup::loadCached(texup::cacheRoot(host().userFolder), path, data, img)) {
