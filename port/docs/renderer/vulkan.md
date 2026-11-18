@@ -133,6 +133,12 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
   seamless, as the port asks GL for.
 * **MSAA:** multisampled colour and depth images; `blit` from a multisampled target is a resolve (colour:
   `vkCmdResolveImage` or a resolve attachment; depth: a resolve with `SAMPLE_ZERO`, matching GL's NEAREST blit).
+* **Second colour attachment** (`hasColor1` … `colorMask1`, the weather mod's surface hook data at location 1): a
+  framebuffer may carry it; rendering then has two colour attachments, the pipeline key adds its format and whether
+  it is written (the program declares `regs_HookData` and `colorMask1` allows it), and both attachments get the same
+  blend, as GL applies one blend to all draw buffers. `clearColor1` is a `vkCmdClearAttachments` on attachment 1;
+  `blitColor1` resolves (multisampled source) or copies it, bottom-left w×h. Wet ground mirrors in rain on both engines
+  (Vienna, `REGS_TEST_WEATHER=rain`, `REGS_DEBUG_WEATHER=4` shows the same film, puddles and hits).
 * **Readback:** `readPixels` and `readTexture` wait for the GPU (as GL does). The bloom's per-frame 64×32 luminance read
   (bloom.md) is the one hot path; it can later read the previous frame's copy without waiting.
 * **Present:** FIFO when vsync is on, else MAILBOX or IMMEDIATE; window resize and the graphics page's mode changes
