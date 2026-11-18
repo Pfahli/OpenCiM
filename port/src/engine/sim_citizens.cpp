@@ -1377,6 +1377,7 @@ void endTrip(SimState& s, int ci, bool keepCar) {
   c.start = c.target >= 0 ? c.target : c.home;
   c.target = -1;
   c.driveStart = c.driveEnd = -1;
+  c.drivePath = std::vector<int>();
   c.usedTransport = 0;
   c.waitTime = 0;
   fireCitizen(s, ci, u"onIdle");
@@ -1623,6 +1624,9 @@ void startTrip(SimState& s, int ci) {
     }
   } else {
     c.flags = (c.flags & ~kStateMask) | kDrive;
+    // D ≥ 0 here: the search above found this path; stepDrive takes it instead of searching again
+    c.drivePath = std::move(drive);
+    c.drivePathFrom = c.driveStart, c.drivePathTo = c.driveEnd, c.drivePathVersion = s.graph.laneVersion;
     if (!utility) {
       ++s.driveCount[cls];
       if (hasRoute) {
@@ -1749,7 +1753,11 @@ void stepDrive(SimState& s, int ci) {
   if (!canEnter(s, c.driveStart, -2, false)) return;  // wait until the spawn node is free
   std::vector<int> path;
   float cost = 0;
-  if (!s.graph.search(c.driveStart, c.driveEnd, false, path, cost) || path.empty()) {
+  bool priced = !c.drivePath.empty() && c.drivePathFrom == c.driveStart && c.drivePathTo == c.driveEnd &&
+                c.drivePathVersion == s.graph.laneVersion;
+  if (priced) path = std::move(c.drivePath);
+  c.drivePath = std::vector<int>();
+  if (!priced && (!s.graph.search(c.driveStart, c.driveEnd, false, path, cost) || path.empty())) {
     fireCitizens(s, ci, u"onCitizenArrive");
     endTrip(s, ci, false);
     return;
