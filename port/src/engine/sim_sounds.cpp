@@ -273,8 +273,9 @@ void tickMovers(VM& vm, SimState& s, SimSounds& ss, const Vec3& eye, float dt) {
 // says something with probability dt/5 per update when in range (or forced)
 void tickCharacters(SimState& s, SimSounds& ss, const Vec3& eye, float dt) {
   if (dt <= 0) return;
+  static const int idleAnim = animNameId("idle");
   for (const Character& ch : s.characters) {
-    if (!ch.alive || ch.virtualLeft >= 0 || ch.model < 0 || ch.anim.current != "idle") continue;
+    if (!ch.alive || ch.virtualLeft >= 0 || ch.model < 0 || ch.anim.current != idleAnim) continue;
     const ModelSounds& M = ss.model(s, ch.model);
     if (!M.horn) continue;
     bool forced = isForced(ch.controller.get());

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <unordered_map>
 
 #include "core/log.h"
@@ -131,9 +132,48 @@ struct SkinnedModel {
 
 }  // namespace
 
+namespace {
+std::mutex animNamesMutex;
+std::vector<std::string>& animNames() {
+  static std::vector<std::string> names{std::string()};
+  return names;
+}
+}  // namespace
+
+int animNameId(std::string_view name) {
+  if (name.empty()) return 0;
+  std::lock_guard<std::mutex> lock(animNamesMutex);
+  static std::unordered_map<std::string, int> ids;
+  auto it = ids.find(std::string(name));
+  if (it != ids.end()) return it->second;
+  auto& names = animNames();
+  names.emplace_back(name);
+  return ids.emplace(std::string(name), int(names.size()) - 1).first->second;
+}
+
+const std::string& animName(int id) {
+  std::lock_guard<std::mutex> lock(animNamesMutex);
+  auto& names = animNames();
+  return id > 0 && size_t(id) < names.size() ? names[size_t(id)] : names[0];
+}
+
+const AnimSlot* SkeletonObj::slotById(int id) {
+  if (id <= 0) return nullptr;
+  if (byIdEpoch_ != slotsEpoch || size_t(id) >= byId_.size()) {  // a slot came or went, or a name is new here
+    byId_.assign(size_t(id) + 1, nullptr);
+    for (size_t k = 1; k < byId_.size(); ++k) {
+      auto it = slots.find(animName(int(k)));
+      byId_[k] = it == slots.end() ? nullptr : &it->second;
+    }
+    byIdEpoch_ = slotsEpoch;
+  }
+  return byId_[size_t(id)];
+}
+
 SkeletonObj* modelSkeleton(VM& vm, ObjectObj* model) {
   if (!model) return nullptr;
-  auto it = model->fieldValues.find(u"skeleton");
+  static const std::u16string kSkeleton = u"skeleton";  // (a literal key builds a heap string per call)
+  auto it = model->fieldValues.find(kSkeleton);
   return it == model->fieldValues.end() ? nullptr : asSkeleton(it->second.object());
 }
 
@@ -149,16 +189,12 @@ Pose poseFirstAnimation(VM& vm, ObjectObj* model, float time) {
   return posePalette(*sk, {{&first, 1.0f, time * first.speed}});
 }
 
-bool animateCharacter(VM& vm, ObjectObj* model, CharacterAnimation& a, const std::string& name, float dt, float factor) {
+bool animateCharacter(VM& vm, ObjectObj* model, CharacterAnimation& a, int name, float dt, float factor) {
   SkeletonObj* sk = modelSkeleton(vm, model);
-  auto slot = [&](const std::string& n) -> const AnimSlot* {
-    if (!sk || n.empty()) return nullptr;
-    auto it = sk->slots.find(n);
-    return it == sk->slots.end() ? nullptr : &it->second;
-  };
+  auto slot = [&](int n) -> const AnimSlot* { return sk && n ? sk->slotById(n) : nullptr; };
   if (name != a.current) {  // gsGridCharacter::animate (L:0x081529d0): a new current slot
     if (!slot(name)) {
-      a.previous.clear();
+      a.previous = 0;
       a.current = name;
       a.currentPos = a.previousPos = 0;
       a.fade = 0.001f;
@@ -194,7 +230,7 @@ bool animateCharacter(VM& vm, ObjectObj* model, CharacterAnimation& a, const std
     a.fade += dt + dt;
     if (a.fade >= 1) {
       a.fade = 1;
-      a.previous.clear();
+      a.previous = 0;
     } else {
       advance(a.previousPos, a.previousFactor, prev);
     }
@@ -207,9 +243,8 @@ Pose poseCharacter(VM& vm, ObjectObj* model, const CharacterAnimation& a) {
   SkeletonObj* sk = modelSkeleton(vm, model);
   if (!sk || !sk->data) return nullptr;
   std::vector<Active> act;
-  auto add = [&](const std::string& n, float w, float pos) {
-    auto it = n.empty() ? sk->slots.end() : sk->slots.find(n);
-    if (it != sk->slots.end()) act.push_back({&it->second, w, pos});
+  auto add = [&](int n, float w, float pos) {
+    if (const AnimSlot* slot = sk->slotById(n)) act.push_back({slot, w, pos});
   };
   add(a.current, a.fade, a.currentPos);
   add(a.previous, 1.0f - a.fade, a.previousPos);
@@ -300,10 +335,11 @@ void registerSkinningNatives(VM& vm) {
     std::string name = utf16ToUtf8(v.toStr(a[0]));
     if (auto old = sk->slots.find(name); old != sk->slots.end()) slot.order = old->second.order;
     sk->slots[name] = std::move(slot);
+    ++sk->slotsEpoch;
     return Value();
   });
   implement(vm, "gsSkeleton", u"unloadAnimation", [](VM& v, Object* s, int, const Value* a) {
-    if (auto* sk = asSkeleton(s)) sk->slots.erase(utf16ToUtf8(v.toStr(a[0])));
+    if (auto* sk = asSkeleton(s)) sk->slots.erase(utf16ToUtf8(v.toStr(a[0]))), ++sk->slotsEpoch;
     return Value();
   });
   // cropAnimation(name, start, length) (L:0x080dce80): start within the take, length within the rest

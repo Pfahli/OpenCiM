@@ -34,6 +34,7 @@ namespace sim {
 namespace {
 
 constexpr int kVisitHome = 1, kVisitWork = 2;
+const int kAnimIdle = animNameId("idle"), kAnimWalk = animNameId("walk");
 constexpr uint32_t kStateMask = 0xf0, kIdle = 0, kWalk = 0x10, kDrive = 0x20, kTravel = 0x30, kReplan = 0x40;
 
 SimState* stateOf(GridObj* g) { return g ? g->sim.get() : nullptr; }
@@ -1026,7 +1027,7 @@ void stepCharacter(SimState& s, Character& ch, float dt) {
   // gsGridCharacter::move: the walk cycle at the walking speed, idle when standing
   if (ch.model >= 0 && ch.virtualLeft < 0)
     if (ObjectObj* o = s.models[size_t(ch.model)].object; o && o->data)
-      animateCharacter(*s.vm, o, ch.anim, ch.done() ? "idle" : "walk", dt, ch.done() ? 1.0f : ch.speed);
+      animateCharacter(*s.vm, o, ch.anim, ch.done() ? kAnimIdle : kAnimWalk, dt, ch.done() ? 1.0f : ch.speed);
   if (ch.virtualLeft >= 0) {
     ch.virtualLeft = std::max(0.0f, ch.virtualLeft - dt);
     if (ch.virtualLeft == 0) ch.pos = ch.goal;
@@ -1096,7 +1097,7 @@ void stepBird(SimState& s, Character& ch, float dt) {
     if (d.x * d.x + d.z * d.z > 1e-6f) ch.yaw = std::atan2(d.x, d.z);
   }
   if (ch.model >= 0)
-    if (ObjectObj* o = s.models[size_t(ch.model)].object; o && o->data) animateCharacter(*s.vm, o, ch.anim, "walk", dt, ch.speed);
+    if (ObjectObj* o = s.models[size_t(ch.model)].object; o && o->data) animateCharacter(*s.vm, o, ch.anim, kAnimWalk, dt, ch.speed);
 }
 
 void retargetBird(SimState& s, Character& ch) {
@@ -2302,7 +2303,7 @@ void loadCitizens(VM& vm, GridObj* grid, SimState& s, const std::vector<uint8_t>
 
 namespace {
 
-const std::string& characterAnimName(const Character& ch, bool current) { return current ? ch.anim.current : ch.anim.previous; }
+const std::string& characterAnimName(const Character& ch, bool current) { return animName(current ? ch.anim.current : ch.anim.previous); }
 
 // FNV-1a over the state the citizen step reads and writes (REGS_DEBUG_SIM_DIGEST)
 struct Digest {
