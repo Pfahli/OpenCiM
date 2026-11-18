@@ -270,6 +270,34 @@ std::u16string portShaderPatch(const std::u16string& path, std::u16string text) 
   return text;
 }
 
+// A component template read, patched (portShaderPatch), converted (templateToScript) and compiled once; every
+// variant runs the same code with its flags set as script variables. The engine builds the script again for each
+// variant with the flags prepended as assignments; the six declarations below stand in for them (same script
+// variables in the same order, same line numbers), so the output is the same.
+struct TemplateCode {
+  bool found = false;
+  Ref<Code> code;  // null when it does not compile
+};
+const char16_t* const kTemplatePath = u"memory/regs/shader-template.script";  // the name its errors carry
+
+const TemplateCode& templateCode(VM& vm, const std::u16string& path) {
+  static std::unordered_map<std::u16string, TemplateCode> cache;
+  if (auto it = cache.find(path); it != cache.end()) return it->second;
+  TemplateCode& tc = cache[path];
+  std::vector<uint8_t> data;
+  if (!vm.vfs().read(utf16ToUtf8(path), data)) return tc;
+  tc.found = true;
+  std::u16string script = u"global $matFlags;\nglobal $meshFlags;\nglobal $envFlags;\nglobal $directionalCount;\n"
+                          u"global $omniCount;\nglobal $spotCount;\n" +
+                          templateToScript(portShaderPatch(path, decodeTextFile(data)));
+  // the engine's way through a memory file: written as UTF-8, read back as an 8-bit file (one code unit per byte),
+  // which turns any non-ASCII character of a template into its UTF-8 bytes; kept so the output stays the same
+  std::string u8 = utf16ToUtf8(script);
+  script = decodeTextFile(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(u8.data()), u8.size()));
+  tc.code = vm.compileSource(script, kTemplatePath);
+  return tc;
+}
+
 bool expandStage(VM& vm, ShaderCombiner* c, const Value& components, uint32_t mat, uint32_t mesh, uint32_t env,
                  std::string& out) {
   std::vector<std::u16string> files;
@@ -282,26 +310,27 @@ bool expandStage(VM& vm, ShaderCombiner* c, const Value& components, uint32_t ma
   e.once = &once;
   for (const auto& f : files) {
     std::u16string path = vm.resolvePath(f, c->script.get());
-    std::vector<uint8_t> data;
-    if (!vm.vfs().read(utf16ToUtf8(path), data)) {
+    const TemplateCode& tc = templateCode(vm, path);
+    if (!tc.found) {
       LOG_WARN("shader %s: component %s not found", utf16ToUtf8(c->path).c_str(), utf16ToUtf8(path).c_str());
       return false;
     }
-    std::u16string script = u"$matFlags = " + utf8ToUtf16(std::to_string(mat)) + u";\n$meshFlags = " +
-                            utf8ToUtf16(std::to_string(mesh)) + u";\n$envFlags = " + utf8ToUtf16(std::to_string(env)) +
-                            u";\n$directionalCount = " + utf8ToUtf16(std::to_string(env >> 8 & 15)) +
-                            u";\n$omniCount = " + utf8ToUtf16(std::to_string(env >> 12 & 15)) + u";\n$spotCount = " +
-                            utf8ToUtf16(std::to_string(env >> 16 & 15)) + u";\n" +
-                            templateToScript(portShaderPatch(path, decodeTextFile(data)));
-    std::string u8 = utf16ToUtf8(script);
-    const std::string tmp = "memory/regs/shader-template.script";
-    vm.vfs().write(tmp, std::vector<uint8_t>(u8.begin(), u8.end()));
     Expansion* outer = g_expansion;
     g_expansion = &e;
     LoadOptions opt;
     opt.cls = vm.findClass("gsTemplate");
     opt.keepInScriptList = false;
-    Value r = vm.load(u"/" + utf8ToUtf16(tmp), opt);  // already resolved: absolute, whatever script is running
+    Value r;
+    if (tc.code)
+      r = vm.loadCompiled(tc.code, kTemplatePath, opt, [&](Object* o) {
+        // the variant's flags (the engine prepends them to the template's script as assignments)
+        o->var(u"matFlags") = Value::integer(int32_t(mat));
+        o->var(u"meshFlags") = Value::integer(int32_t(mesh));
+        o->var(u"envFlags") = Value::integer(int32_t(env));
+        o->var(u"directionalCount") = Value::integer(int32_t(env >> 8 & 15));
+        o->var(u"omniCount") = Value::integer(int32_t(env >> 12 & 15));
+        o->var(u"spotCount") = Value::integer(int32_t(env >> 16 & 15));
+      });
     g_expansion = outer;
     if (!r.object() || !r.object()->code) {
       LOG_WARN("shader %s: template %s does not compile", utf16ToUtf8(c->path).c_str(), utf16ToUtf8(path).c_str());

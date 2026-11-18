@@ -106,6 +106,8 @@ enum : GLenum {
   X(void, LinkProgram, GLuint)                                                                              \
   X(void, GetProgramiv, GLuint, GLenum, GLint*)                                                             \
   X(void, GetProgramInfoLog, GLuint, GLsizei, GLsizei*, GLchar*)                                            \
+  X(void, DeleteProgram, GLuint)                                                                            \
+  X(const GLubyte*, GetStringi, GLenum, GLuint)                                                             \
   X(void, UseProgram, GLuint)                                                                               \
   X(GLint, GetUniformLocation, GLuint, const GLchar*)                                                       \
   X(void, Uniform1i, GLint, GLint)                                                                          \

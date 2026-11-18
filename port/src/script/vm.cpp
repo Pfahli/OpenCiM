@@ -247,6 +247,48 @@ Value VM::load(const std::u16string& rawPath, const LoadOptions& opt) {
   return Value::heap(VT::Object, obj.get());
 }
 
+Ref<Code> VM::compileSource(const std::u16string& source, const std::u16string& path) {
+  auto pr = parse(source);
+  if (!pr.program) {
+    report("Parser error in \"" + u8(path) + "\" at line " + std::to_string(pr.line) + ": " + pr.error, nullptr);
+    return {};
+  }
+  auto cr = compile(pr.program.get(), path);
+  if (!cr.code) {
+    report("Compiler error in \"" + u8(path) + "\" at line " + cr.error, nullptr);
+    return {};
+  }
+  return cr.code;
+}
+
+Value VM::loadCompiled(const Ref<Code>& code, const std::u16string& path, const LoadOptions& opt,
+                       const std::function<void(Object*)>& init) {
+  // as load() from the link on: a new object (or opt.into), linked against the globals as they are now, run at once
+  Ref<Object> obj = opt.into ? opt.into : newObject(opt.cls ? opt.cls : scriptClass_, nullptr);
+  if (!opt.into && opt.keepInScriptList) scripts_.push_back(obj);
+  obj->scriptPath = path;
+  try {
+    link(*code, obj.get());
+  } catch (const ScriptError& e) {
+    report(e.what(), nullptr);
+    return Value::heap(VT::Object, obj.get());
+  }
+  obj->code = code;
+  if (init) init(obj.get());
+  for (auto& n : code->scriptVars)
+    if (!obj->findVar(n)) obj->var(n) = Value::null();
+  ThreadObj* t = newThread(group(opt.group));
+  Frame f;
+  f.kind = Frame::Kind::Top;
+  f.code = code;
+  f.self = obj;
+  f.env = make<Env>();
+  f.env->slots.resize(code->topLocals);
+  t->frames.push_back(std::move(f));
+  runThread(t);
+  return Value::heap(VT::Object, obj.get());
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // threads (semantics.md Â§5)
 

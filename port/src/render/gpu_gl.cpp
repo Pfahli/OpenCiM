@@ -1,7 +1,12 @@
 // The OpenGL 3.3 core device (docs/renderer/vulkan.md §2): every call goes straight to GL, so the picture is exactly
 // what the renderer drew when it called GL itself.
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
+#include <filesystem>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "platform/window.h"
@@ -104,6 +109,26 @@ class GlDevice final : public Device {
       return false;
     }
     gl::Enable(gl::TEXTURE_CUBE_MAP_SEAMLESS);
+    // parallel shader compiles (a batch is queued before its status is asked, queueProgram): the driver picks the
+    // thread count (0xFFFFFFFF, GL_KHR_parallel_shader_compile §"MaxShaderCompilerThreadsKHR")
+    gl::GLint n = 0;
+    gl::GetIntegerv(0x821D /* GL_NUM_EXTENSIONS */, &n);
+    bool khr = false, arb = false;
+    for (gl::GLint i = 0; i < n; ++i) {
+      const char* e = reinterpret_cast<const char*>(gl::GetStringi(0x1F03 /* GL_EXTENSIONS */, gl::GLuint(i)));
+      if (!e) continue;
+      khr = khr || std::strcmp(e, "GL_KHR_parallel_shader_compile") == 0;
+      arb = arb || std::strcmp(e, "GL_ARB_parallel_shader_compile") == 0;
+    }
+    using MaxThreads = void(REGS_GLAPI*)(gl::GLuint);
+    if (auto f = reinterpret_cast<MaxThreads>(khr ? window_.glProc("glMaxShaderCompilerThreadsKHR")
+                                             : arb ? window_.glProc("glMaxShaderCompilerThreadsARB") : nullptr)) {
+      f(0xFFFFFFFFu);
+      parallelCompile_ = true;
+    }
+    programBinary_ = reinterpret_cast<ProgramBinaryFn>(window_.glProc("glProgramBinary"));
+    getProgramBinary_ = reinterpret_cast<GetProgramBinaryFn>(window_.glProc("glGetProgramBinary"));
+    programParameteri_ = reinterpret_cast<ProgramParameteriFn>(window_.glProc("glProgramParameteri"));
     return true;
   }
 
@@ -114,7 +139,8 @@ class GlDevice final : public Device {
     gl::GLint units = 0;
     gl::GetIntegerv(0x8872 /* GL_MAX_TEXTURE_IMAGE_UNITS */, &units);
     return std::string("OpenGL ") + (ver ? ver : "?") + " / " + (ren ? ren : "?") + " / " + std::to_string(units) +
-           " texture units" + (units < 16 ? " (fewer than the 16 the port needs)" : "");
+           " texture units" + (units < 16 ? " (fewer than the 16 the port needs)" : "") +
+           (parallelCompile_ ? " / parallel shader compile" : "");
   }
   float maxAnisotropy() override {
     if (!maxAniso_) {
@@ -325,27 +351,93 @@ class GlDevice final : public Device {
   // ---- programs ----
   uint32_t createProgram(const std::string& vs, const std::string& fs,
                          const std::vector<std::pair<int, const char*>>& attribs, std::string* error) override {
-    uint32_t v = compile(gl::VERTEX_SHADER, vs, error), f = v ? compile(gl::FRAGMENT_SHADER, fs, error) : 0;
-    if (!v || !f) {
-      if (v) gl::DeleteShader(v);
-      return 0;
+    return finishProgram(queueProgram(vs, fs, attribs), error);
+  }
+  // compile and link issued, no status asked (that would wait for the driver): the ticket is the program. With the
+  // program cache, a binary saved before is given to the driver instead (no compile at all).
+  uint32_t queueProgram(const std::string& vs, const std::string& fs,
+                        const std::vector<std::pair<int, const char*>>& attribs) override {
+    Queued q;
+    if (!cacheDir_.empty()) {
+      q.key = programKey(vs, fs, attribs);
+      std::vector<uint8_t> bin;
+      if (readFile(cacheDir_ / (q.key + L".bin"), bin) && bin.size() > 4) {
+        uint32_t prog = gl::CreateProgram();
+        uint32_t format = uint32_t(bin[0]) | uint32_t(bin[1]) << 8 | uint32_t(bin[2]) << 16 | uint32_t(bin[3]) << 24;
+        programBinary_(prog, format, bin.data() + 4, gl::GLsizei(bin.size() - 4));
+        q.fromCache = true;
+        q.vs = vs, q.fs = fs;  // compiled after all when the driver refuses the binary
+        for (const auto& [slot, name] : attribs) q.attribs.emplace_back(slot, name);
+        queuedPrograms_[prog] = std::move(q);
+        return prog;
+      }
     }
-    uint32_t prog = gl::CreateProgram();
-    gl::AttachShader(prog, v);
-    gl::AttachShader(prog, f);
-    for (const auto& [slot, name] : attribs) gl::BindAttribLocation(prog, gl::GLuint(slot), name);
-    gl::LinkProgram(prog);
-    gl::DeleteShader(v);
-    gl::DeleteShader(f);
-    int ok = 0;
-    gl::GetProgramiv(prog, gl::LINK_STATUS, &ok);
-    if (!ok) {
-      char log[4096];
-      gl::GetProgramInfoLog(prog, sizeof log, nullptr, log);
-      if (error) *error = log;
-      return 0;
-    }
+    uint32_t prog = issueProgram(vs, fs, attribs, q);
+    queuedPrograms_[prog] = std::move(q);
     return prog;
+  }
+  // the first error as createProgram always reported it: the vertex stage's compile log, the fragment stage's, the link
+  uint32_t finishProgram(uint32_t prog, std::string* error) override {
+    auto it = queuedPrograms_.find(prog);
+    if (it == queuedPrograms_.end()) return 0;
+    Queued q = std::move(it->second);
+    queuedPrograms_.erase(it);
+    if (q.fromCache) {
+      int linked = 0;
+      gl::GetProgramiv(prog, gl::LINK_STATUS, &linked);
+      if (linked) return prog;
+      gl::DeleteProgram(prog);  // another driver build or a damaged file: compile it
+      std::vector<std::pair<int, const char*>> attribs;
+      for (const auto& [slot, name] : q.attribs) attribs.emplace_back(slot, name.c_str());
+      Queued again;
+      again.key = q.key;
+      prog = issueProgram(q.vs, q.fs, attribs, again);
+      q = std::move(again);
+    }
+    auto [v, f] = std::pair(q.shaderV, q.shaderF);
+    char log[4096];
+    int ok = 0;
+    for (uint32_t s : {v, f}) {
+      gl::GetShaderiv(s, gl::COMPILE_STATUS, &ok);
+      if (!ok) {
+        gl::GetShaderInfoLog(s, sizeof log, nullptr, log);
+        break;
+      }
+    }
+    if (ok) {
+      gl::GetProgramiv(prog, gl::LINK_STATUS, &ok);
+      if (!ok) gl::GetProgramInfoLog(prog, sizeof log, nullptr, log);
+    }
+    gl::DeleteShader(v);  // attached: freed with the program
+    gl::DeleteShader(f);
+    if (!ok) {
+      if (error) *error = log;
+      gl::DeleteProgram(prog);
+      return 0;
+    }
+    if (!q.key.empty()) saveBinary(prog, q.key);
+    return prog;
+  }
+  // The program cache (optional; <user folder>\cache\gl, engine/display.cpp): linked programs as the driver's
+  // binaries (GL_ARB_get_program_binary), one file per program named by a hash of its sources and attribute slots,
+  // in a folder per driver (a hash of the vendor, renderer and version strings), so another GPU or driver never
+  // gets a binary it did not make. A binary the driver refuses anyway is compiled as usual and saved again.
+  void setProgramCache(const std::filesystem::path& dir) override {
+    cacheDir_.clear();
+    if (dir.empty() || !programBinary_ || !getProgramBinary_ || !programParameteri_) return;
+    gl::GLint formats = 0;
+    gl::GetIntegerv(0x87FE /* GL_NUM_PROGRAM_BINARY_FORMATS */, &formats);
+    if (formats <= 0) return;
+    std::string id;
+    for (gl::GLenum e : {gl::VENDOR, gl::RENDERER, gl::VERSION}) {
+      const char* s = reinterpret_cast<const char*>(gl::GetString(e));
+      id += std::string(s ? s : "?") + "\n";
+    }
+    std::filesystem::path d = dir / hex(fnv(id));
+    std::error_code ec;
+    std::filesystem::create_directories(d, ec);
+    if (ec) return;
+    cacheDir_ = d;
   }
   void useProgram(uint32_t prog) override {
     gl::UseProgram(prog);
@@ -426,21 +518,80 @@ class GlDevice final : public Device {
   void setVsync(bool on) override { window_.setVsync(on); }
 
  private:
-  static uint32_t compile(gl::GLenum type, const std::string& src, std::string* error) {
+  static uint32_t issueShader(gl::GLenum type, const std::string& src) {
     uint32_t s = gl::CreateShader(type);
     const char* p = src.c_str();
     gl::ShaderSource(s, 1, &p, nullptr);
     gl::CompileShader(s);
-    int ok = 0;
-    gl::GetShaderiv(s, gl::COMPILE_STATUS, &ok);
-    if (!ok) {
-      char log[4096];
-      gl::GetShaderInfoLog(s, sizeof log, nullptr, log);
-      if (error) *error = log;
-      gl::DeleteShader(s);
-      return 0;
-    }
     return s;
+  }
+  // a program queued: its shaders while they compile, or the sources of one loaded from the cache
+  struct Queued {
+    uint32_t shaderV = 0, shaderF = 0;
+    std::wstring key;  // the cache file's name ("" without the cache)
+    bool fromCache = false;
+    std::string vs, fs;
+    std::vector<std::pair<int, std::string>> attribs;
+  };
+  uint32_t issueProgram(const std::string& vs, const std::string& fs, const std::vector<std::pair<int, const char*>>& attribs,
+                        Queued& q) {
+    q.shaderV = issueShader(gl::VERTEX_SHADER, vs);
+    q.shaderF = issueShader(gl::FRAGMENT_SHADER, fs);
+    uint32_t prog = gl::CreateProgram();
+    gl::AttachShader(prog, q.shaderV);
+    gl::AttachShader(prog, q.shaderF);
+    for (const auto& [slot, name] : attribs) gl::BindAttribLocation(prog, gl::GLuint(slot), name);
+    if (!q.key.empty()) programParameteri_(prog, 0x8257 /* GL_PROGRAM_BINARY_RETRIEVABLE_HINT */, 1);
+    gl::LinkProgram(prog);
+    return prog;
+  }
+  static uint64_t fnv(const std::string& s, uint64_t h = 0xcbf29ce484222325ull) {
+    for (unsigned char c : s) h = (h ^ c) * 0x100000001b3ull;
+    return h;
+  }
+  static std::wstring hex(uint64_t v) {
+    wchar_t b[17];
+    std::swprintf(b, 17, L"%016llx", static_cast<unsigned long long>(v));
+    return b;
+  }
+  static std::wstring programKey(const std::string& vs, const std::string& fs,
+                                 const std::vector<std::pair<int, const char*>>& attribs) {
+    std::string a;
+    for (const auto& [slot, name] : attribs) a += std::to_string(slot) + "=" + name + ";";
+    // two hashes of the whole input (sources, slots): 128 bits, so two programs never share a file
+    std::string all = vs + '\0' + fs + '\0' + a;
+    return hex(fnv(all)) + hex(fnv(all, 0x84222325cbf29ce4ull));
+  }
+  static bool readFile(const std::filesystem::path& p, std::vector<uint8_t>& out) {
+    FILE* f = _wfopen(p.wstring().c_str(), L"rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    long n = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    out.resize(n > 0 ? size_t(n) : 0);
+    bool ok = n > 0 && std::fread(out.data(), 1, out.size(), f) == out.size();
+    std::fclose(f);
+    return ok;
+  }
+  void saveBinary(uint32_t prog, const std::wstring& key) {
+    gl::GLint len = 0;
+    gl::GetProgramiv(prog, 0x8741 /* GL_PROGRAM_BINARY_LENGTH */, &len);
+    if (len <= 0) return;
+    std::vector<uint8_t> bin(size_t(len) + 4);
+    gl::GLenum format = 0;
+    gl::GLsizei got = 0;
+    getProgramBinary_(prog, len, &got, &format, bin.data() + 4);
+    if (got <= 0) return;
+    for (int i = 0; i < 4; ++i) bin[size_t(i)] = uint8_t(format >> (8 * i));
+    std::filesystem::path file = cacheDir_ / (key + L".bin"), tmp = file;
+    tmp += L".tmp";
+    if (FILE* f = _wfopen(tmp.wstring().c_str(), L"wb")) {
+      bool ok = std::fwrite(bin.data(), 1, size_t(got) + 4, f) == size_t(got) + 4;
+      ok = std::fclose(f) == 0 && ok;
+      std::error_code ec;
+      if (ok) std::filesystem::rename(tmp, file, ec);
+      if (!ok || ec) std::filesystem::remove(tmp, ec);
+    }
   }
   bool isCube(uint32_t tex) const { return tex < cube_.size() && cube_[tex]; }
   // texture edits bind on unit 0, as the renderer did before the device existed
@@ -458,6 +609,15 @@ class GlDevice final : public Device {
   int timingSlot_ = 0;
   double gpuMs_ = -1;
   std::vector<uint8_t> cube_;  // per texture name: a cube map
+  std::unordered_map<uint32_t, Queued> queuedPrograms_;  // by program
+  bool parallelCompile_ = false;  // GL_KHR/ARB_parallel_shader_compile, switched to the driver's thread count
+  std::filesystem::path cacheDir_;  // the program cache's folder for this driver; empty: off
+  using ProgramBinaryFn = void(REGS_GLAPI*)(gl::GLuint, gl::GLenum, const void*, gl::GLsizei);
+  using GetProgramBinaryFn = void(REGS_GLAPI*)(gl::GLuint, gl::GLsizei, gl::GLsizei*, gl::GLenum*, void*);
+  using ProgramParameteriFn = void(REGS_GLAPI*)(gl::GLuint, gl::GLenum, gl::GLint);
+  ProgramBinaryFn programBinary_ = nullptr;  // GL 4.1 / GL_ARB_get_program_binary
+  GetProgramBinaryFn getProgramBinary_ = nullptr;
+  ProgramParameteriFn programParameteri_ = nullptr;
   uint32_t program_ = 0;
   int active_ = 0;
   int maxAniso_ = 0;

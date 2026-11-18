@@ -318,9 +318,19 @@ int cmdShader(int argc, char** argv) {
 
 // shaders <gameDir>: generate and compile shader variants on a hidden OpenGL context: every .shader file with all of
 // its material bits and with none, and the default shader for the flags of every material of every shipped .object
-// (with and without skinning, in the normal and the shadow passes)
+// (with and without skinning, in the normal and the shadow passes). --dump <file> writes every variant's expanded
+// GLSL 1.10 (vertex and fragment) to a file in test order, to compare the combiner's output between builds;
+// --no-compile only expands (no GL program is built).
 int cmdShaders(int argc, char** argv) {
   if (argc < 3) return 2;
+  std::string dumpPath;
+  bool compile = true;
+  for (int i = 3; i < argc; ++i) {
+    if (std::string(argv[i]) == "--dump" && i + 1 < argc) dumpPath = argv[++i];
+    else if (std::string(argv[i]) == "--no-compile") compile = false;
+  }
+  FILE* dump = dumpPath.empty() ? nullptr : std::fopen(dumpPath.c_str(), "wb");
+  double expandSeconds = 0;
   fs::path sandbox = fs::temp_directory_path() / "regs-shader-tool";
   fs::create_directories(sandbox);
   engine::Engine eng(widen(argv[2]), sandbox);
@@ -356,7 +366,16 @@ int cmdShaders(int argc, char** argv) {
   auto test = [&](engine::ShaderCombiner* c, uint32_t mat, uint32_t mesh, uint32_t env) {
     auto& pf = perFile[utf16ToUtf8(c->path)];
     ++pf.second;
+    auto t0 = std::chrono::steady_clock::now();
     engine::ShaderVariant* v = engine::combinerVariant(eng.vm(), c, mat, mesh, env);
+    expandSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (dump)
+      std::fprintf(dump, "=== %s mat 0x%x mesh 0x%x env 0x%x%s\n--- vertex\n%s\n--- fragment\n%s\n", utf16ToUtf8(c->path).c_str(),
+                   mat, mesh, env, v->failed ? " FAILED" : "", v->vertex.c_str(), v->fragment.c_str());
+    if (!compile) {
+      v->failed ? ++failed : ++ok;
+      return;
+    }
     std::string e;
     if (!v->failed && !v->program) v->program = r3d.buildProgram(v->vertex, v->fragment, &e);
     if (v->failed || !v->program) {
@@ -403,8 +422,9 @@ int cmdShaders(int argc, char** argv) {
   size_t variants = 0;
   for (auto& [f, n] : perFile)
     if (n.first) std::printf("  %-48s %d of %d variants failed\n", f.c_str(), n.first, n.second);
-  std::printf("%d shader files, %d objects, %zu material flag sets: %d programs compiled, %d failed\n", files, objects,
-              flagsets.size(), ok, failed);
+  std::printf("%d shader files, %d objects, %zu material flag sets: %d programs %s, %d failed; expansion %.0f ms\n", files,
+              objects, flagsets.size(), ok, compile ? "compiled" : "expanded", failed, expandSeconds * 1000);
+  if (dump) std::fclose(dump);
   (void)variants;
   return failed ? 1 : 0;
 }
@@ -909,6 +929,7 @@ int main(int argc, char** argv) {
     else if (cmd == "png-diff") rc = cmdPngDiff(argc, argv);
     else if (cmd == "upscale-check") rc = cmdUpscaleCheck(argc, argv);
     else if (cmd == "ddspng") rc = cmdDdsPng(argc, argv);
+    Vfs::waitForWrites();  // packages of writePackage still being written (a scripted save in "run")
     if (rc != 2) return rc;
   }
   std::fprintf(stderr,

@@ -68,7 +68,24 @@ class Vfs {
   // port: while set, write() puts disk files out on a background thread (the editor's autosave, so the game does not
   // stall on the disk); the record is registered at once. waitForWrites() blocks until they are all out (at exit).
   bool asyncWrites = false;
+  // Also waits for the packages of writePackage still being built or written.
   static void waitForWrites();
+
+  using Bytes = std::shared_ptr<std::vector<uint8_t>>;
+  // A file's bytes for a snapshot: a memory file's own buffer (memory files are never changed in place, write()
+  // replaces the buffer), anything else read into a new one. Null when the file cannot be read.
+  Bytes share(const std::string& path) const;
+  // writePackage (engine/natives_core.cpp): the GS10 package of these files (name in the package, bytes) is built and
+  // written to path ("userdata/..." as write()) on a background thread, into "<file>.tmp" first and then renamed over
+  // the old file. Meanwhile the records a rescan would make of it are served from the given bytes, so the scripts
+  // see the new package at once (a ".gs" as the folder without ".gs", a ".cimtpl" as the file and the folder
+  // "<file>/"); finishWrites() mounts the written file in their place. False when the path is refused.
+  bool writePackage(const std::string& path, std::vector<std::pair<std::string, Bytes>> files);
+  // Mounts the packages whose write has finished, in the order written (each frame, Engine::frame); with wait it
+  // waits for the rest first (rescan() does, so a rescan never meets a package half written).
+  void finishWrites(bool wait = false);
+  bool writesPending() const { return !pending_.empty(); }
+  struct PackageJob;  // vfs.cpp: one package's background build and write
 
   // Files directly inside dir (names only), optionally filtered by exact extension including the dot.
   std::vector<std::string> listFiles(const std::string& dir, const std::string& ext = "") const;
@@ -93,6 +110,22 @@ class Vfs {
   void mountArchive(const std::filesystem::path& file, const std::string& relNoExt, const std::string& keyPrefix,
                     bool plainOnly = false, bool keepOpen = false);
   void scanOriginal();
+  void scanAll();
+
+  // a package of writePackage until finishWrites mounts its file
+  struct PendingPackage {
+    std::shared_ptr<PackageJob> job;
+    std::string path;                   // as given ("userdata/saves/x.gs")
+    std::filesystem::path disk;
+    std::string keyPrefix, rel;         // as scanTree mounts it: mountArchive(disk, rel, keyPrefix)
+    bool folder = false;                // .gs / .cimtpl: the entries show as a folder
+    bool fileRecord = false;            // the file's own record (.cimtpl, other names)
+    std::vector<std::pair<std::string, Bytes>> entries;  // record key, bytes
+  };
+  std::vector<PendingPackage> pending_;
+  void showPending(const PendingPackage& p);
+  void dropPending(const PendingPackage& p);
+  void dropArchive(const std::filesystem::path& disk);
 
   std::filesystem::path installRoot_;
   std::optional<std::filesystem::path> userdataRoot_, overlayRoot_, originalRoot_;

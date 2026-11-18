@@ -228,3 +228,51 @@ After: `stepCitizens` 1.1 ms at speed 1 (was 1.7; `animateCharacter` 1.2 % of th
 speed 10 (was 7.2), of it the pedestrian search 1.8 ms and the trip start's lane
 search 0.9 ms; the trodden map 0.6 ms (was 5). Left: the pedestrian A* itself (its expansions and tie order decide the
 paths; a faster search must find the same ones), the one lane search per car trip, the render side.
+
+## Saving, shader templates and OpenGL compiles (2026-11-18): B3, B4, B7
+
+B7: `writePackage` takes a snapshot of the files (memory files share their buffer), builds and writes the package on one
+background thread (`<file>.tmp`, then renamed over the old file) and shows the package's entries from the snapshot at
+once; `Engine::frame` mounts only the finished package, no rescan; `rescan()` and the exit wait for writes. The
+suspected bug was real by the code: with asynchronous writes (the autosaves) `write()` only started the thread, so the
+rescan right after it could open a half-written file ("size mismatch", the save missing from the lists) or the old
+file whose directory no longer matched the data being written over it. It did not show in 17 test autosaves here (the
+rescan takes ~20 ms, the write usually a few ms; one background write took 88 ms). Main thread of a Berlin save
+(`REGS_DEBUG_SAVE_AT`): 507 to 82 ms (Vulkan), 449 to 74 ms (OpenGL); the autosave tick 460 ms to under 250 ms. The
+written save is the old build's byte for byte (only the wall-clock `$saveTime` differs) and reloads with the same counts.
+
+B4: each shader template component is patched, converted and compiled once; the variants run that code with the flags
+set as script variables (`VM::compileSource` / `loadCompiled`). All 3,814 variants of `regs-tool shaders --dump` are
+byte for byte the same; expansion 2593 to 320 ms.
+
+B3: OpenGL queues the programs a draw list misses (`gpu::Device::queueProgram`, `assignPrograms`) before it asks for
+any status, with `GL_KHR_parallel_shader_compile` on; linked programs are kept as driver binaries in
+`<user folder>\cache\gl\<driver>\`. Berlin, OpenGL, RTX 3080, first view (67 programs) with a private empty driver
+cache (`__GL_SHADER_DISK_CACHE_PATH`): 34.5 s before, 40.8 s one by one, 13.1 s batched, 3.7 s with the program
+binaries; with the driver's cache warm 0.70 s before, 0.59 s now, 0.55 s with the binaries. Vulkan first view: 1.6-2.3 s
+before, 1.5-2.0 s now (only the template part applies; its pipelines are the Vulkan cache item above).
+
+## Vulkan caches and draw state (2026-11-18)
+
+SPIR-V disk cache with the reflection data (`<documents>\OpenCiM\cache\spirv`), a `VkPipelineCache` saved to
+`cache\pipelines.bin` (checked against the GPU), plain string scans instead of `std::regex` in `vk_shader.cpp` (same
+output on all programs), `draw()` recording only changed state and descriptors (`REGS_VK_RECORD_ALL=1` for A/B), and
+the loading-screen pre-draw also drawing the post-hook target, which had made 25 pipelines in one frame during play.
+`REGS_VK_CACHE=0` turns the caches off, `REGS_VK_LOG_PIPELINES=1` logs every pipeline made. Details in
+`docs/renderer/vulkan.md`. Berlin first view with both caches 0.56-0.64 s (was 1.6-1.8 s); no frame over 250 ms
+caused by shaders or pipelines in the measured runs; render CPU about 0.7 ms (10 %) lower from the state skipping.
+
+## Where it stands after both rounds
+
+| Berlin, 1920x1080, start view | Start of the audit | After both rounds |
+|---|---|---|
+| Vulkan fps | 44.1 | 109.5 |
+| Vulkan worst frame | 357 ms | 58 ms |
+| Vulkan render CPU | 13.6 ms | 4.8 ms |
+| Speed 10, Vulkan fps | about 43 | 65.9 |
+| Grid items at load (Vienna) | 4.4 s | 0.7 s |
+| Save, main-thread stall | about 500 ms | about 80 ms |
+
+(After-numbers from one merged run each with `REGS_FIXED_DT=0.016`; other sessions were running.) Left: the
+pedestrian A* (it must find exactly the same paths), bloom's per-frame readback wait, Vulkan programs still built one
+by one, the editor's tool-preview rescans (C2), `restampWalk` after big edits, and the script compile cache (B8).

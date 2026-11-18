@@ -119,6 +119,30 @@ class Device {
   // ---- programs: GLSL 3.30 core vertex and fragment source; attributes named here get these locations ----
   virtual uint32_t createProgram(const std::string& vs, const std::string& fs,
                                  const std::vector<std::pair<int, const char*>>& attribs, std::string* error) = 0;
+  // createProgram in two halves, for a batch (the programs a draw list needs, engine/scene3d.cpp assignPrograms):
+  // queueProgram starts building one and returns a ticket (never 0); finishProgram waits for it and returns what
+  // createProgram would (the program, or 0 with the error). OpenGL issues every compile and link of a batch before it
+  // asks for any status, so the driver compiles them side by side (GL_KHR_parallel_shader_compile); the default
+  // builds at once in queueProgram. Every ticket must be finished, in any order.
+  virtual uint32_t queueProgram(const std::string& vs, const std::string& fs,
+                                const std::vector<std::pair<int, const char*>>& attribs) {
+    Queued q;
+    q.program = createProgram(vs, fs, attribs, &q.error);
+    queued_.push_back(std::move(q));
+    return uint32_t(queued_.size()) + queuedBase_;
+  }
+  virtual uint32_t finishProgram(uint32_t ticket, std::string* error) {
+    Queued& q = queued_[ticket - queuedBase_ - 1];
+    if (!q.program && error) *error = q.error;
+    uint32_t p = q.program;
+    q.done = true;
+    while (!queued_.empty() && queued_.front().done) queued_.erase(queued_.begin()), ++queuedBase_;
+    return p;
+  }
+  // A folder where the device may keep linked programs between runs (OpenGL: driver binaries, gpu_gl.cpp); empty
+  // turns it off. The default keeps nothing.
+  virtual void setProgramCache(const std::filesystem::path& dir) {}
+
   virtual void useProgram(uint32_t prog) = 0;
   virtual uint32_t currentProgram() const = 0;
   virtual int uniformLocation(uint32_t prog, const char* name) = 0;  // −1 when the program has no such uniform
@@ -220,6 +244,15 @@ class Device {
   virtual void frameGenHudless(uint32_t texture) {}  // this frame's; cleared at present
   // FSR's jitter sequence (render pixels) for this render → output width
   virtual void fsrJitter(uint32_t frame, int renderWidth, int outputWidth, float& x, float& y) { x = y = 0; }
+
+ private:
+  struct Queued {  // the default queueProgram's results until finished
+    uint32_t program = 0;
+    std::string error;
+    bool done = false;
+  };
+  std::vector<Queued> queued_;
+  uint32_t queuedBase_ = 0;
 };
 
 // The device of the running game (or tool); set once the window is open.

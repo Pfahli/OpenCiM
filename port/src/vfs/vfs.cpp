@@ -3,10 +3,17 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <thread>
 #include <cstdio>
+#include <cstring>
 #include <cwctype>
 #include <functional>
+#include <span>
+
+#include <windows.h>
 
 #include "core/log.h"
 #include "core/text.h"
@@ -49,6 +56,13 @@ const Vfs::Record* Vfs::find(const std::string& path) const {
 }
 
 void Vfs::rescan() {
+  // a package or file still being written would be read half done (or not at all: "size mismatch")
+  finishWrites(true);
+  waitForWrites();
+  scanAll();
+}
+
+void Vfs::scanAll() {
   for (auto it = records_.begin(); it != records_.end();) {
     if (it->second.kind != Kind::Memory) it = records_.erase(it);
     else ++it;
@@ -296,8 +310,252 @@ bool Vfs::write(const std::string& path, const std::vector<uint8_t>& data) {
   return ok;
 }
 
+// ---- packages written in the background (writePackage) ----
+
+struct Vfs::PackageJob {
+  fs::path disk;
+  std::string path;
+  std::vector<std::pair<std::string, Bytes>> files;  // name in the package, bytes (shared with the pending records)
+  std::atomic<bool> done{false};
+  bool ok = false;
+};
+
+namespace {
+
+// one thread, the jobs in order (two saves to one file land in the order made)
+struct PackageWriter {
+  std::mutex m;
+  std::condition_variable work, finished;
+  std::deque<std::shared_ptr<Vfs::PackageJob>> queue;
+  int open = 0;  // queued or being written
+  bool started = false;
+};
+PackageWriter& packageWriter() {
+  static PackageWriter* w = new PackageWriter;  // never destroyed: the detached thread may outlive the statics
+  return *w;
+}
+
+bool replaceFile(const fs::path& from, const fs::path& to) {
+  // a reader of the old package (Archive::read opens the file per read) can hold it for a moment: retry
+  for (int i = 0; i < 100; ++i) {
+    if (MoveFileExW(from.wstring().c_str(), to.wstring().c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  return false;
+}
+
+void writeJob(Vfs::PackageJob& j) {
+  auto t0 = std::chrono::steady_clock::now();
+  std::vector<std::pair<std::string, std::span<const uint8_t>>> views;
+  size_t raw = 0;
+  for (const auto& [name, data] : j.files) {
+    views.emplace_back(name, std::span<const uint8_t>(*data));
+    raw += data->size();
+  }
+  std::vector<uint8_t> package = buildPackage(views);
+  auto t1 = std::chrono::steady_clock::now();
+  fs::path tmp = j.disk;
+  tmp += L".tmp";
+  bool ok = false;
+  if (FILE* f = _wfopen(tmp.wstring().c_str(), L"wb")) {
+    ok = std::fwrite(package.data(), 1, package.size(), f) == package.size();
+    ok = std::fclose(f) == 0 && ok;
+  }
+  if (ok) ok = replaceFile(tmp, j.disk);
+  if (!ok) {
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    LOG_ERROR("writePackage: cannot write %s", j.path.c_str());
+  }
+  auto t2 = std::chrono::steady_clock::now();
+  LOG_INFO("writePackage %s: %zu files, %.1f MB packed to %.1f MB in %.0f ms, written in %.0f ms (background)", j.path.c_str(),
+           j.files.size(), double(raw) / 1048576.0, double(package.size()) / 1048576.0,
+           std::chrono::duration<double, std::milli>(t1 - t0).count(), std::chrono::duration<double, std::milli>(t2 - t1).count());
+  j.ok = ok;
+}
+
+void writerLoop() {
+  PackageWriter& w = packageWriter();
+  for (;;) {
+    std::shared_ptr<Vfs::PackageJob> j;
+    {
+      std::unique_lock lock(w.m);
+      w.work.wait(lock, [&] { return !w.queue.empty(); });
+      j = w.queue.front();
+      w.queue.pop_front();
+    }
+    writeJob(*j);
+    {
+      std::lock_guard lock(w.m);
+      j->done = true;
+      --w.open;
+    }
+    w.finished.notify_all();
+  }
+}
+
+void queueJob(std::shared_ptr<Vfs::PackageJob> j) {
+  PackageWriter& w = packageWriter();
+  {
+    std::lock_guard lock(w.m);
+    if (!w.started) {
+      w.started = true;
+      std::thread(writerLoop).detach();
+    }
+    w.queue.push_back(std::move(j));
+    ++w.open;
+  }
+  w.work.notify_one();
+}
+
+void waitJob(const Vfs::PackageJob& j) {
+  PackageWriter& w = packageWriter();
+  std::unique_lock lock(w.m);
+  w.finished.wait(lock, [&] { return j.done.load(); });
+}
+
+// the same file, as Windows sees it (case and separators do not matter)
+bool sameFile(const fs::path& a, const fs::path& b) {
+  std::wstring x = a.lexically_normal().wstring(), y = b.lexically_normal().wstring();
+  return x.size() == y.size() && std::equal(x.begin(), x.end(), y.begin(), [](wchar_t c, wchar_t d) { return std::towupper(c) == std::towupper(d); });
+}
+
+bool endsWith(const std::string& s, const char* suffix) {
+  size_t n = std::strlen(suffix);
+  return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+}  // namespace
+
 void Vfs::waitForWrites() {
   for (int i = 0; i < 1000 && g_pendingWrites.load() > 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  PackageWriter& w = packageWriter();
+  std::unique_lock lock(w.m);
+  w.finished.wait(lock, [&] { return w.open == 0; });
+}
+
+Vfs::Bytes Vfs::share(const std::string& path) const {
+  const Record* r = find(path);
+  if (r && r->kind == Kind::Memory) return r->memory;
+  auto out = std::make_shared<std::vector<uint8_t>>();
+  if (!read(path, *out)) return nullptr;
+  return out;
+}
+
+bool Vfs::writePackage(const std::string& path, std::vector<std::pair<std::string, Bytes>> files) {
+  const bool user = path.rfind("userdata/", 0) == 0 && userdataRoot_;
+  if (!allowInstallWrites && !user) {
+    LOG_WARN("vfs: refused write outside userdata/: %s", path.c_str());
+    return false;
+  }
+  PendingPackage p;
+  p.path = path;
+  p.disk = diskPathFor(path);
+  // as scanTree would mount the file: "<rel minus .gs>/" for a .gs, "<rel>/" and the file for a .cimtpl, the file
+  // alone for any other name
+  p.keyPrefix = user ? "userdata/" : "";
+  p.rel = path.substr(p.keyPrefix.size());
+  if (endsWith(path, ".gs")) {
+    p.rel.resize(p.rel.size() - 3);
+    p.folder = true;
+  } else if (endsWith(path, ".cimtpl")) {
+    p.folder = p.fileRecord = true;
+  } else {
+    p.fileRecord = true;
+  }
+  if (p.folder)
+    for (const auto& [name, data] : files) p.entries.emplace_back(p.keyPrefix + p.rel + "/" + packageEntryName(name), data);
+  p.job = std::make_shared<PackageJob>();
+  p.job->disk = p.disk;
+  p.job->path = path;
+  p.job->files = std::move(files);
+  showPending(p);
+  pending_.push_back(p);
+  queueJob(p.job);
+  return true;
+}
+
+void Vfs::dropArchive(const fs::path& disk) {
+  // the records of an earlier mount of this file (its directory no longer matches the file being written)
+  std::vector<bool> gone(archives_.size(), false);
+  bool any = false;
+  for (size_t i = 0; i < archives_.size(); ++i)
+    if (!archives_[i].entries.empty() && sameFile(archives_[i].file, disk)) gone[i] = any = true;
+  if (!any) return;
+  for (auto it = records_.begin(); it != records_.end();) {
+    if (it->second.kind == Kind::ArchiveEntry && gone[size_t(it->second.archive)]) it = records_.erase(it);
+    else ++it;
+  }
+  for (size_t i = 0; i < archives_.size(); ++i)
+    if (gone[i]) archives_[i].entries.clear();  // kept in place: the other records' archive indices stay valid
+}
+
+void Vfs::dropPending(const PendingPackage& p) {
+  for (const auto& [key, data] : p.entries)
+    if (auto it = records_.find(key); it != records_.end() && it->second.kind == Kind::Memory && it->second.memory == data)
+      records_.erase(it);
+}
+
+void Vfs::showPending(const PendingPackage& p) {
+  dropArchive(p.disk);
+  for (const PendingPackage& q : pending_)
+    if (sameFile(q.disk, p.disk)) dropPending(q);
+  for (const auto& [key, data] : p.entries) {
+    if (records_.count(key)) continue;  // as mountArchive: loose files and other archives win
+    Record r;
+    r.kind = Kind::Memory;
+    r.memory = data;
+    records_.emplace(key, std::move(r));
+  }
+  if (p.fileRecord) {
+    Record r;
+    r.kind = Kind::Loose;
+    r.disk = p.disk;
+    records_[p.path] = std::move(r);
+  }
+  // the folders on the way, as a rescan lists them (userdata/ folders have marker records, scanTree)
+  if (p.keyPrefix == "userdata/") {
+    std::error_code ec;
+    for (size_t s = p.rel.find('/'); s != std::string::npos; s = p.rel.find('/', s + 1)) {
+      std::string dir = p.rel.substr(0, s);
+      fs::path d = diskPathFor("userdata/" + dir);
+      if (!records_.count("userdata/" + dir + "/") && fs::is_directory(d, ec)) {
+        Record r;
+        r.kind = Kind::Loose;
+        r.disk = d;
+        records_["userdata/" + dir + "/"] = std::move(r);
+      }
+    }
+  }
+}
+
+void Vfs::finishWrites(bool wait) {
+  size_t n = 0;
+  for (; n < pending_.size(); ++n) {
+    PendingPackage& p = pending_[n];
+    if (!p.job->done) {
+      if (!wait) break;
+      waitJob(*p.job);
+    }
+    bool later = false;
+    for (size_t k = n + 1; k < pending_.size(); ++k) later = later || sameFile(pending_[k].disk, p.disk);
+    if (later) continue;  // a newer package for the same file is still on its way and stays shown
+    dropPending(p);
+    if (p.keyPrefix != "userdata/") {  // outside userdata (allowInstallWrites): as the engine, everything again
+      scanAll();
+      continue;
+    }
+    // the written file, or whatever is on disk after a failed write
+    std::error_code ec;
+    dropArchive(p.disk);
+    if (p.folder && fs::is_regular_file(p.disk, ec)) {
+      size_t before = archives_.size();
+      mountArchive(p.disk, p.rel, p.keyPrefix);
+      if (archives_.size() > before) LOG_INFO("vfs: mounted %s (%zu entries)", p.path.c_str(), archives_.back().entries.size());
+    }
+    if (p.fileRecord && !fs::is_regular_file(p.disk, ec)) records_.erase(p.path);
+  }
+  pending_.erase(pending_.begin(), pending_.begin() + std::ptrdiff_t(n));
 }
 
 std::vector<std::string> Vfs::listFiles(const std::string& dir, const std::string& ext) const {

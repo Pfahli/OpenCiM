@@ -13,8 +13,10 @@
 #include "engine/snowplows.h"
 #include "engine/sound.h"
 
+#include <chrono>
 #include <cstdio>
 
+#include "core/env.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
@@ -114,11 +116,24 @@ bool Engine::init(const std::u16string& initScript) {
 
 void Engine::frame(float dt) {
   ++frames_;
+  vfs_.finishWrites();  // packages written in the background since the last frame mount now (Vfs::writePackage)
   if (Display* d = display()) d->advanceEffectTimer(dt);
+  // REGS_LOG_TIME (measurements): ticks over 250 ms are logged with the script threads' share (an autosave, the
+  // save of REGS_DEBUG_SAVE_AT); the render's own slow frames are logged by Display::renderFrame
+  static const bool logTime = regs::envVar("REGS_LOG_TIME") != nullptr;
+  const auto t0 = std::chrono::steady_clock::now();
   // gsMain.tick (0x100a0700): script threads first, then the enabled children in order
   vm_->runThreads(dt);
+  const auto t1 = std::chrono::steady_clock::now();
   vm_->tickChildren(main_.get(), dt);
   soundsFrame(*vm_, dt);  // listener, sound status, mixer update
+  if (logTime) {
+    const auto t2 = std::chrono::steady_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t2 - t0).count();
+    if (ms > 250)
+      LOG_INFO("slow tick: %.0f ms at frame %llu (script threads %.0f ms, children %.0f ms)", ms, (unsigned long long)frames_,
+               std::chrono::duration<double, std::milli>(t1 - t0).count(), std::chrono::duration<double, std::milli>(t2 - t1).count());
+  }
 }
 
 }  // namespace regs::engine

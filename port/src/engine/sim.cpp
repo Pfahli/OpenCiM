@@ -34,6 +34,7 @@
 #include "engine/particles.h"
 #include "engine/snowplows.h"
 #include "engine/traffic_maps.h"
+#include "vfs/vfs.h"
 
 namespace regs::engine {
 
@@ -2264,8 +2265,21 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
     static int ticks = 0;
     const char* colon = std::strchr(at, ':');
     if (colon && ++ticks == std::atoi(at))
-      if (Value* main = vm.findGlobal(u"MAIN"))
+      if (Value* main = vm.findGlobal(u"MAIN")) {
+        auto t0 = std::chrono::steady_clock::now();
         vm.call(vm.getMember(vm.getMember(*main, u"$main"), u"saveGameData"), {Value::string(utf8ToUtf16(colon + 1))});
+        LOG_INFO("test: saveGameData(\"%s\") took %.0f ms on the main thread", colon + 1,
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+        // what the load list sees of it at once (the package may still be written in the background)
+        std::string dir = std::string("userdata/saves/") + (colon + 1);
+        std::vector<uint8_t> campaign;
+        bool listed = false;
+        for (const std::string& d : vm.vfs().listDirs(dir.substr(0, dir.rfind('/')))) listed = listed || d == dir.substr(dir.rfind('/') + 1);
+        bool reads = vm.vfs().read(dir + "/game.campaign", campaign);
+        LOG_INFO("test: right after the save: listed %s, %s/game.campaign %s (%zu bytes)%s", listed ? "yes" : "no", dir.c_str(),
+                 reads ? "reads" : "missing", campaign.size(),
+                 vm.vfs().writesPending() ? ", package still being written" : "");
+      }
   }
   // test harness: REGS_TEST_SCENARIO_CALL=<ticks>:<function>[,<function>…] calls those scenario functions through
   // MAIN.$scenario.callFunction(name, 0) (scenario, location and default layers) after that many simulation ticks,

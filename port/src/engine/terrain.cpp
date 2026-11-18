@@ -1617,6 +1617,7 @@ void registerTerrainNatives(VM& vm) {
       // cold driver cache (a new driver, changed shaders) that took half a minute of black screen after Spielen
       const int linked = render::gProgramsLinked;
       const int pipelines = render::gpu::hasDevice() ? render::gpu::dev().pipelinesCreated() : 0;
+      const double linkSeconds = render::gLinkSeconds;
       Value* vpv = m->findVar(u"viewport");
       Value* scene = m->findVar(u"scene");
       Value* camera = m->findVar(u"camera");
@@ -1658,10 +1659,10 @@ void registerTerrainNatives(VM& vm) {
       }
       auto t2 = std::chrono::steady_clock::now();
       const int pipelinesNow = render::gpu::hasDevice() ? render::gpu::dev().pipelinesCreated() : 0;
-      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs, %d pipelines)",
+      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs, %.0f ms linking them, %d pipelines)",
                std::chrono::duration<double, std::milli>(t1 - t0).count(),
                std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked,
-               pipelinesNow - pipelines);
+               (render::gLinkSeconds - linkSeconds) * 1000, pipelinesNow - pipelines);
       // what the first view compiled goes to the disk caches now, not only at exit (a crash keeps it)
       if (render::gpu::hasDevice()) render::gpu::dev().saveCaches();
     }
