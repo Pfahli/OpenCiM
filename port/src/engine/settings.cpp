@@ -4,7 +4,7 @@ namespace regs::engine {
 
 using namespace regs::script;
 
-float settingNumber(VM& vm, const char16_t* name, float def) {
+float settingNumber(VM& vm, std::u16string_view name, float def) {
   Value* main = vm.findGlobal(u"MAIN");
   Object* m = main ? main->object() : nullptr;
   Value* s = m ? m->findVar(u"settings") : nullptr;

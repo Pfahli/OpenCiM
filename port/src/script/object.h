@@ -42,13 +42,13 @@ struct ClassInfo {
   const ClassInfo* parent = nullptr;
   // creates instances of native classes that need their own state or tick (nearest ancestor with one is used)
   std::function<Ref<Object>(const ClassInfo*)> factory;
-  std::unordered_map<std::u16string, FieldInfo> fields;
-  std::unordered_map<std::u16string, MethodInfo> methods;
-  std::unordered_map<std::u16string, EventInfo> events;
+  U16Map<FieldInfo> fields;
+  U16Map<MethodInfo> methods;
+  U16Map<EventInfo> events;
 
-  const FieldInfo* findField(const std::u16string& n) const;
-  const MethodInfo* findMethod(const std::u16string& n) const;
-  const EventInfo* findEvent(const std::u16string& n) const;
+  const FieldInfo* findField(std::u16string_view n) const;
+  const MethodInfo* findMethod(std::u16string_view n) const;
+  const EventInfo* findEvent(std::u16string_view n) const;
   bool isA(const ClassInfo* other) const;
 };
 
@@ -85,13 +85,13 @@ class Object : public HeapObj {
 
   // $variables in creation order (exportVariables writes them in this order)
   std::vector<std::pair<std::u16string, Value>> vars;
-  std::unordered_map<std::u16string, size_t> varIndex;
+  U16Map<size_t> varIndex;
   std::map<std::u16string, std::vector<EventBinding>> events;
   std::vector<Ref<Object>> boundTargets;  // objects this script bound handlers on (unbound when it is destroyed)
   // storage for native fields that have no implementation yet (generated API defaults)
-  std::unordered_map<std::u16string, Value> fieldValues;
+  U16Map<Value> fieldValues;
 
-  Value* findVar(const std::u16string& name);
+  Value* findVar(std::u16string_view name);
   Value& var(const std::u16string& name);  // creates unset when missing
   bool removeVar(const std::u16string& name);
 

@@ -39,7 +39,7 @@ using namespace regs::render;
 
 namespace {
 
-Value fieldOf(VM& vm, Object* o, const char16_t* name) {
+Value fieldOf(VM& vm, Object* o, std::u16string_view name) {
   try {
     return vm.resolve(vm.getMember(Value::heap(VT::Object, o), name));
   } catch (const ScriptError&) {

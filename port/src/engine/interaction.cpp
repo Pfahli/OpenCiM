@@ -36,7 +36,7 @@ constexpr int kTypeTree = 0x13, kTypeMarker = 0x15, kTypeSpawnPoint = 0x16;
 
 Value obj(Object* o) { return o ? Value::heap(VT::Object, o) : Value::null(); }
 
-Value member(VM& vm, Object* o, const char16_t* name) {
+Value member(VM& vm, Object* o, std::u16string_view name) {
   try {
     return vm.resolve(vm.getMember(Value::heap(VT::Object, o), name));
   } catch (const ScriptError&) {
@@ -44,12 +44,12 @@ Value member(VM& vm, Object* o, const char16_t* name) {
   }
 }
 
-float numberOf(VM& vm, Object* o, const char16_t* name, float def) {
+float numberOf(VM& vm, Object* o, std::u16string_view name, float def) {
   Value v = member(vm, o, name);
   return v.type() == VT::Float || v.type() == VT::Int ? vm.toFloat(v) : def;
 }
 
-int intField(VM& vm, const Object* o, const char16_t* name, int def) {
+int intField(VM& vm, const Object* o, std::u16string_view name, int def) {
   auto it = o->fieldValues.find(name);
   return it == o->fieldValues.end() || it->second.isNone() ? def : vm.toInt(it->second);
 }
@@ -57,12 +57,12 @@ int intField(VM& vm, const Object* o, const char16_t* name, int def) {
 // truthiness of a possibly unset value (unset reads as false instead of a script error)
 bool isSet(VM& vm, const Value& v) { return !v.isNone() && vm.truthy(v); }
 
-bool flagField(VM& vm, const Object* o, const char16_t* name) {
+bool flagField(VM& vm, const Object* o, std::u16string_view name) {
   auto it = o->fieldValues.find(name);
   return it != o->fieldValues.end() && isSet(vm, it->second);
 }
 
-float floatField(VM& vm, const Object* o, const char16_t* name, float def) {
+float floatField(VM& vm, const Object* o, std::u16string_view name, float def) {
   auto it = o->fieldValues.find(name);
   return it == o->fieldValues.end() || it->second.isNone() ? def : vm.toFloat(it->second);
 }
@@ -589,7 +589,7 @@ struct FieldKey {
 
 Value member(VM& vm, Object* o, FieldKey& k) {
   if (o->cls != k.cls) k.cls = o->cls, k.field = o->cls->findField(k.name);
-  if (!k.field) return member(vm, o, k.name.c_str());
+  if (!k.field) return member(vm, o, std::u16string_view(k.name));
   try {
     return vm.resolve(k.field->get ? k.field->get(vm, o) : Value());
   } catch (const ScriptError&) {

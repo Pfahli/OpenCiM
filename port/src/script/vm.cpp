@@ -18,7 +18,7 @@ namespace regs::script {
 
 namespace {
 
-std::string u8(const std::u16string& s) { return utf16ToUtf8(s); }
+std::string u8(std::u16string_view s) { return utf16ToUtf8(std::u16string(s)); }
 Value plain(const Value& v) { return v.ref() ? v.ref()->get() : v; }
 
 constexpr uint64_t kInstructionBudget = 200'000'000;  // per thread run; guards the port against hangs
@@ -32,7 +32,7 @@ VM::VM(Vfs& vfs) : vfs_(vfs) {
 
 VM::~VM() = default;
 
-Value* VM::findGlobal(const std::u16string& name) {
+Value* VM::findGlobal(std::u16string_view name) {
   auto it = globals_.find(name);
   return it == globals_.end() ? nullptr : &it->second;
 }
@@ -477,14 +477,14 @@ bool VM::fireEvent(Object* target, const std::u16string& name, const std::vector
 // ---------------------------------------------------------------------------------------------------------------
 // members (semantics.md Â§2.2, values.md Â§6)
 
-Value VM::getMember(const Value& raw, const std::u16string& name) {
+Value VM::getMember(const Value& raw, std::u16string_view name) {
   Value v = resolve(raw);
   if (Object* o = v.object()) {
     bool var = !name.empty() && name[0] == u'$';
     if (var) {
       if (!isScriptObject(o)) error(kErrUndefinedMember, "Undefined member name \"" + u8(name) + "\"!");
       if (o->destroyed) error(kErrDestroyed, "Trying to use destroyed object!");
-      return plain(o->var(name.substr(1)));  // reading creates the variable (unset)
+      return plain(o->var(std::u16string(name.substr(1))));  // reading creates the variable (unset)
     }
     if (const FieldInfo* fi = o->cls->findField(name)) return fi->get ? fi->get(*this, o) : Value();
     if (const MethodInfo* mi = o->cls->findMethod(name)) {
@@ -520,13 +520,13 @@ Value VM::getMember(const Value& raw, const std::u16string& name) {
   error(kErrUndefinedMember, "Undefined member name \"" + u8(name) + "\"!");
 }
 
-void VM::setMember(const Value& raw, const std::u16string& name, const Value& val) {
+void VM::setMember(const Value& raw, std::u16string_view name, const Value& val) {
   Value v = resolve(raw);
   if (Object* o = v.object()) {
     if (o->destroyed) error(kErrDestroyed, "Trying to use destroyed object!");
     if (!name.empty() && name[0] == u'$') {
       if (!isScriptObject(o)) error(kErrUndefinedMember, "Undefined member name \"" + u8(name) + "\"!");
-      storeSlot(o->var(name.substr(1)), val);
+      storeSlot(o->var(std::u16string(name.substr(1))), val);
       return;
     }
     if (const FieldInfo* fi = o->cls->findField(name)) {

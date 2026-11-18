@@ -26,7 +26,7 @@ namespace {
 
 constexpr float kPi = 3.14159265f;
 
-Value fieldOf(VM& vm, Object* o, const char16_t* name) {
+Value fieldOf(VM& vm, Object* o, std::u16string_view name) {
   if (!o) return Value();
   try {
     return vm.resolve(vm.getMember(Value::heap(VT::Object, o), name));

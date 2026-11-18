@@ -33,7 +33,7 @@ std::map<int, ToolMode> g_modes;
 
 Value obj(Object* o) { return o ? Value::heap(VT::Object, o) : Value::null(); }
 
-Value member(VM& vm, Object* o, const char16_t* name) {
+Value member(VM& vm, Object* o, std::u16string_view name) {
   try {
     return vm.resolve(vm.getMember(Value::heap(VT::Object, o), name));
   } catch (const ScriptError&) {

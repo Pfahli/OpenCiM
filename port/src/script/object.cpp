@@ -7,7 +7,7 @@
 
 namespace regs::script {
 
-const FieldInfo* ClassInfo::findField(const std::u16string& n) const {
+const FieldInfo* ClassInfo::findField(std::u16string_view n) const {
   for (auto* c = this; c; c = c->parent) {
     auto it = c->fields.find(n);
     if (it != c->fields.end()) return &it->second;
@@ -15,7 +15,7 @@ const FieldInfo* ClassInfo::findField(const std::u16string& n) const {
   return nullptr;
 }
 
-const MethodInfo* ClassInfo::findMethod(const std::u16string& n) const {
+const MethodInfo* ClassInfo::findMethod(std::u16string_view n) const {
   for (auto* c = this; c; c = c->parent) {
     auto it = c->methods.find(n);
     if (it != c->methods.end()) return &it->second;
@@ -23,7 +23,7 @@ const MethodInfo* ClassInfo::findMethod(const std::u16string& n) const {
   return nullptr;
 }
 
-const EventInfo* ClassInfo::findEvent(const std::u16string& n) const {
+const EventInfo* ClassInfo::findEvent(std::u16string_view n) const {
   for (auto* c = this; c; c = c->parent) {
     auto it = c->events.find(n);
     if (it != c->events.end()) return &it->second;
@@ -41,7 +41,7 @@ Object::~Object() = default;
 
 void Object::tick(VM& vm, float dt) { vm.tickChildren(this, dt); }
 
-Value* Object::findVar(const std::u16string& name) {
+Value* Object::findVar(std::u16string_view name) {
   auto it = varIndex.find(name);
   return it == varIndex.end() ? nullptr : &vars[it->second].second;
 }

@@ -95,7 +95,7 @@ struct Code : HeapObj {
   std::vector<std::u16string> strings;
   std::unordered_map<std::u16string, uint32_t> stringIndex;
   std::vector<FunctionInfo> functions;
-  std::unordered_map<std::u16string, int> functionIndex;
+  U16Map<int> functionIndex;
   std::vector<HandlerInfo> handlers;
   std::vector<std::u16string> links;
   std::vector<int> linkLines;

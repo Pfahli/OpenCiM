@@ -4,10 +4,22 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace regs::script {
+
+// Hash maps keyed by std::u16string that find a std::u16string_view or a literal without building a key string
+// (C++20 heterogeneous lookup: find, count, contains, equal_range). The view's std::hash equals the string's, so
+// buckets and iteration order are those of std::unordered_map<std::u16string, V>.
+struct U16Hash {
+  using is_transparent = void;
+  size_t operator()(std::u16string_view s) const noexcept { return std::hash<std::u16string_view>{}(s); }
+};
+template <typename V>
+using U16Map = std::unordered_map<std::u16string, V, U16Hash, std::equal_to<>>;
 
 // Intrusive reference counting, like the engine's gsVariant addRef/release (+0x04/+0x08).
 class HeapObj {

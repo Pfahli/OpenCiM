@@ -98,7 +98,7 @@ class VM {
 
   // ---- registration ----
   void setGlobal(const std::u16string& name, const Value& v) { globals_[name] = v; }
-  Value* findGlobal(const std::u16string& name);
+  Value* findGlobal(std::u16string_view name);
   void defineFunction(const std::u16string& name, int minArgs, int maxArgs, NativeFn fn);
   ClassInfo* defineClass(const std::string& name, const std::string& parent);
   ClassInfo* findClass(const std::string& name);
@@ -129,8 +129,8 @@ class VM {
   bool hasHandler(Object* target, const std::u16string& name) const;
 
   // ---- values (strict, as the interpreter sees them) ----
-  Value getMember(const Value& obj, const std::u16string& name);
-  void setMember(const Value& obj, const std::u16string& name, const Value& v);
+  Value getMember(const Value& obj, std::u16string_view name);
+  void setMember(const Value& obj, std::u16string_view name, const Value& v);
   bool truthy(const Value& v);
   int32_t toInt(const Value& v);
   float toFloat(const Value& v);
@@ -181,7 +181,7 @@ class VM {
   void report(const std::string& msg, ThreadObj* t);
 
   Vfs& vfs_;
-  std::unordered_map<std::u16string, Value> globals_;
+  U16Map<Value> globals_;
   std::map<std::string, std::unique_ptr<ClassInfo>> classes_;
   const ClassInfo* scriptClass_ = nullptr;
   const ClassInfo* moduleClass_ = nullptr;
