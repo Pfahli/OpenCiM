@@ -611,7 +611,10 @@ releaseNode(a, nd):                                   FUN_10107560
   advances first-in first-out and cross traffic cannot slip into it. Port note: the promoted node can lie past the
   reserver's held range (it queued for a node behind junction nodes it could enter but had not committed yet), so the
   port's `releaseAll` also releases every later node of the track the mover occupies or reserves; without that,
-  despawned cars kept such nodes for good (transport.md §10.5).
+  despawned cars kept such nodes for good (transport.md §10.5). Since 2026-11-18 the port queues only where the
+  original's platoon loop would and commits it: not on a marked node (unless marks are ignored), not on a junction
+  node, and right after the committed range; queuing anywhere let cars take a junction's crossing nodes one after
+  another past a waiting tram's marker (transport.md §10.3).
 * **Lane changes:** there is no lateral manoeuvre. An agent only ever moves to `ring[head]`, which is a node chosen by
   the path (step codes index `node.out`). Lane changes exist only as graph links chosen by the path finder.
 * **Same-line passing (0x1000):** for transport type 3 the controller variant `FUN_100e1530` treats nodes held by

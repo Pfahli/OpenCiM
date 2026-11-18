@@ -109,21 +109,21 @@ modes (the editor's roads, terrain and paint tools come later):
   port's ticker message follows the original's. `REGS_NO_JAM_RELIEF=1` off, `REGS_TEST_JAM=<type>[:hard]` test.
   Found on the way: despawned cars left lane claims behind (a node handed to them as the queued reserver past their
   held range), which locked Berlin's and Vienna's tram and bus lines within minutes; fixed in `releaseAll`.
-- [ ] Jams the relief does not cover: metro trains of Berlin's lines 0 and 4 wait for each other for 2 to 10 minutes
-  where the lines share track (they always got going again, §10.4); trams wait 2 to 10 minutes at busy junctions
-  while one car after another holds the crossing nodes (why the cars do not give way to the tram's waiting marker is
-  not found: the port's `canEnter`, marker setting and "ignore marks" test were compared with the original and
-  match, except that the original's cars ignore marks a little more often, `transport.md` §10.3; the claim loop's
-  follow-the-leader branch is not compared yet); the relief's kept node only helps once the tram is detected.
-- [ ] Pedestrian walks without a path: Vienna 0.5 % (22 of 4555 paths) since the walk and height maps are turned as
-  the engine turns them (half a turn off the mesh, `docs/simulation/pathfinding.md` §1.4; it was 10.7 % with the
-  turn of the mesh). That also puts the waiters of underground and elevated metro stations on their platforms (they
-  stood at street level), reached by the stations' stairs. Re-measured 2026-11-18 (6000 frames at speed 3, debug
-  sim log): Vienna 10 of 6319 (0.16 %), all starting at street level inside the footprint of one elevated metro
-  station (the lead to follow: who is put on the ground there instead of the platform layer); Berlin 6 of 4465
-  (0.13 %), a tram platform with marker props and three house-to-house walks. Cim2 not re-measured (no Cim2 save in the test
-  documents; was 1.7 %). Left from before: the sunken park's stairs prop (no walk map, blocks its cell), a hotel
-  enclosed by bushes.
+- [x] Jams the relief did not cover (2026-11-18, `docs/simulation/transport.md` §10.3, §10.4): cars queued behind
+  the car ahead on any blocked node, even a marked one inside a junction, and were promoted onto it when it left, so
+  one car after another held the crossing nodes a tram waited for; the same queuing locked two metro trains at the
+  termini of Berlin's lines 0 and 4. Now a vehicle queues only where the original's platoon loop would (not marked,
+  not a junction node, right after its committed range). Berlin at speed 10: 59 detections in 3600 s and 3720
+  departures before, 0 detections in 3000 s and 6343 departures after; Vienna and Cim2 0 detections.
+- [ ] Pedestrian walks without a path, re-measured 2026-11-18 on main (9000 frames at speed 10, debug sim log):
+  Vienna 2 of 13 325 (0.02 %; one starts at street level inside the footprint of the elevated metro station
+  `station_metroe0` at q-cell 1428,1823, where only 4 cells are reachable: who is put on the ground there instead of
+  the platform layer is not traced); Berlin 4 of 10 021 (0.04 %); Cim2 86 of 4740 (1.8 %, was 1.7 %), all of them
+  the two known cases: walks into or out of the sunken park (`tent`, `pavillion`, `city-stairs` at height −256; its
+  stairs prop has no walk map and blocks its cell, the original cannot reach it either) and from the tram stop
+  `stop_tram03_small` to the hotel enclosed by bushes (`hotel01`). The walk and height maps are turned as the engine
+  turns them (`docs/simulation/pathfinding.md` §1.4), which puts the waiters of underground and elevated metro
+  stations on their platforms.
 - [x] Metro trains at the turn of a line (end stations) stop with their middle at the platform (2026-11-15: straight on
   along their own track before turning; `docs/simulation/transport.md` §4.4, port note).
 - [x] Deviations revisited (2026-11-18, `docs/simulation/README.md`): water cells stay unwalkable (the user asked for
