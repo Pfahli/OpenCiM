@@ -21,9 +21,21 @@ void surfaceMapInit(SurfaceMap& m, float originX, float originZ, float sizeX, fl
   m.topH = std::max(1, int(std::ceil(sizeZ / m.topTexel)));
   m.top.assign(size_t(m.topW) * size_t(m.topH), 0);
   m.trodden.assign(size_t(m.topW) * size_t(m.topH), 0);
-  m.topX0 = 0, m.topZ0 = 0, m.topX1 = m.topW - 1, m.topZ1 = m.topH - 1;
+  m.topTilesW = (m.topW + SurfaceMap::kTopTile - 1) / SurfaceMap::kTopTile;
+  m.topTilesH = (m.topH + SurfaceMap::kTopTile - 1) / SurfaceMap::kTopTile;
+  m.topDirty.assign(size_t(m.topTilesW) * size_t(m.topTilesH), 0);
+  surfaceMarkTop(m, 0, 0, m.topW - 1, m.topH - 1);
   m.dirtyX0 = 0, m.dirtyZ0 = 0, m.dirtyX1 = m.w - 1, m.dirtyZ1 = m.h - 1;  // the empty map once
   LOG_INFO("surface map: %dx%d texels of %.1f m", m.w, m.h, m.texel);
+}
+
+void surfaceMarkTop(SurfaceMap& m, int x0, int z0, int x1, int z1) {
+  x0 = std::max(0, x0), z0 = std::max(0, z0), x1 = std::min(m.topW - 1, x1), z1 = std::min(m.topH - 1, z1);
+  if (x1 < x0 || z1 < z0) return;
+  const int T = SurfaceMap::kTopTile;
+  for (int tz = z0 / T; tz <= z1 / T; ++tz)
+    for (int tx = x0 / T; tx <= x1 / T; ++tx) m.topDirty[size_t(tz) * size_t(m.topTilesW) + size_t(tx)] = 1;
+  m.topAnyDirty = true;
 }
 
 // the top map: every face of an item mesh with an area seen from above raises the cells under it to its height
@@ -60,9 +72,8 @@ void paintTop(SurfaceMap& m, const MeshData& mesh, const Mat4& world, const std:
           uint16_t& t = m.top[size_t(z) * size_t(m.topW) + size_t(x)];
           if (v <= t) continue;
           t = v;
-          if (m.topX1 < m.topX0) m.topX0 = m.topX1 = x, m.topZ0 = m.topZ1 = z;
-          m.topX0 = std::min(m.topX0, x), m.topX1 = std::max(m.topX1, x);
-          m.topZ0 = std::min(m.topZ0, z), m.topZ1 = std::max(m.topZ1, z);
+          m.topDirty[size_t(z / SurfaceMap::kTopTile) * size_t(m.topTilesW) + size_t(x / SurfaceMap::kTopTile)] = 1;
+          m.topAnyDirty = true;
         }
     }
   }
@@ -122,15 +133,19 @@ void surfaceMapPaint(SurfaceMap& m, const MeshData& mesh, const Mat4& world, con
 }
 
 void uploadTop(SurfaceMap& m) {
-  if (m.topW <= 0 || m.topX1 < m.topX0) return;
-  auto pack = [&](int x0, int z0, int w, int h) {  // r = top height, g = trodden (0..255 → 0..65535)
-    std::vector<uint16_t> rect(size_t(w) * size_t(h) * 2);
-    for (int z = 0; z < h; ++z)
-      for (int x = 0; x < w; ++x) {
-        size_t i = size_t(z0 + z) * size_t(m.topW) + size_t(x0 + x), o = (size_t(z) * size_t(w) + size_t(x)) * 2;
+  if (m.topW <= 0 || !m.topAnyDirty) return;
+  // r = top height, g = trodden (0..255 → 0..65535), into the kept buffer
+  auto pack = [&](int x0, int z0, int w, int h) {
+    size_t n = size_t(w) * size_t(h) * 2;
+    if (m.topPack.size() < n) m.topPack.resize(n);
+    uint16_t* rect = m.topPack.data();
+    for (int z = 0; z < h; ++z) {
+      size_t i = size_t(z0 + z) * size_t(m.topW) + size_t(x0), o = size_t(z) * size_t(w) * 2;
+      for (int x = 0; x < w; ++x, ++i, o += 2) {
         rect[o] = m.top[i];
         rect[o + 1] = uint16_t(m.trodden[i] * 257u);
       }
+    }
     return rect;
   };
   using namespace render::gpu;
@@ -141,14 +156,39 @@ void uploadTop(SurfaceMap& m) {
     SamplerDesc s;
     s.wrapS = s.wrapT = Wrap::ClampToEdge;
     dev().setSampler(m.topTexture, s);
-    std::vector<uint16_t> all = pack(0, 0, m.topW, m.topH);
-    dev().texImage(m.topTexture, 0, 0, Format::RG16, m.topW, m.topH, Pixels::RG16, all.data());
+    dev().texImage(m.topTexture, 0, 0, Format::RG16, m.topW, m.topH, Pixels::RG16, pack(0, 0, m.topW, m.topH));
   } else {
-    int w = m.topX1 - m.topX0 + 1, h = m.topZ1 - m.topZ0 + 1;
-    std::vector<uint16_t> rect = pack(m.topX0, m.topZ0, w, h);
-    dev().texSubImage(m.topTexture, 0, m.topX0, m.topZ0, w, h, Pixels::RG16, rect.data());
+    // the dirty tiles as runs along each row of tiles; with many runs one rectangle around them all instead (each
+    // upload is a copy and a barrier on Vulkan)
+    struct Run {
+      int tz, tx0, tx1;
+    };
+    static thread_local std::vector<Run> runs;
+    runs.clear();
+    const int T = SurfaceMap::kTopTile;
+    int bx0 = m.topTilesW, bx1 = -1, bz0 = m.topTilesH, bz1 = -1;
+    for (int tz = 0; tz < m.topTilesH; ++tz) {
+      const uint8_t* row = &m.topDirty[size_t(tz) * size_t(m.topTilesW)];
+      for (int tx = 0; tx < m.topTilesW; ++tx) {
+        if (!row[tx]) continue;
+        int tx1 = tx;
+        while (tx1 + 1 < m.topTilesW && row[tx1 + 1]) ++tx1;
+        runs.push_back({tz, tx, tx1});
+        bx0 = std::min(bx0, tx), bx1 = std::max(bx1, tx1), bz0 = std::min(bz0, tz), bz1 = std::max(bz1, tz);
+        tx = tx1;
+      }
+    }
+    auto send = [&](int tx0, int tz0, int tx1, int tz1) {
+      int x0 = tx0 * T, z0 = tz0 * T, x1 = std::min(m.topW, (tx1 + 1) * T), z1 = std::min(m.topH, (tz1 + 1) * T);
+      dev().texSubImage(m.topTexture, 0, x0, z0, x1 - x0, z1 - z0, Pixels::RG16, pack(x0, z0, x1 - x0, z1 - z0));
+    };
+    constexpr size_t kMaxRuns = 32;
+    if (runs.size() > kMaxRuns) send(bx0, bz0, bx1, bz1);
+    else
+      for (const Run& r : runs) send(r.tx0, r.tz, r.tx1, r.tz);
   }
-  m.topX0 = 0, m.topZ0 = 0, m.topX1 = -1, m.topZ1 = -1;
+  std::fill(m.topDirty.begin(), m.topDirty.end(), uint8_t(0));
+  m.topAnyDirty = false;
 }
 
 void surfaceMapTrodden(SurfaceMap& m, const uint8_t* bytes, int w, float originX, float originZ, int x0, int z0, int x1,
@@ -158,10 +198,18 @@ void surfaceMapTrodden(SurfaceMap& m, const uint8_t* bytes, int w, float originX
   int tx0 = std::max(0, x0 + dx), tx1 = std::min(m.topW - 1, x1 + dx);
   int tz0 = std::max(0, z0 + dz), tz1 = std::min(m.topH - 1, z1 + dz);
   if (tx1 < tx0 || tz1 < tz0) return;
-  for (int z = tz0; z <= tz1; ++z)
-    for (int x = tx0; x <= tx1; ++x) m.trodden[size_t(z) * size_t(m.topW) + size_t(x)] = bytes[size_t(z - dz) * size_t(w) + size_t(x - dx)];
-  if (m.topX1 < m.topX0) m.topX0 = tx0, m.topX1 = tx1, m.topZ0 = tz0, m.topZ1 = tz1;
-  else m.topX0 = std::min(m.topX0, tx0), m.topX1 = std::max(m.topX1, tx1), m.topZ0 = std::min(m.topZ0, tz0), m.topZ1 = std::max(m.topZ1, tz1);
+  const int T = SurfaceMap::kTopTile;
+  for (int z = tz0; z <= tz1; ++z) {
+    uint8_t* dst = &m.trodden[size_t(z) * size_t(m.topW)];
+    const uint8_t* src = bytes + ptrdiff_t(z - dz) * ptrdiff_t(w);
+    uint8_t* flags = &m.topDirty[size_t(z / T) * size_t(m.topTilesW)];
+    for (int x = tx0; x <= tx1; ++x)
+      if (dst[x] != src[x - dx]) {
+        dst[x] = src[x - dx];
+        flags[x / T] = 1;
+        m.topAnyDirty = true;
+      }
+  }
 }
 
 void surfaceMapUpload(SurfaceMap& m) {

@@ -57,9 +57,17 @@ struct TrafficMaps {
   // trodden map
   std::unordered_map<uint32_t, float> trodden;  // cell (z << 16 | x) → seconds
   std::vector<uint8_t> troddenBytes;            // laneW × laneH
-  bool troddenSynced = false;  // copied into the top map's texture once (then the dirty rects)
+  bool troddenSynced = false;  // copied into the top map's texture once (then the dirty tiles)
   const void* troddenTarget = nullptr;  // the surface map it was copied into
-  int dirtyX0 = 0, dirtyZ0 = 0, dirtyX1 = -1, dirtyZ1 = -1;
+  // the bytes changed since the last copy: a flag per tile of kTroddenTile² (markTrodden)
+  static constexpr int kTroddenTile = 64;
+  int troddenTilesW = 0, troddenTilesH = 0;
+  std::vector<uint8_t> troddenDirty;
+  bool troddenAnyDirty = false;
+  void markTrodden(int x, int z) {
+    troddenDirty[size_t(z / kTroddenTile) * size_t(troddenTilesW) + size_t(x / kTroddenTile)] = 1;
+    troddenAnyDirty = true;
+  }
   float age = 0;
   bool laneTrafficDirty = false;
   double lastUpload = -1;  // steady-clock seconds of the last upload
