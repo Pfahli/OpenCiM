@@ -7,8 +7,11 @@
 // nodes (canEnter's conflict list, §6.3), exactly while the train holds them. The bell is engine/sim_sounds.cpp.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <string>
 
 #include "core/log.h"
+#include "engine/display.h"
 #include "engine/sim.h"
 #include "engine/sim_state.h"
 
@@ -100,6 +103,11 @@ void stepDoors(SimState& s, float dt) {
       }
     if (occupied) {  // :122-146: a closing phase continues as the opening one, 1 s to open
       float p = d.phase < 0 ? d.phase + 1.0f : d.phase;
+      // test switch REGS_SHOT_DOORS=<prefix>: a screenshot <prefix>-<item>.png when a crossing's barriers are down
+      if (p < 1.0f && p + dt >= 1.0f)
+        if (const char* shot = std::getenv("REGS_SHOT_DOORS"))
+          if (Display* disp = display())
+            disp->requestScreenshot(std::string(shot) + "-" + std::to_string(d.item) + ".png");
       p = std::min(p + dt, 1.0f);
       d.phase = p;
       d.time = d.openStart + p * d.openLen;

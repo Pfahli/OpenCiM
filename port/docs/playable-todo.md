@@ -23,7 +23,10 @@ modes (the editor's roads, terrain and paint tools come later):
   roads, alleys, straight, diagonal, junctions where a road crosses one, dead ends; `createRoadBlock` joins with the
   track tools' rules, not the original's own map-edge and ramp code. Bridges and tunnels (modes 0xb, 0xc) are
   `moveLayBridge`; the double track laid across a small road becomes the level crossing (checked in the editor on
-  testmap, `port/run/gaps/double-track-crossing.png`). Still open: the ramps' heights, half-block road ends.
+  testmap, `port/run/gaps/double-track-crossing.png`), and so does a small road laid across the track. The road joins
+  follow the original (roads of different kinds join, a small road ends beside a wide one at the half the cursor is
+  on, the elevated ramp's heights); checked in the editor. Port (owner's request): level crossings with tram tracks,
+  across large roads and across alleys (`port/docs/building-tools.md` "Level crossings").
 - [x] The underground view (`GRID_VIEW_UNDERGROUND`, `docs/renderer/underground.md`): the minimap's layer button, the
   "U" key and the subway tool switch it as in the original; the map turns into bare earth with pits 24 m deep around
   the tunnel items, in which the subway tracks, underground stations with their stairs and halls, metro trains on

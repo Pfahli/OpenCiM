@@ -367,6 +367,13 @@ const std::vector<uint32_t>* walkMap(SimState& s, ObjectObj* tpl, int w, int l) 
   return &out;
 }
 
+}  // namespace
+
+// port-made templates (engine/crossing_templates.cpp): their walk map given in place of a <stem>.bmp
+void setPortWalkMap(const Object* tpl, std::vector<uint32_t> words) { walkMaps[tpl] = std::move(words); }
+
+namespace {
+
 // <stem>-y.bmp of a template: per cell the walk height offset R·2 − negHeight·256 (L:0x0817f650.c:262-300); the
 // stamping puts such items on a layer of their own
 std::map<const Object*, std::vector<int32_t>> walkHeights;
