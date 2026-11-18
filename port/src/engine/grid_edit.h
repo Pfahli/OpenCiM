@@ -5,6 +5,7 @@
 // division meshes, the picking buckets (GridObj::itemsVersion), item controllers of removed items, and the simulation
 // (simItemsChanged / simTerrainChanged in sim.h). Item indices stay stable: removed items are tombstones
 // (GridData::Item::removed) until the map is saved and reloaded.
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -28,6 +29,38 @@ void gridEditHoldSimulation(script::VM& vm, GridObj* grid, bool hold);
 // template.
 int gridEditAddItem(script::VM& vm, GridObj* grid, const std::string& templateName, int x, int y, int z, int orient,
                     uint32_t flags, int parent, bool removeOptional = true);
+// Caches of per-item state (picking, particles, sounds, night lights, traffic lights) keep the itemsVersion they were
+// made for. The items added, removed or changed by the batches after `version` (sorted, unique) into out; false when
+// those batches are not all kept: too old, too many items in them (an import), or a bump without its batch. Then the
+// cache walks all items as after a load.
+bool gridItemsTouchedSince(const GridObj* grid, uint64_t version, std::vector<uint32_t>& out);
+// bumps itemsVersion for a change outside a batch (gsGridItemController.activate / deactivate) with its items
+void gridItemsChangedOutsideBatch(GridObj* grid, const std::vector<uint32_t>& items);
+// REGS_DEBUG_ITEM_CACHES=1 (tests): after each such incremental update the cache is also made by the full walk and
+// compared; gridItemCacheChecked logs a difference as an error (and every 50th check as a count)
+bool gridDebugItemCaches();
+void gridItemCacheChecked(const char* cache, bool same);
+// A cache's entries in item order (T::item; several per item allowed) after edits: the entries of the touched items
+// are dropped and `fresh` (the touched items' entries as they are now, in item order) merged in, so the list is what a
+// walk of all items makes. dropped(old, replacement) sees each dropped entry with the first fresh one of its item, or
+// null (to carry state such as timers over, or to stop a sound).
+template <typename T, typename F>
+void gridMergeTouched(std::vector<T>& list, const std::vector<uint32_t>& touched, std::vector<T>& fresh, F&& dropped) {
+  std::vector<T> out;
+  out.reserve(list.size() + fresh.size());
+  size_t f = 0;
+  for (T& e : list) {
+    while (f < fresh.size() && fresh[f].item < e.item) out.push_back(std::move(fresh[f++]));
+    if (std::binary_search(touched.begin(), touched.end(), uint32_t(e.item))) {
+      dropped(e, f < fresh.size() && fresh[f].item == e.item ? &fresh[f] : static_cast<T*>(nullptr));
+      continue;
+    }
+    out.push_back(std::move(e));
+  }
+  while (f < fresh.size()) out.push_back(std::move(fresh[f++]));
+  list.swap(out);
+}
+
 // gsGrid::removeObject: the item and its non-temporary children (auto-generated pillars, attached details).
 void gridEditRemoveItem(script::VM& vm, GridObj* grid, uint32_t item);
 // an item's look changed (variation, flags): its division is rebuilt

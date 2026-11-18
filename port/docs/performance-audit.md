@@ -364,3 +364,40 @@ same 491 digests (`REGS_DEBUG_SIM_DIGEST=10`, 5000 frames) on both saves, and so
 (The first new run had other load: render CPU 8.9 ms against 7.2-7.5 ms in the others.) The fps change is within the
 noise of this machine; the search lost about 0.75 ms a frame (40 %). Left in the search: the ground height
 (`layerHeight` for each new q-cell, a third of the remaining time) and the narrow searches that fail before the wide one.
+
+## Tool previews (2026-11-18): C2
+
+A preview moving with the mouse is one edit batch per move, and every batch made picking, the item particles and tree
+emitters, the item sounds, the built-up cells and market-stand lamps (high beams), the traffic lights and the lamp map
+walk all items again. Now `gridEditEnd` keeps the items each batch added, removed or changed (`GridObj::itemsEdits`,
+the last 64 batches, none over 4096 items), and those caches update only the touched items when every batch since
+their version is still kept (`gridItemsTouchedSince`, `gridMergeTouched` in `engine/grid_edit.h`); otherwise (a map
+load, an import, a cache far behind) they walk all items as before. Previews are not handled apart: they are small
+batches like any other, so they show as before (a preview lamp lights the street; previews stay unpickable, as the
+pick skips TEMP items), and a real placement goes the same way. The incremental lists are kept in item order, so they
+are exactly what a full walk makes. Details: picking edits its division lists in place; the built-up cells count the
+buildings per cell; the lamp map knows the changed heads directly (no sort of all heads) and uploads only the rows it
+changed (the whole 2048x2048 map before: 25 ms per lamp change in Vienna, now under 1 ms); the item sounds keep the
+loops of the items that stay (before, every edit stopped and restarted all ambient loops); the traffic lights keep
+their poles and only redo the junction grouping. `gsGridItemController.activate`/`deactivate` log their item the same
+way. Left as it was: the editor's ground overlay and the underground view's tunnel count (both only while shown).
+
+Checks: `REGS_DEBUG_ITEM_CACHES=1` builds each cache by the full walk after every incremental update and logs any
+difference (the lamp map also re-splats the whole map and compares the bytes): 0 differences in Vienna (track drag
+and placement, night), Berlin (200+ updates per cache, night) and the editor (lamp preview and a placed lamp, both
+lighting the ground). `REGS_DEBUG_SIM_DIGEST=20` with a moving preview and a real track placement: all 70 digests the
+same in both builds. New test switch `REGS_TEST_MOUSE_SWEEP=<first frame>,<x0>,<y0>,<x1>,<y1>,<frames>` (app/main.cpp):
+the mouse moves every frame, back and forth between two window points.
+
+Runs: game, tram track tool (construction menu, tram tab), 1920x1080 Vulkan, `REGS_FIXED_DT=0.016`, `REGS_BENCH`
+1000:600 while the mouse sweeps along a road 20 frames each way (a new block under the cursor almost every frame);
+old and new alternated, two runs each (fps average, p95 frame ms; other sessions were running):
+
+| | Vienna before | Vienna after | Berlin before | Berlin after |
+|---|---|---|---|---|
+| Hover (one-piece preview) | 88.4 / 86.8 fps, p95 18.5 / 18.8 | 105.3 / 105.1 fps, p95 14.2 / 14.4 | 72.9 / 72.0 fps, p95 21.6 / 22.1 | 84.8 / 86.2 fps, p95 18.2 / 17.4 |
+| Drag (the track preview grows) | 73.8 / 85.4 fps, p95 23.3 / 19.3 | 94.2 / 104.2 fps, p95 16.6 / 14.3 | 71.6 / 70.5 fps, p95 23.6 / 25.5 | 83.2 / 82.1 fps, p95 18.2 / 19.3 |
+
+With the mouse still (tool active) the same views run at about 115-120 fps (Vienna) and 85-87 fps (Berlin), so in
+Berlin a moving preview now costs about nothing on average; what is left in Vienna is the tool itself and the division
+meshes it rebuilds. A slow drag (120 frames each way) changed less: Berlin 85-86 to 90-94 fps, p95 20 to 16.5 ms.

@@ -13,6 +13,7 @@
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/grid.h"
+#include "engine/grid_edit.h"
 #include "engine/grid_render.h"
 #include "engine/gui.h"
 #include "engine/scene3d.h"
@@ -89,18 +90,11 @@ struct PickState {
 
 std::unordered_map<const GridObj*, PickState> g_pick;
 
-PickState& pickState(VM& vm, GridObj* grid) {
-  PickState& st = g_pick[grid];
-  if (!grid->data || (st.data.lock() == grid->data && st.itemsVersion == grid->itemsVersion)) return st;
-  // a new map starts over; edits of the same map keep the controllers (scripts hold them)
-  auto controllers = st.data.lock() == grid->data ? std::move(st.controllers) : decltype(st.controllers){};
-  st = PickState{};
-  st.data = grid->data;
-  st.itemsVersion = grid->itemsVersion;
-  st.controllers = std::move(controllers);
+void pickTemplates(VM& vm, GridObj* grid, PickState& st) {
   const GridData& g = *grid->data;
   st.templates.resize(g.types.size());
   for (size_t t = 0; t < g.types.size(); ++t) {
+    if (st.templates[t].object) continue;  // (known; a type without its template is looked up again)
     auto it = grid->templates.find(g.types[t]);
     if (it == grid->templates.end() || !it->second) continue;
     Object* o = it->second.get();
@@ -115,14 +109,60 @@ PickState& pickState(VM& vm, GridObj* grid) {
     Value name = member(vm, o, u"displayName");
     p.named = name.type() == VT::String && !vm.toStr(name).empty();
   }
+}
+
+// the division list an item belongs in, or null (off the map)
+std::vector<uint32_t>* pickDivision(const GridData& g, PickState& st, const GridData::Item& it) {
+  if (it.x < 0 || it.z < 0 || it.x >= g.width || it.z >= g.length) return nullptr;
+  return &st.divisions[size_t(it.z / st.n) * size_t(st.cols) + size_t(it.x / st.n)];
+}
+
+PickState& pickState(VM& vm, GridObj* grid) {
+  PickState& st = g_pick[grid];
+  if (!grid->data || (st.data.lock() == grid->data && st.itemsVersion == grid->itemsVersion)) return st;
+  const GridData& g = *grid->data;
+  // live edits of the same map (a tool preview on every mouse move): only the items they touched, in item order as
+  // the full build below (equal hits keep the first)
+  static std::vector<uint32_t> touched;
+  if (st.data.lock() == grid->data && gridItemsTouchedSince(grid, st.itemsVersion, touched)) {
+    st.itemsVersion = grid->itemsVersion;
+    pickTemplates(vm, grid, st);
+    for (uint32_t i : touched) {
+      if (i >= g.items.size()) continue;
+      const GridData::Item& it = g.items[i];
+      std::vector<uint32_t>* d = pickDivision(g, st, it);
+      if (!d) continue;
+      auto at = std::lower_bound(d->begin(), d->end(), i);
+      bool listed = at != d->end() && *at == i;
+      if (it.removed && listed) d->erase(at);
+      else if (!it.removed && !listed) d->insert(at, i);
+    }
+    if (gridDebugItemCaches()) {
+      PickState full;
+      full.n = st.n, full.cols = st.cols, full.rows = st.rows;
+      full.divisions.assign(st.divisions.size(), {});
+      for (uint32_t i = 0; i < g.items.size(); ++i)
+        if (!g.items[i].removed)
+          if (std::vector<uint32_t>* d = pickDivision(g, full, g.items[i])) d->push_back(i);
+      gridItemCacheChecked("picking", full.divisions == st.divisions && st.templates.size() == g.types.size());
+    }
+    return st;
+  }
+  // a new map starts over; edits of the same map keep the controllers (scripts hold them)
+  auto controllers = st.data.lock() == grid->data ? std::move(st.controllers) : decltype(st.controllers){};
+  st = PickState{};
+  st.data = grid->data;
+  st.itemsVersion = grid->itemsVersion;
+  st.controllers = std::move(controllers);
+  pickTemplates(vm, grid, st);
   st.n = 1 << std::min(g.bucketShift, 8u);
   st.cols = (g.width + st.n - 1) / st.n;
   st.rows = (g.length + st.n - 1) / st.n;
   st.divisions.assign(size_t(st.cols) * size_t(st.rows), {});
   for (uint32_t i = 0; i < g.items.size(); ++i) {
     const GridData::Item& it = g.items[i];
-    if (it.removed || it.x < 0 || it.z < 0 || it.x >= g.width || it.z >= g.length) continue;
-    st.divisions[size_t(it.z / st.n) * size_t(st.cols) + size_t(it.x / st.n)].push_back(i);
+    if (it.removed) continue;
+    if (std::vector<uint32_t>* d = pickDivision(g, st, it)) d->push_back(i);
   }
   return st;
 }
@@ -874,7 +914,7 @@ void registerInteractionNatives(VM& vm) {
         tc->dirtyItems.insert(d);
       }
     }
-    ++grid->itemsVersion;
+    gridItemsChangedOutsideBatch(grid, {i});
   };
   implement(vm, "gsGridItemController", u"activate", [setItemType](VM& v, Object* s, int, const Value*) {
     setItemType(v, s, 0);

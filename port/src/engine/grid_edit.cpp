@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <set>
 #include <unordered_map>
 
+#include "core/env.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/api.h"
@@ -73,6 +75,24 @@ struct EditState {
 
 std::unordered_map<const GridObj*, EditState> g_edits;
 
+// GridObj::itemsEdits: the latest batches (a cache further behind walks all items once), and no batch with more items
+// than an incremental update is worth (an import: the log starts over after it)
+constexpr size_t kKeptEdits = 64, kMaxLoggedItems = 4096;
+
+// bumps itemsVersion and keeps the batch's items for the caches (gridItemsTouchedSince)
+void logItemsEdit(GridObj* grid, std::vector<uint32_t> items) {
+  ++grid->itemsVersion;
+  auto& log = grid->itemsEdits;
+  if (items.size() > kMaxLoggedItems) {
+    log.clear();
+    return;
+  }
+  std::sort(items.begin(), items.end());
+  items.erase(std::unique(items.begin(), items.end()), items.end());
+  if (log.size() >= kKeptEdits) log.erase(log.begin());
+  log.push_back({grid->itemsVersion, std::move(items)});
+}
+
 TypeInfo typeInfoOf(VM& vm, GridObj* grid, const std::string& name) {
   TypeInfo t;
   auto it = grid->templates.find(name);
@@ -104,6 +124,7 @@ EditState& state(VM& vm, GridObj* grid) {
   st = EditState{};
   st.depth = depth;
   st.data = grid->data;
+  grid->itemsEdits.clear();  // (another map: the batches logged so far name its items)
   const GridData& g = *grid->data;
   for (size_t t = 0; t < g.types.size(); ++t) {
     st.types.push_back(typeInfoOf(vm, grid, g.types[t]));
@@ -268,6 +289,40 @@ void removeItem(VM& vm, GridObj* grid, EditState& st, uint32_t index, int depth)
 
 }  // namespace
 
+bool gridItemsTouchedSince(const GridObj* grid, uint64_t version, std::vector<uint32_t>& out) {
+  out.clear();
+  if (version == grid->itemsVersion) return true;
+  const auto& log = grid->itemsEdits;
+  if (version > grid->itemsVersion || log.empty() || log.back().version != grid->itemsVersion ||
+      log.front().version > version + 1)
+    return false;
+  size_t first = log.size() - size_t(grid->itemsVersion - version), total = 0;
+  for (size_t k = first; k < log.size(); ++k) total += log[k].items.size();
+  if (total > kMaxLoggedItems) return false;
+  out.reserve(total);
+  for (size_t k = first; k < log.size(); ++k) out.insert(out.end(), log[k].items.begin(), log[k].items.end());
+  if (log.size() - first > 1) {
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+  }
+  return true;
+}
+
+void gridItemsChangedOutsideBatch(GridObj* grid, const std::vector<uint32_t>& items) { logItemsEdit(grid, items); }
+
+bool gridDebugItemCaches() {
+  static const bool on = regs::envVar("REGS_DEBUG_ITEM_CACHES") != nullptr;
+  return on;
+}
+
+void gridItemCacheChecked(const char* cache, bool same) {
+  static std::map<std::string, std::pair<int, int>> counts;  // cache → checks, differences
+  auto& [checks, diffs] = counts[cache];
+  ++checks;
+  if (!same) ++diffs, LOG_ERROR("item caches: %s after live edits differs from a full walk (%d of %d)", cache, diffs, checks);
+  else if (checks == 1 || checks % 50 == 0) LOG_INFO("item caches: %s %d incremental updates checked, %d differ", cache, checks, diffs);
+}
+
 void gridEditBegin(VM& vm, GridObj* grid) { ++state(vm, grid).depth; }
 
 void gridEditEnd(VM& vm, GridObj* grid) {
@@ -294,7 +349,14 @@ void gridEditEnd(VM& vm, GridObj* grid) {
     for (uint32_t i : st.changed)
       if (int d = itemDivision(g, *tc, i); d >= 0) tc->dirtyItems.insert(d);
   }
-  ++grid->itemsVersion;
+  {
+    std::vector<uint32_t> touched;
+    touched.reserve(st.added.size() + st.removed.size() + st.changed.size());
+    touched.insert(touched.end(), st.added.begin(), st.added.end());
+    touched.insert(touched.end(), st.removed.begin(), st.removed.end());
+    touched.insert(touched.end(), st.changed.begin(), st.changed.end());
+    logItemsEdit(grid, std::move(touched));
+  }
   std::vector<uint32_t> added = std::move(st.added), removed = std::move(st.removed);
   Rect heights = st.heightCells;
   st.added.clear();

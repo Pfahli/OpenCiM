@@ -197,6 +197,14 @@ class GridObj : public script::Object {
   std::shared_ptr<const std::vector<uint8_t>> sourceFile;  // the loaded map.grid; saveToFile writes it back by section
   uint64_t generation = 0;  // bumped on every load (render caches rebuild)
   uint64_t itemsVersion = 0;  // bumped after each batch of live map edits (engine/grid_edit.h)
+  // the latest batches behind itemsVersion, oldest first: the items each added, removed or changed (a tool preview
+  // moving with the mouse makes one per move). Caches of per-item state update from them instead of walking all
+  // items again (gridItemsTouchedSince in engine/grid_edit.h).
+  struct ItemsEdit {
+    uint64_t version = 0;
+    std::vector<uint32_t> items;
+  };
+  std::vector<ItemsEdit> itemsEdits;
   // port curved roads: bumped when GridData::curves or the tool's preview curve changed (the renderer rebuilds)
   uint64_t curvesVersion = 0;
   uint64_t procVersion = 0;  // port: bumped when GridData::procBuildings changed (the renderer rebuilds)
