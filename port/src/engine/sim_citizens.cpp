@@ -6,8 +6,11 @@
 // from the camera walk by time without a path and board without walking to the doors, metro stations' doors are taken
 // at street level directly (the original's re-snap after its lead-out search).
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <queue>
 
@@ -824,8 +827,15 @@ bool walkPath(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uint3
   return walkPathIn(s, qx0, qz0, qx1, qz1, out, false, false) || walkPathIn(s, qx0, qz0, qx1, qz1, out, true, true);
 }
 
-bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uint32_t>& out, bool wide, bool last) {
-  out.clear();
+// a search's box, its ends (snapped onto the walk surface) and the walk layers in it
+struct WalkBox {
+  int x0 = 0, x1 = 0, z0 = 0, z1 = 0, W = 0, L = 0, K = 1;
+  int qx0 = 0, qz0 = 0, l0 = 0, qx1 = 0, qz1 = 0;
+  int cap = 0;  // expansions per layer
+};
+
+// false when an end lies outside the box (no way)
+bool walkBox(SimState& s, int qx0, int qz0, int qx1, int qz1, bool wide, WalkBox& b) {
   int l0 = qz0 >> kLayerShift;
   qz0 &= kQzMask, qz1 &= kQzMask;
   int pad = 64;
@@ -874,6 +884,17 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
         if (int list = s.walk.deckList[size_t(cz) * size_t(s.walk.width) + size_t(cx)]; list >= 0)
           K = std::max(K, 1 + int(s.walk.decks[size_t(list)].size()));
   if (l0 >= K) l0 = 0;
+  b.x0 = x0, b.x1 = x1, b.z0 = z0, b.z1 = z1, b.W = W, b.L = L, b.K = K;
+  b.qx0 = qx0, b.qz0 = qz0, b.l0 = l0, b.qx1 = qx1, b.qz1 = qz1, b.cap = cap;
+  return true;
+}
+
+// the search as it was up to 2026-11-18 (REGS_DEBUG_WALK_COMPARE runs it beside walkSearch)
+bool walkSearchReference(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& expanded) {
+  out.clear();
+  const int x0 = b.x0, x1 = b.x1, z0 = b.z0, z1 = b.z1, W = b.W, L = b.L, K = b.K;
+  (void)L;
+  const int qx0 = b.qx0, qz0 = b.qz0, l0 = b.l0, qx1 = b.qx1, qz1 = b.qz1, cap = b.cap;
   // scratch kept between searches: a q-cell's cost and parent count only when its stamp is this search's (the box
   // grows up to 800² q-cells; clearing it for every search cost more than most searches), and the open list (a binary
   // heap with std::priority_queue's push and pop) keeps its storage
@@ -973,7 +994,245 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
       push({ng + h(nx, nz), q});
     }
   }
-  if (goal < 0) {
+  expanded = expansions;
+  if (goal < 0) return false;
+  for (int q = goal; q >= 0; q = parent[size_t(q)]) {
+    int cell = q / K, lv = q % K;
+    out.push_back(uint32_t((cell / W + z0) | lv << kLayerShift) << 16 | uint32_t(cell % W + x0));
+  }
+  std::reverse(out.begin(), out.end());
+  return true;
+}
+
+// the open list of walkSearch: a 4-ary min-heap of 64-bit keys, and before it the smallest key while that was pushed
+// below every key in the heap (a q-cell reached at its parent's f, the usual step towards the goal, then comes next
+// without going through the heap). Always the smallest key comes out, as from any heap
+struct WalkOpen {
+  std::vector<uint64_t> heap;
+  uint64_t front = 0;
+  bool hasFront = false;
+  void clear() { heap.clear(), hasFront = false; }
+  bool empty() const { return !hasFront && heap.empty(); }
+  void push(uint64_t k) {
+    if (hasFront) {
+      if (k < front) std::swap(k, front);
+    } else if (heap.empty() || k < heap[0]) {
+      front = k, hasFront = true;
+      return;
+    }
+    size_t i = heap.size();
+    heap.push_back(k);
+    while (i > 0) {
+      size_t up = (i - 1) >> 2;
+      if (heap[up] <= k) break;
+      heap[i] = heap[up];
+      i = up;
+    }
+    heap[i] = k;
+  }
+  uint64_t pop() {
+    if (hasFront) {
+      hasFront = false;
+      return front;
+    }
+    uint64_t top = heap[0], k = heap.back();
+    heap.pop_back();
+    const size_t n = heap.size();
+    if (n == 0) return top;
+    size_t i = 0;
+    for (;;) {
+      size_t c = 4 * i + 1;
+      if (c >= n) break;
+      size_t m = c, e = std::min(c + 4, n);
+      uint64_t mk = heap[c];
+      for (size_t j = c + 1; j < e; ++j)
+        if (heap[j] < mk) mk = heap[j], m = j;
+      if (mk >= k) break;
+      heap[i] = mk;
+      i = m;
+    }
+    heap[i] = k;
+    return top;
+  }
+};
+
+// walkSearchReference with the same expansions in the same order, so the same path, the same expansion count (the cap)
+// and the same failures:
+// - the open list's key is f's bits over the q-cell's box position (z − z0, x − x0, layer). f ≥ 0, so its bits order
+//   as the floats do, and the position orders as the index ((z − z0)·W + x − x0)·K + layer does: the keys order as
+//   std::pair<float, int>(f, index), the old heap's entries, and two entries with the same key stand for the same
+//   q-cell and f, so any open list pops the same sequence (here WalkOpen; no division to get the q-cell back)
+// - a q-cell's cost, parent, stamp and height in one record, layer by layer, the ground's record also caching its
+//   ground height
+// - an entry popped for a q-cell already expanded at its present cost (an entry left from a cost at most 1e-3 higher,
+//   which the stale test lets through; about 1.5 % of the expansions in Berlin) counts as an expansion but skips the
+//   neighbours: they were all reached from this cost already and their costs only fell since, so the old search's
+//   second pass over them changed nothing
+bool walkSearch(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& expanded) {
+  out.clear();
+  const int x0 = b.x0, x1 = b.x1, z0 = b.z0, z1 = b.z1, W = b.W, L = b.L, K = b.K;
+  const int qx0 = b.qx0, qz0 = b.qz0, l0 = b.l0, qx1 = b.qx1, qz1 = b.qz1, cap = b.cap;
+  if (W > 0x2000 || L > 0x10000 || K > 8) return walkSearchReference(s, b, out, expanded);  // keys hold 13/16/3 bits
+  // a q-cell's record on one layer, the layers one after another (the ground's records dense); the stamp is the
+  // search's serial << 2 | reached (cost and parent valid; else as cost −1, parent −1) << 1 | expanded at this cost.
+  // On the ground the serial alone says y holds the q-cell's ground height (= layerHeight(s, x, z), made on first use:
+  // up to eight neighbours ask for it), which is also the height of the q-cell reached there; on a deck y is that
+  // reached q-cell's height
+  struct Node {
+    float cost;
+    int32_t parent;
+    uint32_t stamp;
+    float y;
+  };
+  static thread_local std::vector<Node> node;
+  static thread_local WalkOpen open;
+  static thread_local uint32_t serial = 0;
+  const size_t plane = size_t(W) * size_t(L), cells = plane * size_t(K);
+  if (node.size() < cells) node.resize(cells, Node{0, 0, 0, 0});
+  if (++serial == 1u << 30) {
+    for (Node& n : node) n.stamp = 0;
+    serial = 1;
+  }
+  const uint32_t touched = serial << 2, reached = touched | 2;
+  auto at = [&](int x, int z) { return size_t(z - z0) * size_t(W) + size_t(x - x0); };
+  auto groundHeight = [&](int x, int z) {  // = layerHeight(s, x, z)
+    Node& g = node[at(x, z)];
+    if ((g.stamp >> 2) != serial) g.stamp = touched, g.y = layerHeight(s, x, z);
+    return g.y;
+  };
+  auto h = [&](int x, int z) {
+    float dx = float(std::abs(x - qx1)), dz = float(std::abs(z - qz1));
+    return std::max(dx, dz) + 0.4142135f * std::min(dx, dz);
+  };
+  auto key = [&](float f, int x, int z, int lv) {
+    uint32_t bits;
+    std::memcpy(&bits, &f, sizeof bits);
+    return uint64_t(bits) << 32 | uint64_t(uint32_t(z - z0) << 16 | uint32_t(x - x0) << 3 | uint32_t(lv));
+  };
+  open.clear();
+  int goal = -1;
+  {
+    float y0 = layerHeight(s, qx0, qz0 | l0 << kLayerShift);
+    node[size_t(l0) * plane + at(qx0, qz0)] = {0.0f, -1, reached, y0};
+  }
+  open.push(key(h(qx0, qz0), qx0, qz0, l0));
+  static const int dxs[8] = {1, 0, -1, 0, 1, 1, -1, -1}, dzs[8] = {0, 1, 0, -1, 1, -1, 1, -1};
+  const uint32_t* words = s.walk.words.data();
+  const int32_t* deckList = s.walk.deckList.data();
+  const size_t gridW = size_t(s.walk.width);
+  int expansions = 0;
+  const int limit = cap * K;
+  while (!open.empty() && expansions < limit) {
+    uint64_t e = open.pop();
+    uint32_t bits = uint32_t(e >> 32), pos = uint32_t(e);
+    float f;
+    std::memcpy(&f, &bits, sizeof f);
+    int pl = int(pos & 7), px = int((pos >> 3) & 0x1fff) + x0, pz = int(pos >> 16) + z0;
+    int p = int(size_t(pl) * plane + at(px, pz));
+    Node& np = node[size_t(p)];
+    if (f - h(px, pz) > np.cost + 1e-3f) continue;
+    if (px == qx1 && pz == qz1) {
+      goal = p;
+      break;
+    }
+    ++expansions;
+    if (np.stamp & 1) continue;  // expanded at this cost already: its neighbours hold no more than it gives them
+    np.stamp |= 1;
+    float y = np.y, pc = np.cost;
+    for (int d = 0; d < 8; ++d) {
+      int nx = px + dxs[d], nz = pz + dzs[d];
+      if (nx < x0 || nx > x1 || nz < z0 || nz > z1) continue;
+      // stepLayer(s, nx, nz, y, pl == 0), keeping the code and height it reads (walk.code and layerHeight of the
+      // layer taken give the same values again); the box lies inside the walk grid
+      int nl = -1, v = 0;
+      float ny = 0;
+      const size_t ci = size_t(nz >> 2) * gridW + size_t(nx >> 2);
+      const int shift = 2 * ((nx & 3) + (nz & 3) * 4);
+      const int gcode = int((words[ci] >> shift) & 3);
+      if (gcode) {
+        ny = groundHeight(nx, nz);
+        if (std::abs(ny - y) <= 160.0f) nl = 0;
+      }
+      if (nl < 0)
+        if (int list = deckList[ci]; list >= 0) {
+          const auto& decks = s.walk.decks[size_t(list)];
+          for (size_t k = 0; k < decks.size(); ++k) {
+            int bitsK = int((decks[k].word >> shift) & 3);
+            if (bitsK && std::abs(float(decks[k].height) - y) <= 160.0f) {
+              nl = int(k) + 1, v = bitsK, ny = float(decks[k].height);
+              break;
+            }
+          }
+        }
+      if (nl < 0) {
+        if (gcode && pl == 0) nl = 0;
+        else if (nx != qx1 || nz != qz1) continue;
+        else nl = 0;
+      }
+      if (nl >= K) continue;
+      if (nl == 0) v = gcode, ny = gcode ? ny : groundHeight(nx, nz);
+      float c = (d < 4 ? 1.0f : 1.4142135f) + 0.05f * std::abs(ny - y);
+      if (v == 1) c *= 3;
+      else if (v == 3) c *= 4;
+      const size_t q = size_t(nl) * plane + at(nx, nz);
+      Node& nq = node[q];
+      float ng = pc + c;
+      if ((nq.stamp >> 1) == (reached >> 1) && nq.cost <= ng) continue;
+      nq.cost = ng, nq.parent = p, nq.stamp = reached;
+      if (nl > 0) nq.y = ny;
+      open.push(key(ng + h(nx, nz), nx, nz, nl));
+    }
+  }
+  expanded = expansions;
+  if (goal < 0) return false;
+  for (int q = goal; q >= 0; q = node[size_t(q)].parent) {
+    int lv = int(size_t(q) / plane), cell = int(size_t(q) % plane);
+    out.push_back(uint32_t((cell / W + z0) | lv << kLayerShift) << 16 | uint32_t(cell % W + x0));
+  }
+  std::reverse(out.begin(), out.end());
+  return true;
+}
+
+// REGS_DEBUG_WALK_COMPARE=1 (tests): every pedestrian search runs walkSearch and walkSearchReference (in turns first,
+// so neither always finds the scratch warm) and logs any difference in the result, the path or the expansion count,
+// and every 1000 searches the counts and both searches' time
+bool compareWalkSearch(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& expanded) {
+  static thread_local std::vector<uint32_t> ref;
+  static std::atomic<long long> searches{0}, differ{0}, usNew{0}, usRef{0};
+  const long long n = ++searches;
+  int refExpanded = 0;
+  bool found = false, refFound = false;
+  auto timed = [](auto&& f) {
+    auto t0 = std::chrono::steady_clock::now();
+    f();
+    return (long long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
+  };
+  auto runNew = [&] { usNew += timed([&] { found = walkSearch(s, b, out, expanded); }); };
+  auto runRef = [&] { usRef += timed([&] { refFound = walkSearchReference(s, b, ref, refExpanded); }); };
+  if (n & 1) runNew(), runRef();
+  else runRef(), runNew();
+  bool same = refFound == found && refExpanded == expanded && (!found || ref == out);
+  long long bad = same ? differ.load() : ++differ;
+  if (!same && bad <= 20)
+    LOG_INFO("walk compare: differs: (%d,%d L%d) -> (%d,%d), box %dx%d, %d layers: found %d / reference %d, expanded %d / "
+             "%d, path %zu / %zu steps",
+             b.qx0, b.qz0, b.l0, b.qx1, b.qz1, b.W, b.L, b.K, int(found), int(refFound), expanded, refExpanded,
+             out.size(), ref.size());
+  if (n % 1000 == 0)
+    LOG_INFO("walk compare: %lld searches, %lld differ; %.1f ms, reference %.1f ms", n, bad, double(usNew.load()) / 1000.0,
+             double(usRef.load()) / 1000.0);
+  return found;
+}
+
+bool walkPathIn(SimState& s, int ax, int az, int bx, int bz, std::vector<uint32_t>& out, bool wide, bool last) {
+  out.clear();
+  WalkBox b;
+  if (!walkBox(s, ax, az, bx, bz, wide, b)) return false;
+  int expansions = 0;
+  static const bool compare = regs::envVar("REGS_DEBUG_WALK_COMPARE") != nullptr;
+  bool found = compare ? compareWalkSearch(s, b, out, expansions) : walkSearch(s, b, out, expansions);
+  if (!found) {
+    const int W = b.W, L = b.L, K = b.K, cap = b.cap, qx0 = b.qx0, qz0 = b.qz0, l0 = b.l0, qx1 = b.qx1, qz1 = b.qz1;
     if (last && debugSim()) {  // why: the expansion cap, or every reachable q-cell of the box searched (disconnected)
       ++s.walkFailKind[expansions >= cap * K ? 0 : 1];
       static int shown = 0;
@@ -998,11 +1257,6 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
     }
     return false;
   }
-  for (int q = goal; q >= 0; q = parent[size_t(q)]) {
-    int cell = q / K, lv = q % K;
-    out.push_back(uint32_t((cell / W + z0) | lv << kLayerShift) << 16 | uint32_t(cell % W + x0));
-  }
-  std::reverse(out.begin(), out.end());
   return true;
 }
 

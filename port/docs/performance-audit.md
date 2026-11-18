@@ -334,3 +334,33 @@ cold run a traffic light's phase) differ by a few levels from run to run in both
 (one virtual call per draw list): first view with its program binaries 0.66 s in both builds, 98-99 fps in the
 undisturbed runs. Left: particles, post-effect quads and the GUI still make their few pipelines at first draw, and a
 program first needed during play (the snow particles) still compiles in its frame, now on a worker thread.
+
+## Pedestrian path search (2026-11-18)
+
+`walkSearch` (in `sim_citizens.cpp`) makes exactly the expansions of the search before it, in the same order, so every
+path, every expansion count (the cap) and every failure stays the same; the old search is kept as `walkSearchReference`.
+What changed: the open list holds 64-bit keys, f's bits over the q-cell's box position (z, x, layer), which order as the
+old `std::pair<float, int>(f, index)` (f ≥ 0; equal keys are the same q-cell and f, so any heap pops the same sequence),
+in a 4-ary heap with a one-entry slot in front of it for a key pushed below everything in the heap (a step towards the
+goal at its parent's f comes next without going through the heap); a q-cell's cost, parent, stamp and height are one
+16-byte record, the layers one after another, the ground record also caching the ground height (the old search kept
+five arrays and interleaved the layers, about 2.9 in a Berlin box); an entry for a q-cell already expanded at its
+present cost (left from a cost at most 1e-3 higher, which the stale test lets through) counts as an expansion but skips
+the neighbours, which that cost already reached. In Berlin a search averages 15,000 expansions over 316,000 box q-cells;
+about 7 % of the narrow searches fail and are repeated in the wide box, and those wide searches are 40 % of the time.
+
+Sameness: `REGS_DEBUG_WALK_COMPARE=1` runs both searches for every request (in turns first) and logs any difference in
+the result, path or expansion count, with both times every 1000 searches. Berlin and Vienna, speed 10,
+`REGS_FIXED_DT=0.016`, 5000 frames: 0 differences in over 2000 (Berlin) and 5000 (Vienna) searches; the same search time
+1.80× (Berlin, 3.87 s against 6.96 s) and 1.76× (Vienna, 5.33 s against 9.36 s) faster. The old and new build print the
+same 491 digests (`REGS_DEBUG_SIM_DIGEST=10`, 5000 frames) on both saves, and so do the compare runs.
+
+| Berlin, speed 10, Vulkan (profiled) | before | after |
+|---|---|---|
+| fps (two runs each, alternating) | 63.0, 61.9 | 55.3, 64.3 |
+| pedestrian search, ms a frame | 2.00, 1.97 | 1.27, 1.15 |
+| `stepCitizens`, ms a frame | 3.90, 3.93 | 3.63, 3.23 |
+
+(The first new run had other load: render CPU 8.9 ms against 7.2-7.5 ms in the others.) The fps change is within the
+noise of this machine; the search lost about 0.75 ms a frame (40 %). Left in the search: the ground height
+(`layerHeight` for each new q-cell, a third of the remaining time) and the narrow searches that fail before the wide one.
