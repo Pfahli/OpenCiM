@@ -551,40 +551,106 @@ ToolPick toolPickLevel(VM& vm, ControlObj* player, float x, float y, int planeY,
   return out;
 }
 
-void placeTracer(VM& vm, ControlObj* c) {
+namespace {
+
+// A plain field read by a key made once: the FieldInfo is found once per class instead of building the name and
+// walking the class chain on every read. The same as member(vm, o, name) (getMember's field path: the getter, then
+// resolve); names that are no field of the class (methods, script functions, errors) take the general path.
+struct FieldKey {
+  std::u16string name;
+  const ClassInfo* cls = nullptr;
+  const FieldInfo* field = nullptr;
+  explicit FieldKey(const char16_t* n) : name(n) {}
+};
+
+Value member(VM& vm, Object* o, FieldKey& k) {
+  if (o->cls != k.cls) k.cls = o->cls, k.field = o->cls->findField(k.name);
+  if (!k.field) return member(vm, o, k.name.c_str());
+  try {
+    return vm.resolve(k.field->get ? k.field->get(vm, o) : Value());
+  } catch (const ScriptError&) {
+    return Value();
+  }
+}
+
+float numberOf(VM& vm, Object* o, FieldKey& k, float def) {
+  Value v = member(vm, o, k);
+  return v.type() == VT::Float || v.type() == VT::Int ? vm.toFloat(v) : def;
+}
+
+// a target viewport's camera as the tracers project with it: the same for every tracer of a frame (placeTracer only
+// reads the camera), so an organizer works it out once per viewport and frame
+struct TracerView {
+  ControlObj* vp = nullptr;
+  bool ok = false;  // the viewport has a camera
+  Vec3 eye, fwd, right, upv;
+  float w = 0, h = 0, t = 0, left = 0, top = 0;
+};
+
+void tracerView(VM& vm, ControlObj* vp, TracerView& v) {
+  static FieldKey kCamera(u"camera"), kFov(u"fov");
+  v.vp = vp;
+  v.ok = false;
+  Object* cam = member(vm, vp, kCamera).object();
+  if (!cam) return;
+  Vec3 eye, look, up;
+  cameraFrame(vm, cam, eye, look, up);
+  v.w = vp->width, v.h = vp->height, v.t = std::tan(numberOf(vm, cam, kFov, 60.0f) * 3.14159265f / 360.0f);
+  v.eye = eye;
+  v.fwd = normalize(look - eye), v.right = normalize(cross(v.fwd, up)), v.upv = cross(v.right, v.fwd);
+  v.left = vp->desktopLeft(), v.top = vp->desktopTop();
+  v.ok = true;
+}
+
+// views: the viewports already worked out this frame (null: work the viewport out for this tracer alone)
+void placeTracerIn(VM& vm, ControlObj* c, std::vector<TracerView>* views) {
   static const ClassInfo* cls = vm.findClass("gsTracerCtrl");
   if (!cls || !c->cls->isA(cls)) return;
+  static FieldKey kViewport(u"targetViewport"), kPosition(u"targetPosition"), kModule(u"targetModule"),
+      kGlobalPos(u"globalPos"), kModulePos(u"position"), kAnchorX(u"anchorX"), kAnchorY(u"anchorY");
   guarded([&] {
-    auto* vp = dynamic_cast<ControlObj*>(member(vm, c, u"targetViewport").object());
+    auto* vp = dynamic_cast<ControlObj*>(member(vm, c, kViewport).object());
     if (!vp || vp->width <= 0 || vp->height <= 0) return;
-    Object* cam = member(vm, vp, u"camera").object();
-    if (!cam) return;
+    TracerView own;
+    const TracerView* view = nullptr;
+    if (views)
+      for (const TracerView& v : *views)
+        if (v.vp == vp) view = &v;
+    if (!view) {
+      tracerView(vm, vp, own);
+      if (views) views->push_back(own);
+      view = &own;
+    }
+    if (!view->ok) return;  // no camera
     // the target point: targetPosition in the module's frame (port: offsets are not rotated with the module; the
     // shipped tracers use vertical ones) or in world space without a module
-    Value tp = member(vm, c, u"targetPosition");
+    Value tp = member(vm, c, kPosition);
     Vec3 p = tp.type() == VT::Vector ? Vec3{tp.vec()[0], tp.vec()[1], tp.vec()[2]} : Vec3{};
-    if (Object* m = member(vm, c, u"targetModule").object()) {
-      Value g = member(vm, m, u"globalPos");
-      if (g.type() != VT::Vector) g = member(vm, m, u"position");
+    if (Object* m = member(vm, c, kModule).object()) {
+      Value g = member(vm, m, kGlobalPos);
+      if (g.type() != VT::Vector) g = member(vm, m, kModulePos);
       if (g.type() == VT::Vector) p = p + Vec3{g.vec()[0], g.vec()[1], g.vec()[2]};
     }
-    Vec3 eye, look, up;
-    cameraFrame(vm, cam, eye, look, up);
-    float w = vp->width, h = vp->height, t = std::tan(numberOf(vm, cam, u"fov", 60.0f) * 3.14159265f / 360.0f);
-    Vec3 fwd = normalize(look - eye), right = normalize(cross(fwd, up)), upv = cross(right, fwd), d = p - eye;
+    const Vec3 &eye = view->eye, &fwd = view->fwd, &right = view->right, &upv = view->upv;
+    const float w = view->w, h = view->h, t = view->t;
+    Vec3 d = p - eye;
     float z = dot(d, fwd), nx = z > 0 ? dot(d, right) / (z * t * w / h) : 2, ny = z > 0 ? dot(d, upv) / (z * t) : 2;
     if (z <= 0 || std::abs(nx) > 1 || std::abs(ny) > 1) {  // behind the camera or outside the four side planes
       c->left = c->top = -10000;
       return;
     }
-    float sx = vp->desktopLeft() + (nx + 1) * 0.5f * w, sy = vp->desktopTop() + (1 - ny) * 0.5f * h;
+    float sx = view->left + (nx + 1) * 0.5f * w, sy = view->top + (1 - ny) * 0.5f * h;
     float px = 0, py = 0;
     if (ControlObj* parent = c->parentControl()) px = parent->desktopLeft(), py = parent->desktopTop();
-    c->left = sx - c->width * numberOf(vm, c, u"anchorX", 0.5f) - px;
-    c->top = sy - c->height * numberOf(vm, c, u"anchorY", 0.5f) - py;
+    c->left = sx - c->width * numberOf(vm, c, kAnchorX, 0.5f) - px;
+    c->top = sy - c->height * numberOf(vm, c, kAnchorY, 0.5f) - py;
     tracerFade(vm, c, eye, p);  // enableFade: visibility by distance (engine/sky.cpp)
   });
 }
+
+}  // namespace
+
+void placeTracer(VM& vm, ControlObj* c) { placeTracerIn(vm, c, nullptr); }
 
 // gsTracerOrganizer::move (L:0x081d14c0 = W:0x100af3d0, docs/ui/lines.md §4.1). The organizer keeps no state: each
 // frame its children move first (gsControl::move → each child's gsTracerCtrl::move), then the tracer children with
@@ -601,12 +667,14 @@ void organizeTracers(VM& vm, ControlObj* organizer) {
     ControlObj* c;
   };
   std::vector<Entry> list;
+  std::vector<TracerView> views;  // the target viewports of this frame
+  static const std::u16string kOrganize = u"organize";
   for (auto& k : organizer->children) {
     auto* t = dynamic_cast<ControlObj*>(k.get());
     if (!t || t->destroyed || !t->cls->isA(tracer)) continue;
-    placeTracer(vm, t);
+    placeTracerIn(vm, t, &views);
     // organize: a plain field the scripts write; unset = the constructor's true (L:0x081d38a0.c:29)
-    if (auto o = t->fieldValues.find(u"organize"); o != t->fieldValues.end() && !o->second.isNone() && !vm.toInt(o->second)) continue;
+    if (auto o = t->fieldValues.find(kOrganize); o != t->fieldValues.end() && !o->second.isNone() && !vm.toInt(o->second)) continue;
     if (!(t->left > -t->width)) continue;
     list.push_back({t->left, t});
   }
