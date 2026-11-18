@@ -1,9 +1,8 @@
 // The in-game minimap after docs/ui/minimap.md: gsGrid::renderMap paints the map texture from a fixed 256×256 raster
 // of per-pixel counters (§2-3), gsMapCtrl maps world ↔ control pixels and shifts the image through minimap.shader's
 // custom0 (§4), gsMapViewportCtrl draws the main camera's ground footprint (§5) and gsMapItemCtrl centres pins on
-// their targets (§6). Not yet: the transport marks (raster bytes 0-5, from stops and line segments) and the
-// selected-line ribbon (gsMapRouteCtrl, §7), which need the simulation; the traffic, catchment and popularity data
-// views read 0 for the same reason.
+// their targets (§6). The transport marks (raster bytes 0-5) come from the live stops and line legs (§2.4). Not yet:
+// the selected-line ribbon (gsMapRouteCtrl, §7); the traffic, catchment and popularity data views read 0.
 #include "engine/minimap.h"
 
 #include <algorithm>
@@ -21,6 +20,7 @@
 #include "engine/grid_render.h"
 #include "engine/gui.h"
 #include "engine/scene3d.h"
+#include "engine/sim_state.h"
 #include "render/image.h"
 #include "vfs/vfs.h"
 
@@ -126,10 +126,95 @@ int dataValue(const MapTemplate& tp, int sx, int sz, uint32_t mode) {
   }
 }
 
+// §2.4: the transport marks (bytes 0..5). The original keeps them incrementally (stop create/destroy, segment
+// updateMesh/clearRoute); the port rebuilds the raster on every render, so it counts the live stops and line legs here.
+void addTransportMarks(std::vector<uint8_t>& R, const GridData& g, const std::vector<MapTemplate>& tpl, const SimState& s) {
+  const int W = g.width, L = g.length;
+  if (W <= 0 || L <= 0) return;
+  auto mark = [&](long p, int t) {
+    if (p < 0 || p >= 65536) return;  // the original has no bounds check; the port drops marks off the raster
+    uint8_t* r = &R[size_t(p) * 16];
+    ++r[0];
+    ++r[1 + t];
+  };
+  // stops (gsTransportStopController::create L:0x081c2120.c:44-94): a plus shape around the footprint centre, record
+  // from the exact division
+  for (const auto& [item, idx] : s.stopOfItem) {
+    (void)idx;
+    if (item < 0 || size_t(item) >= g.items.size()) continue;
+    const GridData::Item& it = g.items[size_t(item)];
+    if (it.removed || it.type >= tpl.size() || !tpl[it.type].object) continue;
+    const MapTemplate& tp = tpl[it.type];
+    int type = tp.type;
+    int t = (type == 2 || type == 5 || type == 6) ? 0
+            : (type >= 10 && type <= 12)          ? 1
+            : (type >= 13 && type <= 15)          ? 2
+            : type == 0x11                        ? 3
+            : type == 0x12                        ? 4
+                                                  : -1;
+    if (t < 0) continue;
+    int sx = (it.orient & 1) ? tp.length : tp.width, sz = (it.orient & 1) ? tp.width : tp.length;
+    long cx = it.x + (sx >> 1), cz = it.z + (sz >> 1);
+    if (cx < 0 || cz < 0) continue;
+    long p = (((cz * 65536) / L) & 0xff00) | ((cx * 256) / W);
+    for (long d : {0L, -256L, -1L, 1L, 256L}) mark(p + d, t);
+  }
+  // line legs (gsTransportSegment::updateMesh L:0x081ba9f0.c:447-463,640-648,688-721): every path node's cell and the
+  // midpoint of consecutive nodes, with the §2.1 reciprocal; bridge (0x4000) and tunnel (0x8000) pieces mark positions
+  // sampled along their curve instead (port: the route strip's 4 steps per piece; the original's step count is not traced)
+  const uint32_t sxr = 0x1000000u / uint32_t(W), szr = 0x1000000u / uint32_t(L);
+  auto recOf = [&](int x, int z) -> long {
+    if (x < 0 || z < 0) return -1;
+    return long(((uint32_t(z) * szr) >> 16) * 256 + ((uint32_t(x) * sxr) >> 16));
+  };
+  const float cs = s.graph.cellSize > 0 ? s.graph.cellSize : 3.0f;
+  for (const sim::LineState& line : s.lines) {
+    if (line.deleted || line.type < 0 || line.type > 4) continue;
+    for (const sim::LineStopState& st : line.stops) {
+      long last = -1;
+      int px = 0, pz = 0;
+      bool havePrev = false;
+      for (int nd : st.path) {
+        if (nd < 0 || size_t(nd) >= s.graph.nodes.size()) continue;
+        const LaneNode& n = s.graph.nodes[size_t(nd)];
+        if (n.flags & 0xC000) {
+          float Ln = n.length;
+          Vec3 a = n.p0, b = n.p0 + n.f0 * (Ln / 3), c = n.p1 - n.f1 * (Ln / 3), e = n.p1;
+          for (int k = 0; k <= 4; ++k) {
+            float t = float(k) * 0.25f, u = 1 - t;
+            Vec3 q = a * (u * u * u) + b * (3 * u * u * t) + c * (3 * u * t * t) + e * (t * t * t);
+            int qx = int((float(W) * cs * 0.5f + q.x) / cs), qz = int((float(L) * cs * 0.5f + q.z) / cs);
+            long p = recOf(qx, qz);
+            if (p != last) mark(p, line.type);
+            last = p;
+          }
+          havePrev = false;
+          continue;
+        }
+        if (havePrev) {
+          long m = -1;  // (a + b)·s >> 17: the midpoint pixel without halving the cells first
+          if (px + n.cellX >= 0 && pz + n.cellZ >= 0)
+            m = long(((uint32_t(pz + n.cellZ) * szr) >> 17) * 256 + ((uint32_t(px + n.cellX) * sxr) >> 17));
+          if (m != last) mark(m, line.type);
+          last = m;
+        }
+        long p = recOf(n.cellX, n.cellZ);
+        if (p != last) mark(p, line.type);
+        last = p;
+        px = n.cellX;
+        pz = n.cellZ;
+        havePrev = true;
+      }
+    }
+  }
+}
+
 // §2.2 + §3.2: the counter raster of the whole grid, then w×h BGRA pixels (0xAARRGGBB)
-std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTemplate>& tpl, int w, int h, uint32_t mode) {
+std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTemplate>& tpl, int w, int h, uint32_t mode,
+                                      const SimState* sim = nullptr) {
   const int W = g.width, L = g.length;
   std::vector<uint8_t> R(size_t(256) * 256 * 16, 0);
+  if (sim) addTransportMarks(R, g, tpl, *sim);
   const uint32_t sxr = 0x1000000u / uint32_t(std::max(1, W)), szr = 0x1000000u / uint32_t(std::max(1, L));
   auto rec = [&](int x, int z) -> uint8_t* {
     size_t px = (uint32_t(x) * sxr) >> 16, pz = (uint32_t(z) * szr) >> 16;
@@ -253,7 +338,17 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
       if (r[11]) col = lerpColor(col, 0xFF42391Cu, wt(r[11]));
       if (r[12]) col = lerpColor(col, 0xFF605D58u, wt(r[12]));
       if (r[13]) col = dataColor(uint32_t(r[14] | r[15] << 8) / r[13]);
-      // transport outlines and line colours (bytes 0..5) come with stops and lines
+      // §3.2: a one-pixel black edge next to any transport mark, then the mark's type colour (bus > … > heli); the
+      // neighbour tests use the fixed 256-record rows of the raster
+      if ((x > 0 && r[-16]) || (y > 0 && r[-0x1000]) || (x < 255 && r[16]) || (y < 255 && r[0x1000])) col = 0xFF000000u;
+      if (r[0]) {
+        static const uint32_t kLine[5] = {0xFF4040FFu, 0xFFFF0000u, 0xFF00FF00u, 0xFFFFFF00u, 0xFFFF00FFu};
+        for (int t = 0; t < 5; ++t)
+          if (r[1 + t]) {
+            col = kLine[t];
+            break;
+          }
+      }
       out[size_t(y) * size_t(w) + size_t(x)] = col;
     }
   return out;
@@ -391,7 +486,7 @@ bool drawMapFootprint(Display& d, VM& vm, ControlObj* c) {
 }
 
 std::vector<uint32_t> renderGridThumbnail(VM& vm, const GridObj& grid, const GridData& g, int w, int h) {
-  return renderMapPixels(g, mapTemplates(vm, grid, g), w, h, 0xFE);
+  return renderMapPixels(g, mapTemplates(vm, grid, g), w, h, 0xFE, &g == grid.data.get() ? grid.sim.get() : nullptr);
 }
 
 void registerMinimapNatives(VM& vm) {
@@ -402,7 +497,7 @@ void registerMinimapNatives(VM& vm) {
     if (!g || !g->data || !tex) return Value();
     referenceCheck(v, *g);
     int w = v.toInt(a[1]), h = v.toInt(a[2]);
-    std::vector<uint32_t> px = renderMapPixels(*g->data, mapTemplates(v, *g, *g->data), w, h, uint32_t(v.toInt(a[3])));
+    std::vector<uint32_t> px = renderMapPixels(*g->data, mapTemplates(v, *g, *g->data), w, h, uint32_t(v.toInt(a[3])), g->sim.get());
     // REGS_MINIMAP_DUMP=<file>: every default-mode render also goes to a raw BGRA file (w × h × 4, rows top-down), to
     // compare the live map (e.g. after city growth) with the shipped per-year thumbnails <map>-timeline.dds
     if (const char* dump = std::getenv("REGS_MINIMAP_DUMP"); dump && (uint32_t(v.toInt(a[3])) & 0xF0000) == 0)

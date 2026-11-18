@@ -46,8 +46,10 @@ modes (the editor's roads, terrain and paint tools come later):
   `gsGridPlayer.timeline`. The brushes' drag copy (`addUndoItem`) is put back on cancel.
 - [x] Live map updates after an edit (`engine/grid_edit.h`, used by the city timeline): items added and removed in
   batches, the item and terrain meshes of the touched divisions, cell cover (`fixGrid`) and ground levelling under
-  LOCK_GROUND items, the lane graph and walk map (simulation hooks), picking, the minimap raster. Still open: the
-  minimap's transport marks (`docs/ui/minimap.md` §2.4), the full `checkConflict` and
+  LOCK_GROUND items, the lane graph and walk map (simulation hooks), picking, the minimap raster with its transport
+  marks (`docs/ui/minimap.md` §2.4, §3.2: stops and line legs from the live simulation, black edge and type colour;
+  Vienna's tram, metro, water bus and helicopter lines checked in the minimap texture; the bridge and tunnel pieces'
+  sampling step is the port's, 4 per piece). Still open: the full `checkConflict` and
   `removeOverlappingOptionalObjects` rules (simplified today), undo.
 
 ## 2. Lines and vehicles
