@@ -943,6 +943,11 @@ void tickWakes(VM& vm, SimState& s, SimParticles& sp, const Vec3& eye, float dt)
     if (++frames % 120 == 0) {
       int shown = 0;
       for (auto& [id, w] : sp.wakes) shown += w.count >= 2 && (~w.still & 0xFFFFu) != 0;
+      for (auto& [id, w] : sp.wakes) {
+        Vec3 q = w.at - eye;
+        LOG_INFO("particles:   wake of mover %zu: %d points, last point %.0f from eye, density %.2f, maxDistance %.0f, planeSize %.1f", id, w.count, std::sqrt(dot(q, q)), w.emitter ? w.emitter->rate(vm) : 0.0f, w.emitter ? w.emitter->maxDistance : 0.0f, w.emitter ? w.emitter->planeSize : 0.0f);
+      }
+      if (s.followed >= 0 && size_t(s.followed) < s.vehicles.size()) LOG_INFO("particles:   followed vehicle mover %d", s.vehicles[size_t(s.followed)].mover);
       LOG_INFO("particles: %zu boat wakes, %d with moving points", sp.wakes.size(), shown);
     }
   }

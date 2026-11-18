@@ -186,10 +186,12 @@ modes (the editor's roads, terrain and paint tools come later):
   `port/run/particles/`.
 - [ ] Boat wakes (`gsBoatContrain`, docs/renderer/particles.md §6.1): WIP. `engine/particles.cpp` `tickWakes` keeps the
   16-point ring per boat and `collectBoatWakes` draws the ribbon with the emitter's `contrain.shader` material. Builds and
-  runs on GL and Vulkan (Vienna: 4 boats keep wakes, `REGS_DEBUG_PARTICLES=1` logs them), but no wake was seen on
-  screen yet: the logged wakes were ~850-980 units from the camera (beyond farZ 310) and emitted rarely; the followed
-  water bus (`REGS_DEBUG_FOLLOW=3:1`) showed none. Next: log every wake per frame (which boat, its density and
-  maxDistance), check the followed boat's model has a wake emitter, then check the material's blend and alpha.
+  runs on GL and Vulkan, but no wake has been seen on screen yet. `REGS_DEBUG_PARTICLES=1` logs every wake: in
+  Vienna the 4 wakes are the background boats (movers 856-989, density 2/s, maxDistance 100000), all 820-955 units from
+  the camera when it follows water bus `REGS_DEBUG_FOLLOW=3:1` (mover 7), so they are culled at farZ 310. The water
+  bus itself gets no wake: either its mover is not flagged `boat` or its model has no `gsBoatContrain` child (check
+  `tickWakes`' skip conditions for line boats). Next: put the camera on a background boat, or fix the line-boat case,
+  and then check the ribbon's look (blend, alpha, width).
 - [ ] Fires as a simulation event (building pass, `docs/simulation/grid-traffic.md` §4.4).
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
   cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;
