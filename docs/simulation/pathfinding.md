@@ -528,7 +528,8 @@ start on the ground under the station instead of on its platform layer (who they
 not traced). Berlin, same run length: 6 of 4465 (0.13 %) from four places: a tram `platform` with `marker4`/`marker6`
 props (both directions), and from houses to houses (`cityhouse03` → `cornerhouse04`, `cornerhouse04` →
 `diagonalhouse3b`) after 19 000 to 420 000 expanded cells. (The goal q-cell is entered whatever its code; the
-logged goal code is the ground layer's.) Earlier notes: Cim2's sunken park (its stairs prop has no walk map and blocks its cell, so the original cannot
+logged goal code is the ground layer's.) On main, 9000 frames at speed 10: Vienna 2 of 13 325 (the station spot once),
+Berlin 4 of 10 021, Cim2 86 of 4740 (1.8 %), all Cim2 failures the sunken park and the hotel below. Earlier notes: Cim2's sunken park (its stairs prop has no walk map and blocks its cell, so the original cannot
 reach it either) and a hotel enclosed by bush props.
 
 ---

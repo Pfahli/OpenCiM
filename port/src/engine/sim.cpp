@@ -333,7 +333,12 @@ void claimAhead(SimState& s, int id) {
     NodeRt& r = s.rt[size_t(n)];
     if (r.occupant != id && !canEnter(s, n, id, ignore)) {
       if (m.transit || (s.graph.nodes[size_t(n)].flags & kPathLaneChange)) r.marker = true;  // waiting marker
-      if (r.occupant >= 0 && r.occupant != id && r.reserver < 0 && m.reserved < 0) {  // queue behind the leader
+      // queue behind the leader (claimNodes' platoon, grid-traffic.md §6.3): only on a node the original would accept
+      // and commit: not marked (unless marks are ignored), not a junction node and right after the committed range
+      // (the original commits a platoon only up to `safe`). Queuing anyway handed a junction's crossing nodes from one
+      // car to the next past a waiting tram's marker (transport.md §10.3).
+      bool platoon = (ignore || !isMarked(s, n)) && !(s.graph.nodes[size_t(n)].flags & kPathIntersection) && k == safe;
+      if (platoon && r.occupant >= 0 && r.occupant != id && r.reserver < 0 && m.reserved < 0) {
         r.reserver = id;
         m.reserved = n;
       }

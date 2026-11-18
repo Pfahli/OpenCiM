@@ -819,27 +819,30 @@ When the vehicle has not advanced a unit for **30 s** of step 2 (the 30 s restar
    (`gsTransportVehicle`, event id 14); the port's extension of `metro/ui/linepanel/linepanel.script` turns it into a
    ticker message (`$regs_newsticker_jamMoved_text` in `port/data/regs/strings/`).
 
-**Giving way to the waiting marker, compared with the original (2026-11-18, not solved).** The port's claim code
-matches the original where it was compared: `canEnter` is `FUN_100e14b0` (a marked node blocks unless it is a 0x20
-node or the claimer ignores marks; a crossing blocks when another holds it, when it is marked and marks are not
-ignored, or when it is a blocker), and the marker is set by a line vehicle (flags 0x200) or on a 0x20 node when the
-claim fails (`0x1010de50.c`, claim loop). The one difference is in the "ignore marks" test (`FUN_100e15d0`, the
-port's `isMarked`): the original tests the head node, the occupied queue entries 1 … occupiedCount − 1 and, if none
-is marked, also the first queued entry past them when it is a junction node (0x20); line vehicles always ignore.
-The port tests the held nodes only. So the original's cars ignore the marker more often, not less, and this does not
-explain the trams waiting at Berlin's busy junctions. Not compared yet: the follow-the-leader branch of the claim
-loop (a node held by another vehicle whose node field +0x7c is 0 is followed instead of failing, same loop).
-
+**Giving way to the waiting marker (2026-11-18, fixed).** The port's `canEnter` is `FUN_100e14b0`, the marker is set
+as in the claim loop of `0x1010de50.c`, and its "ignore marks" test (`isMarked`, `FUN_100e15d0`) differs only in that
+the original's cars ignore marks slightly more often (it also tests the first queued entry past the occupied ones
+when that is a junction node). The difference that mattered was **queuing behind the leader** (grid-traffic.md §6.3):
+the original takes the reserver slot only on nodes its platoon loop accepts, which needs `ignoreMarks or
+!isMarked(node)`, and only up to `safe`, so never on junction nodes it could not clear. The port queued on the first
+blocked node it met, whatever its marker and even inside a junction; when the car ahead left a crossing node, the
+queued car was promoted onto it past the tram's marker, and the next one behind it the same way: one car after
+another held the crossing nodes. Now the port queues only on a node that is not marked (unless marks are ignored),
+not a junction node, and right after its committed range (`claimAhead`). Berlin at speed 10 (9000 frames, the
+relief on): before, 59 tram, bus and metro detections in 3600 s and 3720 departures; after, **0 detections** in
+3000 s and 6343 departures. Vienna (1800 s) and Cim2 (1800 s): 0 detections.
 Saves: the relief state is not saved. A vehicle saved while waiting for its respawn platform has no agent in the save
 and spawns at the first free platform of its line after loading (§4.2); turned cars are ordinary traffic with their
 new route; a vehicle saved in step 2 loads standing where it was and is detected again 120 s later.
 
 ### 10.4 Metro and trains
 
-Metro trains (type 2) are only watched: the detection runs and is logged, nothing is done. In Berlin, trains of
-lines 0 and 4 wait for each other where the lines share track; all 43 such waits in 6000 s of game time (and 56 in
-4800 s with the relief on) ended by themselves, 125 to 600 s after the train stopped (most within 150 to 300 s). They
-claim whole blocks and have no cars to clear, so only step 3 could apply; it is not needed so far. Water buses and
+Metro trains (type 2) are only watched: the detection runs and is logged, nothing is done. In Berlin, two trains of
+line 0 (and of line 4) locked each other at a terminus, one arriving and one leaving, each listed as in the other's
+way. Until 2026-11-18 the arriving train could queue for a node the leaving one held and be promoted onto it, so the
+turned leg met it head on (*inf*, from the fix below) (in 6000 s, 43 waits that ended by themselves after 125 to 600 s; after the end-station change of 2026-11-15
+the whole of line 4 stood within 2 minutes of loading). Since the queuing fix in §10.3: no metro detection in 3000 s, and
+all Berlin metro halts, end stations included, have their middle within 1 unit of the platform. Water buses and
 helicopters are not watched. Background trains are not line vehicles: they give up after 60 s standing anyway
 (grid-traffic.md §6.5).
 
