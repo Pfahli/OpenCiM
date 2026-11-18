@@ -10,11 +10,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <set>
 
 #include "core/log.h"
@@ -2468,6 +2470,73 @@ int takeOffRemovedNodes(VM& vm, SimState& s, const std::vector<uint8_t>& nodeGon
   return despawned;
 }
 
+// cell rectangles (inclusive) merged into their bounding box while two lie within gap cells of each other (in x and
+// in z), until no two do; the result in the order of each group's first rectangle. The same as merging the first
+// such pair over and over (the merged box in the first one's place): boxes only grow and nearness only grows with
+// them, so every order of merges ends in the same groups (a group of one order never spans two groups of a finished
+// other order, whose boxes would then be near), and that loop keeps each group in its first member's place. Here a
+// round puts every group into the buckets (8² cells) its box widened by gap to the right and below covers (two near
+// boxes share a cell of those), unites the near ones met in a bucket, and repeats until a round unites none: about
+// linear instead of the loop's restart after every merge (minutes after a large import).
+struct TouchRect {
+  int x0, z0, x1, z1;
+};
+void mergeNearRects(std::vector<TouchRect>& rects, int gap) {
+  const size_t n = rects.size();
+  if (n < 2) return;
+  std::vector<int> parent(n);
+  std::iota(parent.begin(), parent.end(), 0);
+  auto find = [&](int i) {
+    while (parent[size_t(i)] != i) i = parent[size_t(i)] = parent[size_t(parent[size_t(i)])];
+    return i;
+  };
+  auto near = [gap](const TouchRect& p, const TouchRect& q) {
+    return !(p.x0 > q.x1 + gap || q.x0 > p.x1 + gap || p.z0 > q.z1 + gap || q.z0 > p.z1 + gap);
+  };
+  std::vector<TouchRect> box = rects;  // per root: its group's box
+  std::vector<int> roots(n), start, list;
+  std::iota(roots.begin(), roots.end(), 0);
+  constexpr int B = 8;
+  for (bool united = true; united;) {
+    united = false;
+    int gx0 = INT_MAX, gz0 = INT_MAX, gx1 = INT_MIN, gz1 = INT_MIN;
+    for (int r : roots) {
+      const TouchRect& b = box[size_t(r)];
+      gx0 = std::min(gx0, b.x0), gz0 = std::min(gz0, b.z0), gx1 = std::max(gx1, b.x1 + gap), gz1 = std::max(gz1, b.z1 + gap);
+    }
+    const int64_t W = (int64_t(gx1) - gx0) / B + 1, H = (int64_t(gz1) - gz0) / B + 1;
+    // the buckets as one list (counting sort): start[k] .. start[k + 1] are bucket k's groups
+    auto span = [&](int r, auto fn) {
+      const TouchRect& b = box[size_t(r)];
+      for (int64_t bz = (int64_t(b.z0) - gz0) / B; bz <= (int64_t(b.z1) + gap - gz0) / B; ++bz)
+        for (int64_t bx = (int64_t(b.x0) - gx0) / B; bx <= (int64_t(b.x1) + gap - gx0) / B; ++bx) fn(size_t(bz * W + bx));
+    };
+    start.assign(size_t(W * H) + 1, 0);
+    for (int r : roots) span(r, [&](size_t k) { ++start[k + 1]; });
+    for (size_t k = 0; k + 1 < start.size(); ++k) start[k + 1] += start[k];
+    list.resize(size_t(start.back()));
+    std::vector<int> fill(start.begin(), start.end() - 1);
+    for (int r : roots) span(r, [&](size_t k) { list[size_t(fill[k]++)] = r; });
+    for (size_t k = 0; k + 1 < start.size(); ++k)
+      for (int i = start[k]; i < start[k + 1]; ++i)
+        for (int j = i + 1; j < start[k + 1]; ++j) {
+          int a = find(list[size_t(i)]), b = find(list[size_t(j)]);
+          if (a == b || !near(box[size_t(a)], box[size_t(b)])) continue;
+          if (b < a) std::swap(a, b);  // the root is the group's first rectangle
+          parent[size_t(b)] = a;
+          TouchRect &p = box[size_t(a)], &q = box[size_t(b)];
+          p = {std::min(p.x0, q.x0), std::min(p.z0, q.z0), std::max(p.x1, q.x1), std::max(p.z1, q.z1)};
+          united = true;
+        }
+    if (united) std::erase_if(roots, [&](int r) { return find(r) != r; });
+  }
+  // roots ascend: each group in its first rectangle's place
+  std::vector<TouchRect> out;
+  out.reserve(roots.size());
+  for (int r : roots) out.push_back(box[size_t(r)]);
+  rects = std::move(out);
+}
+
 void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, const std::vector<uint32_t>& removed) {
   if (!grid || !grid->sim || !grid->data || (added.empty() && removed.empty())) return;
   SimState& s = *grid->sim;
@@ -2475,9 +2544,7 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
   LaneGraph& G = s.graph;
   auto t0 = std::chrono::steady_clock::now();
   // the cells to stamp again: the touched footprints, merged where they lie within 4 cells of each other
-  struct Rect {
-    int x0, z0, x1, z1;
-  };
+  using Rect = TouchRect;
   std::vector<Rect> rects;
   for (const auto* list : {&added, &removed})
     for (uint32_t i : *list) {
@@ -2487,17 +2554,7 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
       const auto& it = g.items[i];
       rects.push_back({it.x, it.z, it.x + sx - 1, it.z + sz - 1});
     }
-  for (bool merged = true; merged;) {
-    merged = false;
-    for (size_t a = 0; a < rects.size() && !merged; ++a)
-      for (size_t b = a + 1; b < rects.size() && !merged; ++b) {
-        Rect &p = rects[a], &q = rects[b];
-        if (p.x0 > q.x1 + 4 || q.x0 > p.x1 + 4 || p.z0 > q.z1 + 4 || q.z0 > p.z1 + 4) continue;
-        p = {std::min(p.x0, q.x0), std::min(p.z0, q.z0), std::max(p.x1, q.x1), std::max(p.z1, q.z1)};
-        rects.erase(rects.begin() + std::ptrdiff_t(b));
-        merged = true;
-      }
-  }
+  mergeNearRects(rects, 4);
 
   // 1. lane graph: a removed item's nodes out, a new item's nodes in (removeItem FUN_100bff60, addObject's attach)
   std::vector<uint8_t> nodeGone(G.nodes.size(), 0);
