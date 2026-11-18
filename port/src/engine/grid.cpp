@@ -136,6 +136,25 @@ bool parseGridFile(const std::vector<uint8_t>& d, GridData& g, std::string* erro
           }
         } else if (t2 == 0x07020200) {
           LOG_WARN("grid: old 8-byte item format is not supported yet");
+        } else if (t2 == 0x07020300) {
+          // the older names section (L:0x08146470.c:376-413, gsWideStr): one Latin-1 string per item, unpadded.
+          // The shipped scenario maps use it (scenario 3: "Favoriten", "$vie_university" for its first task).
+          g.names.clear();
+          size_t p = b2;
+          for (uint32_t i = 0; i < itemCount && p < s2; ++i) {
+            std::string s;
+            for (; p < s2 && d[p]; ++p) {
+              uint8_t c = d[p];
+              if (c < 0x80) {
+                s += char(c);
+              } else {
+                s += char(0xC0 | (c >> 6));
+                s += char(0x80 | (c & 0x3F));
+              }
+            }
+            ++p;
+            g.names.push_back(s);
+          }
         } else if (t2 == 0x07020310) {  // UTF-8, every entry padded to 4 bytes
           size_t p = b2;
           for (uint32_t i = 0; i < itemCount && p < s2; ++i) {
