@@ -237,7 +237,6 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
   // characters (§2.4): within 1 unit of the point 1 above the feet, ranked by the distance to that point minus 2
   // The tools pick without vehicles and characters (intersectGrid(..., null, null), tools.h toolPick).
   if (vehicles) forEachSimCharacter(grid, [&](const SimCharacterView& c) {
-    if (!c.object) return;  // no controller: no displayName, not pickable
     int cx = int((c.position.x + hW) / cs), cz = int((c.position.z + hL) / cs);
     if (cx < rx0 - 3 || cx > rx1 + 3 || cz < rz0 - 3 || cz > rz1 + 3) return;
     Vec3 L = c.position + Vec3{0, 1, 0}, w = start - L, x = cross(D, w);
@@ -245,11 +244,14 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
     if (d2 >= 1.0f) return;
     float t = (std::sqrt(dot(w, w)) - 2.0f + std::sqrt(d2)) * invLen;
     if (t >= 0 && t < h.t) {
+      // the controller only for a hit (getController in the original's pick, docs/ui/selection.md §5.2)
+      Object* ctrl = c.object ? c.object : simCharacterController(grid, c.index);
+      if (!ctrl) return;  // no controller: not pickable
       h.t = t;
       h.cellX = cx;
       h.cellZ = cz;
       h.vehicle = nullptr;
-      h.character = c.object;
+      h.character = ctrl;
       h.item = -1;
       h.y = int(std::lround(c.position.y / cs * 256.0f));
     }
@@ -471,8 +473,9 @@ void mouseMoveSelectObject(VM& vm, ControlObj* player, float x, float y) {
     static const bool debug = regs::envVar("REGS_DEBUG_PICK") != nullptr;  // logs each change of the hovered object
     if (debug && ctrl && ctrl != player->fieldValues[u"hoverObject"].object()) {
       const GridData& g = *grid->data;
-      LOG_INFO("pick (%.0f,%.0f): t %.4f cell %d,%d item %d %s vehicle %p", x, y, h.t, h.cellX, h.cellZ, h.item,
-               h.item >= 0 ? g.types[g.items[size_t(h.item)].type].c_str() : "-", static_cast<void*>(h.vehicle));
+      LOG_INFO("pick (%.0f,%.0f): t %.4f cell %d,%d item %d %s vehicle %p character %p", x, y, h.t, h.cellX, h.cellZ, h.item,
+               h.item >= 0 ? g.types[g.items[size_t(h.item)].type].c_str() : "-", static_cast<void*>(h.vehicle),
+               static_cast<void*>(h.character));
     }
   }
   Object* old = player->fieldValues[u"hoverObject"].object();

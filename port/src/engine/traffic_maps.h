@@ -42,7 +42,7 @@ struct TrafficMaps {
   std::vector<float> listIds;      // the lists: lane numbers, nearest first
   uint32_t cellBase = 0;  // the lane texture's first texel of the cells (gridTrafficMaps)
   bool lanesBuilt = false, lanesUploaded = false;
-  size_t graphNodes = 0;
+  uint64_t laneVersion = 0;      // the LaneGraph::laneVersion painted
   std::vector<int32_t> laneId;   // per graph node: its lane number in the maps (−1: not a painted lane)
   std::vector<int> laneNodes;    // per lane number: the graph node
   // lane traffic
@@ -57,9 +57,17 @@ struct TrafficMaps {
   // trodden map
   std::unordered_map<uint32_t, float> trodden;  // cell (z << 16 | x) → seconds
   std::vector<uint8_t> troddenBytes;            // laneW × laneH
-  bool troddenSynced = false;  // copied into the top map's texture once (then the dirty rects)
+  bool troddenSynced = false;  // copied into the top map's texture once (then the dirty tiles)
   const void* troddenTarget = nullptr;  // the surface map it was copied into
-  int dirtyX0 = 0, dirtyZ0 = 0, dirtyX1 = -1, dirtyZ1 = -1;
+  // the bytes changed since the last copy: a flag per tile of kTroddenTile² (markTrodden)
+  static constexpr int kTroddenTile = 64;
+  int troddenTilesW = 0, troddenTilesH = 0;
+  std::vector<uint8_t> troddenDirty;
+  bool troddenAnyDirty = false;
+  void markTrodden(int x, int z) {
+    troddenDirty[size_t(z / kTroddenTile) * size_t(troddenTilesW) + size_t(x / kTroddenTile)] = 1;
+    troddenAnyDirty = true;
+  }
   float age = 0;
   bool laneTrafficDirty = false;
   double lastUpload = -1;  // steady-clock seconds of the last upload

@@ -143,7 +143,7 @@ void paintLanes(TrafficMaps& t, const LaneGraph& g) {
     c[0] = uint16_t(start & 0xffff), c[1] = uint16_t(start >> 16), c[2] = uint16_t(near), c[3] = uint16_t(count);
     a = b;
   }
-  t.graphNodes = g.nodes.size();
+  t.laneVersion = g.laneVersion;
   t.lanesBuilt = true;
   t.lanesUploaded = false;
   t.laneCurvesDirty = true;
@@ -336,9 +336,14 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     t.laneW = std::max(1, int(std::ceil(float(s.graph.width) * cs / kTexel)));
     t.laneH = std::max(1, int(std::ceil(float(s.graph.length) * cs / kTexel)));
     t.troddenBytes.assign(size_t(t.laneW) * size_t(t.laneH), 0);
+    t.troddenTilesW = (t.laneW + TrafficMaps::kTroddenTile - 1) / TrafficMaps::kTroddenTile;
+    t.troddenTilesH = (t.laneH + TrafficMaps::kTroddenTile - 1) / TrafficMaps::kTroddenTile;
+    t.troddenDirty.assign(size_t(t.troddenTilesW) * size_t(t.troddenTilesH), 0);
   }
   TrafficMaps& t = *s.trafficMaps;
-  if (!t.lanesBuilt || t.graphNodes != s.graph.nodes.size()) {
+  // the lanes again when they changed (an aircraft's or boat's inline node is none: the node count alone would repaint
+  // for each of them)
+  if (!t.lanesBuilt || t.laneVersion != s.graph.laneVersion) {
     paintLanes(t, s.graph);
     if (regs::envVar("REGS_DEBUG_TRAFFIC_MAPS")) {  // where the parked cars are (for close-up checks)
       int parked = 0;
@@ -368,10 +373,8 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     it->second *= keepT;
     uint32_t x = it->first & 0xffff, z = it->first >> 16;
     if (it->second < 0.05f) {
-      t.troddenBytes[size_t(z) * size_t(t.laneW) + x] = 0;
-      if (t.dirtyX1 < t.dirtyX0) t.dirtyX0 = t.dirtyX1 = int(x), t.dirtyZ0 = t.dirtyZ1 = int(z);
-      t.dirtyX0 = std::min(t.dirtyX0, int(x)), t.dirtyX1 = std::max(t.dirtyX1, int(x));
-      t.dirtyZ0 = std::min(t.dirtyZ0, int(z)), t.dirtyZ1 = std::max(t.dirtyZ1, int(z));
+      uint8_t& b = t.troddenBytes[size_t(z) * size_t(t.laneW) + x];
+      if (b) b = 0, t.markTrodden(int(x), int(z));
       it = t.trodden.erase(it);
     } else {
       ++it;
@@ -511,24 +514,28 @@ bool gridTrafficMaps(GridObj* grid, uint32_t& laneTraffic, float rect[4], float 
     }
     for (const auto& [cell, v] : t.trodden) {
       int x = int(cell & 0xffff), z = int(cell >> 16);
-      t.troddenBytes[size_t(z) * size_t(t.laneW) + size_t(x)] = uint8_t(std::lround(255.0f * (1.0f - std::exp(-v / 1.5f))));
-      if (t.dirtyX1 < t.dirtyX0) t.dirtyX0 = t.dirtyX1 = x, t.dirtyZ0 = t.dirtyZ1 = z;
-      t.dirtyX0 = std::min(t.dirtyX0, x), t.dirtyX1 = std::max(t.dirtyX1, x);
-      t.dirtyZ0 = std::min(t.dirtyZ0, z), t.dirtyZ1 = std::max(t.dirtyZ1, z);
+      uint8_t b = uint8_t(std::lround(255.0f * (1.0f - std::exp(-v / 1.5f))));
+      uint8_t& old = t.troddenBytes[size_t(z) * size_t(t.laneW) + size_t(x)];
+      if (old != b) old = b, t.markTrodden(x, z);
     }
     // the trodden map goes into the top map's texture (engine/surface_map.h, its second channel): first all of it,
-    // then only the rectangle the walkers touched; kept for later while the map has no surface map yet
+    // then only the tiles whose bytes changed; kept for later while the map has no surface map yet
     SurfaceMap* sm = grid->terrain ? grid->terrain->surfaceMap.get() : nullptr;
     if (sm != t.troddenTarget) t.troddenSynced = false, t.troddenTarget = sm;  // a new surface map: all again
     if (sm && sm->topW > 0) {
       if (!t.troddenSynced) {
         surfaceMapTrodden(*sm, t.troddenBytes.data(), t.laneW, t.originX, t.originZ, 0, 0, t.laneW - 1, t.laneH - 1);
         t.troddenSynced = true;
-      } else {
-        surfaceMapTrodden(*sm, t.troddenBytes.data(), t.laneW, t.originX, t.originZ, t.dirtyX0, t.dirtyZ0, t.dirtyX1,
-                          t.dirtyZ1);
+      } else if (t.troddenAnyDirty) {
+        const int T = TrafficMaps::kTroddenTile;
+        for (int tz = 0; tz < t.troddenTilesH; ++tz)
+          for (int tx = 0; tx < t.troddenTilesW; ++tx)
+            if (t.troddenDirty[size_t(tz) * size_t(t.troddenTilesW) + size_t(tx)])
+              surfaceMapTrodden(*sm, t.troddenBytes.data(), t.laneW, t.originX, t.originZ, tx * T, tz * T,
+                                std::min(t.laneW - 1, tx * T + T - 1), std::min(t.laneH - 1, tz * T + T - 1));
       }
-      t.dirtyX0 = 0, t.dirtyZ0 = 0, t.dirtyX1 = -1, t.dirtyZ1 = -1;
+      std::fill(t.troddenDirty.begin(), t.troddenDirty.end(), uint8_t(0));
+      t.troddenAnyDirty = false;
     }
   }
   laneTraffic = t.laneTrafficTexture;

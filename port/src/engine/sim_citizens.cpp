@@ -1195,7 +1195,7 @@ Object* characterController(SimState& s, int i) {
     o->fieldValues[u"<instance>"] = Value::boolean(true);
     if (ch.model >= 0) o->fieldValues[u"<model>"] = Value::heap(VT::Object, s.models[size_t(ch.model)].object);
     // the pose at once: a controller made while the game is paused gets no tick update until it runs again
-    setPoseFields(o, {ch.pos, {std::sin(ch.yaw), 0, std::cos(ch.yaw)}});
+    setCharacterPoseFields(o, ch.pos, ch.yaw, &ch.controllerSlots);
   }
   return ch.controller.get();
 }
@@ -1204,6 +1204,12 @@ Object* characterController(SimState& s, int i) {
 void fireCitizen(SimState& s, int ci, const char16_t* ev, std::vector<Value> args = {}) {
   Citizen& c = s.citizens[size_t(ci)];
   if (c.controller) s.vm->fireEvent(c.controller.get(), ev, args);
+}
+// onSpawnCharacter(character controller) to the citizen's controller; the character's controller is made only when
+// the citizen has one to fire on (lazy as in the original, docs/ui/selection.md §5.2)
+void fireSpawnCharacter(SimState& s, int ci, int character) {
+  if (!s.citizens[size_t(ci)].controller) return;
+  if (Object* ctrl = characterController(s, character)) fireCitizen(s, ci, u"onSpawnCharacter", {Value::heap(VT::Object, ctrl)});
 }
 void fireCitizens(SimState& s, int ci, const char16_t* ev) {
   if (!s.citizensModule) return;
@@ -1608,7 +1614,7 @@ void stepWalk(SimState& s, int ci) {
       return;
     }
     walkTo(s, s.characters[size_t(i)], qx0, qz0, qx1, qz1);
-    if (Object* ctrl = characterController(s, i)) fireCitizen(s, ci, u"onSpawnCharacter", {Value::heap(VT::Object, ctrl)});
+    fireSpawnCharacter(s, ci, i);
     return;
   }
   Character& ch = s.characters[size_t(c.character)];
@@ -1742,8 +1748,7 @@ void stepTravel(SimState& s, int ci) {
         qz = int(std::lround((at.z / g.cellSize + float(g.length) * 0.5f) * 4));
       }
       int i = spawnCharacter(s, c, ci, qx, qz);
-      if (i >= 0)
-        if (Object* ctrl = characterController(s, i)) fireCitizen(s, ci, u"onSpawnCharacter", {Value::heap(VT::Object, ctrl)});
+      if (i >= 0) fireSpawnCharacter(s, ci, i);
       setMood(s, ci, 3);
       c.hasRoute = false;
       c.route = Route();
@@ -1770,8 +1775,7 @@ void stepTravel(SimState& s, int ci) {
     int qx, qz;
     doorOf(s, line.stops[size_t(v.stopB)].item, qx, qz);
     int i = spawnCharacter(s, c, ci, qx, qz);
-    if (i >= 0)
-      if (Object* ctrl = characterController(s, i)) fireCitizen(s, ci, u"onSpawnCharacter", {Value::heap(VT::Object, ctrl)});
+    if (i >= 0) fireSpawnCharacter(s, ci, i);
     return;
   }
   // waiting (§8.2-8.3)
@@ -1882,7 +1886,7 @@ void stepTravel(SimState& s, int ci) {
         return;
       }
       walkTo(s, s.characters[size_t(i)], qx0, qz0, qx1, qz1);
-      if (Object* ctrl = characterController(s, i)) fireCitizen(s, ci, u"onSpawnCharacter", {Value::heap(VT::Object, ctrl)});
+      fireSpawnCharacter(s, ci, i);
       return;
     }
   }
@@ -2048,8 +2052,7 @@ int evacuateRiders(SimState& s, int vi, const Vec3& at) {
     c.vehicle = -1;
     c.flags |= 0x200;
     int i = spawnCharacter(s, c, int(ci), qx, qz);
-    if (i >= 0)
-      if (Object* ctrl = characterController(s, i)) fireCitizen(s, int(ci), u"onSpawnCharacter", {Value::heap(VT::Object, ctrl)});
+    if (i >= 0) fireSpawnCharacter(s, int(ci), i);
     c.hasRoute = false;
     c.route = Route();
     c.replanFrom = item;
@@ -2494,8 +2497,8 @@ void collectCharacters(Display& d, VM& vm, SimState& s, const Vec3& eye, const M
 }
 
 void syncCharacterFields(SimState& s) {
-  for (const Character& ch : s.characters)
-    if (ch.alive && ch.controller) setPoseFields(ch.controller.get(), {ch.pos, {std::sin(ch.yaw), 0, std::cos(ch.yaw)}});
+  for (Character& ch : s.characters)
+    if (ch.alive && ch.controller) setCharacterPoseFields(ch.controller.get(), ch.pos, ch.yaw, &ch.controllerSlots);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2916,7 +2919,8 @@ void forEachSimCharacter(GridObj* grid, const std::function<void(const SimCharac
     if (!ch.alive || ch.model < 0 || ch.virtualLeft > 0) continue;
     const sim::UnitModel& m = s->models[size_t(ch.model)];
     SimCharacterView view;
-    view.object = sim::characterController(*s, int(i));
+    view.object = ch.controller.get();  // made on demand: simCharacterController
+    view.index = int(i);
     view.citizen = ch.citizen;
     view.position = ch.pos;
     view.yaw = ch.yaw;
@@ -2927,6 +2931,12 @@ void forEachSimCharacter(GridObj* grid, const std::function<void(const SimCharac
     view.radius = std::sqrt(dot(half, half));
     fn(view);
   }
+}
+
+script::Object* simCharacterController(GridObj* grid, int character) {
+  SimState* s = sim::stateOf(grid);
+  if (!s || character < 0 || size_t(character) >= s->characters.size()) return nullptr;
+  return sim::characterController(*s, character);
 }
 
 script::Object* simCitizenController(GridObj* grid, int citizen) {

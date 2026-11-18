@@ -10,11 +10,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <set>
 
 #include "core/log.h"
@@ -1326,9 +1328,66 @@ bool vehicleDoorPoint(const SimState& s, const VehicleState& v, const Vec3& from
   return best >= 0;
 }
 
+namespace {
+// the keys of the synced fields, built once (a key over 7 characters costs a heap string per lookup)
+const std::u16string kPositionKey = u"position", kGlobalPosKey = u"globalPos", kOrientationKey = u"orientation";
+const std::u16string kModelKey = u"<model>", kInstanceKey = u"<instance>";
+
+void writePose(Object* o, FieldSlots* slots, const Vec3& p, float qx, float qy, float qz, float qw) {
+  Value pos = Value::vector(p.x, p.y, p.z), q = Value::quat(qx, qy, qz, qw);
+  if (!slots) {
+    o->fieldValues[kPositionKey] = pos;
+    o->fieldValues[kGlobalPosKey] = pos;
+    o->fieldValues[kOrientationKey] = q;
+    return;
+  }
+  FieldSlots& c = fieldSlots(o, *slots);
+  if (!c.position) c.position = &o->fieldValues[kPositionKey];
+  if (!c.globalPos) c.globalPos = &o->fieldValues[kGlobalPosKey];
+  if (!c.orientation) c.orientation = &o->fieldValues[kOrientationKey];
+  setSlot(*c.position, pos);
+  setSlot(*c.globalPos, pos);
+  setSlot(*c.orientation, q);
+}
+}  // namespace
+
+FieldSlots& fieldSlots(Object* o, FieldSlots& slots) {
+  if (slots.serial != o->serial) slots = FieldSlots{}, slots.serial = o->serial;
+  return slots;
+}
+
+void setSlot(Value& slot, const Value& v) {
+  if (slot.type() == v.type()) {
+    switch (v.type()) {
+      case VT::Vector:
+      case VT::Quat:
+        if (std::memcmp(slot.vec(), v.vec(), 4 * sizeof(float)) == 0) return;
+        break;
+      case VT::Bool:
+        if (slot.b() == v.b()) return;
+        break;
+      case VT::Object:
+        if (slot.heapPtr() == v.heapPtr()) return;
+        break;
+      default: break;
+    }
+  }
+  slot = v;
+}
+
+// a character's orientation from its yaw: the pose matrix is a turn by yaw + π about +Y, so the quaternion below is
+// ±(0, cos(yaw/2), 0, sin(yaw/2)), with the sign setPoseFields' trace branches pick (trace 1 − 2·cos yaw > 0: w ≥ 0;
+// else the y branch: y ≤ 0); equal to the matrix path within float rounding
+void setCharacterPoseFields(Object* o, const Vec3& pos, float yaw, FieldSlots* slots) {
+  float c = std::cos(yaw), h = std::cos(yaw * 0.5f), sh = std::sin(yaw * 0.5f);
+  bool neg = 1.0f - 2.0f * c > 0 ? sh < 0 : h > 0;
+  if (neg) h = -h, sh = -sh;
+  writePose(o, slots, pos, 0.0f, h, 0.0f, sh);
+}
+
 // position, globalPos, orientation of a gs3DElement from a pose (orientation in the engine's convention, the
 // conjugate of ours: q·(0,0,−1) = forward there)
-void setPoseFields(Object* o, const PlacedPose& p) {
+void setPoseFields(Object* o, const PlacedPose& p, FieldSlots* slots) {
   Mat4 w = poseMatrix(p);
   float m00 = w.at(0, 0), m11 = w.at(1, 1), m22 = w.at(2, 2), tr = m00 + m11 + m22;
   float qx, qy, qz, qw;
@@ -1345,27 +1404,32 @@ void setPoseFields(Object* o, const PlacedPose& p) {
     float k = std::sqrt(1 + m22 - m00 - m11) * 2;
     qw = (w.at(1, 0) - w.at(0, 1)) / k, qx = (w.at(0, 2) + w.at(2, 0)) / k, qy = (w.at(1, 2) + w.at(2, 1)) / k, qz = 0.25f * k;
   }
-  Value pos = Value::vector(p.position.x, p.position.y, p.position.z);
-  o->fieldValues[u"position"] = pos;
-  o->fieldValues[u"globalPos"] = pos;
-  o->fieldValues[u"orientation"] = Value::quat(-qx, -qy, -qz, qw);
+  writePose(o, slots, p.position, -qx, -qy, -qz, qw);
 }
 
 // the gs3DElement fields of the vehicles' script objects (their leading unit) and the hidden fields the
-// item-controller natives read (<model>, <instance>: gsGridController.getModel / hasInstance)
-void syncVehicleFields(const SimState& s) {
-  for (const VehicleState& v : s.vehicles) {
+// item-controller natives read (<model>, <instance>: gsGridController.getModel / hasInstance); through cached slots,
+// writing only values that differ
+void syncVehicleFields(SimState& s) {
+  for (VehicleState& v : s.vehicles) {
     Object* o = v.object.get();
     if (!o) continue;
+    FieldSlots& c = fieldSlots(o, v.objectSlots);
     const Unit* head = v.units.empty() || v.units[0].model < 0 ? nullptr : &v.units[0];
-    if (head) o->fieldValues[u"<model>"] = Value::heap(VT::Object, s.models[size_t(head->model)].object);
+    if (head) {
+      if (!c.model) c.model = &o->fieldValues[kModelKey];
+      if (HeapObj* model = s.models[size_t(head->model)].object; !(c.model->type() == VT::Object && c.model->heapPtr() == model))
+        *c.model = Value::heap(VT::Object, model);
+    }
     const Mover* m = v.mover >= 0 ? &s.movers[size_t(v.mover)] : nullptr;
     bool live = head && m && m->live && !m->track.nodes.empty();
-    o->fieldValues[u"<instance>"] = Value::boolean(live);
-    if (live) setPoseFields(o, unitPose(s, *m, *head, m->dist));
+    if (!c.instance) c.instance = &o->fieldValues[kInstanceKey];
+    setSlot(*c.instance, Value::boolean(live));
+    if (live) setPoseFields(o, unitPose(s, *m, *head, m->dist), &v.objectSlots);
   }
-  for (const Mover& m : s.movers)
-    if (m.live && !m.transit && m.controller && !m.track.nodes.empty()) setPoseFields(m.controller.get(), unitPose(s, m, m.units[0], m.dist));
+  for (Mover& m : s.movers)
+    if (m.live && !m.transit && m.controller && !m.track.nodes.empty())
+      setPoseFields(m.controller.get(), unitPose(s, m, m.units[0], m.dist), &m.controllerSlots);
 }
 
 // ---- loading ----
@@ -2406,6 +2470,73 @@ int takeOffRemovedNodes(VM& vm, SimState& s, const std::vector<uint8_t>& nodeGon
   return despawned;
 }
 
+// cell rectangles (inclusive) merged into their bounding box while two lie within gap cells of each other (in x and
+// in z), until no two do; the result in the order of each group's first rectangle. The same as merging the first
+// such pair over and over (the merged box in the first one's place): boxes only grow and nearness only grows with
+// them, so every order of merges ends in the same groups (a group of one order never spans two groups of a finished
+// other order, whose boxes would then be near), and that loop keeps each group in its first member's place. Here a
+// round puts every group into the buckets (8² cells) its box widened by gap to the right and below covers (two near
+// boxes share a cell of those), unites the near ones met in a bucket, and repeats until a round unites none: about
+// linear instead of the loop's restart after every merge (minutes after a large import).
+struct TouchRect {
+  int x0, z0, x1, z1;
+};
+void mergeNearRects(std::vector<TouchRect>& rects, int gap) {
+  const size_t n = rects.size();
+  if (n < 2) return;
+  std::vector<int> parent(n);
+  std::iota(parent.begin(), parent.end(), 0);
+  auto find = [&](int i) {
+    while (parent[size_t(i)] != i) i = parent[size_t(i)] = parent[size_t(parent[size_t(i)])];
+    return i;
+  };
+  auto near = [gap](const TouchRect& p, const TouchRect& q) {
+    return !(p.x0 > q.x1 + gap || q.x0 > p.x1 + gap || p.z0 > q.z1 + gap || q.z0 > p.z1 + gap);
+  };
+  std::vector<TouchRect> box = rects;  // per root: its group's box
+  std::vector<int> roots(n), start, list;
+  std::iota(roots.begin(), roots.end(), 0);
+  constexpr int B = 8;
+  for (bool united = true; united;) {
+    united = false;
+    int gx0 = INT_MAX, gz0 = INT_MAX, gx1 = INT_MIN, gz1 = INT_MIN;
+    for (int r : roots) {
+      const TouchRect& b = box[size_t(r)];
+      gx0 = std::min(gx0, b.x0), gz0 = std::min(gz0, b.z0), gx1 = std::max(gx1, b.x1 + gap), gz1 = std::max(gz1, b.z1 + gap);
+    }
+    const int64_t W = (int64_t(gx1) - gx0) / B + 1, H = (int64_t(gz1) - gz0) / B + 1;
+    // the buckets as one list (counting sort): start[k] .. start[k + 1] are bucket k's groups
+    auto span = [&](int r, auto fn) {
+      const TouchRect& b = box[size_t(r)];
+      for (int64_t bz = (int64_t(b.z0) - gz0) / B; bz <= (int64_t(b.z1) + gap - gz0) / B; ++bz)
+        for (int64_t bx = (int64_t(b.x0) - gx0) / B; bx <= (int64_t(b.x1) + gap - gx0) / B; ++bx) fn(size_t(bz * W + bx));
+    };
+    start.assign(size_t(W * H) + 1, 0);
+    for (int r : roots) span(r, [&](size_t k) { ++start[k + 1]; });
+    for (size_t k = 0; k + 1 < start.size(); ++k) start[k + 1] += start[k];
+    list.resize(size_t(start.back()));
+    std::vector<int> fill(start.begin(), start.end() - 1);
+    for (int r : roots) span(r, [&](size_t k) { list[size_t(fill[k]++)] = r; });
+    for (size_t k = 0; k + 1 < start.size(); ++k)
+      for (int i = start[k]; i < start[k + 1]; ++i)
+        for (int j = i + 1; j < start[k + 1]; ++j) {
+          int a = find(list[size_t(i)]), b = find(list[size_t(j)]);
+          if (a == b || !near(box[size_t(a)], box[size_t(b)])) continue;
+          if (b < a) std::swap(a, b);  // the root is the group's first rectangle
+          parent[size_t(b)] = a;
+          TouchRect &p = box[size_t(a)], &q = box[size_t(b)];
+          p = {std::min(p.x0, q.x0), std::min(p.z0, q.z0), std::max(p.x1, q.x1), std::max(p.z1, q.z1)};
+          united = true;
+        }
+    if (united) std::erase_if(roots, [&](int r) { return find(r) != r; });
+  }
+  // roots ascend: each group in its first rectangle's place
+  std::vector<TouchRect> out;
+  out.reserve(roots.size());
+  for (int r : roots) out.push_back(box[size_t(r)]);
+  rects = std::move(out);
+}
+
 void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, const std::vector<uint32_t>& removed) {
   if (!grid || !grid->sim || !grid->data || (added.empty() && removed.empty())) return;
   SimState& s = *grid->sim;
@@ -2413,9 +2544,7 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
   LaneGraph& G = s.graph;
   auto t0 = std::chrono::steady_clock::now();
   // the cells to stamp again: the touched footprints, merged where they lie within 4 cells of each other
-  struct Rect {
-    int x0, z0, x1, z1;
-  };
+  using Rect = TouchRect;
   std::vector<Rect> rects;
   for (const auto* list : {&added, &removed})
     for (uint32_t i : *list) {
@@ -2425,17 +2554,7 @@ void simItemsChanged(VM& vm, GridObj* grid, const std::vector<uint32_t>& added, 
       const auto& it = g.items[i];
       rects.push_back({it.x, it.z, it.x + sx - 1, it.z + sz - 1});
     }
-  for (bool merged = true; merged;) {
-    merged = false;
-    for (size_t a = 0; a < rects.size() && !merged; ++a)
-      for (size_t b = a + 1; b < rects.size() && !merged; ++b) {
-        Rect &p = rects[a], &q = rects[b];
-        if (p.x0 > q.x1 + 4 || q.x0 > p.x1 + 4 || p.z0 > q.z1 + 4 || q.z0 > p.z1 + 4) continue;
-        p = {std::min(p.x0, q.x0), std::min(p.z0, q.z0), std::max(p.x1, q.x1), std::max(p.z1, q.z1)};
-        rects.erase(rects.begin() + std::ptrdiff_t(b));
-        merged = true;
-      }
-  }
+  mergeNearRects(rects, 4);
 
   // 1. lane graph: a removed item's nodes out, a new item's nodes in (removeItem FUN_100bff60, addObject's attach)
   std::vector<uint8_t> nodeGone(G.nodes.size(), 0);

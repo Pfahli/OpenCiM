@@ -48,6 +48,10 @@ struct LaneGraph {
   std::vector<int> buckets;                 // head node per 8×8-cell bucket
   std::vector<int> curveNodes;              // port: the curved roads' lanes (rebuildCurveNodes), after the items'
   std::vector<int> railLinks;               // port: tram connectors between tram tracks and railway tracks (linkTramsToRail)
+  // port: changes whenever the lanes do (bumpLaneVersion: removeNodeList, and linkTramsToRail, the last step of
+  // buildLaneGraph, addItemNodes and rebuildCurveNodes), from one counter for all graphs, so a rebuilt graph never
+  // repeats an old value; not for the aircraft's and boats' inline nodes (engine/sim_air.cpp), which are no lanes
+  uint64_t laneVersion = 0;
 
   // FUN_100e2070: nodes with cellX ∈ [x−3, x+w+3], cellZ ∈ [z−3, z+l+3] and all mask bits, in bucket row,
   // bucket column, bucket list order
@@ -61,6 +65,8 @@ struct LaneGraph {
   // cost = Σ length / speedLimit (seconds of travel)
   bool search(int start, int goal, bool ignoreTraffic, std::vector<int>& path, float& cost) const;
 };
+
+void bumpLaneVersion(LaneGraph& G);
 
 // Point and tangent of a node's curve at t ∈ [0, 1] (control points p0 + f0·L/3, p1 − f1·L/3).
 render::Vec3 laneBezier(const LaneNode& n, float t);

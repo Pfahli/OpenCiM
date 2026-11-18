@@ -29,6 +29,15 @@ class TransportObj;
 namespace sim {
 
 // a vehicle or character template (gsGridObject) as movement and drawing use it
+// the script-field slots the per-frame field syncs write into (setPoseFields, syncVehicleFields): fieldValues
+// entries are never erased and unordered_map keeps element addresses, so the pointers stay valid while the object
+// lives; serial says which object they belong to (serials are never reused, 0 = none yet)
+struct FieldSlots {
+  uint64_t serial = 0;
+  script::Value *position = nullptr, *globalPos = nullptr, *orientation = nullptr;
+  script::Value *model = nullptr, *instance = nullptr;  // <model>, <instance>: looked up on their first write
+};
+
 struct UnitModel {
   ObjectObj* object = nullptr;
   float frontOffset = 0, rearOffset = 0, frontAnchor = 0, rearAnchor = 0;
@@ -85,6 +94,7 @@ struct Mover {
   bool crashing = false; // agent flag 0x40000: claims frozen, decelerates 4/s, drifts by crashOffset
   render::Vec3 crashOffset{};
   script::Ref<script::Object> controller;  // traffic: the gsGridVehicleController that picking sees
+  FieldSlots controllerSlots;               // its pose fields (syncVehicleFields)
   // animated parts (rotors, propellers, paddle wheels; gsGridVehicle::move L:0x081adca0.c:604-690): the shader
   // parameter custom4 of the model's materials, x = the accumulated angle, y = the spin-up r (0..12; −1 = the
   // template's initial value, read as full speed when moving); stepAnimatedParts
@@ -142,6 +152,7 @@ struct LineStopState {
 
 struct VehicleState {
   script::Ref<script::Object> object;
+  FieldSlots objectSlots;  // its <model>, <instance> and pose fields (syncVehicleFields)
   int line = -1;
   int mover = -1;
   std::vector<Unit> units;
@@ -240,7 +251,8 @@ struct Character {
   render::Vec3 goal;           // where a virtual walk ends
   bool done() const { return virtualLeft >= 0 ? virtualLeft <= 0 : next >= path.size(); }
   CharacterAnimation anim;     // walk / idle blend (engine/skinning.h)
-  script::Ref<script::Object> controller;
+  script::Ref<script::Object> controller;  // made on demand (characterController): an event, a pick, a script
+  FieldSlots controllerSlots;               // its pose fields (syncCharacterFields)
   uint8_t animal = 0;          // 1 a bird (0x07050300 list), 2 a ground animal (0x07050400); people 0
   uint16_t anchor = 0;         // animals: the home block (x >> 5) | (z >> 5) << 8 in q-cells (+0x80)
   int target[3] = {0, 0, 0};   // birds: the q-cell and altitude (1/256 cell) flown to (+0x20..+0x2c)
@@ -306,7 +318,7 @@ float segmentBetween(SimState& s, const LineState& line, const LineStopState& a,
 bool computeSegment(SimState& s, LineState& line, size_t k);
 // platforms and every segment of a line; the unreachable count
 int relinkLine(script::VM& vm, GridObj* grid, SimState& s, LineState& line);
-void syncVehicleFields(const SimState& s);
+void syncVehicleFields(SimState& s);
 
 // MSVC rand(): the engine's random stream
 int rnd(SimState& s);
@@ -371,7 +383,15 @@ struct PlacedPose {
 };
 PlacedPose unitPose(const SimState& s, const Mover& v, const Unit& u, float r);
 render::Mat4 poseMatrix(const PlacedPose& p);
-void setPoseFields(script::Object* o, const PlacedPose& p);
+// writes position, globalPos and orientation; with slots, through the cached field slots and only the values that
+// differ (the fields end the same either way)
+void setPoseFields(script::Object* o, const PlacedPose& p, FieldSlots* slots = nullptr);
+// the same for a character at pos facing (sin yaw, 0, cos yaw): the orientation straight from the yaw
+void setCharacterPoseFields(script::Object* o, const render::Vec3& pos, float yaw, FieldSlots* slots = nullptr);
+// the slots of o, (re)looked up when they belong to another object
+FieldSlots& fieldSlots(script::Object* o, FieldSlots& slots);
+// writes v into slot unless it already holds exactly that (same type and bits)
+void setSlot(script::Value& slot, const script::Value& v);
 // the nearest door point of a line vehicle for a pedestrian at from (FUN_10108350); false without a live agent
 bool vehicleDoorPoint(const SimState& s, const VehicleState& v, const render::Vec3& from, render::Vec3& out);
 // the world centre of an item and its footprint after the orientation swap

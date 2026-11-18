@@ -33,8 +33,17 @@ struct SurfaceMap {
   // texture (a texture unit fewer for the shader hooks)
   std::vector<uint8_t> trodden;
   uint32_t topTexture = 0;         // GL RG16 (r top, g trodden), LINEAR (exact reads: texelFetch)
-  int topX0 = 0, topZ0 = 0, topX1 = -1, topZ1 = -1;
+  // the top texture's texels to upload: a flag per tile of kTopTile² texels (surfaceMarkTop), and the packing buffer,
+  // kept between uploads
+  static constexpr int kTopTile = 64;
+  int topTilesW = 0, topTilesH = 0;
+  std::vector<uint8_t> topDirty;
+  bool topAnyDirty = false;
+  std::vector<uint16_t> topPack;
 };
+
+// marks the top texture's texels x0..x1, z0..z1 (clamped) for the next upload
+void surfaceMarkTop(SurfaceMap& m, int x0, int z0, int x1, int z1);
 
 // covers [originX, originX + sizeX) × [originZ, originZ + sizeZ)
 void surfaceMapInit(SurfaceMap& m, float originX, float originZ, float sizeX, float sizeZ);
@@ -43,7 +52,7 @@ void surfaceMapInit(SurfaceMap& m, float originX, float originZ, float sizeX, fl
 void surfaceMapPaint(SurfaceMap& m, const render::MeshData& mesh, const render::Mat4& world,
                      const std::vector<render::GpuMaterial>& materials, bool items);
 // copies the rect x0..x1, z0..z1 of a trodden map (w texels wide, its texel (0, 0) at originX, originZ, 1 m texels)
-// into the top map's second channel
+// into the top map's second channel; only texels that change are marked for the upload
 void surfaceMapTrodden(SurfaceMap& m, const uint8_t* bytes, int w, float originX, float originZ, int x0, int z0, int x1,
                        int z1);
 // uploads the painted texels (creates the texture on first use)
