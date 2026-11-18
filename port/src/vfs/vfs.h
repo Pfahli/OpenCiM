@@ -89,8 +89,9 @@ class Vfs {
  private:
   void scanTree(const std::filesystem::path& root, const std::string& keyPrefix, bool skipUserdata,
                 const std::string* overrideBy = nullptr);
+  // keepOpen: the install's archives, which do not change while the game runs, keep their file open for reads
   void mountArchive(const std::filesystem::path& file, const std::string& relNoExt, const std::string& keyPrefix,
-                    bool plainOnly = false);
+                    bool plainOnly = false, bool keepOpen = false);
   void scanOriginal();
 
   std::filesystem::path installRoot_;

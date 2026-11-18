@@ -141,7 +141,7 @@ void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skip
         mountArchive(e.path(), relPath, keyPrefix);
       } else if (hasGsExtension(e.path())) {
         std::string relNoExt = relPath.substr(0, relPath.size() - 3);
-        mountArchive(e.path(), relNoExt, keyPrefix);
+        mountArchive(e.path(), relNoExt, keyPrefix, false, install);
       } else {
         Record r;
         r.kind = Kind::Loose;
@@ -154,8 +154,10 @@ void Vfs::scanTree(const fs::path& root, const std::string& keyPrefix, bool skip
   walk(root, "");
 }
 
-void Vfs::mountArchive(const fs::path& file, const std::string& relNoExt, const std::string& keyPrefix, bool plainOnly) {
+void Vfs::mountArchive(const fs::path& file, const std::string& relNoExt, const std::string& keyPrefix, bool plainOnly,
+                       bool keepOpen) {
   Archive a;
+  a.keepOpen = keepOpen;
   std::string err;
   if (!a.open(file, &err)) {
     LOG_WARN("vfs: skipping archive '%s': %s", pathToUtf8(file).c_str(), err.c_str());

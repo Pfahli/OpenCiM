@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,6 +23,9 @@ struct Archive {
   std::optional<std::string> mountPath;     // chunk 0x01140000 (absolute mount)
   std::vector<ArchiveEntry> entries;
   std::string trailer;                      // 0x00000001 comment, shipped archives only
+  // Keep the file open after the first read instead of opening it for every read (set before open(); the install's
+  // archives). Safe to read from several threads.
+  bool keepOpen = false;
 
   static constexpr uint32_t kStored = 0x01110000;
   static constexpr uint32_t kZlib = 0x01120000;
@@ -36,6 +40,11 @@ struct Archive {
   // Virtual path prefix of this archive's entries. relPath is the archive's path relative to the root it was found
   // under, with '/' separators and without the ".gs" extension.
   std::string virtualPrefix(const std::string& relPathNoExt) const;
+
+ private:
+  struct OpenFile;
+  std::shared_ptr<OpenFile> open_;  // keepOpen: the handle, opened on the first read
+  bool readAt(uint64_t offset, void* dst, size_t n, std::string* error) const;
 };
 
 // Header check used by validatePackage: magic "GS10" and size == file length - 8.

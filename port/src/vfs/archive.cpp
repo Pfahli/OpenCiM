@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+
+#include <windows.h>
 
 #include "core/deflate.h"
 #include "core/inflate.h"
@@ -38,6 +41,7 @@ bool fail(std::string* error, const std::string& msg) {
 
 bool Archive::open(const std::filesystem::path& path, std::string* error) {
   file = path;
+  open_ = keepOpen ? std::make_shared<OpenFile>() : nullptr;
   entries.clear();
   parentPrefix.reset();
   mountPath.reset();
@@ -104,16 +108,55 @@ bool Archive::open(const std::filesystem::path& path, std::string* error) {
   return true;
 }
 
-bool Archive::read(const ArchiveEntry& e, std::vector<uint8_t>& out, std::string* error) const {
-  File f(file);
-  if (!f.f) return fail(error, "cannot open archive");
-  if (e.tag == kStored) {
-    out.resize(e.size);
-    if (!f.readAt(e.offset, out.data(), e.size)) return fail(error, "short read");
+// a Win32 handle (no C runtime stream: an install with many addon archives would exhaust the streams); ReadFile at
+// an explicit offset needs no shared file position, so reads from several threads need no lock
+struct Archive::OpenFile {
+  std::mutex m;  // the first open
+  HANDLE h = INVALID_HANDLE_VALUE;
+  bool tried = false;
+  ~OpenFile() {
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+  }
+};
+
+bool Archive::readAt(uint64_t offset, void* dst, size_t n, std::string* error) const {
+  if (keepOpen) {
+    if (!open_) return fail(error, "cannot open archive");  // open() not called or failed
+    HANDLE h;
+    {
+      std::lock_guard<std::mutex> lock(open_->m);
+      if (!open_->tried) {
+        open_->tried = true;
+        // others may still read, write, rename or delete the file, as with the C runtime's fopen
+        open_->h = CreateFileW(file.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+      }
+      h = open_->h;
+    }
+    if (h == INVALID_HANDLE_VALUE) return fail(error, "cannot open archive");
+    for (auto* p = static_cast<uint8_t*>(dst); n > 0;) {
+      OVERLAPPED ov{};
+      ov.Offset = DWORD(offset);
+      ov.OffsetHigh = DWORD(offset >> 32);
+      DWORD want = DWORD(std::min<size_t>(n, 1u << 30)), got = 0;
+      if (!ReadFile(h, p, want, &got, &ov) || got == 0) return fail(error, "short read");
+      p += got, offset += got, n -= got;
+    }
     return true;
   }
+  File f(file);
+  if (!f.f) return fail(error, "cannot open archive");
+  if (!f.readAt(offset, dst, n)) return fail(error, "short read");
+  return true;
+}
+
+bool Archive::read(const ArchiveEntry& e, std::vector<uint8_t>& out, std::string* error) const {
+  if (e.tag == kStored) {
+    out.resize(e.size);
+    return readAt(e.offset, out.data(), e.size, error);
+  }
   std::vector<uint8_t> packed(e.packedSize);
-  if (!f.readAt(e.offset, packed.data(), packed.size())) return fail(error, "short read");
+  if (!readAt(e.offset, packed.data(), packed.size(), error)) return false;
   if (!zlibInflate(packed, out, e.size) || out.size() != e.size) return fail(error, "corrupted");
   return true;
 }
@@ -121,16 +164,13 @@ bool Archive::read(const ArchiveEntry& e, std::vector<uint8_t>& out, std::string
 bool Archive::readHead(const ArchiveEntry& e, std::vector<uint8_t>& out, size_t n) const {
   n = std::min<size_t>(n, e.size);
   if (e.tag == kStored) {
-    File f(file);
     out.resize(n);
-    return f.f && f.readAt(e.offset, out.data(), n);
+    return readAt(e.offset, out.data(), n, nullptr);
   }
   if (n < e.size) {
     // the start of the packed data is usually enough (a few hundred bytes give a DDS header); else all of it
-    File f(file);
-    if (!f.f) return false;
     std::vector<uint8_t> packed(std::min<size_t>(e.packedSize, 4096 + 2 * n));
-    if (!f.readAt(e.offset, packed.data(), packed.size())) return false;
+    if (!readAt(e.offset, packed.data(), packed.size(), nullptr)) return false;
     if (zlibInflateHead(packed, out, n)) return true;
   }
   if (!read(e, out)) return false;
