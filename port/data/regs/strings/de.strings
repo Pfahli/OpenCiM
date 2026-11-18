@@ -15,10 +15,13 @@ $regs_antialiasing_values = ["Aus", "2x", "4x", "8x"];
 // nach gespeichertem Wert ($shadows) bzw. Samples / 2 indiziert, wie die Seite des Spiels es tut
 $regs_shadows_byValue = ["Aus", "Niedrig", "Hoch", "Sehr hoch", "Sehr hoch", "Ultra", "Ultra", "Ultra", "Ultra"];
 $regs_antialiasing_byHalf = ["Aus", "2x", "4x", "6x", "8x"];
-$regs_colorStyle_item = "Farbstil: %0";
+$regs_colorStyle_label = "Farbstil";
 $regs_colorStyle_values = ["Original", "Lebendig", "Warm", "Kühl", "Filmisch", "Schwarzweiß"];
-$regs_lensBlur_item = "Tiefenunschärfe: %0";
+$regs_lensBlur_label = "Tiefenunschärfe";
 $regs_lensBlur_values = ["Aus", "Leicht", "Stark", "Tilt-Shift"];
+$regs_vignette_label = "Vignette";
+$regs_filmGrain_label = "Filmkorn";
+$regs_amount_values = ["Aus", "Leicht", "Stark"];
 $regs_renderer_item = "Grafik-Engine:";
 $regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
 $regs_renderer_hint = "Gilt nach einem Neustart. Vulkan fällt auf OpenGL zurück, wenn Grafikkarte oder Treiber es nicht können";

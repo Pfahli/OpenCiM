@@ -15,10 +15,13 @@ $regs_antialiasing_values = ["Off", "2x", "4x", "8x"];
 // indexed by the stored value ($shadows) and by samples / 2, as the game's page does
 $regs_shadows_byValue = ["Off", "Low", "High", "Very high", "Very high", "Ultra", "Ultra", "Ultra", "Ultra"];
 $regs_antialiasing_byHalf = ["Off", "2x", "4x", "6x", "8x"];
-$regs_colorStyle_item = "Colour style: %0";
+$regs_colorStyle_label = "Colour style";
 $regs_colorStyle_values = ["Original", "Vibrant", "Warm", "Cool", "Cinematic", "Monochrome"];
-$regs_lensBlur_item = "Lens blur: %0";
+$regs_lensBlur_label = "Lens blur";
 $regs_lensBlur_values = ["Off", "Light", "Strong", "Tilt-shift"];
+$regs_vignette_label = "Vignette";
+$regs_filmGrain_label = "Film grain";
+$regs_amount_values = ["Off", "Light", "Strong"];
 $regs_renderer_item = "Graphics engine:";
 $regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
 $regs_renderer_hint = "Applies after a restart. Vulkan falls back to OpenGL when the graphics card or driver cannot run it";

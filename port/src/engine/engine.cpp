@@ -1,4 +1,5 @@
 #include "engine/engine.h"
+#include "engine/effects.h"
 #include "engine/grid_save.h"
 #include "engine/interaction.h"
 #include "engine/grid_edit.h"
@@ -77,6 +78,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerTerrainTools(*vm_);
   registerTemplateTools(*vm_);
   registerOsmNatives(*vm_);
+  registerStylePreviewNatives(*vm_);
   registerCurveTool(*vm_);
   registerSaveNatives(*vm_);
   registerTimelineNatives(*vm_);

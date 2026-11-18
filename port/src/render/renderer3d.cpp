@@ -504,7 +504,8 @@ void Renderer3D::destroyTarget(RenderTarget& t) {
 }
 
 void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count, const float custom0[4], const float uv[4][4],
-                          const float* rect, const float* custom1, const float* matrix, bool multiply) {
+                          const float* rect, const float* custom1, const float* matrix, bool multiply,
+                          const float* custom2) {
   if (!program) return;
   if (!quadVao_) {
     quadVbo_ = dev().createBuffer();
@@ -543,6 +544,7 @@ void Renderer3D::drawQuad(uint32_t program, const uint32_t* textures, int count,
   dev().uniform1f(l.alphaRef, -1.0f);
   if (custom0) dev().uniform4fv(l.custom[0], 1, custom0);
   if (custom1) dev().uniform4fv(l.custom[1], 1, custom1);
+  if (custom2) dev().uniform4fv(l.custom[2], 1, custom2);
   if (matrix) dev().uniformMatrix4fv(l.matrix, 1, matrix);
   for (int i = 0; i < count && i < 8; ++i) {
     dev().uniform1i(l.texture[i], i);

@@ -1,0 +1,27 @@
+// ReGS colour-style preview without a game view: the main menu's painted street, its eight layers
+// (metro/ui/menus/animation/layer_1..8.dds, layer 8 at the back) laid over each other as the menu stacks them.
+// texture0 = layer 1 (front) … texture7 = layer 8 (back)
+uniform sampler2D texture0;
+uniform sampler2D texture1;
+uniform sampler2D texture2;
+uniform sampler2D texture3;
+uniform sampler2D texture4;
+uniform sampler2D texture5;
+uniform sampler2D texture6;
+uniform sampler2D texture7;
+varying vec4 texCoord;
+
+vec3 over(vec3 c, vec4 l) { return mix(c, l.rgb, l.a); }
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  vec3 c = texture2D(texture7, uv).rgb;
+  c = over(c, texture2D(texture6, uv));
+  c = over(c, texture2D(texture5, uv));
+  c = over(c, texture2D(texture4, uv));
+  c = over(c, texture2D(texture3, uv));
+  c = over(c, texture2D(texture2, uv));
+  c = over(c, texture2D(texture1, uv));
+  c = over(c, texture2D(texture0, uv));
+  gl_FragColor = vec4(c, 1.0);
+}

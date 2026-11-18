@@ -6,12 +6,20 @@
 #include "engine/effects.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstring>
+#include <fstream>
 #include <map>
 
 #include "core/log.h"
 #include "core/text.h"
+#include "engine/api.h"
 #include "engine/display.h"
+#include "engine/gui.h"
+#include "engine/host.h"
+#include "engine/texture_upscale.h"
+#include "render/image.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "render/gpu.h"
@@ -120,6 +128,35 @@ StyleState& styleState() {
   return s;
 }
 
+// The colour-style preview of the graphics page (regsStylePreview): the game view once, ungraded and small, then
+// graded with the chosen style into the page's texture. The last such picture is kept in the user folder
+// (style-preview.png; also taken once per session after a while in a game), so the main menu shows a city too; only
+// before the first game the menu's painted street stands in
+constexpr int kPreviewW = 480, kPreviewH = 270;
+struct StylePreview {
+  RenderTarget view, out;       // view: the game view's capture; out: graded, shown by the page (rows top first)
+  Ref<Object> texture;          // the page's image (gsTextureVariant_OGL), out's colour texture
+  int style = 0, vignette = 0, grain = 0;
+  int waiting = -1;             // frames since a capture was asked for (-1: none asked)
+  bool captured = false, dirty = false;
+  bool store = false;           // the capture goes to style-preview.png (next frame)
+  bool autoTaken = false;       // this session's own capture (after kAutoFrames of game view)
+  int viewFrames = 0;
+  uint32_t layers = 0;          // the program laying the menu's layers over each other (menulayers.fragment)
+  uint32_t saved = 0;           // style-preview.png as a texture (0: not loaded or none)
+  bool savedTried = false;
+};
+
+StylePreview& stylePreview() {
+  static StylePreview* p = new StylePreview;  // left to the process end (the device goes first)
+  return *p;
+}
+constexpr int kAutoFrames = 900;
+
+std::filesystem::path previewFile() {
+  return host().userFolder.empty() ? std::filesystem::path() : host().userFolder / L"style-preview.png";
+}
+
 // colour styles: saturation, vibrance, contrast, brightness, warmth, tint, split toning (index = regsColorStyle)
 const float kColorStyles[][7] = {
     {1.00f, 0.00f, 1.00f, 1.00f, 0.00f, 0.00f, 0.0f},   // original
@@ -137,6 +174,11 @@ const float kLensBlurStrength[] = {0, 120, 250, 0};
 
 int colorStyle(VM& vm) { return std::clamp(int(settingNumber(vm, u"regsColorStyle", 0)), 0, kColorStyleCount - 1); }
 int lensBlur(VM& vm) { return std::clamp(int(settingNumber(vm, u"regsLensBlur", 0)), 0, 3); }
+// vignette and film grain (regsVignette, regsFilmGrain): off, light, strong
+const float kVignette[] = {0.0f, 0.3f, 0.55f};
+const float kFilmGrain[] = {0.0f, 0.035f, 0.06f};  // very slight: about 0.7 % and 1.2 % brightness noise
+int vignette(VM& vm) { return std::clamp(int(settingNumber(vm, u"regsVignette", 0)), 0, 2); }
+int filmGrain(VM& vm) { return std::clamp(int(settingNumber(vm, u"regsFilmGrain", 0)), 0, 2); }
 
 uint32_t postProgram(Display& d, VM& vm, const char* fragment) {
   std::vector<uint8_t> vs, fs;
@@ -147,7 +189,24 @@ uint32_t postProgram(Display& d, VM& vm, const char* fragment) {
   return p;
 }
 
-bool ensureTarget(Display& d, RenderTarget& t, int w, int h, int samples, bool depthTexture = false, bool hookData = false) {
+bool ensureTarget(Display& d, RenderTarget& t, int w, int h, int samples, bool depthTexture = false, bool hookData = false);
+
+bool stylePrograms(Display& d, VM& vm) {
+  StyleState& s = styleState();
+  if (s.failed) return false;
+  if (!s.grade) {
+    s.grade = postProgram(d, vm, "grade.fragment");
+    s.tilt = postProgram(d, vm, "tiltshift.fragment");
+    s.dof = postProgram(d, vm, "dof.fragment");
+    if (!s.grade || !s.tilt || !s.dof) {
+      s.failed = true;
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ensureTarget(Display& d, RenderTarget& t, int w, int h, int samples, bool depthTexture, bool hookData) {
   if (t.fbo && t.width == w && t.height == h && t.samples == samples && (t.depthTex != 0) == depthTexture &&
       (t.hookData != 0) == hookData)
     return true;
@@ -159,7 +218,9 @@ bool ensureTarget(Display& d, RenderTarget& t, int w, int h, int samples, bool d
 
 }  // namespace
 
-bool styleActive(VM& vm) { return colorStyle(vm) != 0 || lensBlur(vm) != 0; }
+bool styleActive(VM& vm) {
+  return colorStyle(vm) != 0 || lensBlur(vm) != 0 || vignette(vm) != 0 || filmGrain(vm) != 0 || stylePreview().waiting >= 0;
+}
 
 bool postHooksWanted(VM& vm, Object* scene) {
   static const bool registered = render::postHooksRegistered();
@@ -170,16 +231,7 @@ bool postHooksWanted(VM& vm, Object* scene) {
 
 const RenderTarget* styleTarget(Display& d, VM& vm, int w, int h, int samples) {
   StyleState& s = styleState();
-  if (s.failed) return nullptr;
-  if (!s.grade) {
-    s.grade = postProgram(d, vm, "grade.fragment");
-    s.tilt = postProgram(d, vm, "tiltshift.fragment");
-    s.dof = postProgram(d, vm, "dof.fragment");
-    if (!s.grade || !s.tilt || !s.dof) {
-      s.failed = true;
-      return nullptr;
-    }
-  }
+  if (!stylePrograms(d, vm)) return nullptr;
   for (int n = std::max(0, samples); n >= 0; n -= 2) {  // MSAA steps down by 2 like the engine's targets
     // with a depth texture for the distance blur, and the surface hooks' data while the mods have post hooks
     if (ensureTarget(d, s.input, w, h, n, true, render::postHooksRegistered())) return &s.input;
@@ -216,6 +268,19 @@ void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int 
     r.drawQuad(s.post, in, 3, texel, uv);
     image = s.postOut.color;
   }
+  // the style preview asked for the view: it, after the mods' post hooks and before the blur and grade, made small
+  if (StylePreview& pv = stylePreview(); pv.waiting >= 0 && ensureTarget(d, pv.view, kPreviewW, kPreviewH, 0)) {
+    dev().scissorTest(false);
+    dev().bindFramebuffer(pv.view.fbo);
+    dev().viewport(0, 0, kPreviewW, kPreviewH);
+    const float c0[4] = {kColorStyles[0][0], kColorStyles[0][1], kColorStyles[0][2], kColorStyles[0][3]};
+    const float c1[4] = {kColorStyles[0][4], kColorStyles[0][5], kColorStyles[0][6], 0}, c2[4] = {0, 0, 0, 0};
+    r.drawQuad(s.grade, &image, 1, c0, uv, nullptr, c1, nullptr, false, c2);
+    pv.captured = true;
+    pv.waiting = -1;
+    pv.dirty = true;
+    pv.store = true;
+  }
   if (int blur = lensBlur(vm); blur > 0 && ensureTarget(d, s.blurA, w, h, 0) && ensureTarget(d, s.blurB, w, h, 0)) {
     const float ch[4] = {1.0f / float(w), 0, kLensBlurRadius[blur], 0}, cv[4] = {0, 1.0f / float(h), kLensBlurRadius[blur], 0};
     // distance blur: thin lens focused on the camera target; tilt-shift: a sharp band at the screen centre
@@ -232,13 +297,121 @@ void styleFinish(Display& d, VM& vm, int x, int y, int w, int h, int backW, int 
     image = s.blurB.color;
   }
   const float* st = kColorStyles[colorStyle(vm)];
+  // the grain's pattern changes 24 times a second, like film frames, whatever the frame rate
+  static const auto t0 = std::chrono::steady_clock::now();
+  const float grainSeed = float(int64_t(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() * 24.0) % 977);
   const float c0[4] = {st[0], st[1], st[2], st[3]}, c1[4] = {st[4], st[5], st[6], 0};
+  const float c2[4] = {kVignette[vignette(vm)], kFilmGrain[filmGrain(vm)], grainSeed, 0};
   dev().bindFramebuffer(0);
   dev().viewport(x, backH - y - h, w, h);
   dev().scissorTest(true);
   dev().scissor(x, backH - y - h, w, h);
-  r.drawQuad(s.grade, &image, 1, c0, uv, nullptr, c1);
+  r.drawQuad(s.grade, &image, 1, c0, uv, nullptr, c1, nullptr, false, c2);
   dev().viewport(0, 0, backW, backH);
+}
+
+// once per frame before the views: the preview graded into the page's texture when something changed; without a
+// game view after a few frames, from the main menu's painted street (its layers stacked into the capture target)
+void stylePreviewFrame(Display& d, VM& vm) {
+  StylePreview& pv = stylePreview();
+  if (pv.store) {  // the last capture into the user folder: RGBA8, rows bottom first → a PNG, rows top first
+    pv.store = false;
+    if (auto file = previewFile(); !file.empty()) {
+      std::vector<uint8_t> px(size_t(kPreviewW) * kPreviewH * 4), rows(px.size());
+      dev().readPixels(pv.view.fbo, 0, 0, kPreviewW, kPreviewH, px.data());
+      for (int y = 0; y < kPreviewH; ++y)
+        std::memcpy(&rows[size_t(y) * kPreviewW * 4], &px[size_t(kPreviewH - 1 - y) * kPreviewW * 4], size_t(kPreviewW) * 4);
+      for (size_t i = 3; i < rows.size(); i += 4) rows[i] = 255;
+      std::vector<uint8_t> png = render::encodePng(rows.data(), kPreviewW, kPreviewH);
+      std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char*>(png.data()), std::streamsize(png.size()));
+      if (pv.saved) dev().destroyTexture(pv.saved);
+      pv.saved = 0, pv.savedTried = false;  // the menu takes the new one
+    }
+  }
+  if (pv.waiting >= 0 && ++pv.waiting > 4) pv.waiting = -1, pv.dirty = true;
+  if (!pv.dirty || pv.waiting >= 0 || !pv.texture) return;
+  pv.dirty = false;
+  auto* tex = dynamic_cast<TextureObj*>(pv.texture.get());
+  if (!tex || !stylePrograms(d, vm) || !ensureTarget(d, pv.out, kPreviewW, kPreviewH, 0)) return;
+  if (!pv.captured && !pv.savedTried) {  // the kept in-game picture
+    pv.savedTried = true;
+    std::vector<uint8_t> png, rgba;
+    int w = 0, h = 0;
+    if (auto file = previewFile(); !file.empty() && std::filesystem::exists(file)) {
+      std::ifstream in(file, std::ios::binary);
+      png.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    if (!png.empty() && texup::decodePng(png, rgba, w, h) && w > 0 && h > 0) {
+      for (size_t i = 0; i + 3 < rgba.size(); i += 4) std::swap(rgba[i], rgba[i + 2]);  // BGRA
+      pv.saved = d.r2d().createTextureBGRA(rgba.data(), w, h);
+    }
+  }
+  if (!pv.captured && pv.saved) {  // first rows the top, into the capture target the way a view lands there
+    if (!ensureTarget(d, pv.view, kPreviewW, kPreviewH, 0)) return;
+    const float m[4][4] = {{0, 0, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {0, 1, 0, 0}};
+    const float c0[4] = {1, 0, 1, 1}, zero[4] = {0, 0, 0, 0};
+    dev().scissorTest(false);
+    dev().bindFramebuffer(pv.view.fbo);
+    dev().viewport(0, 0, kPreviewW, kPreviewH);
+    d.r3d().drawQuad(styleState().grade, &pv.saved, 1, c0, m, nullptr, zero, nullptr, false, zero);
+  } else if (!pv.captured) {
+    // the menu picture (2:1, first rows the top): its middle at the preview's 16:9, into the capture target the
+    // way a view lands there (first rows the bottom)
+    if (!pv.layers) pv.layers = postProgram(d, vm, "menulayers.fragment");
+    uint32_t layer[8] = {};
+    for (int i = 0; i < 8; ++i) {
+      auto* t = dynamic_cast<TextureObj*>(
+          getTexture(vm, u"metro/ui/menus/animation/layer_" + std::u16string(1, char16_t(u'1' + i)) + u".dds").get());
+      layer[i] = t ? d.texture(vm, t) : 0;
+      if (!layer[i]) return;
+    }
+    if (!pv.layers || !ensureTarget(d, pv.view, kPreviewW, kPreviewH, 0)) return;
+    const float a = 0.5f - 0.5f * (2.0f * float(kPreviewH) / float(kPreviewW)), b = 1.0f - a;  // u: 2:1 → 16:9
+    const float m[4][4] = {{a, 0, 0, 0}, {b, 0, 0, 0}, {b, 1, 0, 0}, {a, 1, 0, 0}};
+    const float none[4] = {0, 0, 0, 0};
+    dev().scissorTest(false);
+    dev().bindFramebuffer(pv.view.fbo);
+    dev().viewport(0, 0, kPreviewW, kPreviewH);
+    d.r3d().drawQuad(pv.layers, layer, 8, none, m);
+  }
+  // corners TL, TR, BR, BL; out keeps the picture's top in its first rows (as the GUI's textures), the capture
+  // target its bottom
+  const float uv[4][4] = {{0, 0, 0, 0}, {1, 0, 0, 0}, {1, 1, 0, 0}, {0, 1, 0, 0}};
+  uint32_t source = pv.view.color;
+  const float* st = kColorStyles[std::clamp(pv.style, 0, kColorStyleCount - 1)];
+  const float c0[4] = {st[0], st[1], st[2], st[3]}, c1[4] = {st[4], st[5], st[6], 0};
+  // the grain a little stronger: the page shows the preview at about half its size
+  const float c2[4] = {kVignette[std::clamp(pv.vignette, 0, 2)], 1.5f * kFilmGrain[std::clamp(pv.grain, 0, 2)], 0, 0};
+  dev().scissorTest(false);
+  dev().bindFramebuffer(pv.out.fbo);
+  dev().viewport(0, 0, kPreviewW, kPreviewH);
+  d.r3d().drawQuad(styleState().grade, &source, 1, c0, uv, nullptr, c1, nullptr, false, c2);
+  dev().bindFramebuffer(0);
+  tex->gl = pv.out.color;
+  tex->width = kPreviewW, tex->height = kPreviewH;
+}
+
+// a game view was drawn: after kAutoFrames of them, once per session, the preview's picture is taken (and kept)
+void stylePreviewSawView() {
+  StylePreview& pv = stylePreview();
+  if (pv.autoTaken || ++pv.viewFrames < kAutoFrames) return;
+  pv.autoTaken = true;
+  if (pv.waiting < 0) pv.waiting = 0, pv.captured = false;
+}
+
+void registerStylePreviewNatives(VM& vm) {
+  // regsStylePreview(style, vignette, grain, capture): the graphics page's preview texture, graded with that colour
+  // style, vignette and film grain (the settings' indices); capture: take the game view again (the page opening)
+  implementGlobal(vm, u"regsStylePreview", [](VM& v, Object*, int argc, const Value* a) {
+    StylePreview& pv = stylePreview();
+    if (!pv.texture) pv.texture = v.newObject(v.findClass("gsTextureVariant_OGL"), nullptr);
+    pv.style = int(v.toInt(a[0]));
+    pv.vignette = int(v.toInt(a[1]));
+    pv.grain = int(v.toInt(a[2]));
+    if (argc > 3 && v.truthy(a[3])) pv.waiting = 0, pv.captured = false;
+    pv.dirty = true;
+    return Value::heap(VT::Object, pv.texture.get());
+  }, 3, 4);
 }
 
 void styleTakeDepth(Display& d, const RenderTarget& scene, int w, int h) {

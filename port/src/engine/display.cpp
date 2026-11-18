@@ -613,6 +613,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
   } slowFrame{logTime, frameStart, linkedBefore, linkBefore};
   syncRenderSettings(vm);
   sweepEffects(*this);
+  stylePreviewFrame(*this, vm);
   int w = window_->width(), h = window_->height();
   uint32_t background = uint32_t(vm.toInt(field(vm, win, u"background")));
   r2d_.timer = effectTimer;
