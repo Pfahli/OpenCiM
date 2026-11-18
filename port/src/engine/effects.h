@@ -28,6 +28,11 @@ void styleFinish(Display& d, script::VM& vm, int x, int y, int w, int h, int bac
                  float focus, const render::SceneView* post = nullptr);
 // The mods' post hooks are registered and the scene asks for them (gsScene.regsPostHooks, mod-manager.md §4.3).
 bool postHooksWanted(script::VM& vm, script::Object* scene);
+// The graphics page's colour-style preview (regsStylePreview): stylePreviewFrame once per frame before the views.
+void stylePreviewFrame(Display& d, script::VM& vm);
+void registerStylePreviewNatives(script::VM& vm);
+// a game view is drawn this frame (the preview keeps one picture of a game, taken after a while)
+void stylePreviewSawView();
 // The style input already holds the bloom composite: take the scene depth from bloom's scene target.
 void styleTakeDepth(Display& d, const render::RenderTarget& scene, int w, int h);
 

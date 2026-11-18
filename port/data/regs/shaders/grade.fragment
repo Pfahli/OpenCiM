@@ -1,9 +1,13 @@
 // ReGS colour styles (setting regsColorStyle): a colour grade after the scene and bloom.
-// custom0 = (saturation, vibrance, contrast, brightness), custom1 = (warmth, tint, split toning, 0)
+// custom0 = (saturation, vibrance, contrast, brightness), custom1 = (warmth, tint, split toning, 0),
+// custom2 = (vignette, film grain, grain seed, 0): the darkening at the corners and the grain's strength
 uniform sampler2D texture0;
 uniform vec4 custom0;
 uniform vec4 custom1;
+uniform vec4 custom2;
 varying vec4 texCoord;
+
+float grainHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
 void main(void) {
   vec4 c = texture2D(texture0, texCoord.xy);
@@ -17,5 +21,19 @@ void main(void) {
   col += vec3(0.06, 0.0, -0.06) * custom1.x + vec3(0.0, 0.04, 0.0) * custom1.y;
   // split toning: cool shadows, warm highlights
   col += mix(vec3(-0.02, 0.01, 0.04), vec3(0.04, 0.01, -0.03), clamp(l, 0.0, 1.0)) * custom1.z;
+  // vignette: the corners darker, the middle untouched (a little wider than high)
+  vec2 q = (texCoord.xy - 0.5) * vec2(1.0, 0.85);
+  col *= 1.0 - custom2.x * smoothstep(0.35, 0.95, length(q) * 1.414);
+  // film grain, very slight: soft specks about 1.5 px across (smoothed noise between random points), a new
+  // pattern 24 times a second (custom2.z), most in the mid tones and little in deep shadows and highlights
+  if (custom2.y > 0.0) {
+    vec2 p = gl_FragCoord.xy / 1.5 + custom2.z * vec2(31.7, 17.3);
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n = mix(mix(grainHash(i), grainHash(i + vec2(1.0, 0.0)), f.x),
+                  mix(grainHash(i + vec2(0.0, 1.0)), grainHash(i + vec2(1.0, 1.0)), f.x), f.y) - 0.5;
+    float m = clamp(l, 0.0, 1.0);
+    col += n * custom2.y * mix(0.3, 1.0, 4.0 * m * (1.0 - m));
+  }
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), c.a);
 }

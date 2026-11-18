@@ -41,11 +41,14 @@ $detailDistance = $settings.$regsDetailDistance : 1.0;
 $fpsLimit = regsStepOf($fpsValues, $settings.$fpsLimit : 0.0);
 $colorStyle = int($settings.$regsColorStyle : 0);
 $lensBlur = int($settings.$regsLensBlur : 0);
+$vignette = int($settings.$regsVignette : 0);
+$filmGrain = int($settings.$regsFilmGrain : 0);
 
 // ---- the layout (owner's request 2026-11-18): three columns with headings, like the Image quality page.
 // Display: resolution and frequency (drop-down lists), fullscreen, vsync, frame-rate limit, UI scale, cursor and
 // readouts. Quality: the preset (a drop-down list with "Custom"), shadows, antialiasing, anisotropy, distances.
-// Effects and style: HDR lighting and saturation, colour style, lens blur, day and night. The original page's own
+// Effects and style: bloom and saturation, colour style (with its preview), lens blur, vignette, film grain, day
+// and night; sharper textures sit under the quality settings. The original page's own
 // controls are moved (its variables, setters and save() stay in charge); its resolution and frequency lists are hidden
 // behind the drop-down lists, which call its selectResolution / selectFrequency.
 $regsColX = [30, 355, 680];
@@ -130,8 +133,8 @@ function regsDropItem($list, $text, $action) {
   return $regsDdItem;
 }
 
-regsRule($regsColX[1] - 15, 58, 1, 330);
-regsRule($regsColX[2] - 15, 58, 1, 330);
+regsRule($regsColX[1] - 15, 58, 1, 430);
+regsRule($regsColX[2] - 15, 58, 1, 430);
 
 // ---- display ----
 $x = $regsColX[0];
@@ -281,6 +284,20 @@ function regsSetDetailDistance() {
   regsUpdatePreset();
 }
 
+// sharper textures (port option, docs/renderer/texture-upscaling.md): textures upscaled 2x on this PC from the
+// player's own install, cached in OpenCiM	exture-cache; switched live on OK (engine/display.cpp). Missing ones are
+// made in the background; the line under it shows how far that is
+$textureUpscale = $settings.$regsTextureUpscale : false;
+$regsTextureUpscaleButton = MAIN.$ui.createChoiceButton($box.$content, "self", $regsColX[1], 404, 16, 16, "", macro :: regsSetTextureUpscale(!$textureUpscale), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+MAIN.$ui.setTooltip(regsLabel($regsColX[1] + 20, 403, $regs.$regs_textureUpscale_item), $regs.$regs_textureUpscale_hint, 0, -1);
+function regsTextureUpscaleStatus() {
+  $p = MAIN.$window.regsTextureUpscaleProgress();
+  if ($p < 0) return "";
+  return $regs.$regs_textureUpscale_progress + " " + string($p) + " %";
+}
+with (regsLabel($regsColX[1] + 20, 424, "%0")) {
+  .setArg(0, macro :: regsTextureUpscaleStatus());
+}
 // ---- effects and style ----
 $x = $regsColX[2];
 regsHeading($x, 58, $regs.$regs_g_effects);
@@ -295,50 +312,70 @@ function regsSetHDR($value) {
 regsSliderRow($saturationItem, $saturationSlider, $x, 122);
 MAIN.$ui.setSliderPos($saturationSlider, $saturation);
 
-// style (not part of the presets): colour grade and lens blur after the scene
-with (regsLabel($x, 174, $regs.$regs_colorStyle_item)) {
-  .setArg(0, macro :: $regs.$regs_colorStyle_values[$colorStyle]);
+// style (not part of the presets): colour grade and lens blur after the scene, each a drop-down list; under the
+// colour style a preview: the game view (or, in the main menu, the Vienna map picture) graded with the chosen style
+// by the engine (regsStylePreview, engine/effects.cpp)
+with (regsLabel($x, 178, $regs.$regs_colorStyle_label)) .setRect($x, 178, 100, 18);
+$regsColorStyleList = regsDropDown($x + 105, 178, 185);
+for ($i = 0; $i < #$regs.$regs_colorStyle_values; ++$i) {
+  $regsStyleItem = regsDropItem($regsColorStyleList, $regs.$regs_colorStyle_values[$i], macro($i) :: regsSetColorStyle($0));
+  if ($i == $colorStyle) MAIN.$ui.selectDropListItem($regsStyleItem);
 }
-$colorStyleSlider = regsSlider($x, 192, #$regs.$regs_colorStyle_values, $colorStyle);
-$colorStyleSlider.$action = macro :: regsSetColorStyle();
-function regsSetColorStyle() {
-  $colorStyle = int($colorStyleSlider.$value);
+with ($regsStylePreview = new_control($box.$content)) {
+  .setRect($x, 210, 256, 144);
+  .setBorder(0xFF5A5048, 1);
+  .setImage(regsStylePreview($colorStyle, $vignette, $filmGrain, true));  // true: the game view is taken again
+  .visible = true;
+  .canActivate = false;
+}
+function regsSetColorStyle($value) {
+  $colorStyle = $value;
+  regsStylePreview($colorStyle, $vignette, $filmGrain);
 }
 
-with (regsLabel($x, 226, $regs.$regs_lensBlur_item)) {
-  .setArg(0, macro :: $regs.$regs_lensBlur_values[$lensBlur]);
+with (regsLabel($x, 372, $regs.$regs_lensBlur_label)) .setRect($x, 372, 100, 18);
+$regsLensBlurList = regsDropDown($x + 105, 372, 185);
+for ($i = 0; $i < #$regs.$regs_lensBlur_values; ++$i) {
+  $regsBlurItem = regsDropItem($regsLensBlurList, $regs.$regs_lensBlur_values[$i], macro($i) :: regsSetLensBlur($0));
+  if ($i == $lensBlur) MAIN.$ui.selectDropListItem($regsBlurItem);
 }
-$lensBlurSlider = regsSlider($x, 244, #$regs.$regs_lensBlur_values, $lensBlur);
-$lensBlurSlider.$action = macro :: regsSetLensBlur();
-function regsSetLensBlur() {
-  $lensBlur = int($lensBlurSlider.$value);
+function regsSetLensBlur($value) {
+  $lensBlur = $value;
+}
+
+// vignette and film grain: off, light, strong (in the preview too)
+with (regsLabel($x, 404, $regs.$regs_vignette_label)) .setRect($x, 404, 100, 18);
+$regsVignetteList = regsDropDown($x + 105, 404, 185);
+for ($i = 0; $i < #$regs.$regs_amount_values; ++$i) {
+  $regsVignetteItem = regsDropItem($regsVignetteList, $regs.$regs_amount_values[$i], macro($i) :: regsSetVignette($0));
+  if ($i == $vignette) MAIN.$ui.selectDropListItem($regsVignetteItem);
+}
+function regsSetVignette($value) {
+  $vignette = $value;
+  regsStylePreview($colorStyle, $vignette, $filmGrain);
+}
+with (regsLabel($x, 436, $regs.$regs_filmGrain_label)) .setRect($x, 436, 100, 18);
+$regsGrainList = regsDropDown($x + 105, 436, 185);
+for ($i = 0; $i < #$regs.$regs_amount_values; ++$i) {
+  $regsGrainItem = regsDropItem($regsGrainList, $regs.$regs_amount_values[$i], macro($i) :: regsSetFilmGrain($0));
+  if ($i == $filmGrain) MAIN.$ui.selectDropListItem($regsGrainItem);
+}
+function regsSetFilmGrain($value) {
+  $filmGrain = $value;
+  regsStylePreview($colorStyle, $vignette, $filmGrain);
 }
 
 // day and night (port option; the original keeps each location's fixed time of day): the cycle length in minutes
 // of normal game speed is $regsDayLength (settings.script only, default 12)
 $dayNight = $settings.$regsDayNight : true;  // on unless the player switched it off
-$regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 283, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
-regsLabel($x + 20, 282, $regs.$regs_dayNight_item);
+$regsDayNightButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 469, 16, 16, "", macro :: regsSetDayNight(!$dayNight), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel($x + 20, 468, $regs.$regs_dayNight_item);
 function regsSetDayNight($value) {
   $dayNight = $value;
   MAIN.$ui.selectChoiceButton($dayNight ? $regsDayNightButton : null, $regsDayNightButton);
 }
 regsSetDayNight($dayNight);
 
-// sharper textures (port option, docs/renderer/texture-upscaling.md): textures upscaled 2x on this PC from the
-// player's own install, cached in OpenCiM	exture-cache; switched live on OK (engine/display.cpp). Missing ones are
-// made in the background; the line under it shows how far that is
-$textureUpscale = $settings.$regsTextureUpscale : false;
-$regsTextureUpscaleButton = MAIN.$ui.createChoiceButton($box.$content, "self", $x, 309, 16, 16, "", macro :: regsSetTextureUpscale(!$textureUpscale), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
-MAIN.$ui.setTooltip(regsLabel($x + 20, 308, $regs.$regs_textureUpscale_item), $regs.$regs_textureUpscale_hint, 0, -1);
-function regsTextureUpscaleStatus() {
-  $p = MAIN.$window.regsTextureUpscaleProgress();
-  if ($p < 0) return "";
-  return $regs.$regs_textureUpscale_progress + " " + string($p) + " %";
-}
-with (regsLabel($x + 20, 330, "%0")) {
-  .setArg(0, macro :: regsTextureUpscaleStatus());
-}
 function regsSetTextureUpscale($value) {
   $textureUpscale = $value;
   MAIN.$ui.selectChoiceButton($textureUpscale ? $regsTextureUpscaleButton : null, $regsTextureUpscaleButton);
@@ -396,10 +433,12 @@ function save() {
   MAIN.fpsLimit = $settings.$fpsLimit;
   $settings.$regsColorStyle = $colorStyle;
   $settings.$regsLensBlur = $lensBlur;
+  $settings.$regsVignette = $vignette;
+  $settings.$regsFilmGrain = $filmGrain;
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
   $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
   $settings.$regsTextureUpscale = $textureUpscale; // read every frame (engine/display.cpp)
-  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsShowFps", "regsDayNight", "regsTextureUpscale");
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsVignette", "regsFilmGrain", "regsShowFps", "regsDayNight", "regsTextureUpscale");
   $regsNewScale = $uiScale != $regsUiScaleShown;
   if ($regsNewScale) {
     $settings.$regsUiScale = $uiScaleValues[$uiScale];

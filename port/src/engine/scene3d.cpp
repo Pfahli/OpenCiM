@@ -697,6 +697,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   // port style effects (game view): the scene, or the bloom composite, goes into the style input first
   const RenderTarget* styled = nullptr;
   const bool postHooks = !rt && !grids.empty() && postHooksWanted(vm, scene);  // the mods' post hooks (render/glsl.h)
+  if (!rt && !grids.empty()) stylePreviewSawView();
   if (!rt && !grids.empty() && (styleActive(vm) || postHooks))
     styled = styleTarget(d, vm, w, h, hdr || temporal.active ? 0 : d.antialiasing);
   if (temporal.active) {
