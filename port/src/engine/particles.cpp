@@ -134,7 +134,7 @@ class ParticleEmitterObj : public Object {
   std::vector<std::string> trees;
   float land = 0, flutter = 0;
   bool emitting = false;   // gsEmittingParticleEmitter: its particles carry its child emitters
-  bool contrail = false;   // gsBoatContrain: a wake ribbon, not particles (not ported)
+  bool contrail = false;   // gsBoatContrain: a wake ribbon, not particles (tickWakes, collectBoatWakes)
 
   float termSum(VM& vm, const std::vector<Term>& t) const {
     float s = 0;
@@ -460,16 +460,20 @@ render::GpuMaterial* batchMaterial(Display& d, VM& vm, ParticleEmitterObj* e) {
 struct ModelEffects {
   bool resolved = false;
   std::vector<ParticleEmitterObj*> emitters;  // the template's direct child emitters
+  std::vector<ParticleEmitterObj*> wakes;     // its gsBoatContrain children
   float range = 0;                            // the largest maxDistance
 };
 
 void resolveEffects(ModelEffects& m, Object* model) {
   m.resolved = true;
   m.emitters.clear();
+  m.wakes.clear();
   m.range = 0;
   if (!model) return;
   for (auto& c : model->children)
-    if (auto* e = dynamic_cast<ParticleEmitterObj*>(c.get()); e && !e->destroyed && !e->contrail) {
+    if (auto* e = dynamic_cast<ParticleEmitterObj*>(c.get()); e && !e->destroyed && e->contrail)
+      m.wakes.push_back(e);
+    else if (e && !e->destroyed) {
       m.emitters.push_back(e);
       m.range = std::max(m.range, e->maxDistance);
     }
@@ -505,6 +509,24 @@ struct SimParticles {
   uint64_t treesGeneration = ~0ull, treesVersion = ~0ull;
   int fireTicks = 0;
   bool fireDone = false;
+  // gsBoatContrain instance data (createInstanceData L:0x08174780): per boat mover, the last 16 emit positions, a
+  // bit per position that is set when it lay within 1 unit of the one before (a halted boat: transparent), the next
+  // slot and the count; the ribbon mesh is rebuilt after each emission with the custom0 of that moment
+  struct Wake {
+    const Object* model = nullptr;
+    ParticleEmitterObj* emitter = nullptr;
+    Vec3 ring[16];
+    uint32_t still = 0;
+    int head = 0, count = 0;
+    float timer = 0;
+    bool dirty = false;
+    float custom0[4] = {0, 0, 0, 0};
+    Vec3 at;
+    std::shared_ptr<render::GpuMesh> mesh;
+    std::vector<render::GpuMaterial> materials;
+    const Object* materialOf = nullptr;
+  };
+  std::unordered_map<size_t, Wake> wakes;
 
   ModelEffects& model(const SimState& s, int index) {
     if (models.size() < s.models.size()) models.resize(s.models.size());
@@ -861,6 +883,77 @@ void testFire(VM& vm, GridObj* grid, SimParticles& sp) {
   LOG_INFO("particles: test fire at item %d (%d,%d): new item %d", item, it.x - 1, it.z - 1, fire);
 }
 
+// gsBoatContrain::emitParticle (L:0x081748b0), the ring part, for every mover whose head unit's model has a wake
+// emitter (background boats and the water buses of the lines alike): each emission of a boat's wake emitter (the steady
+// stream of instanceMove, density per second) stores the emitter's placed position; custom0 of the ribbon is set
+// then: ((16 - count)/density + timer, 1/density, timer - count/density, 0), which contrain-alter.vertex turns into
+// the fade of each ring point by its age (v = its index) and the fade-in right behind the boat.
+void tickWakes(VM& vm, SimState& s, SimParticles& sp, const Vec3& eye, float dt) {
+  Display* dd = display();
+  const float timer = dd ? dd->effectTimer : 0.0f;
+  for (size_t id = 0; id < s.movers.size(); ++id) {
+    Mover& m = s.movers[id];
+    if (!m.live || m.parked || m.track.nodes.empty() || m.units.empty() || m.units[0].model < 0) {
+      sp.wakes.erase(id);
+      continue;
+    }
+    const Unit& u = m.units[0];
+    const ModelEffects& fx = sp.model(s, u.model);
+    if (fx.wakes.empty()) continue;
+    ParticleEmitterObj* e = fx.wakes[0];
+    PlacedPose p = unitPose(s, m, u, m.dist);
+    Vec3 dv = p.position - eye;
+    float range = e->maxDistance > 0 ? e->maxDistance : 400.0f;
+    SimParticles::Wake& w = sp.wakes[id];
+    if (w.model != s.models[size_t(u.model)].object || w.emitter != e) {
+      w = SimParticles::Wake{};
+      w.model = s.models[size_t(u.model)].object, w.emitter = e;
+    }
+    if (dot(dv, dv) > range * range) continue;
+    int n = emissionCount(vm, e, w.timer, dt);
+    if (n <= 0) continue;
+    Vec3 at = render::transformPoint(poseMatrix(p), e->localPos);
+    if (debugParticles()) {
+      static int logged = 0;
+      if (++logged % 25 == 0) {
+        Vec3 q = at - eye;
+        LOG_INFO("particles: wake emit %zu: boat %.0f from eye, point %.0f, localPos %.1f %.1f %.1f", id, std::sqrt(dot(dv, dv)), std::sqrt(dot(q, q)), e->localPos.x, e->localPos.y, e->localPos.z);
+      }
+    }
+    for (int k = 0; k < std::min(n, 16); ++k) {
+      bool still = false;
+      if (w.count > 0) {
+        Vec3 q = w.ring[(w.head + 15) & 15] - at;
+        still = dot(q, q) < 1.0f;
+      }
+      w.still = still ? w.still | (1u << w.head) : w.still & ~(1u << w.head);
+      w.ring[w.head] = at;
+      w.head = (w.head + 1) & 15;
+      if (w.count < 16) ++w.count;
+    }
+    float rate = std::max(0.001f, e->rate(vm));
+    w.custom0[0] = float(16 - w.count) / rate + timer;
+    w.custom0[1] = 1.0f / rate;
+    w.custom0[2] = timer - float(w.count) / rate;
+    w.custom0[3] = 0;
+    w.at = at;
+    w.dirty = w.count >= 2;
+  }
+  if (debugParticles()) {
+    static int frames = 0;
+    if (++frames % 120 == 0) {
+      int shown = 0;
+      for (auto& [id, w] : sp.wakes) shown += w.count >= 2 && (~w.still & 0xFFFFu) != 0;
+      for (auto& [id, w] : sp.wakes) {
+        Vec3 q = w.at - eye;
+        LOG_INFO("particles:   wake of mover %zu: %d points, last point %.0f from eye, density %.2f, maxDistance %.0f, planeSize %.1f", id, w.count, std::sqrt(dot(q, q)), w.emitter ? w.emitter->rate(vm) : 0.0f, w.emitter ? w.emitter->maxDistance : 0.0f, w.emitter ? w.emitter->planeSize : 0.0f);
+      }
+      if (s.followed >= 0 && size_t(s.followed) < s.vehicles.size()) LOG_INFO("particles:   followed vehicle mover %d", s.vehicles[size_t(s.followed)].mover);
+      LOG_INFO("particles: %zu boat wakes, %d with moving points", sp.wakes.size(), shown);
+    }
+  }
+}
+
 }  // namespace
 
 void simParticlesTick(VM& vm, GridObj* grid, SimState& s, float dt) {
@@ -888,7 +981,94 @@ void simParticlesTick(VM& vm, GridObj* grid, SimState& s, float dt) {
   tickItems(vm, eng, grid, sp, s.eye, dt);
   tickVehicleEmitters(vm, eng, grid, s, sp, s.eye, dt);
   tickTreeEmitters(vm, eng, grid, sp, s.eye, dt);
+  tickWakes(vm, s, sp, s.eye, dt);
   stats.simMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// gsBoatContrain::emitParticle (L:0x081748b0), the mesh part: a quad strip through the ring from the oldest point,
+// two vertices per point at +-side, side = ((a + b).z, 0, -(a + b).x)*(1 - a.b/2)*planeSize with a, b the directions
+// of the segments before and after the point (the first takes its own), u = 0 / 1, v = the point's index, normal +Y,
+// white with alpha 0 on the points of a halted boat; drawn with the emitter's material (contrain.shader). The
+// original inserts it into the grid bucket under the boat; here it is a draw item of the frame.
+void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float farZ, std::vector<render::DrawItem>& items) {
+  if (!s.particles || particlesOff()) return;
+  for (auto& [id, w] : s.particles->wakes) {
+    if (debugParticles()) {
+      static int seen = 0;
+      if (++seen % 240 == 0) {
+        Vec3 q = w.at - eye;
+        LOG_INFO("particles: wake %zu seen: %d points, distance %.0f, farZ %.0f", id, w.count, std::sqrt(dot(q, q)), farZ);
+      }
+    }
+    if (!w.emitter || w.count < 2) continue;
+    Vec3 e = w.at - eye;
+    if (dot(e, e) > farZ * farZ) continue;
+    Object* matObj = nullptr;
+    try {
+      matObj = vm.resolve(vm.getMember(Value::heap(VT::Object, w.emitter), u"material")).object();
+    } catch (...) {
+    }
+    if (debugParticles()) {
+      static int calls = 0;
+      if (++calls % 240 == 0)
+        LOG_INFO("particles: wake %zu: %d points, material %p, planeSize %.2f, custom0 %.2f %.2f %.2f timer %.2f", id, w.count,
+                 (void*)matObj, w.emitter->planeSize, w.custom0[0], w.custom0[1], w.custom0[2], d.effectTimer);
+    }
+    if (!matObj) continue;
+    if (w.materials.empty() || w.materialOf != matObj) {
+      w.materials = {scriptMaterial(d, vm, matObj)};
+      w.materialOf = matObj;
+    }
+    std::copy(w.custom0, w.custom0 + 4, w.materials[0].custom[0]);
+    if (w.dirty || !w.mesh) {
+      w.dirty = false;
+      render::MeshData md;
+      const int n = w.count;
+      const float plane = w.emitter->planeSize;
+      auto pt = [&](int i) { return w.ring[(w.head + 16 - n + i) & 15]; };
+      auto dir = [&](int i) {
+        Vec3 q = pt(i + 1) - pt(i);
+        float l = std::sqrt(dot(q, q));
+        return l > 1e-5f ? q * (1.0f / l) : Vec3{0, 0, 1};
+      };
+      Vec3 cur = dir(0);
+      for (int i = 0; i < n; ++i) {
+        Vec3 prev = cur;
+        uint32_t base = uint32_t(md.vertexCount());
+        if (i != n - 1) {
+          cur = dir(i);
+          md.indices.insert(md.indices.end(), {base, base + 1, base + 2, base + 2, base + 1, base + 3});
+        }
+        float f = (1.0f - dot(prev, cur) * 0.5f) * plane;
+        Vec3 side{(prev.z + cur.z) * f, 0, -(prev.x + cur.x) * f};
+        int slot = (w.head + 16 - n + i) & 15;
+        uint32_t color = (w.still >> slot & 1u) ? 0x00FFFFFFu : 0xFFFFFFFFu;
+        for (int k = 0; k < 2; ++k) {
+          Vec3 q = k == 0 ? pt(i) + side : pt(i) - side;
+          md.positions.insert(md.positions.end(), {q.x, q.y, q.z});
+          md.normals.insert(md.normals.end(), {0.0f, 1.0f, 0.0f});
+          md.uv0.insert(md.uv0.end(), {float(k), float(i)});
+          md.colors.push_back(color);
+        }
+      }
+      render::Submesh sm;
+      sm.vertexCount = uint32_t(md.vertexCount());
+      sm.indexCount = uint32_t(md.indices.size());
+      md.submeshes.push_back(sm);
+      float r = 0;
+      for (float v : md.positions) r = std::max(r, std::fabs(v));
+      md.radius = r;
+      w.mesh = std::shared_ptr<render::GpuMesh>(new render::GpuMesh(d.r3d().upload(md)), [](render::GpuMesh* g) {
+        if (Display* dd = display()) dd->r3d().destroy(*g);
+        delete g;
+      });
+    }
+    render::DrawItem it;
+    it.mesh = w.mesh.get();
+    it.materials = &w.materials;
+    it.world = render::Mat4();
+    items.push_back(it);
+  }
 }
 
 void collectParticles(Display& d, VM& vm, Object* scene, const Vec3& eye, const Vec3& forward, const Mat4& viewProj,

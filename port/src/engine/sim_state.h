@@ -500,6 +500,8 @@ class TransportObj : public script::Object {
 void registerLineNatives(script::VM& vm);
 // the route strips of the visible lines (engine/sim_paths.cpp)
 void collectLinePaths(Display& d, script::VM& vm, SimState& s, const render::Vec3& eye, float farZ, std::vector<render::DrawItem>& items);
+// the boats' wake ribbons (gsBoatContrain, engine/particles.cpp)
+void collectBoatWakes(Display& d, script::VM& vm, SimState& s, const render::Vec3& eye, float farZ, std::vector<render::DrawItem>& items);
 // gsGaugeCtrl, gsVideo_OGL.renderViewport, gsTextureTarget_OGL.resetTexture (engine/ui_lines.cpp)
 void registerLinePanelNatives(script::VM& vm);
 

@@ -2677,6 +2677,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
   if (!s) return;
   collectCharacters(d, vm, *s, eye, viewProj, farZ, items);
   collectLinePaths(d, vm, *s, eye, farZ, items);
+  collectBoatWakes(d, vm, *s, eye, farZ, items);
   // the followed vehicle turned round or halts: a screenshot burst (every 12 frames; every 4 for the short halts)
   if (s->followShots > 0 && ++s->followFrame % (s->followShotName.rfind("halt-", 0) == 0 ? 4 : 12) == 0)
     d.requestScreenshot(s->followShotName + std::to_string(16 - s->followShots--) + ".png");

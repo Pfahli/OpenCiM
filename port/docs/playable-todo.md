@@ -202,8 +202,17 @@ modes (the editor's roads, terrain and paint tools come later):
   helicopter dust, the demolish and construction dust; sorted lit billboards with shadows, capped pool. Port change:
   helicopters board with a still rotor (`docs/simulation/boats-aircraft.md` §6.3). Screenshots in
   `port/run/particles/`.
-- [ ] Boat wakes (`gsBoatContrain`: a ribbon mesh per boat in the grid bucket, docs/renderer/particles.md §7) and
-  fires as a simulation event (building pass, `docs/simulation/grid-traffic.md` §4.4).
+- [ ] Boat wakes (`gsBoatContrain`, docs/renderer/particles.md §6.1): WIP. `engine/particles.cpp` `tickWakes` keeps the
+  16-point ring per boat and `collectBoatWakes` draws the ribbon with the emitter's `contrain.shader` material. Builds and
+  runs on GL and Vulkan, but no wake has been seen on screen yet. `REGS_DEBUG_PARTICLES=1` logs every wake: in
+  Vienna the 4 wakes are the background boats (movers 856-989, density 2/s, maxDistance 100000), all 820-955 units from
+  the camera when it follows water bus `REGS_DEBUG_FOLLOW=3:1` (mover 7), so they are culled at farZ 310. Fixed: the
+  wake used to need `Mover.boat`, which marks only background boats; now every mover whose model has a wake emitter
+  keeps one, and the water bus has its wake (12 points, 155 units from the camera; `port`'s test frame
+  `wake-fix-490` shows at most a faint streak behind it; its `planeSize` is 1.2, a ribbon ~2.4 units wide, a hairline from
+  that height). Next: look at the ribbon closely (zoomed camera, moving
+  boat) on GL and Vulkan and check its blend, alpha and width (`planeSize`) against the original.
+- [ ] Fires as a simulation event (building pass, `docs/simulation/grid-traffic.md` §4.4).
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
   cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;
   `port/run/barriers/sheet-f-rise.png`, `sheet-f-wait.png`).
