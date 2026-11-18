@@ -1549,6 +1549,11 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   Ref<Object> o = vm.newObject(stopClass, grid);
   if (auto* to = transport(o.get())) to->index = int(s.stops.size());
   o->fieldValues[u"<model>"] = Value::heap(VT::Object, t->second.get());
+  // the track templates of train stations have no $attractiveness and $maintenanceCost; ui.script's
+  // transportStopCreated and player.script's monthly stop maintenance multiply them ("Operator 3 not defined" /
+  // "Cannot read valueless variant", scenarios 4 and 5): the values of the first tram stops (stops/tram01_*.script)
+  if (station && !t->second->findVar(u"attractiveness")) t->second->var(u"attractiveness") = Value::real(0.70);
+  if (station && !t->second->findVar(u"maintenanceCost")) t->second->var(u"maintenanceCost") = Value::integer(1000);
   {
     int w = std::max(1, fieldInt(vm, t->second.get(), u"width", 1)), l = std::max(1, fieldInt(vm, t->second.get(), u"length", 1));
     int sx = (it.orient & 1) ? l : w, sz = (it.orient & 1) ? w : l;

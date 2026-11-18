@@ -502,6 +502,11 @@ void registerCoreNatives(VM& vm) {
     return Value();
   });
 
+  // ---- gsAchievements: awardAchievement does nothing in the original (L:0x080d9150); awardSteamAchievement
+  // (L:0x080d98b0) only submits to Steam, which the port has not. The scenarios' own trophies live in state.gs. ----
+  implement(vm, "gsAchievements", u"awardAchievement", [](VM&, Object*, int, const Value*) { return Value(); });
+  implement(vm, "gsAchievements", u"awardSteamAchievement", [](VM&, Object*, int, const Value*) { return Value(); });
+
   // ---- gsScript / gsObjectVariant ----
   implement(vm, "gsScript", u"getVariable", [](VM&, Object* self, int, const Value* a) {
     Value* v = self->findVar(deref(a[0]).toString());
