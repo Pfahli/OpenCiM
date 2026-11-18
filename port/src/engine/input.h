@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+
 #include "script/vm.h"
 
 namespace regs::platform {
@@ -28,5 +30,28 @@ int engineKeyOf(int vk);
 // passed on to the game); its script natives (regsSmoothCamera, regsCameraInput, regsKeyHeld)
 bool cameraInputEvent(script::VM& vm, WindowObj* w, const platform::InputEvent& e);
 void registerCameraInputNatives(script::VM& vm);
+// the pointer is over the world (the desktop's hover control is MAIN.$player or inside it), not a panel
+bool overWorld(script::VM& vm, WindowObj* w);
+
+// the controller's camera amounts of a frame (gamepad.cpp → camera_input.cpp → regsCameraInput, the gameUI extension)
+struct CameraPad {
+  float panX = 0, panY = 0;  // screen heights, screen right / down
+  float zoom = 0;            // ln of the distance factor (nearer negative), eased
+  float turn = 0;            // radians, the map counterclockwise positive, followed
+  float tilt = 0;            // radians, looking further down positive
+  bool turning = false;      // the turn stick is out of its dead zone
+  bool tiltReset = false;
+};
+void cameraPadInput(const CameraPad& p);
+
+// Game controllers (gamepad.cpp, port/docs/controller.md): once a frame after the OS pump, before dispatchInput. Reads
+// the pad (or the simulated one), moves the virtual cursor and presses buttons and keys by adding OS-style events to
+// host().input, so the game sees a mouse and keys; camera amounts go to cameraPadInput. warp: the system cursor
+// follows the virtual one (off in scripted runs)
+void gamepadFrame(Engine& eng, float dt, bool warp);
+// --at N:pad:<name>,<value> (tests): the simulated pad (a, b, x, y, lb, rb, back, start, l3, r3, up, down, left,
+// right, guide: 1 pressed / 0 released; lx, ly, rx, ry: -1..1, up positive; lt, rt: 0..1; off: the real pads again)
+void gamepadSimulate(const std::string& arg);
+void registerGamepadNatives(script::VM& vm);
 
 }  // namespace regs::engine

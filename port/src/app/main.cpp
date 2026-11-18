@@ -228,6 +228,9 @@ int main(int argc, char** argv) {
             input.push_back(c);
           }
           continue;
+        } else if (sc.action == "pad") {  // pad:<button|axis>,<value> | pad:off: the simulated controller (gamepad.cpp)
+          engine::gamepadSimulate(sc.arg);
+          continue;
         } else if (sc.action == "shot") {
           d->requestScreenshot(widen(sc.arg.c_str()));
           continue;
@@ -269,6 +272,7 @@ int main(int argc, char** argv) {
         input.push_back(e);
       }
     }
+    if (d) engine::gamepadFrame(eng, dt, scripted.empty());  // the controller: cursor, buttons, camera
     engine::dispatchInput(eng);
     eng.frame(dt);
     ++frame;

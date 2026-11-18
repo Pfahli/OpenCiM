@@ -37,7 +37,14 @@ struct CameraInput {
   bool dragging = false;
   int dragX = 0;
   bool held[kKeyCount] = {};
+  // the controller (gamepad.cpp): pan in screen heights, zoom as ln of the distance factor (eased), turn in radians
+  // (followed), tilt in radians; a turn by stick is going on, turns by stick ended
+  float padPanX = 0, padPanY = 0, padZoom = 0, padTurn = 0, padTilt = 0;
+  bool padTurning = false;
+  int padReleased = 0, padTiltReset = 0;
 } g_cam;
+
+}  // namespace
 
 // the pointer is over the world: the desktop's hover control is the player (MAIN.$player) or inside it
 bool overWorld(VM& vm, WindowObj* w) {
@@ -55,7 +62,16 @@ bool overWorld(VM& vm, WindowObj* w) {
   return false;
 }
 
-}  // namespace
+void cameraPadInput(const CameraPad& p) {
+  g_cam.padPanX += p.panX;
+  g_cam.padPanY += p.panY;
+  g_cam.padZoom += p.zoom;
+  g_cam.padTurn += p.turn;
+  g_cam.padTilt += p.tilt;
+  if (g_cam.padTurning && !p.turning) ++g_cam.padReleased;
+  g_cam.padTurning = p.turning;
+  if (p.tiltReset) ++g_cam.padTiltReset;
+}
 
 bool cameraInputEvent(VM& vm, WindowObj* w, const platform::InputEvent& e) {
   using T = platform::InputEvent::Type;
@@ -63,7 +79,7 @@ bool cameraInputEvent(VM& vm, WindowObj* w, const platform::InputEvent& e) {
     case T::KeyDown:
     case T::KeyUp:
       if (!e.system)
-        if (int k = engineKeyOf(e.key); k > 0 && k < kKeyCount) g_cam.held[k] = e.type == T::KeyDown;
+        if (int k = e.engineKey ? e.engineKey : engineKeyOf(e.key); k > 0 && k < kKeyCount) g_cam.held[k] = e.type == T::KeyDown;
       return false;
     case T::MouseDown:
     case T::MouseUp: {
@@ -124,16 +140,22 @@ void registerCameraInputNatives(VM& vm) {
     return Value::boolean(g_cam.smooth);
   }, 0, 1);
   // regsCameraInput(): [zoom eased, zoom direct (ln of the distance factor), turn eased, turn direct (radians, map
-  // counterclockwise), pan x, pan y (pixels), pivot x, pivot y, free turns ended, turning by mouse now (0/1)]; the
-  // amounts start again from zero
+  // counterclockwise), pan x, pan y (pixels), pivot x, pivot y, free turns ended, turning by mouse now (0/1),
+  // the controller: pan x, pan y (screen heights, screen right / down), zoom (ln, eased), turn (radians, followed),
+  // tilt (radians, more down positive), turning by stick now (0/1), stick turns ended, tilt resets]; the amounts start
+  // again from zero
   implementGlobal(vm, u"regsCameraInput", [](VM&, Object*, int, const Value*) {
     auto arr = make<ArrayObj>();
     arr->items = {Value::real(g_cam.zoomSmooth), Value::real(g_cam.zoomDirect), Value::real(g_cam.turnSmooth),
                   Value::real(g_cam.turnDirect), Value::real(g_cam.panX),       Value::real(g_cam.panY),
                   Value::real(g_cam.pivotX),     Value::real(g_cam.pivotY),     Value::integer(g_cam.released),
-                  Value::integer(g_cam.dragging ? 1 : 0)};
+                  Value::integer(g_cam.dragging ? 1 : 0),
+                  Value::real(g_cam.padPanX),    Value::real(g_cam.padPanY),    Value::real(g_cam.padZoom),
+                  Value::real(g_cam.padTurn),    Value::real(g_cam.padTilt),    Value::integer(g_cam.padTurning ? 1 : 0),
+                  Value::integer(g_cam.padReleased), Value::integer(g_cam.padTiltReset)};
     g_cam.zoomSmooth = g_cam.zoomDirect = g_cam.turnSmooth = g_cam.turnDirect = g_cam.panX = g_cam.panY = 0;
-    g_cam.released = 0;
+    g_cam.padPanX = g_cam.padPanY = g_cam.padZoom = g_cam.padTurn = g_cam.padTilt = 0;
+    g_cam.released = g_cam.padReleased = g_cam.padTiltReset = 0;
     return Value::heap(VT::Array, arr.get());
   }, 0, 0);
   // regsKeyHeld(name): the key (a controls.keys name such as "Left" or "MouseMiddle") is held down now

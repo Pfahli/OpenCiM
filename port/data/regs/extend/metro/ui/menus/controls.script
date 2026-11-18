@@ -1,0 +1,160 @@
+// ReGS extension of the controls page (metro/ui/menus/controls.script, used as installed; see VM::extendSource).
+// Controller (owner's request 2026-11-18, port/docs/controller.md): a fourth category "Controller" next to the game's
+// Camera / Shortcuts / Map editor lists, with the port's controller settings and the button legend:
+// * $regsController (on): the pad plays the game alongside the mouse and keyboard (engine/gamepad.cpp);
+// * $regsControllerCursor, $regsControllerCamera (1.0 = 100 %, 25 .. 250 %): the cursor's and the camera's speed;
+// * $regsControllerInvertTilt (off): stick up looks down.
+// They apply on OK like the game's keys (the engine reads them every frame); Cancel keeps the old ones.
+//@rename categorySelected regsBaseCategorySelected
+//@rename save regsBaseSave
+
+if (file_exists("regs/strings/"+MAIN.$language+".strings")) {
+  $regs = load "/regs/strings/"+MAIN.$language+".strings";
+} else {
+  $regs = load "/regs/strings/en_US.strings";
+}
+
+//@base
+
+$regsPadOn = MAIN.$settings.$regsController : true;
+$regsPadCursor = MAIN.$settings.$regsControllerCursor : 1.0;
+$regsPadCamera = MAIN.$settings.$regsControllerCamera : 1.0;
+$regsPadInvert = MAIN.$settings.$regsControllerInvertTilt : false;
+$regsPadCategory = #$categoryBar.$buttons;
+// the list's checkboxes and sliders: named here at top level, so the functions below share them (a variable first
+// set inside a function would be that function's own)
+$regsPadOnButton = null;
+$regsPadInvertButton = null;
+$regsPadCursorSlider = null;
+$regsPadCameraSlider = null;
+
+// the category button, the four centred as the game centres its three
+$regsX = int(($categoryBar.width - ($regsPadCategory + 1) * 129) * 0.5);
+foreach ($categoryBar.$buttons) {
+  .setRect($regsX, 0, 128, 32);
+  $regsX += 129;
+}
+with ($regsPadButton = MAIN.$ui.createChoiceButton($categoryBar, $categoryBar, $regsX, 0, 128, 32, $regs.$regs_controller_category, macro($categoryBar, $regsPadCategory) :: MAIN.$ui.selectCategory($0, $1), "/metro/ui/category_ia.dds", "/metro/ui/category_se.dds", "/metro/ui/category_ia.dds")) {
+  .setMargins(0, 0, 0, 5);
+}
+$categoryBar.$buttons[] = $regsPadButton;
+
+function categorySelected() {
+  $pad = $categoryBar.$category == $regsPadCategory;
+  $primaryTitle.visible = !$pad;     // the key columns' headings
+  $secondaryTitle.visible = !$pad;
+  if (!$pad) {
+    regsBaseCategorySelected();
+    return;
+  }
+  $items = [];
+  $itemsArea.$content.clear();
+  regsPadItems();
+  MAIN.$ui.resetScrollArea($itemsArea);
+}
+
+// a row of the list: the game's striped background, a text on the left (columns: the left half, or all of it)
+function regsPadRow($y, $h, $text, $wide = false, $color = 0xFFCCCCCC) {
+  $w = $itemsArea.$content.width;
+  with ($row = new_control($itemsArea.$content)) {
+    .setRect(0, $y, $w, $h);
+    .background = ((int($y / $h) & 1) == 0) ? 0x30000000 : 0x80000000;
+    .visible = true;
+    .canActivate = false;
+  }
+  with ($label = new_control($row)) {
+    .setRect(8, 0, $wide ? $w - 16 : int($w * 0.5) - 8, $h);
+    MAIN.$ui.setTextFont(current, $color);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    .visible = true;
+    .canActivate = false;
+  }
+  $row.$label = $label;
+  return $row;
+}
+
+function regsPadStatusText() {
+  $s = regsPadStatus();
+  if ($s == 1) return $regs.$regs_controller_xbox;
+  if ($s == 2) return $regs.$regs_controller_ps;
+  if ($s == 3) return $regs.$regs_controller_sim;
+  return $regs.$regs_controller_none;
+}
+
+function regsPadCheckbox($row, $action) {
+  return MAIN.$ui.createChoiceButton($row, "self", int($row.width * 0.5), 11, 16, 16, "", $action, "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+}
+
+function regsPadItems() {
+  $h = 38;
+  $half = int($itemsArea.$content.width * 0.5);
+  with (regsPadRow(0, $h, $regs.$regs_controller_status, true).$label) {
+    .setArg(0, macro :: regsPadStatusText());
+  }
+  $row = regsPadRow($h, $h, $regs.$regs_controller_enable);
+  $regsPadOnButton = regsPadCheckbox($row, macro :: regsPadSetOn(!$regsPadOn));
+  regsPadSetOn($regsPadOn);
+
+  with (regsPadRow($h * 2, $h, $regs.$regs_controller_cursor).$label) {
+    .setArg(0, macro :: int($regsPadCursor * 100.0 + 0.5));
+  }
+  $regsPadCursorSlider = MAIN.$ui.createSlider($itemsArea.$content, $regsPadCursor, 0.25, 2.5, $half, $h * 2 + 6, 215, 27);
+  $regsPadCursorSlider.$action = macro :: regsPadSetCursor();
+
+  with (regsPadRow($h * 3, $h, $regs.$regs_controller_camera).$label) {
+    .setArg(0, macro :: int($regsPadCamera * 100.0 + 0.5));
+  }
+  $regsPadCameraSlider = MAIN.$ui.createSlider($itemsArea.$content, $regsPadCamera, 0.25, 2.5, $half, $h * 3 + 6, 215, 27);
+  $regsPadCameraSlider.$action = macro :: regsPadSetCamera();
+
+  $row = regsPadRow($h * 4, $h, $regs.$regs_controller_invert);
+  $regsPadInvertButton = regsPadCheckbox($row, macro :: regsPadSetInvert(!$regsPadInvert));
+  regsPadSetInvert($regsPadInvert);
+
+  // the button legend: [button, what it does] pairs from the strings
+  $y = $h * 5 + 12;
+  regsPadRow($y, 30, $regs.$regs_controller_legend, true, 0xFFFFFFFF);
+  $y += 30;
+  foreach ($regs.$regs_controller_legend_items) {
+    $pair = current;
+    $row = regsPadRow($y, 30, $pair[0]);
+    with (new_control($row)) {
+      .setRect($half, 0, $row.width - $half - 8, 30);
+      MAIN.$ui.setTextFont(current);
+      .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+      .text = $pair[1];
+      .visible = true;
+      .canActivate = false;
+    }
+    $y += 30;
+  }
+}
+
+function regsPadSetOn($value) {
+  $regsPadOn = $value;
+  MAIN.$ui.selectChoiceButton($regsPadOn ? $regsPadOnButton : null, $regsPadOnButton);
+}
+
+function regsPadSetInvert($value) {
+  $regsPadInvert = $value;
+  MAIN.$ui.selectChoiceButton($regsPadInvert ? $regsPadInvertButton : null, $regsPadInvertButton);
+}
+
+function regsPadSetCursor() {
+  $regsPadCursor = $regsPadCursorSlider.$value;
+}
+
+function regsPadSetCamera() {
+  $regsPadCamera = $regsPadCameraSlider.$value;
+}
+
+// the original save() (renamed regsBaseSave) stores the keys, then the controller settings
+function save() {
+  regsBaseSave();
+  MAIN.$settings.$regsController = $regsPadOn;
+  MAIN.$settings.$regsControllerCursor = $regsPadCursor;
+  MAIN.$settings.$regsControllerCamera = $regsPadCamera;
+  MAIN.$settings.$regsControllerInvertTilt = $regsPadInvert;
+  MAIN.$settings.exportVariables("regsController", "regsControllerCursor", "regsControllerCamera", "regsControllerInvertTilt");
+}

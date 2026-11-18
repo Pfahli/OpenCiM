@@ -41,6 +41,7 @@ add_library(regs_engine STATIC
   src/engine/font.cpp
   src/engine/input.cpp
   src/engine/camera_input.cpp
+  src/engine/gamepad.cpp
   src/render/gl.cpp
   src/render/gpu_gl.cpp
   src/render/image.cpp
@@ -101,6 +102,7 @@ add_library(regs_engine STATIC
   src/engine/debug_economy.cpp
   src/platform/window_win32.cpp
   src/platform/touchpad_win32.cpp
+  src/platform/gamepad_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp
 )

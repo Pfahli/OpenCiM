@@ -121,6 +121,11 @@ it is, what already exists, and the open decisions. Order is not priority.
 ## Gameplay and comfort
 
 * **Controller support.** Play with a gamepad (Xbox, PlayStation, Switch Pro, Steam Deck).
+  * **Done (2026-11-18), first version: [controller.md](controller.md).** XInput (+ DualShock 4 / DualSense raw HID)
+    on Windows, a virtual cursor on the left stick (camera pan at the screen edge or with LB), right stick turn and
+    tilt, triggers zoom, the game's keys on the buttons, a Controller page in the controls settings. Still open from
+    this list: text entry, radial menus, snapping to buttons, button prompts, rumble, remapping, SDL2 for other
+    platforms; not yet tried on a real pad.
   * How: XInput on Windows, or SDL2's game-controller API, which covers all pads and the later ARM/Linux builds
     (`docs/ui/input.md` describes the input path the port feeds today). The left stick pans the camera, the right
     stick turns and tilts it, the triggers zoom; a virtual cursor (stick or touchpad) drives the HUD, the tools and

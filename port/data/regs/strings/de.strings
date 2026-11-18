@@ -252,3 +252,32 @@ $regs_brush_circle = "Pinsel: Kreis";
 $regs_brush_square = "Pinsel: Quadrat";
 $regs_brush_diamond = "Pinsel: Raute";
 $regs_brush_line = "Pinsel: Linie (ziehen: ein gerader Streifen in Pinselbreite vom Klick bis zum Loslassen; Pflaster und Felder)";
+// der Controller (Seite Steuerung, Kategorie "Controller"; port/docs/controller.md)
+$regs_controller_category = "Controller";
+$regs_controller_status = "Controller: %0";
+$regs_controller_none = "keiner angeschlossen";
+$regs_controller_xbox = "angeschlossen (Xbox-kompatibel, XInput)";
+$regs_controller_ps = "angeschlossen (PlayStation)";
+$regs_controller_sim = "simuliert (Testlauf)";
+$regs_controller_enable = "Mit Controller spielen (Maus und Tastatur bleiben aktiv)";
+$regs_controller_cursor = "Cursorgeschwindigkeit: %0%%";
+$regs_controller_camera = "Kamerageschwindigkeit: %0%%";
+$regs_controller_invert = "Neigung umkehren (Stick hoch blickt nach unten)";
+$regs_controller_legend = "Tasten (PlayStation in Klammern)";
+$regs_controller_legend_items = [
+  ["Linker Stick", "Cursor (feiner über Fenstern); am Bildrand: verschieben"],
+  ["LB (L1) + linker Stick", "Karte verschieben, der Cursor bleibt"],
+  ["Rechter Stick", "Drehen (seitlich), neigen (hoch und runter)"],
+  ["R3 (rechten Stick drücken)", "Neigung zurück auf die des Spiels"],
+  ["LT / RT (L2 / R2)", "Herauszoomen / hineinzoomen"],
+  ["A (Kreuz)", "Linksklick; halten zum Ziehen (Gleise, Regler)"],
+  ["B (Kreis)", "Rechtsklick (Objekt drehen, Ziehen abbrechen); halten: Werkzeug verlassen"],
+  ["Start (Options)", "Esc: Pausenmenü, Fenster schließen"],
+  ["Y (Dreieck)", "Baumenü"],
+  ["X (Quadrat)", "Abrisswerkzeug"],
+  ["Ansicht / Back (Create, Touchpad)", "Untergrundansicht"],
+  ["RB (R1)", "Pause / weiter"],
+  ["Steuerkreuz links / rechts", "Spielgeschwindigkeit langsamer / schneller"],
+  ["Steuerkreuz hoch / runter", "Linienfenster / Fahrzeugfenster"],
+  ["L3 (linken Stick drücken)", "Auswahlwerkzeug"]
+];

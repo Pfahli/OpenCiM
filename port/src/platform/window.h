@@ -38,6 +38,8 @@ struct InputEvent {
   // centre moved), 4 end (the fingers lifted)
   uint8_t gesture = 0;
   float value = 0, dx = 0, dy = 0;
+  // KeyDown/KeyUp made by the engine itself (the controller's buttons): the engine key code, used instead of key
+  int engineKey = 0;
 };
 
 class Window {
@@ -50,6 +52,8 @@ class Window {
   virtual void setTitle(const std::u16string& title) = 0;
   virtual void setVsync(bool on) = 0;
   virtual void showCursor(bool on) = 0;
+  // moves the system cursor to a client position (the controller's virtual cursor; no effect without the focus)
+  virtual void warpCursor(int, int) {}
   virtual int width() const = 0;   // client size in pixels
   virtual int height() const = 0;
   // Switches between a captioned window with a w × h client area and fullscreen (borderless over the monitor the

@@ -252,3 +252,32 @@ $regs_brush_circle = "Brush: circle";
 $regs_brush_square = "Brush: square";
 $regs_brush_diamond = "Brush: diamond";
 $regs_brush_line = "Brush: line (drag: a straight strip as wide as the brush from the press to the release; pavement and fields)";
+// the controller (controls page, category "Controller"; port/docs/controller.md)
+$regs_controller_category = "Controller";
+$regs_controller_status = "Controller: %0";
+$regs_controller_none = "none connected";
+$regs_controller_xbox = "connected (Xbox-compatible, XInput)";
+$regs_controller_ps = "connected (PlayStation)";
+$regs_controller_sim = "simulated (test run)";
+$regs_controller_enable = "Play with a controller (mouse and keyboard keep working)";
+$regs_controller_cursor = "Cursor speed: %0%%";
+$regs_controller_camera = "Camera speed: %0%%";
+$regs_controller_invert = "Invert tilt (stick up looks down)";
+$regs_controller_legend = "Buttons (PlayStation in brackets)";
+$regs_controller_legend_items = [
+  ["Left stick", "Cursor (finer over panels); at the screen edge: pan"],
+  ["LB (L1) + left stick", "Pan the map, the cursor stays"],
+  ["Right stick", "Turn (sideways), tilt (up and down)"],
+  ["R3 (click the right stick)", "Tilt back to the game's angle"],
+  ["LT / RT (L2 / R2)", "Zoom out / in"],
+  ["A (Cross)", "Left click; hold to drag (tracks, sliders)"],
+  ["B (Circle)", "Right click (turn an object, stop a drag); hold: leave the tool"],
+  ["Start (Options)", "Esc: pause menu, close windows"],
+  ["Y (Triangle)", "Construction menu"],
+  ["X (Square)", "Bulldozer"],
+  ["View / Back (Create, touchpad)", "Underground view"],
+  ["RB (R1)", "Pause / resume"],
+  ["D-pad left / right", "Game speed slower / faster"],
+  ["D-pad up / down", "Line panel / vehicle panel"],
+  ["L3 (click the left stick)", "Selection tool"]
+];

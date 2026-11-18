@@ -563,7 +563,7 @@ void dispatchInput(Engine& eng) {
       case T::KeyDown:
       case T::KeyUp: {
         if (e.system) break;  // WM_SYSKEY* never reach the engine (Alt, F10)
-        int k = vkToKey(e.key);
+        int k = e.engineKey ? e.engineKey : vkToKey(e.key);
         if (!k) break;
         key(e.type == T::KeyUp ? u"keyUp" : e.repeat ? u"keyRepeat" : u"keyDown", k);
         break;
@@ -593,6 +593,7 @@ int engineKeyOf(int vk) { return vkToKey(vk); }
 
 void registerInputNatives(VM& vm) {
   registerCameraInputNatives(vm);
+  registerGamepadNatives(vm);
   if (ClassInfo* c = vm.findClass("gsDesktop")) c->factory = [](const ClassInfo* ci) { return Ref<Object>(new DesktopObj(ci)); };
   implement(vm, "gsWindow", u"addInputTarget", [](VM& v, Object* s, int argc, const Value* a) {
     auto* w = dynamic_cast<WindowObj*>(s);
