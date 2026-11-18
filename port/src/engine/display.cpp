@@ -937,9 +937,9 @@ void registerDisplayNatives(VM& vm) {
       desc.fullscreen = false;
     }
     desc.vsync = v.truthy(field(v, s, u"vsync"));
-    // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, 1 = Vulkan (falls back to OpenGL when it cannot start);
+    // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, 1 = Vulkan, the default (falls back to OpenGL when it cannot start);
     // REGS_RENDERER=gl|vulkan overrides the setting (test runs)
-    int engine = int(settingNumber(v, u"regsRenderer", 0));
+    int engine = int(settingNumber(v, u"regsRenderer", 1));
     if (const char* r = std::getenv("REGS_RENDERER")) engine = std::string(r) == "vulkan" ? 1 : 0;
     // the engine put MSAA into the window's pixel format without post-processing (and into the effect buffers with
     // it). Port: never into the pixel format, which cannot change once set; views without effects draw into a

@@ -7,8 +7,8 @@ missing or failing Vulkan device falls back to OpenGL. The reverse-engineered co
 port's side.
 
 Goals, in order: (1) the same picture as OpenGL for every scene the port draws, chosen with the existing setting
-`$regsRenderer` (graphics page: "OpenGL 3.3" / "Vulkan"); (2) OpenGL keeps working unchanged and stays the default and
-the fallback; (3) a base for raytracing, DLSS and multiview stereo later (§9). Not a goal for the first version: being
+`$regsRenderer` (graphics page: "OpenGL 3.3" / "Vulkan"); (2) OpenGL keeps working unchanged and stays the
+fallback (Vulkan is the default since 2026-11-18, owner's decision); (3) a base for raytracing, DLSS and multiview stereo later (§9). Not a goal for the first version: being
 faster than OpenGL. Parity first, then the Vulkan-only features.
 
 ## 1. Where OpenGL is called today
@@ -155,7 +155,7 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
 
 ## 7. Choosing the backend and falling back
 
-* `$regsRenderer` (settings): 0 = OpenGL 3.3, 1 = Vulkan. Read once in `window.init()`; the graphics page's choice
+* `$regsRenderer` (settings): 0 = OpenGL 3.3, 1 = Vulkan (the default when unset). Read once in `window.init()`; the graphics page's choice
   takes effect at the next start (the page says so; switching APIs while running would mean recreating every texture,
   mesh and program). `REGS_RENDERER=gl|vulkan` in the environment overrides the setting for test runs.
 * Vulkan start-up failures (no `vulkan-1.dll`, no 1.3 device with BC textures, no surface/swapchain, the built-in

@@ -6,7 +6,7 @@
 //                                upscaled, temporally with TAA, else with the spatial upscaler
 //   $settings.$regsUpscaler      0 the port's TAA / upscaler, 1 AMD FSR 3.1 (drop-down list; Vulkan; replaces TAA,
 //                                also at 100 %)
-//   $settings.$regsRenderer      0 OpenGL 3.3, 1 Vulkan: the graphics engine, chosen when the game starts (window.init)
+//   $settings.$regsRenderer      0 OpenGL 3.3, 1 Vulkan (default): the graphics engine, chosen when the game starts (window.init)
 //   $settings.$regsFrameGen      0 off, 1 FSR 3 frame generation (Vulkan, with the FSR upscaler)
 //   $settings.$regsHdr           0 off, 1 HDR output (Vulkan with Windows HDR on; engine/hdr.cpp)
 //   $settings.$regsHdrPaperWhite 80 .. 400 nits (slider, 10-nit steps): menus and the game's normal white
@@ -40,7 +40,7 @@ $hdrPeak = int($settings.$regsHdrPeak : 1000);
 $rtShadows = int($settings.$regsRtShadows : 0);
 $rtAo = int($settings.$regsRtAo : 0);
 $rtReflections = int($settings.$regsRtReflections : 0);
-$renderer = int($settings.$regsRenderer : 0);
+$renderer = int($settings.$regsRenderer : 1);
 
 // (script variables are shared with the callers: the names here are its own)
 function label($x, $y, $w, $text, $title) {
