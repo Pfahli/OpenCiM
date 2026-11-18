@@ -614,6 +614,7 @@ function regsEnlargeMap($size, $old) {
 // presses itself (loading.script extension); REGS_START_RUN=1 also starts the game clock.
 $regsStart = getenv("REGS_START");
 $regsStartRun = getenv("REGS_START_RUN") != "";
+$regsStartScenario = "";
 $regsStartOsm = "";  // (the start flag --osm: the place, read by regsStartOsmImport)
 event this.enter::["Logo1"]() {
   if ($regsStart != "") this.perform("timeout");
@@ -648,12 +649,47 @@ event this.enter::["MainMenu"]() {
       $submenu.$selectedMap = $regsStartMapFile;
       MAIN.$main.perform("ok");
     };
+  } else if (findstr($regsWhat, "scenario:") == 0) {
+    // scenario:<n or file>: main menu > new game > scenarios, that scenario chosen (any, also locked ones), OK
+    $regsStartScenario = substr($regsWhat, 9, 1000);
+    if (findstr($regsStartScenario, "/") < 0) {
+      if (findstr($regsStartScenario, "scenario") < 0 && findstr($regsStartScenario, "tutorial") < 0) {
+        $regsN = int($regsStartScenario);
+        $regsStartScenario = ($regsN < 10 ? "0" : "")+$regsN;
+        $regsStartScenario = "scenario"+$regsStartScenario;
+      }
+      if (findstr($regsStartScenario, ".scenario") < 0) $regsStartScenario = $regsStartScenario+".scenario";
+      $regsStartScenario = "metro/scenarios/"+$regsStartScenario;
+    }
+    $regsStartPlay = true;
+    echo "start flag: scenario \""+$regsStartScenario+"\"";
+    thread :: {
+      wait 0.1;
+      MAIN.$main.perform("newgame");
+      wait 0.1;
+      MAIN.$main.perform("scenarios");
+      wait 0.3;
+      $submenu.selectScenario($regsStartScenario);
+      MAIN.$main.perform("ok");
+    };
+  } else if ($regsWhat == "campaign" || $regsWhat == "tutorial") {
+    // campaign / tutorial: main menu > new game > campaign (or tutorial), OK where the menu asks
+    $regsStartPlay = true;
+    echo "start flag: "+$regsWhat;
+    thread :: {
+      wait 0.1;
+      MAIN.$main.perform("newgame");
+      wait 0.1;
+      MAIN.$main.perform($regsWhat);
+      wait 0.3;
+      if ($submenu) MAIN.$main.perform("ok");
+    };
   } else if (findstr($regsWhat, "osm:") == 0) {
     $regsStartOsm = substr($regsWhat, 4, 1000);
     echo "start flag: OpenStreetMap import of \""+$regsStartOsm+"\"";
     thread :: regsStartOsmImport();
   } else {
-    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file>, editor:<map file> or osm:<place>)";
+    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file>, editor:<map file>, scenario:<n>, campaign, tutorial or osm:<place>)";
   }
 }
 

@@ -1544,6 +1544,9 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   Ref<Object> o = vm.newObject(stopClass, grid);
   if (auto* to = transport(o.get())) to->index = int(s.stops.size());
   o->fieldValues[u"<model>"] = Value::heap(VT::Object, t->second.get());
+  // the track templates of train stations have no $attractiveness; ui.script's transportStopCreated multiplies it
+  // ("Operator 3 not defined", scenario 4's stations): the value of the first tram stops (stops/tram01_*.script)
+  if (station && !t->second->findVar(u"attractiveness")) t->second->var(u"attractiveness") = Value::real(0.70);
   {
     int w = std::max(1, fieldInt(vm, t->second.get(), u"width", 1)), l = std::max(1, fieldInt(vm, t->second.get(), u"length", 1));
     int sx = (it.orient & 1) ? l : w, sz = (it.orient & 1) ? w : l;

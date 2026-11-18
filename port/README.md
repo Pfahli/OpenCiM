@@ -33,6 +33,8 @@ loading screen's Spielen button presses itself; `data/regs/extend/metro/scripts/
 | `REGS_START=save:<name>` | loads a save (`<folder>/<name>` for one in a folder) |
 | `REGS_START=map:<map file>` | a sandbox game on a map (`testmap.grid` = `userdata/maps/testmap.grid`) |
 | `REGS_START=editor:<map file>` | opens a map in the map editor |
+| `REGS_START=scenario:<n>` | a new game of scenario n (1-12; or a file name, e.g. `tutorial`, `metro/scenarios/scenario04.scenario`), locked ones too; the instructions dialog still waits for its Start button |
+| `REGS_START=campaign` / `tutorial` | a new campaign / the tutorial (main menu > new game > campaign or tutorial, OK) |
 | `REGS_START_RUN=1` | with save or map: the game clock runs from the start |
 
 ### Where data lives
