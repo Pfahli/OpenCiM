@@ -465,6 +465,7 @@ struct GuiPass {
   Display& d;
   float vpX = 0, vpY = 0, unit = 1;  // viewport origin (px) and pixels per GUI unit
   int sx = 0, sy = 0, sw = 0, sh = 0;  // current scissor in window pixels
+  TracerViews tracerViews;             // the tracers' target viewports, worked out once in this pass
 
   void scissor(int x, int y, int w, int h) {
     sx = x;
@@ -606,12 +607,15 @@ struct GuiPass {
     if (!c->visible()) return;
     if (drawMapFootprint(d, vm, c)) return;  // a line primitive, no rect of its own
     placeMapPin(vm, c);
-    if (!placed) placeTracer(vm, c);
+    if (!placed) placeTracer(vm, c, &tracerViews);
     static const ClassInfo* organizerClass = vm.findClass("gsTracerOrganizer");
     const bool organizer = organizerClass && c->cls->isA(organizerClass);
-    if (organizer) organizeTracers(vm, c);
+    if (organizer) organizeTracers(vm, c, &tracerViews);
     if (c->clipped()) return;
-    if (c->cls->name == "gsViewPort") renderViewportScene(d, vm, c);  // fills its render target first
+    if (c->cls->name == "gsViewPort") {
+      renderViewportScene(d, vm, c);  // fills its render target first
+      tracerViews.clear();            // it eased its camera: later tracers project with the new one
+    }
     if (c->hasImage) image(c);
     if (c->hasBorder) border(c);
     if (auto* g = dynamic_cast<GraphObj*>(c)) graph(g);

@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 
+#include "render/math3d.h"
 #include "script/vm.h"
 
 namespace regs::engine {
@@ -33,11 +34,25 @@ void gridPlayerMouseMove(script::VM& vm, ControlObj* c, float x, float y, int bu
 void gridPlayerMouseDown(script::VM& vm, ControlObj* c, float x, float y, int key);
 void gridPlayerMouseUp(script::VM& vm, ControlObj* c, float x, float y, int key);
 
+// The target viewports' cameras as the tracers project with them, each worked out once and reused by every later
+// tracer of the same GUI pass (placing a tracer only reads its viewport and camera). Cleared whenever a camera may
+// have moved since: a viewport drawn inside the pass eases its floating camera first.
+struct TracerViews {
+  struct View {
+    ControlObj* vp = nullptr;
+    bool ok = false;  // the viewport has a camera
+    render::Vec3 eye, fwd, right, upv;
+    float w = 0, h = 0, t = 0, left = 0, top = 0;  // viewport size, tan(fov / 2), desktop position
+  };
+  std::vector<View> views;
+  void clear() { views.clear(); }
+};
+
 // gsTracerCtrl::move (L:0x081cfc00): before it is drawn, a tracer control (the selection arrow, citizen pins) moves
 // so that its anchor lies on its target's screen point in targetViewport, or off screen when the point is not in view
-void placeTracer(script::VM& vm, ControlObj* c);
+void placeTracer(script::VM& vm, ControlObj* c, TracerViews* views = nullptr);
 // gsTracerOrganizer::move (L:0x081d14c0): places the organizer's tracer children (placeTracer) and pushes overlapping
 // ones apart; the GUI pass then draws those children without placing them again
-void organizeTracers(script::VM& vm, ControlObj* organizer);
+void organizeTracers(script::VM& vm, ControlObj* organizer, TracerViews* views = nullptr);
 
 }  // namespace regs::engine

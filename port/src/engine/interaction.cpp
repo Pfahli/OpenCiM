@@ -602,14 +602,7 @@ float numberOf(VM& vm, Object* o, FieldKey& k, float def) {
   return v.type() == VT::Float || v.type() == VT::Int ? vm.toFloat(v) : def;
 }
 
-// a target viewport's camera as the tracers project with it: the same for every tracer of a frame (placeTracer only
-// reads the camera), so an organizer works it out once per viewport and frame
-struct TracerView {
-  ControlObj* vp = nullptr;
-  bool ok = false;  // the viewport has a camera
-  Vec3 eye, fwd, right, upv;
-  float w = 0, h = 0, t = 0, left = 0, top = 0;
-};
+using TracerView = TracerViews::View;
 
 void tracerView(VM& vm, ControlObj* vp, TracerView& v) {
   static FieldKey kCamera(u"camera"), kFov(u"fov");
@@ -626,8 +619,8 @@ void tracerView(VM& vm, ControlObj* vp, TracerView& v) {
   v.ok = true;
 }
 
-// views: the viewports already worked out this frame (null: work the viewport out for this tracer alone)
-void placeTracerIn(VM& vm, ControlObj* c, std::vector<TracerView>* views) {
+// views: the viewports already worked out in this GUI pass (null: work the viewport out for this tracer alone)
+void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
   static const ClassInfo* cls = vm.findClass("gsTracerCtrl");
   if (!cls || !c->cls->isA(cls)) return;
   static FieldKey kViewport(u"targetViewport"), kPosition(u"targetPosition"), kModule(u"targetModule"),
@@ -638,11 +631,11 @@ void placeTracerIn(VM& vm, ControlObj* c, std::vector<TracerView>* views) {
     TracerView own;
     const TracerView* view = nullptr;
     if (views)
-      for (const TracerView& v : *views)
+      for (const TracerView& v : views->views)
         if (v.vp == vp) view = &v;
     if (!view) {
       tracerView(vm, vp, own);
-      if (views) views->push_back(own);
+      if (views) views->views.push_back(own);
       view = &own;
     }
     if (!view->ok) return;  // no camera
@@ -674,7 +667,7 @@ void placeTracerIn(VM& vm, ControlObj* c, std::vector<TracerView>* views) {
 
 }  // namespace
 
-void placeTracer(VM& vm, ControlObj* c) { placeTracerIn(vm, c, nullptr); }
+void placeTracer(VM& vm, ControlObj* c, TracerViews* views) { placeTracerIn(vm, c, views); }
 
 // gsTracerOrganizer::move (L:0x081d14c0 = W:0x100af3d0, docs/ui/lines.md §4.1). The organizer keeps no state: each
 // frame its children move first (gsControl::move → each child's gsTracerCtrl::move), then the tracer children with
@@ -683,7 +676,7 @@ void placeTracer(VM& vm, ControlObj* c) { placeTracerIn(vm, c, nullptr); }
 // A and each later B whose key is below A's right edge, if the two overlap vertically both move apart by a third of the
 // smallest of the three overlaps (B's bottom − A's top: A down / B up; A's right − B's left: A left / B right; A's
 // bottom − B's top: A up / B down), with the epsilons 0.001 / 0.002 of the original. No clamping, no smoothing.
-void organizeTracers(VM& vm, ControlObj* organizer) {
+void organizeTracers(VM& vm, ControlObj* organizer, TracerViews* views) {
   static const ClassInfo* tracer = vm.findClass("gsTracerCtrl");
   if (!tracer) return;
   struct Entry {
@@ -691,12 +684,13 @@ void organizeTracers(VM& vm, ControlObj* organizer) {
     ControlObj* c;
   };
   std::vector<Entry> list;
-  std::vector<TracerView> views;  // the target viewports of this frame
+  TracerViews own;  // without a pass's views: this organizer's target viewports
+  if (!views) views = &own;
   static const std::u16string kOrganize = u"organize";
   for (auto& k : organizer->children) {
     auto* t = dynamic_cast<ControlObj*>(k.get());
     if (!t || t->destroyed || !t->cls->isA(tracer)) continue;
-    placeTracerIn(vm, t, &views);
+    placeTracerIn(vm, t, views);
     // organize: a plain field the scripts write; unset = the constructor's true (L:0x081d38a0.c:29)
     if (auto o = t->fieldValues.find(kOrganize); o != t->fieldValues.end() && !o->second.isNone() && !vm.toInt(o->second)) continue;
     if (!(t->left > -t->width)) continue;
