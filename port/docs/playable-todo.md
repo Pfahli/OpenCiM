@@ -106,17 +106,25 @@ modes (the editor's roads, terrain and paint tools come later):
 - [ ] Jams the relief does not cover: metro trains of Berlin's lines 0 and 4 wait for each other for 2 to 10 minutes
   where the lines share track (they always got going again, §10.4); trams wait 2 to 10 minutes at busy junctions
   while one car after another holds the crossing nodes (why the cars do not give way to the tram's waiting marker is
-  not traced); the relief's kept node only helps once the tram is detected.
+  not found: the port's `canEnter`, marker setting and "ignore marks" test were compared with the original and
+  match, except that the original's cars ignore marks a little more often, `transport.md` §10.3; the claim loop's
+  follow-the-leader branch is not compared yet); the relief's kept node only helps once the tram is detected.
 - [ ] Pedestrian walks without a path: Vienna 0.5 % (22 of 4555 paths) since the walk and height maps are turned as
   the engine turns them (half a turn off the mesh, `docs/simulation/pathfinding.md` §1.4; it was 10.7 % with the
   turn of the mesh). That also puts the waiters of underground and elevated metro stations on their platforms (they
-  stood at street level), reached by the stations' stairs. Cim2 not re-measured since (was 1.7 %). Left from before:
-  the sunken park's stairs prop (no walk map, blocks its cell), a hotel enclosed by bushes.
+  stood at street level), reached by the stations' stairs. Re-measured 2026-11-18 (6000 frames at speed 3, debug
+  sim log): Vienna 10 of 6319 (0.16 %, all in one enclosed spot), Berlin 6 of 4465 (0.13 %); every failed walk's goal
+  is a blocked q-cell (code 0), which is the lead to follow. Cim2 not re-measured (no Cim2 save in the test
+  documents; was 1.7 %). Left from before: the sunken park's stairs prop (no walk map, blocks its cell), a hotel
+  enclosed by bushes.
 - [ ] Metro trains at the turn of a line (end stations) stop with their front at the platform instead of their
   middle (`docs/simulation/transport.md` §4.4, port note); all other halts are centred since the leg after a turn
   pulls its half length too.
-- [ ] Deviations to revisit: water cells are never walkable (the original treats them as open ground); boats keep
-  running across a save (the original removes them).
+- [x] Deviations revisited (2026-11-18, `docs/simulation/README.md`): water cells stay unwalkable (the user asked for
+  it; the original treats them as open ground). Boats: the original's saves now load as in the original (their
+  background boats carry agent flag 1 and are not placed, Vienna 4, Berlin 6; new boats fill the caps of 4 and 5 again
+  at once), while the port's own saves
+  write no flag 1 and keep their boats running (deliberate, the original despawns them at every save).
 - [x] Saves keep the live simulation, including boats, aircraft, animals and the rest of each pedestrian's walk (the
   original's direction codes, also read from the original's saves: 99 % of Cim2's walks continue after loading).
   Round trips on Cim2, Vienna and Berlin reload matching counts.

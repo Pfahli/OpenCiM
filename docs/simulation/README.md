@@ -132,7 +132,9 @@ The port deviates from the original on purpose in these two places. They are not
 * **Boats survive a save.** The original rebuilds the generated water lanes when it saves. Every agent on them gets
   agent flag 1 and is despawned on the next tick (boats-aircraft.md §2.7 Q4). The port keeps its lanes and boats
   running. It writes the boats' lane references into the lanes the next load will lay from the flags written now. A
-  boat on a lane that will not exist then is not written.
+  boat on a lane that will not exist then is not written. It writes no agent flag 1. Loading the original's saves
+  matches the original: their background boats all carry flag 1 and are not placed (Vienna: 4 of 4), and new boats
+  spawn as usual (2026-11-18). Water buses (line vehicles) are placed either way.
 
 Test and debugging switches of the port's simulation (environment variables, `engine/sim*.cpp`):
 * `REGS_DEBUG_SIM=1` turns on the periodic logs.
