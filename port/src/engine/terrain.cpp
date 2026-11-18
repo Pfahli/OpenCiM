@@ -31,6 +31,7 @@
 #include "engine/proc_buildings.h"
 #include "render/gl.h"
 #include "render/glsl.h"
+#include "render/gpu.h"
 #include "render/image.h"
 #include "vfs/vfs.h"
 
@@ -1615,6 +1616,7 @@ void registerTerrainNatives(VM& vm) {
       // the first view drawn once, unseen (the loading screen covers it): its shader programs compile now; with a
       // cold driver cache (a new driver, changed shaders) that took half a minute of black screen after Spielen
       const int linked = render::gProgramsLinked;
+      const int pipelines = render::gpu::hasDevice() ? render::gpu::dev().pipelinesCreated() : 0;
       Value* vpv = m->findVar(u"viewport");
       Value* scene = m->findVar(u"scene");
       Value* camera = m->findVar(u"camera");
@@ -1632,9 +1634,13 @@ void registerTerrainNatives(VM& vm) {
         }
       }
       auto t2 = std::chrono::steady_clock::now();
-      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs)",
+      const int pipelinesNow = render::gpu::hasDevice() ? render::gpu::dev().pipelinesCreated() : 0;
+      LOG_INFO("grid cache prepared on the loading screen in %.0f ms, first view drawn ahead in %.0f ms (%d shader programs, %d pipelines)",
                std::chrono::duration<double, std::milli>(t1 - t0).count(),
-               std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked);
+               std::chrono::duration<double, std::milli>(t2 - t1).count(), render::gProgramsLinked - linked,
+               pipelinesNow - pipelines);
+      // what the first view compiled goes to the disk caches now, not only at exit (a crash keeps it)
+      if (render::gpu::hasDevice()) render::gpu::dev().saveCaches();
     }
     return Value();
   });

@@ -22,7 +22,9 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <mutex>
 #include <thread>
 #include <map>
@@ -76,7 +78,8 @@ namespace {
   X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
   X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)  \
   X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets)          \
-  X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer)
+  X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer) X(vkCreatePipelineCache) X(vkDestroyPipelineCache)              \
+  X(vkGetPipelineCacheData)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -493,6 +496,9 @@ class VkDeviceImpl final : public Device {
   void setVsync(bool on) override {
     if (on != vsync_) vsync_ = on, swapchainDirty_ = true;
   }
+  void saveCaches() override { savePipelineCache(); }
+  int pipelinesCreated() const override { return pipelinesCreated_; }
+  double pipelineMs() const override { return pipelineMs_; }
 
   // ---- ray queries ----
   bool rayTracing() const override { return rt_; }
@@ -654,6 +660,10 @@ class VkDeviceImpl final : public Device {
   void destroySwapchain();
   bool makeBackBuffer(int w, int h);
   void shutdown();
+  // the VkPipelineCache from <cache>\pipelines.bin (when its header names this driver and GPU), written back by
+  // savePipelineCache when it grew
+  void loadPipelineCache();
+  void savePipelineCache();
 
   // textures
   uint32_t newTexture() {
@@ -751,6 +761,11 @@ class VkDeviceImpl final : public Device {
   std::vector<Program> programs_ = std::vector<Program>(1);
   std::map<std::string, int> layoutIds_;
   std::unordered_map<PipeKey, VkPipeline, PipeHash> pipelines_;
+  VkPhysicalDeviceProperties physProps_{};
+  VkPipelineCache pipeCache_ = VK_NULL_HANDLE;
+  size_t pipeCacheSaved_ = 0;   // bytes of the cache as last read or written (save only when it grew)
+  int pipelinesCreated_ = 0;    // pipeline objects made and the time spent (slow-frame log)
+  double pipelineMs_ = 0;
   std::map<std::string, VkSampler> samplers_;
   uint32_t backColor_ = 0, backDepth_ = 0;
   int backW_ = 0, backH_ = 0;
@@ -1026,6 +1041,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   }
   VkPhysicalDeviceProperties props;
   vkGetPhysicalDeviceProperties(phys_, &props);
+  physProps_ = props;
   maxAniso_ = props.limits.maxSamplerAnisotropy;
   uboAlign_ = std::max<VkDeviceSize>(16, props.limits.minUniformBufferOffsetAlignment);
   timestampNs_ = props.limits.timestampPeriod > 0 ? props.limits.timestampPeriod : 1.0;
@@ -1121,6 +1137,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
 #undef REGS_VK_LOAD_DEVICE
   vkGetDeviceQueue(dev_, queueFamily_, 0, &queue_);
   alloc_.init(phys_, dev_, rt_);
+  loadPipelineCache();
   if (rt_) {
     VkPhysicalDeviceAccelerationStructurePropertiesKHR ap{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
     VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &ap};
@@ -1353,6 +1370,71 @@ bool VkDeviceImpl::makeBackBuffer(int w, int h) {
   return true;
 }
 
+void VkDeviceImpl::loadPipelineCache() {
+  std::vector<char> data;
+  const char* why = nullptr;
+  if (!cacheFolder_.empty()) {
+    std::ifstream in(cacheFolder_ / "pipelines.bin", std::ios::binary);
+    if (in) data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    // the header (VkPipelineCacheHeaderVersionOne): a cache of another driver or GPU is dropped, not handed over
+    VkPipelineCacheHeaderVersionOne h{};
+    if (data.empty()) {
+    } else if (data.size() < sizeof h) {
+      why = "too short";
+    } else {
+      std::memcpy(&h, data.data(), sizeof h);
+      if (h.headerSize < sizeof h || h.headerSize > data.size() || h.headerVersion != VK_PIPELINE_CACHE_HEADER_VERSION_ONE)
+        why = "unknown header";
+      else if (h.vendorID != physProps_.vendorID || h.deviceID != physProps_.deviceID ||
+               std::memcmp(h.pipelineCacheUUID, physProps_.pipelineCacheUUID, VK_UUID_SIZE) != 0)
+        why = "another driver or GPU";
+    }
+    if (why) data.clear();
+  }
+  VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+  ci.initialDataSize = data.size();
+  ci.pInitialData = data.empty() ? nullptr : data.data();
+  if (vkCreatePipelineCache(dev_, &ci, nullptr, &pipeCache_) != VK_SUCCESS) {
+    ci.initialDataSize = 0, ci.pInitialData = nullptr;  // the driver refused the data: start empty
+    if (vkCreatePipelineCache(dev_, &ci, nullptr, &pipeCache_) != VK_SUCCESS) pipeCache_ = VK_NULL_HANDLE;
+    data.clear();
+    why = "refused by the driver";
+  }
+  pipeCacheSaved_ = data.size();
+  if (!cacheFolder_.empty())
+    LOG_INFO("vulkan: pipeline cache %s (%zu KB)%s%s", data.empty() ? "empty" : "read", data.size() / 1024,
+             why ? ", the file was not used: " : "", why ? why : "");
+}
+
+void VkDeviceImpl::savePipelineCache() {
+  if (!pipeCache_ || cacheFolder_.empty()) return;
+  size_t size = 0;
+  if (vkGetPipelineCacheData(dev_, pipeCache_, &size, nullptr) != VK_SUCCESS || size <= pipeCacheSaved_) return;
+  std::vector<char> data(size);
+  if (vkGetPipelineCacheData(dev_, pipeCache_, &size, data.data()) != VK_SUCCESS) return;
+  data.resize(size);
+  std::error_code ec;
+  std::filesystem::create_directories(cacheFolder_, ec);
+  // written beside and renamed over the old file: a run that dies mid-write leaves the previous cache
+  std::filesystem::path file = cacheFolder_ / "pipelines.bin", tmp = cacheFolder_ / "pipelines.bin.tmp";
+  bool ok;
+  {
+    std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+    o.write(data.data(), std::streamsize(data.size()));
+    o.close();
+    ok = !o.fail();
+  }
+  if (ok) std::filesystem::rename(tmp, file, ec);
+  if (!ok || ec) {
+    std::filesystem::remove(tmp, ec);
+    LOG_WARN("vulkan: the pipeline cache could not be written (cache\\pipelines.bin)");
+    return;
+  }
+  pipeCacheSaved_ = data.size();
+  LOG_INFO("vulkan: pipeline cache written (%zu KB, %d pipelines made in this run in %.0f ms)", data.size() / 1024,
+           pipelinesCreated_, pipelineMs_);
+}
+
 void VkDeviceImpl::shutdown() {
   if (!instance_) {
     if (lib_) FreeLibrary(lib_), lib_ = nullptr;
@@ -1382,6 +1464,8 @@ void VkDeviceImpl::shutdown() {
       if (a.as) vkDestroyAccelerationStructureKHR(dev_, a.as, nullptr), vkDestroyBuffer(dev_, a.buffer, nullptr);
     for (Frame& f : frames_)
       if (f.tlas.as) vkDestroyAccelerationStructureKHR(dev_, f.tlas.as, nullptr), vkDestroyBuffer(dev_, f.tlas.buffer, nullptr);
+    savePipelineCache();
+    if (pipeCache_) vkDestroyPipelineCache(dev_, pipeCache_, nullptr);
     for (auto& [k, p] : pipelines_) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& [k, s] : samplers_) vkDestroySampler(dev_, s, nullptr);
     for (Program& p : programs_) {
@@ -2422,8 +2506,11 @@ VkPipeline VkDeviceImpl::pipelineFor(Prim prim) {
   gci.pDynamicState = &dys;
   gci.layout = p.layout;
   VkPipeline pipe = VK_NULL_HANDLE;
-  if (VkResult r = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gci, nullptr, &pipe); r != VK_SUCCESS)
+  auto t0 = std::chrono::steady_clock::now();
+  if (VkResult r = vkCreateGraphicsPipelines(dev_, pipeCache_, 1, &gci, nullptr, &pipe); r != VK_SUCCESS)
     LOG_ERROR("vulkan: %s", vkError("vkCreateGraphicsPipelines", r).c_str());
+  ++pipelinesCreated_;
+  pipelineMs_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   pipelines_[key] = pipe;
   return pipe;
 }

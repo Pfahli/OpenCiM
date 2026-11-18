@@ -160,6 +160,13 @@ class Device {
   // reading it never waits); −1 until the first is known or when the device cannot measure it (benchmarks)
   virtual double gpuFrameMs() const { return -1; }
 
+  // ---- caches (Vulkan: pipeline state objects and the pipeline cache on disk; OpenGL has none of its own) ----
+  // Writes the device's on-disk caches now if they grew (after a map's first view was drawn ahead; also at shutdown).
+  virtual void saveCaches() {}
+  // pipeline state objects created so far and the milliseconds spent on them (the slow-frame log)
+  virtual int pipelinesCreated() const { return 0; }
+  virtual double pipelineMs() const { return 0; }
+
   // ---- ray queries (docs/renderer/vulkan.md §9.3): Vulkan with VK_KHR_ray_query only; the defaults do nothing ----
   virtual bool rayTracing() const { return false; }
   // A bottom-level structure over triangles: positions are float3 at offset 0 of each `stride`-byte vertex of

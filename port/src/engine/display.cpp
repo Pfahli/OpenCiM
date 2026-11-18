@@ -673,15 +673,19 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     std::chrono::steady_clock::time_point t0;
     int linked;
     double link;
+    int pipelines;
+    double pipelineMs;
     ~SlowFrame() {
       double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       if (on && ms > 250)
-        LOG_INFO("slow frame: %.0f ms (%d shader programs linked in %.0f ms; scene %.0f, grid %.0f, vehicles %.0f, particles %.0f, night %.0f, programs %.0f ms)",
-                 ms, render::gProgramsLinked - linked, (render::gLinkSeconds - link) * 1000, gPhaseSeconds[1] * 1000,
-                 gPhaseSeconds[2] * 1000, gPhaseSeconds[3] * 1000, gPhaseSeconds[4] * 1000, gPhaseSeconds[5] * 1000,
-                 gPhaseSeconds[6] * 1000);
+        LOG_INFO("slow frame: %.0f ms (%d shader programs linked in %.0f ms, %d pipelines in %.0f ms; scene %.0f, grid %.0f, vehicles %.0f, particles %.0f, night %.0f, programs %.0f ms)",
+                 ms, render::gProgramsLinked - linked, (render::gLinkSeconds - link) * 1000,
+                 render::gpu::dev().pipelinesCreated() - pipelines, render::gpu::dev().pipelineMs() - pipelineMs,
+                 gPhaseSeconds[1] * 1000, gPhaseSeconds[2] * 1000, gPhaseSeconds[3] * 1000, gPhaseSeconds[4] * 1000,
+                 gPhaseSeconds[5] * 1000, gPhaseSeconds[6] * 1000);
     }
-  } slowFrame{logTime, frameStart, linkedBefore, linkBefore};
+  } slowFrame{logTime, frameStart, linkedBefore, linkBefore, render::gpu::dev().pipelinesCreated(),
+              render::gpu::dev().pipelineMs()};
   syncRenderSettings(vm);
   sweepEffects(*this);
   stylePreviewFrame(*this, vm);
