@@ -41,8 +41,9 @@ ship (README, "Game data"). Two ways out, used together:
 2. **Own art for the parts that are shown before the game is found or when it is missing:** the OpenCiM title
    (`data/regs/ui/opencim-title.dds`, the port's own), a dark panel drawn from gradients in the game's colours
    (charcoal brown `#2b211b` → `#15100c`, bevel highlight `#6b5646`, text `#f1ece4`, accent the menu's blue
-   `#2f6db5` and orange `#d9772b`), and a painted city scene of our own in the same style (sepia, blue sky, 1920s-60s
-   facades, a tram), made once for the port and kept in `data/regs/ui/`.
+   `#2f6db5` and orange `#d9772b`). The right side of every page is a real screenshot of the port (owner's decision
+   2026-11-19, replacing a painted street of our own): it comes with the release like the showcase pictures (§5), not
+   inside the setup program.
 
 That rules out off-the-shelf installer skins as the main route: Inno Setup or NSIS can show bitmaps and custom pages,
 but they cannot read the game's archives, so they would need either shipped art or a helper that extracts it to temp
@@ -105,7 +106,7 @@ releases) and later a `nightly` channel (pre-releases from `main`).
 ## 4. Pages
 
 All pages share the game's main-menu layout: the dark panel on the left (OpenCiM title on top, the page's buttons as
-the menu's bevelled bars below), the painted city filling the right side, the version in the bottom right corner as on
+the menu's bevelled bars below), a screenshot of the port filling the right side, the version in the bottom right corner as on
 the main menu.
 
 1. **Welcome.** "OPENCiM – a new engine for Cities in Motion", a line that it is unofficial and needs the original,
@@ -141,9 +142,12 @@ Picked from what is on `main` today and ordered by how much they change the game
 
 Later releases add Vulkan with raytracing and upscaling, and the high-res textures, when they are done.
 
-**The pictures (owner's decision 2026-11-17): screenshots, added later.** No pictures are rendered on the player's
-machine. Each slide gets a screenshot of the port showing its feature, made when the release is put together; until
-then the slides show the own painted street (§2) as a stand-in. The screenshots go with each GitHub release next to
+**The pictures (owner's decisions 2026-11-17 and 2026-11-19): real screenshots only.** No pictures are rendered on the
+player's machine and there is no painted stand-in. Each slide gets a screenshot of the port showing its feature, and
+the Welcome, Game not found, Done and Update pages each get a background screenshot, all taken in the port with
+tilt-shift on (`$regsLensBlur = 3`, bloom, shadows 4, `--at N:ui:off`), made when the release is put together; the
+current set is in `docs/installer-shots/` (slides `<n>-*.jpg` at 1600 × 900, backgrounds `bg-*.jpg` at 1086 × 960,
+the 724 × 640 panel at 1.5×). The screenshots go with each GitHub release next to
 `release.json` (`showcase/<n>.jpg`, about 1280 × 800, a few hundred KB each), so the setup program stays small, every
 release can show its own new features, and the offline installer carries the same files appended. Screenshots show
 game art (buildings, vehicles, terrain); the owner chose them over own illustrations, as store pages do.
@@ -154,8 +158,8 @@ game art (buildings, vehicles, terrain); the owner chose them over own illustrat
    folders and a missing game.
 2. `src/setup/` with the payload, install, shortcuts, uninstall entry, manifest and maintenance page, plain pages
    first; then the GitHub download, update, repair and the in-game update check (needs the GitHub repository).
-3. The game's menu look (panel, bars, fonts, background from the install) and the own fallback art.
-4. The showcase: slides, cross-fade, progress bar, the stand-in picture; the screenshots once they are made.
+3. The game's menu look (panel, bars, fonts, background from the install) and the background screenshots.
+4. The showcase: slides, cross-fade, progress bar and the screenshots.
 5. The release script (`tools/make-release.ps1`): build, collect the files, licences (the port's own, miniaudio, miniz,
    later Vulkan-Headers and glslang), zip, `.sha256`, `release.json`, the offline installer, sign; later a GitHub
    Actions workflow that does the same and publishes the release (and the nightly pre-release from `main`).
