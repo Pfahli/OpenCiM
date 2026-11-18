@@ -240,8 +240,10 @@ preview is built as a list of pieces (as the engine's loose items) and added to 
 rebuilding a 50-block preview takes 2-4 ms. `toolBlocks().track(x, z, conn, a, b, type, y)` appends to the calling
 tool's `newItems` (variation: the player's `toolType`). Deviations:
 * `createRoadBlock` (`L:0x08190700`, roads: editor only; the game's objects have no road parts) lays the plain piece
-  of the connections without joining its neighbours. The double track's road crossings (createTrackBlock type 9) and
-  the editor's bridge and tunnel modes (0xb, 0xc) are ported as `moveLayBridge` (L:0x0819f2a0.c:738-1372): ramps or
+  of the connections without joining its neighbours. The double track (createTrackBlock type 9) laid straight across a
+  straight small road on its block becomes the road's crossing piece (`L:0x08195400.c:510-546`: type 2 with the
+  track's connections and SPECIAL0, `track_double_cross_small`, the level crossing), replacing the road. The
+  editor's bridge and tunnel modes (0xb, 0xc) are ported as `moveLayBridge` (L:0x0819f2a0.c:738-1372): ramps or
   portals at the ends (connections2 = the block's connections, flags BRIDGE/TUNNEL | SLOPE_1p2, wide roads 1p4), spans
   between (several blocks per span when the design's gap template is wider), then one height for all: the highest a
   span needs to clear what is under it by a cell, for tunnels the lowest below what is over it. Port: straight drags

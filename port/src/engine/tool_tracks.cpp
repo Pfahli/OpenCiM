@@ -1121,7 +1121,22 @@ uint32_t createTrackBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, i
     }
     if (a && b) mark = (c.W.size() + mark) >> 1;
   }
-  // double track (9) over a small road becomes its crossing piece: editor maps only, not ported
+  // the double track (9) straight across a straight small road on this block becomes the road's crossing piece
+  // (L:0x08195400.c:510-546): the small road's template with the track's connections added and SPECIAL0 (0x1000), at
+  // the road's corner, replacing the road; the track piece itself is not laid
+  if (T == 9 && (b0 == 0x11000000u || b0 == 0x44000000u) && !(flags & 0xc000)) {
+    for (const Piece& o : c.getObjects(x, z, 4, 4)) {
+      if (o.type() != 2 || (o.flags() & 0xc000)) continue;
+      auto [rx, rz] = roadXZ(o);
+      if (rx != x || rz != z || rot(o.conn, 2) != b0 >> 24) continue;
+      int orient = 0;
+      const TInfo* tp = c.lookup(2, uint32_t(o.tvar()), b0 | o.conn, o.conn2, o.flags() | 0x1000, &orient);
+      if (!tp) continue;
+      res = c.piece(tp, o.x, o.y, o.z, orient, kFlagJoin);  // a merged track piece is dropped (it stays replaced)
+      c.t.replaced.insert(uint32_t(o.live));
+      break;
+    }
+  }
   if (!res) res = c.createRoadItem(x, y, z, b0, c2, T, c.toolType, flags);
   if (b) c.W.insert(c.W.begin() + std::ptrdiff_t(std::min(mark, c.W.size())), *res);
   else c.W.push_back(*res);

@@ -21,8 +21,9 @@ modes (the editor's roads, terrain and paint tools come later):
   through `toolBlocks().track`.
 - [~] Lay roads and alleys (editor only, `moveLayRoad` in `engine/tool_tracks.cpp`): small, large, avenue and express
   roads, alleys, straight, diagonal, junctions where a road crosses one, dead ends; `createRoadBlock` joins with the
-  track tools' rules, not the original's own map-edge and ramp code. Still open: bridges and tunnels (modes 0xb,
-  0xc), the ramps' heights, half-block road ends, the double track's road crossings.
+  track tools' rules, not the original's own map-edge and ramp code. Bridges and tunnels (modes 0xb, 0xc) are
+  `moveLayBridge`; the double track laid across a small road becomes the level crossing (checked in the editor on
+  testmap, `port/run/gaps/double-track-crossing.png`). Still open: the ramps' heights, half-block road ends.
 - [x] The underground view (`GRID_VIEW_UNDERGROUND`, `docs/renderer/underground.md`): the minimap's layer button, the
   "U" key and the subway tool switch it as in the original; the map turns into bare earth with pits 24 m deep around
   the tunnel items, in which the subway tracks, underground stations with their stairs and halls, metro trains on
