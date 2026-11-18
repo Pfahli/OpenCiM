@@ -327,17 +327,26 @@ class Renderer3D {
     int eyePos = -1;  // raytraced reflections: the camera in world space
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
+    // draw(): the view (viewSerial_) whose per-view uniforms (setupProgram) the program holds. They stay in the
+    // program between uses (GL program objects; the Vulkan device's per-program uniform block and sampler units),
+    // so a program used again in the same draw() is not set up again.
+    uint64_t setupView = 0;
   };
-  std::map<uint32_t, ProgramLocs> locs_;
+  // by program handle (both devices hand out small consecutive numbers); larger handles in locsFar_. Entries never
+  // move, so the references locs() returns stay valid.
+  static constexpr uint32_t kLocsDirect = 1u << 16;
+  std::vector<std::unique_ptr<ProgramLocs>> locs_;
+  std::map<uint32_t, ProgramLocs> locsFar_;
+  uint64_t viewSerial_ = 0;  // one per draw() call
   // bottom-level structures per (vertex layout, material table): the parts included depend on the materials
   std::map<std::pair<uint32_t, const void*>, uint32_t> blas_;
-  const ProgramLocs& locs(uint32_t prog);
+  ProgramLocs& locs(uint32_t prog);
   void setupProgram(const SceneView& v, uint32_t prog);
   void hookState(const SceneView& v, uint32_t prog);
   uint32_t linkProgram(const std::string& vs, const std::string& fs, std::string* error);
   void setupFallback(const SceneView& v);
-  void drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m, uint32_t prog,
-                    float alphaRef);
+  void drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
+                    const ProgramLocs& l, float alphaRef);
   void drawParticles(const SceneView& v, const ParticleDrawList& list);
   GpuMesh particleMesh_;            // stream VBO of the billboards, static quad index buffer
   size_t particleQuads_ = 0;        // quads the index buffer holds

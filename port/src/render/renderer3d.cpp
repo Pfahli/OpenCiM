@@ -706,10 +706,19 @@ uint32_t Renderer3D::linkProgram(const std::string& vs, const std::string& fs, s
   return prog;
 }
 
-const Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
-  auto it = locs_.find(prog);
-  if (it != locs_.end()) return it->second;
-  ProgramLocs& l = locs_[prog];
+Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
+  ProgramLocs* found;
+  if (prog < kLocsDirect) {
+    if (prog < locs_.size() && locs_[prog]) return *locs_[prog];
+    if (prog >= locs_.size()) locs_.resize(size_t(prog) + 1);
+    locs_[prog] = std::make_unique<ProgramLocs>();
+    found = locs_[prog].get();
+  } else {
+    auto it = locsFar_.find(prog);
+    if (it != locsFar_.end()) return it->second;
+    found = &locsFar_[prog];
+  }
+  ProgramLocs& l = *found;
   auto at = [&](const std::string& n) { return dev().uniformLocation(prog, n.c_str()); };
   l.mv = at("regs_ModelViewMatrix");
   l.proj = at("regs_ProjectionMatrix");
@@ -849,13 +858,13 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
 // the shader hooks' uniforms and maps (units 8-14) for a program in use: the view's inverse, eye, timer, the mods'
 // uniforms (regsShaderUniform) and the engine's maps
 void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
-  const ProgramLocs& l = locs(prog);
+  ProgramLocs& l = locs(prog);
   Mat4 inv = inverse(v.proj * v.view);
   dev().uniformMatrix4fv(l.hookInvViewProj, 1, inv.m);
   dev().uniform3f(l.hookEye, v.eye.x, v.eye.y, v.eye.z);
   dev().uniform1f(l.hookTime, v.timer);
   dev().uniform1f(l.hookNight, v.night[3]);
-  ProgramLocs& lw = locs_[prog];
+  ProgramLocs& lw = l;
   for (const auto& [name, value] : shaderHookUniforms()) {
     auto it = lw.hookUniforms.find(name);
     if (it == lw.hookUniforms.end()) it = lw.hookUniforms.emplace(name, dev().uniformLocation(prog, name.c_str())).first;
@@ -880,8 +889,7 @@ void Renderer3D::hookState(const SceneView& v, uint32_t prog) {
 }
 
 void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuMesh::Part& p, const GpuMaterial& m,
-                              uint32_t prog, float alphaRef) {
-  const ProgramLocs& l = locs(prog);
+                              const ProgramLocs& l, float alphaRef) {
   dev().uniform1f(l.alphaRef, alphaRef);  // glAlphaFunc(GREATER, ref) of the queue
   const float es = v.emissionScale;
   dev().uniform4f(l.matEmission, m.emission[0] * es, m.emission[1] * es, m.emission[2] * es, m.emission[3]);
@@ -988,6 +996,7 @@ void Renderer3D::setupFallback(const SceneView& v) {
 }
 
 void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
+  const uint64_t view = ++viewSerial_;  // each program's per-view uniforms once per call (ProgramLocs::setupView)
   static const GpuMaterial fallbackMaterial;
   auto materialOf = [&](const DrawItem& it, const GpuMesh::Part& p) -> const GpuMaterial& {
     size_t m = it.layerMaterial >= 0 ? size_t(it.layerMaterial) : size_t(p.material);
@@ -1041,6 +1050,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     dev().bindTexture(kNightMapUnit, v.lampMap ? v.lampMap : v.carMap);
   }
   uint32_t current = 0;
+  ProgramLocs* locsCurrent = nullptr;  // locs(current) for a combiner program
   const DrawItem* bound = nullptr;
   gpu::Blend blendSrc = gpu::Blend::SrcAlpha, blendDst = gpu::Blend::OneMinusSrcAlpha;
   // opaque: no alpha test; alpha-tested: GREATER 0.2 with depth writes; blended and decals: GREATER 0.001 without
@@ -1077,8 +1087,17 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         current = prog;
         bound = nullptr;
         dev().useProgram(prog);
-        if (e.program) setupProgram(v, prog);
-        else setupFallback(v);
+        if (e.program) {
+          // the per-view uniforms once per program and view: they stay in the program while others draw, and the
+          // units hookState binds hold this view's maps for the whole call (the draws bind units 0-5 only)
+          locsCurrent = &locs(prog);
+          if (locsCurrent->setupView != view) {
+            setupProgram(v, prog);
+            locsCurrent->setupView = view;
+          }
+        } else {
+          setupFallback(v);
+        }
       }
       if (e.it != bound) {
         bound = e.it;
@@ -1086,7 +1105,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         float nm[9];
         normalMatrix(mv, nm);
         if (e.program) {
-          const ProgramLocs& l = locs(prog);
+          const ProgramLocs& l = *locsCurrent;
           Mat4 mvp = v.proj * mv;
           dev().uniformMatrix4fv(l.mv, 1, mv.m);
           dev().uniformMatrix4fv(l.mvp, 1, mvp.m);
@@ -1098,7 +1117,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
         }
         dev().bindVertexInput(e.it->mesh->vao);
       }
-      if (e.program) drawCombined(v, *e.it, *e.p, m, prog, ref);
+      if (e.program) drawCombined(v, *e.it, *e.p, m, *locsCurrent, ref);
       else drawPart(v, *e.it, *e.p);
     }
   };
