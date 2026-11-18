@@ -22,7 +22,9 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <mutex>
 #include <thread>
 #include <map>
@@ -76,7 +78,8 @@ namespace {
   X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
   X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)  \
   X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets)          \
-  X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer)
+  X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer) X(vkCreatePipelineCache) X(vkDestroyPipelineCache)              \
+  X(vkGetPipelineCacheData)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -302,7 +305,7 @@ void imageBarrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags aspect, V
 
 class VkDeviceImpl final : public Device {
  public:
-  explicit VkDeviceImpl(platform::Window& w) : window_(w) {}
+  VkDeviceImpl(platform::Window& w, const std::filesystem::path& cacheFolder) : window_(w), cacheFolder_(cacheFolder) {}
   ~VkDeviceImpl() override { shutdown(); }
 
   bool init(bool vsync, std::string* error);
@@ -358,6 +361,7 @@ class VkDeviceImpl final : public Device {
       framebuffers_.emplace_back();
     }
     framebuffers_[h] = {true, color & ~kRenderbufferBit, depth & ~kRenderbufferBit, 0};
+    ++targetsVersion_;
     return h;
   }
   // ---- the second colour attachment (the mods' surface hook data; render/gpu.h) ----
@@ -369,6 +373,7 @@ class VkDeviceImpl final : public Device {
     if (!c1 || !c1->image || c1->w != c0.w || c1->h != c0.h || c1->samples != c0.samples || isDepth(c1->format)) return false;
     if (renderingFb_ == int(fb)) endRendering();
     framebuffers_[fb].color1 = color & ~kRenderbufferBit;
+    ++targetsVersion_;
     return true;
   }
   void blitColor1(uint32_t src, uint32_t dst, int w, int h) override;
@@ -378,6 +383,7 @@ class VkDeviceImpl final : public Device {
     if (fb == 0 || fb >= framebuffers_.size()) return;
     if (renderingFb_ == int(fb)) endRendering();
     framebuffers_[fb] = {};
+    ++targetsVersion_;
     if (boundFb_ == fb) boundFb_ = 0;
   }
   void bindFramebuffer(uint32_t fb) override {
@@ -493,6 +499,9 @@ class VkDeviceImpl final : public Device {
   void setVsync(bool on) override {
     if (on != vsync_) vsync_ = on, swapchainDirty_ = true;
   }
+  void saveCaches() override { savePipelineCache(); }
+  int pipelinesCreated() const override { return pipelinesCreated_; }
+  double pipelineMs() const override { return pipelineMs_; }
 
   // ---- ray queries ----
   bool rayTracing() const override { return rt_; }
@@ -596,6 +605,11 @@ class VkDeviceImpl final : public Device {
     bool bindless = false;    // set 1 = the bindless set (raytraced reflections)
     bool writesData = false;  // writes location 1 (regs_HookData, the translated shaders): the second attachment
     int hitTableOffset = -1;  // regs_HitTable in the block: the device writes the hit table's address there
+    // the block's last copy in the frame's ring: reused by the next draw while the block is unchanged in that frame
+    bool blockDirty = true;
+    VkBuffer uboBuffer = VK_NULL_HANDLE;
+    VkDeviceSize uboOffset = 0;
+    uint64_t uboFrame = 0;
   };
   struct Frame {
     VkCommandPool pool = VK_NULL_HANDLE;
@@ -654,6 +668,10 @@ class VkDeviceImpl final : public Device {
   void destroySwapchain();
   bool makeBackBuffer(int w, int h);
   void shutdown();
+  // the VkPipelineCache from <cache>\pipelines.bin (when its header names this driver and GPU), written back by
+  // savePipelineCache when it grew
+  void loadPipelineCache();
+  void savePipelineCache();
 
   // textures
   uint32_t newTexture() {
@@ -713,12 +731,20 @@ class VkDeviceImpl final : public Device {
   void endRendering();
   void fbExtent(uint32_t fb, int& w, int& h, VkFormat& color, VkFormat& depth, int& samples);
   VkPipeline pipelineFor(Prim p);
+  VkPipeline pipelineForKey(Prim p);  // builds the key, finds or makes the pipeline
   void draw(Prim p, bool indexed, int count, size_t first);
   int locIndex(int loc) const { return loc >> 10; }
   int locElement(int loc) const { return loc & 1023; }
   void setFloats(int loc, const float* v, int comps, int count, int columns);
+  // writes into a program's block; a change makes the next draw copy the block anew
+  static void putBlock(Program& p, size_t off, const void* v, size_t n) {
+    if (std::memcmp(&p.block[off], v, n) == 0) return;
+    std::memcpy(&p.block[off], v, n);
+    p.blockDirty = true;
+  }
 
   platform::Window& window_;
+  std::filesystem::path cacheFolder_;  // SPIR-V (spirv\) and pipeline (pipelines.bin) caches; empty = none
   std::string info_;
   float maxAniso_ = 1;
   bool vsync_ = true;
@@ -750,6 +776,11 @@ class VkDeviceImpl final : public Device {
   std::vector<Program> programs_ = std::vector<Program>(1);
   std::map<std::string, int> layoutIds_;
   std::unordered_map<PipeKey, VkPipeline, PipeHash> pipelines_;
+  VkPhysicalDeviceProperties physProps_{};
+  VkPipelineCache pipeCache_ = VK_NULL_HANDLE;
+  size_t pipeCacheSaved_ = 0;   // bytes of the cache as last read or written (save only when it grew)
+  int pipelinesCreated_ = 0;    // pipeline objects made and the time spent (slow-frame log)
+  double pipelineMs_ = 0;
   std::map<std::string, VkSampler> samplers_;
   uint32_t backColor_ = 0, backDepth_ = 0;
   int backW_ = 0, backH_ = 0;
@@ -762,12 +793,69 @@ class VkDeviceImpl final : public Device {
   uint32_t program_ = 0, boundVi_ = 0, boundFb_ = 0;
   int renderingFb_ = -1;
   bool nullDrawLogged_ = false;
+  bool recordAll_ = false;  // REGS_VK_RECORD_ALL=1: every draw records all state and pushes every descriptor (A/B tests)
   // draw()'s scratch lists: cleared per draw, their storage kept (no heap traffic per draw)
   std::vector<VkBuffer> drawVbs_;
   std::vector<VkDeviceSize> drawOffs_;
   std::vector<uint32_t> drawSeen_;
   std::vector<VkWriteDescriptorSet> drawWrites_;
   std::vector<VkDescriptorImageInfo> drawImages_;
+  // draw(): what the command buffer holds since the last reset (the start of a command buffer or of a rendering
+  // pass); state equal to it is not recorded again. Every pipeline has the same dynamic states, so binding another
+  // pipeline keeps them.
+  struct Recorded {
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    bool dynamic = false;  // the dynamic states below were recorded
+    VkViewport viewport{};
+    VkRect2D scissor{};
+    VkCullModeFlags cull = 0;
+    VkBool32 depthTest = 0, depthWrite = 0, biasOn = 0;
+    VkCompareOp compare = VK_COMPARE_OP_NEVER;
+    float biasConstant = 0, biasSlope = 0;
+    std::vector<VkBuffer> vbs;
+    std::vector<VkDeviceSize> offs;
+    VkBuffer ib = VK_NULL_HANDLE;
+    VkDeviceSize ibOffset = 0;
+    VkPipelineLayout pushLayout = VK_NULL_HANDLE;      // the layout of the last push (set 0)
+    VkPipelineLayout bindlessLayout = VK_NULL_HANDLE;  // set 1 bound with this layout
+  } rec_;
+  // set 0 as last pushed with rec_.pushLayout, per binding: pushes write only what changed (push descriptors keep
+  // what an earlier push with a compatible layout wrote)
+  struct Pushed {
+    VkDescriptorType type = VK_DESCRIPTOR_TYPE_MAX_ENUM;  // MAX_ENUM: nothing pushed
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceSize offset = 0, range = 0;
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkAccelerationStructureKHR accel = VK_NULL_HANDLE;
+  };
+  std::vector<Pushed> pushed_;
+  void resetRecorded() {
+    rec_.pipeline = VK_NULL_HANDLE;
+    rec_.dynamic = false;
+    rec_.vbs.clear(), rec_.offs.clear();
+    rec_.ib = VK_NULL_HANDLE;
+    rec_.pushLayout = rec_.bindlessLayout = VK_NULL_HANDLE;
+    pushed_.clear();
+  }
+  // pipelineFor(): the inputs of the last key and its pipeline (no key built or hashed while they stay the same)
+  struct KeyInputs {
+    uint32_t program = 0;
+    int layout = 0;
+    Prim prim = Prim::Triangles;
+    bool blendOn = false;
+    Blend src = Blend::One, dst = Blend::Zero;
+    uint32_t fb = 0;
+    bool mask1 = true;
+    uint64_t targets = 0;
+    bool operator==(const KeyInputs& o) const {
+      return program == o.program && layout == o.layout && prim == o.prim && blendOn == o.blendOn && src == o.src &&
+             dst == o.dst && fb == o.fb && mask1 == o.mask1 && targets == o.targets;
+    }
+  };
+  KeyInputs lastKeyInputs_;
+  VkPipeline lastPipeline_ = VK_NULL_HANDLE;
+  uint64_t targetsVersion_ = 1;  // bumped when an image is (re)made or a framebuffer's attachments change
 
   // GPU frame time: two timestamps per frame slot, read when the slot's fence has passed
   VkQueryPool timestamps_ = VK_NULL_HANDLE;
@@ -901,6 +989,10 @@ class VkDeviceImpl final : public Device {
 
 bool VkDeviceImpl::init(bool vsync, std::string* error) {
   vsync_ = vsync;
+  // REGS_VK_CACHE=0: no caches on disk (measurements of a cold start)
+  if (const char* c = regs::envVar("REGS_VK_CACHE"); c && std::strcmp(c, "0") == 0) cacheFolder_.clear();
+  vk::setCacheFolder(cacheFolder_.empty() ? cacheFolder_ : cacheFolder_ / "spirv");
+  recordAll_ = regs::envVar("REGS_VK_RECORD_ALL") != nullptr;
   lib_ = LoadLibraryW(L"vulkan-1.dll");
   if (!lib_) {
     if (error) *error = "vulkan-1.dll not found (no Vulkan driver)";
@@ -1022,6 +1114,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   }
   VkPhysicalDeviceProperties props;
   vkGetPhysicalDeviceProperties(phys_, &props);
+  physProps_ = props;
   maxAniso_ = props.limits.maxSamplerAnisotropy;
   uboAlign_ = std::max<VkDeviceSize>(16, props.limits.minUniformBufferOffsetAlignment);
   timestampNs_ = props.limits.timestampPeriod > 0 ? props.limits.timestampPeriod : 1.0;
@@ -1117,6 +1210,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
 #undef REGS_VK_LOAD_DEVICE
   vkGetDeviceQueue(dev_, queueFamily_, 0, &queue_);
   alloc_.init(phys_, dev_, rt_);
+  loadPipelineCache();
   if (rt_) {
     VkPhysicalDeviceAccelerationStructurePropertiesKHR ap{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
     VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &ap};
@@ -1344,9 +1438,75 @@ bool VkDeviceImpl::makeBackBuffer(int w, int h) {
       !makeImage(textures_[backDepth_], Format::Depth24, w, h, 1, 1))
     return false;
   framebuffers_[0] = {true, backColor_, backDepth_};
+  ++targetsVersion_;
   backW_ = w;
   backH_ = h;
   return true;
+}
+
+void VkDeviceImpl::loadPipelineCache() {
+  std::vector<char> data;
+  const char* why = nullptr;
+  if (!cacheFolder_.empty()) {
+    std::ifstream in(cacheFolder_ / "pipelines.bin", std::ios::binary);
+    if (in) data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    // the header (VkPipelineCacheHeaderVersionOne): a cache of another driver or GPU is dropped, not handed over
+    VkPipelineCacheHeaderVersionOne h{};
+    if (data.empty()) {
+    } else if (data.size() < sizeof h) {
+      why = "too short";
+    } else {
+      std::memcpy(&h, data.data(), sizeof h);
+      if (h.headerSize < sizeof h || h.headerSize > data.size() || h.headerVersion != VK_PIPELINE_CACHE_HEADER_VERSION_ONE)
+        why = "unknown header";
+      else if (h.vendorID != physProps_.vendorID || h.deviceID != physProps_.deviceID ||
+               std::memcmp(h.pipelineCacheUUID, physProps_.pipelineCacheUUID, VK_UUID_SIZE) != 0)
+        why = "another driver or GPU";
+    }
+    if (why) data.clear();
+  }
+  VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+  ci.initialDataSize = data.size();
+  ci.pInitialData = data.empty() ? nullptr : data.data();
+  if (vkCreatePipelineCache(dev_, &ci, nullptr, &pipeCache_) != VK_SUCCESS) {
+    ci.initialDataSize = 0, ci.pInitialData = nullptr;  // the driver refused the data: start empty
+    if (vkCreatePipelineCache(dev_, &ci, nullptr, &pipeCache_) != VK_SUCCESS) pipeCache_ = VK_NULL_HANDLE;
+    data.clear();
+    why = "refused by the driver";
+  }
+  pipeCacheSaved_ = data.size();
+  if (!cacheFolder_.empty())
+    LOG_INFO("vulkan: pipeline cache %s (%zu KB)%s%s", data.empty() ? "empty" : "read", data.size() / 1024,
+             why ? ", the file was not used: " : "", why ? why : "");
+}
+
+void VkDeviceImpl::savePipelineCache() {
+  if (!pipeCache_ || cacheFolder_.empty()) return;
+  size_t size = 0;
+  if (vkGetPipelineCacheData(dev_, pipeCache_, &size, nullptr) != VK_SUCCESS || size <= pipeCacheSaved_) return;
+  std::vector<char> data(size);
+  if (vkGetPipelineCacheData(dev_, pipeCache_, &size, data.data()) != VK_SUCCESS) return;
+  data.resize(size);
+  std::error_code ec;
+  std::filesystem::create_directories(cacheFolder_, ec);
+  // written beside and renamed over the old file: a run that dies mid-write leaves the previous cache
+  std::filesystem::path file = cacheFolder_ / "pipelines.bin", tmp = cacheFolder_ / "pipelines.bin.tmp";
+  bool ok;
+  {
+    std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+    o.write(data.data(), std::streamsize(data.size()));
+    o.close();
+    ok = !o.fail();
+  }
+  if (ok) std::filesystem::rename(tmp, file, ec);
+  if (!ok || ec) {
+    std::filesystem::remove(tmp, ec);
+    LOG_WARN("vulkan: the pipeline cache could not be written (cache\\pipelines.bin)");
+    return;
+  }
+  pipeCacheSaved_ = data.size();
+  LOG_INFO("vulkan: pipeline cache written (%zu KB, %d pipelines made in this run in %.0f ms)", data.size() / 1024,
+           pipelinesCreated_, pipelineMs_);
 }
 
 void VkDeviceImpl::shutdown() {
@@ -1357,6 +1517,10 @@ void VkDeviceImpl::shutdown() {
   if (dev_) {
     fgStop();
     vkDeviceWaitIdle(dev_);
+    if (vk::CacheStats cs = vk::cacheStats(); cs.hits || cs.compiled)
+      LOG_INFO("vulkan: SPIR-V cache: %d programs read (%.0f ms), %d compiled (%.0f ms), %d entries rejected", cs.hits,
+               cs.loadMs, cs.compiled, cs.compileMs, cs.rejected);
+    if (pipelinesCreated_) LOG_INFO("vulkan: %d pipelines made in this run (%.0f ms)", pipelinesCreated_, pipelineMs_);
 #if REGS_FFX
     fsr::shutdown();
 #endif
@@ -1375,6 +1539,8 @@ void VkDeviceImpl::shutdown() {
       if (a.as) vkDestroyAccelerationStructureKHR(dev_, a.as, nullptr), vkDestroyBuffer(dev_, a.buffer, nullptr);
     for (Frame& f : frames_)
       if (f.tlas.as) vkDestroyAccelerationStructureKHR(dev_, f.tlas.as, nullptr), vkDestroyBuffer(dev_, f.tlas.buffer, nullptr);
+    savePipelineCache();
+    if (pipeCache_) vkDestroyPipelineCache(dev_, pipeCache_, nullptr);
     for (auto& [k, p] : pipelines_) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& [k, s] : samplers_) vkDestroySampler(dev_, s, nullptr);
     for (Program& p : programs_) {
@@ -1420,6 +1586,7 @@ void VkDeviceImpl::beginCommands() {
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   vkBeginCommandBuffer(f.cmd, &bi);
   recording_ = true;
+  resetRecorded();  // a new command buffer has no state
 }
 
 void VkDeviceImpl::submitAndWait() {
@@ -1818,6 +1985,7 @@ VkFormat VkDeviceImpl::vkFormatOf(Format f) const {
 }
 
 bool VkDeviceImpl::makeImage(Tex& t, Format f, int w, int h, int levels, int samples, bool storage) {
+  ++targetsVersion_;  // a framebuffer's attachment may change format or sample count
   freeImage(t);
   t.format = f;
   t.vkFormat = vkFormatOf(f);
@@ -2185,10 +2353,10 @@ void VkDeviceImpl::uniform1i(int loc, int v) {
   }
   size_t off = size_t(u.offset + locElement(loc) * u.arrayStride);
   if (off + 4 > p.block.size()) return;
-  if (u.isInt) std::memcpy(&p.block[off], &v, 4);
+  if (u.isInt) putBlock(p, off, &v, 4);
   else {
     float f = float(v);
-    std::memcpy(&p.block[off], &f, 4);
+    putBlock(p, off, &f, 4);
   }
 }
 
@@ -2207,7 +2375,7 @@ void VkDeviceImpl::setFloats(int loc, const float* v, int comps, int count, int 
       for (int c = 0; c < columns && c < std::max(u.columns, 1); ++c) {
         size_t o = base + size_t(c * u.matrixStride);
         if (o + size_t(comps) * 4 > p.block.size()) return;
-        std::memcpy(&p.block[o], v + (e * columns + c) * comps, size_t(comps) * 4);
+        putBlock(p, o, v + (e * columns + c) * comps, size_t(comps) * 4);
       }
     } else {
       int n = std::min(comps, u.components);
@@ -2215,10 +2383,10 @@ void VkDeviceImpl::setFloats(int loc, const float* v, int comps, int count, int 
       if (u.isInt) {
         for (int k = 0; k < n; ++k) {
           int iv = int(v[e * comps + k]);
-          std::memcpy(&p.block[base + size_t(k) * 4], &iv, 4);
+          putBlock(p, base + size_t(k) * 4, &iv, 4);
         }
       } else {
-        std::memcpy(&p.block[base], v + e * comps, size_t(n) * 4);
+        putBlock(p, base, v + e * comps, size_t(n) * 4);
       }
     }
   }
@@ -2271,6 +2439,9 @@ void VkDeviceImpl::ensureRendering() {
   }
   vkCmdBeginRendering(cmd(), &ri);
   renderingFb_ = int(boundFb_);
+  // state survives a rendering pass in Vulkan, but copies and the FSR passes recorded between two passes may bind
+  // their own; draw() records everything again
+  resetRecorded();
 }
 
 void VkDeviceImpl::endRendering() {
@@ -2312,6 +2483,24 @@ void VkDeviceImpl::clear(bool color, bool depth, float r, float g, float b, floa
 }
 
 VkPipeline VkDeviceImpl::pipelineFor(Prim prim) {
+  const VertexInput& vi = vertexInputs_[boundVi_];
+  KeyInputs in;
+  in.program = program_;
+  in.layout = vi.layout;
+  in.prim = prim;
+  in.blendOn = st_.blendOn;
+  in.src = st_.src;
+  in.dst = st_.dst;
+  in.fb = boundFb_;
+  in.mask1 = st_.mask1;
+  in.targets = targetsVersion_;
+  if (lastPipeline_ && in == lastKeyInputs_) return lastPipeline_;
+  lastKeyInputs_ = in;
+  lastPipeline_ = pipelineForKey(prim);
+  return lastPipeline_;
+}
+
+VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
   const Program& p = programs_[program_];
   const VertexInput& vi = vertexInputs_[boundVi_];
   int w, h, samples;
@@ -2415,8 +2604,17 @@ VkPipeline VkDeviceImpl::pipelineFor(Prim prim) {
   gci.pDynamicState = &dys;
   gci.layout = p.layout;
   VkPipeline pipe = VK_NULL_HANDLE;
-  if (VkResult r = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gci, nullptr, &pipe); r != VK_SUCCESS)
+  auto t0 = std::chrono::steady_clock::now();
+  if (VkResult r = vkCreateGraphicsPipelines(dev_, pipeCache_, 1, &gci, nullptr, &pipe); r != VK_SUCCESS)
     LOG_ERROR("vulkan: %s", vkError("vkCreateGraphicsPipelines", r).c_str());
+  ++pipelinesCreated_;
+  const double took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  pipelineMs_ += took;
+  static const bool logPipelines = regs::envVar("REGS_VK_LOG_PIPELINES") != nullptr;
+  if (logPipelines)  // REGS_VK_LOG_PIPELINES: each pipeline made, with its key (where draw-time creation happens)
+    LOG_INFO("vulkan: pipeline %d in %.1f ms: program %u layout %d prim %d blend %d %d-%d fb %u colour %d depth %d samples %d colour1 %d/%d",
+             pipelinesCreated_, took, key.program, key.layout, int(key.prim), int(key.blendOn), int(key.src), int(key.dst),
+             boundFb_, int(key.color), int(key.depth), key.samples, int(key.color1), key.mask1);
   pipelines_[key] = pipe;
   return pipe;
 }
@@ -2432,15 +2630,12 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
   const VertexInput& vi = vertexInputs_[boundVi_];
   VkPipeline pipe = pipelineFor(prim);
   if (!pipe) return;
-  ensureRendering();
+  ensureRendering();  // a new rendering pass starts with nothing recorded (rec_, pushed_)
   VkCommandBuffer c = cmd();
-  vkCmdBindPipeline(c, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
   int fw, fh, samples;
   VkFormat cf, df;
   fbExtent(boundFb_, fw, fh, cf, df, samples);
   // GL's viewport and scissor, same numbers (rows are stored as GL stores them)
-  VkViewport vp{float(st_.vp[0]), float(st_.vp[1]), float(std::max(1, st_.vp[2])), float(std::max(1, st_.vp[3])), 0, 1};
-  vkCmdSetViewport(c, 0, 1, &vp);
   VkRect2D sc{{0, 0}, {uint32_t(fw), uint32_t(fh)}};
   if (st_.scissorOn) {
     int x0 = std::clamp(st_.sc[0], 0, fw), y0 = std::clamp(st_.sc[1], 0, fh);
@@ -2448,15 +2643,6 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     if (x1 <= x0 || y1 <= y0) return;
     sc = {{x0, y0}, {uint32_t(x1 - x0), uint32_t(y1 - y0)}};
   }
-  vkCmdSetScissor(c, 0, 1, &sc);
-  vkCmdSetCullMode(c, !st_.cullOn ? VK_CULL_MODE_NONE : st_.cullFace == Face::Front ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT);
-  vkCmdSetFrontFace(c, VK_FRONT_FACE_CLOCKWISE);  // GL's counter-clockwise in GL row order (top of this file)
-  bool hasDepth = df != VK_FORMAT_UNDEFINED;
-  vkCmdSetDepthTestEnable(c, hasDepth && st_.depthTest);
-  vkCmdSetDepthWriteEnable(c, hasDepth && st_.depthTest && st_.depthWrite);
-  vkCmdSetDepthCompareOp(c, st_.depthFunc == Compare::Less ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL);
-  vkCmdSetDepthBiasEnable(c, st_.polyOn);
-  vkCmdSetDepthBias(c, st_.polyOn ? st_.polyUnits : 0, 0, st_.polyOn ? st_.polyFactor : 0);
   // vertex buffers in the pipeline's binding order
   std::vector<VkBuffer>& vbs = drawVbs_;
   std::vector<VkDeviceSize>& offs = drawOffs_;
@@ -2479,28 +2665,47 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
       if (vbs.size() == supplied) vbs.push_back(zeroAttrib_), offs.push_back(0);
     }
   }
-  if (!vbs.empty()) vkCmdBindVertexBuffers(c, 0, uint32_t(vbs.size()), vbs.data(), offs.data());
-  // descriptors: the uniform block (copied into the ring) and the images of the units the samplers point at
+  const Buf* ib = nullptr;
+  if (indexed) {
+    ib = vi.index < buffers_.size() ? &buffers_[vi.index] : nullptr;
+    if (!ib || !ib->buffer) return;
+  }
+  // descriptors: the uniform block (copied into the ring when it changed) and the images of the units the samplers
+  // point at; with the same layout as the last push only what differs from it is pushed
+  if (rec_.pushLayout != p.layout) pushed_.clear();
+  const bool incremental = !recordAll_ && rec_.pushLayout == p.layout;
+  int maxBinding = p.blockBinding;
+  for (const vk::UniformInfo& u : p.uniforms)
+    if (u.sampler || u.accel) maxBinding = std::max(maxBinding, u.binding);
+  if (maxBinding >= 0 && pushed_.size() <= size_t(maxBinding)) pushed_.resize(size_t(maxBinding) + 1);
   std::vector<VkWriteDescriptorSet>& writes = drawWrites_;
   std::vector<VkDescriptorImageInfo>& images = drawImages_;
   writes.clear(), images.clear();
   images.reserve(p.uniforms.size());  // the writes point into it: it must not reallocate while they are made
   VkDescriptorBufferInfo ubo{};
   if (p.blockBinding >= 0 && !p.block.empty()) {
-    VkBuffer ub;
-    VkDeviceSize uo;
-    uint8_t* uptr;
-    if (!ringAlloc(p.block.size(), uboAlign_, ub, uo, uptr)) return;
     if (p.hitTableOffset >= 0 && size_t(p.hitTableOffset) + 8 <= p.block.size())
-      std::memcpy(p.block.data() + p.hitTableOffset, &hitAddress_, 8);
-    std::memcpy(uptr, p.block.data(), p.block.size());
-    ubo = {ub, uo, p.block.size()};
-    VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    w.dstBinding = uint32_t(p.blockBinding);
-    w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    w.pBufferInfo = &ubo;
-    writes.push_back(w);
+      putBlock(p, size_t(p.hitTableOffset), &hitAddress_, 8);
+    // the ring is reused only when the frame comes round again: an earlier copy in this frame is still intact
+    if (p.blockDirty || p.uboFrame != frameCount_ || !p.uboBuffer) {
+      VkBuffer ub;
+      VkDeviceSize uo;
+      uint8_t* uptr;
+      if (!ringAlloc(p.block.size(), uboAlign_, ub, uo, uptr)) return;
+      std::memcpy(uptr, p.block.data(), p.block.size());
+      p.uboBuffer = ub, p.uboOffset = uo, p.uboFrame = frameCount_, p.blockDirty = false;
+    }
+    Pushed& was = pushed_[size_t(p.blockBinding)];
+    if (!incremental || was.type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER || was.buffer != p.uboBuffer ||
+        was.offset != p.uboOffset || was.range != p.block.size()) {
+      ubo = {p.uboBuffer, p.uboOffset, p.block.size()};
+      VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+      w.dstBinding = uint32_t(p.blockBinding);
+      w.descriptorCount = 1;
+      w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      w.pBufferInfo = &ubo;
+      writes.push_back(w);
+    }
   }
   VkWriteDescriptorSetAccelerationStructureKHR sceneWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
   for (size_t i = 0; i < p.uniforms.size(); ++i) {
@@ -2508,6 +2713,8 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     if (u.accel) {  // the frame's scene (buildScene); without one this frame the program cannot draw
       Frame& fr = frames_[frame_];
       if (!fr.tlasBuilt || !fr.tlas.as) return;
+      Pushed& was = pushed_[size_t(u.binding)];
+      if (incremental && was.type == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR && was.accel == fr.tlas.as) continue;
       sceneWrite.accelerationStructureCount = 1;
       sceneWrite.pAccelerationStructures = &fr.tlas.as;
       VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, &sceneWrite};
@@ -2524,7 +2731,11 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     // a shadow sampler needs a depth texture; a plain sampler reads colour or depth (the post effects read depth)
     bool fits = t && t->image && t->cube == u.cube && (!u.shadow || isDepth(t->format)) && t->samples == 1;
     if (!fits) t = &textures_[u.cube ? dummyCube_ : u.shadow ? dummyShadow_ : dummy2D_];
-    images.push_back({samplerFor(*t, u.shadow), t->view, VK_IMAGE_LAYOUT_GENERAL});
+    VkSampler smp = samplerFor(*t, u.shadow);
+    Pushed& was = pushed_[size_t(u.binding)];
+    if (incremental && was.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && was.sampler == smp && was.view == t->view)
+      continue;
+    images.push_back({smp, t->view, VK_IMAGE_LAYOUT_GENERAL});
     VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     w.dstBinding = uint32_t(u.binding);
     w.descriptorCount = 1;
@@ -2532,14 +2743,63 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     w.pImageInfo = &images.back();
     writes.push_back(w);
   }
-  if (!writes.empty())
+
+  // record: everything above could still return without drawing; from here on the draw happens
+  if (rec_.pipeline != pipe || recordAll_) {
+    vkCmdBindPipeline(c, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    rec_.pipeline = pipe;
+  }
+  VkViewport vp{float(st_.vp[0]), float(st_.vp[1]), float(std::max(1, st_.vp[2])), float(std::max(1, st_.vp[3])), 0, 1};
+  const bool all = !rec_.dynamic || recordAll_;
+  if (all) vkCmdSetFrontFace(c, VK_FRONT_FACE_CLOCKWISE);  // GL's counter-clockwise in GL row order (top of this file)
+  if (all || std::memcmp(&vp, &rec_.viewport, sizeof vp) != 0) vkCmdSetViewport(c, 0, 1, &vp), rec_.viewport = vp;
+  if (all || std::memcmp(&sc, &rec_.scissor, sizeof sc) != 0) vkCmdSetScissor(c, 0, 1, &sc), rec_.scissor = sc;
+  VkCullModeFlags cull = !st_.cullOn ? VK_CULL_MODE_NONE : st_.cullFace == Face::Front ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
+  if (all || cull != rec_.cull) vkCmdSetCullMode(c, cull), rec_.cull = cull;
+  bool hasDepth = df != VK_FORMAT_UNDEFINED;
+  VkBool32 depthTest = hasDepth && st_.depthTest, depthWrite = hasDepth && st_.depthTest && st_.depthWrite;
+  if (all || depthTest != rec_.depthTest) vkCmdSetDepthTestEnable(c, depthTest), rec_.depthTest = depthTest;
+  if (all || depthWrite != rec_.depthWrite) vkCmdSetDepthWriteEnable(c, depthWrite), rec_.depthWrite = depthWrite;
+  VkCompareOp compare = st_.depthFunc == Compare::Less ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
+  if (all || compare != rec_.compare) vkCmdSetDepthCompareOp(c, compare), rec_.compare = compare;
+  VkBool32 biasOn = st_.polyOn;
+  if (all || biasOn != rec_.biasOn) vkCmdSetDepthBiasEnable(c, biasOn), rec_.biasOn = biasOn;
+  float biasConstant = st_.polyOn ? st_.polyUnits : 0, biasSlope = st_.polyOn ? st_.polyFactor : 0;
+  if (all || biasConstant != rec_.biasConstant || biasSlope != rec_.biasSlope) {
+    vkCmdSetDepthBias(c, biasConstant, 0, biasSlope);
+    rec_.biasConstant = biasConstant, rec_.biasSlope = biasSlope;
+  }
+  rec_.dynamic = true;
+  if (!vbs.empty() && (vbs != rec_.vbs || offs != rec_.offs || recordAll_)) {
+    vkCmdBindVertexBuffers(c, 0, uint32_t(vbs.size()), vbs.data(), offs.data());
+    rec_.vbs = vbs, rec_.offs = offs;
+  }
+  if (!writes.empty()) {
     vkCmdPushDescriptorSetKHR(c, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 0, uint32_t(writes.size()), writes.data());
-  if (p.bindless)  // (a hit table exists whenever the scene has instances: they come from its bottom levels)
+    for (const VkWriteDescriptorSet& w : writes) {
+      Pushed& d = pushed_[w.dstBinding];
+      d = Pushed{};
+      d.type = w.descriptorType;
+      if (w.pBufferInfo) d.buffer = w.pBufferInfo->buffer, d.offset = w.pBufferInfo->offset, d.range = w.pBufferInfo->range;
+      if (w.pImageInfo) d.sampler = w.pImageInfo->sampler, d.view = w.pImageInfo->imageView;
+      if (w.descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) d.accel = *sceneWrite.pAccelerationStructures;
+    }
+  }
+  if (rec_.pushLayout != p.layout) {
+    // a push with another layout may disturb set 1: bind it again below
+    rec_.pushLayout = p.layout;
+    rec_.bindlessLayout = VK_NULL_HANDLE;
+  }
+  if (p.bindless && (rec_.bindlessLayout != p.layout || recordAll_)) {
+    // (a hit table exists whenever the scene has instances: they come from its bottom levels)
     vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 1, 1, &bindlessSet_, 0, nullptr);
+    rec_.bindlessLayout = p.layout;
+  }
   if (indexed) {
-    const Buf* ib = vi.index < buffers_.size() ? &buffers_[vi.index] : nullptr;
-    if (!ib || !ib->buffer) return;
-    vkCmdBindIndexBuffer(c, ib->buffer, ib->offset, VK_INDEX_TYPE_UINT32);
+    if (ib->buffer != rec_.ib || ib->offset != rec_.ibOffset || recordAll_) {
+      vkCmdBindIndexBuffer(c, ib->buffer, ib->offset, VK_INDEX_TYPE_UINT32);
+      rec_.ib = ib->buffer, rec_.ibOffset = ib->offset;
+    }
     vkCmdDrawIndexed(c, uint32_t(count), 1, uint32_t(first), 0, 0);
   } else {
     vkCmdDraw(c, uint32_t(count), 1, uint32_t(first), 0);
@@ -3028,8 +3288,9 @@ void VkDeviceImpl::buildScene(const Instance* instances, int count) {
 
 }  // namespace
 
-std::unique_ptr<Device> createVulkanDevice(platform::Window& window, bool vsync, std::string* error) {
-  auto d = std::make_unique<VkDeviceImpl>(window);
+std::unique_ptr<Device> createVulkanDevice(platform::Window& window, bool vsync, std::string* error,
+                                           const std::filesystem::path& cacheFolder) {
+  auto d = std::make_unique<VkDeviceImpl>(window, cacheFolder);
   if (!d->init(vsync, error)) return nullptr;
   LOG_INFO("vulkan: %s", d->info().c_str());
   return d;

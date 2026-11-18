@@ -31,6 +31,7 @@
 #include "engine/settings.h"
 #include "engine/texture_upscale.h"
 #include "engine/ui_graphs.h"
+#include "engine/user_folders.h"
 #include "render/gpu.h"
 #include "render/glsl.h"
 #include "render/image.h"
@@ -154,7 +155,11 @@ bool Display::open(const platform::WindowDesc& desc, bool vulkan, std::string* e
     window_ = platform::createWindow();
     std::string why;
     std::unique_ptr<render::gpu::Device> device;
-    if (window_->create(vd, &why)) device = render::gpu::createVulkanDevice(*window_, desc.vsync, &why);
+    // the shader and pipeline caches in the player's OpenCiM folder (follows --documents)
+    std::filesystem::path cache;
+    if (!host().userFolder.empty()) cache = host().userFolder / "cache";
+    else if (!host().documents.empty()) cache = host().documents / kPortFolderName / "cache";
+    if (window_->create(vd, &why)) device = render::gpu::createVulkanDevice(*window_, desc.vsync, &why, cache);
     if (device) {
       render::gpu::setDevice(std::move(device));
     } else {
@@ -672,15 +677,19 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     std::chrono::steady_clock::time_point t0;
     int linked;
     double link;
+    int pipelines;
+    double pipelineMs;
     ~SlowFrame() {
       double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       if (on && ms > 250)
-        LOG_INFO("slow frame: %.0f ms (%d shader programs linked in %.0f ms; scene %.0f, grid %.0f, vehicles %.0f, particles %.0f, night %.0f, programs %.0f ms)",
-                 ms, render::gProgramsLinked - linked, (render::gLinkSeconds - link) * 1000, gPhaseSeconds[1] * 1000,
-                 gPhaseSeconds[2] * 1000, gPhaseSeconds[3] * 1000, gPhaseSeconds[4] * 1000, gPhaseSeconds[5] * 1000,
-                 gPhaseSeconds[6] * 1000);
+        LOG_INFO("slow frame: %.0f ms (%d shader programs linked in %.0f ms, %d pipelines in %.0f ms; scene %.0f, grid %.0f, vehicles %.0f, particles %.0f, night %.0f, programs %.0f ms)",
+                 ms, render::gProgramsLinked - linked, (render::gLinkSeconds - link) * 1000,
+                 render::gpu::dev().pipelinesCreated() - pipelines, render::gpu::dev().pipelineMs() - pipelineMs,
+                 gPhaseSeconds[1] * 1000, gPhaseSeconds[2] * 1000, gPhaseSeconds[3] * 1000, gPhaseSeconds[4] * 1000,
+                 gPhaseSeconds[5] * 1000, gPhaseSeconds[6] * 1000);
     }
-  } slowFrame{logTime, frameStart, linkedBefore, linkBefore};
+  } slowFrame{logTime, frameStart, linkedBefore, linkBefore, render::gpu::dev().pipelinesCreated(),
+              render::gpu::dev().pipelineMs()};
   syncRenderSettings(vm);
   sweepEffects(*this);
   stylePreviewFrame(*this, vm);
