@@ -302,7 +302,7 @@ void imageBarrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags aspect, V
 
 class VkDeviceImpl final : public Device {
  public:
-  explicit VkDeviceImpl(platform::Window& w) : window_(w) {}
+  VkDeviceImpl(platform::Window& w, const std::filesystem::path& cacheFolder) : window_(w), cacheFolder_(cacheFolder) {}
   ~VkDeviceImpl() override { shutdown(); }
 
   bool init(bool vsync, std::string* error);
@@ -719,6 +719,7 @@ class VkDeviceImpl final : public Device {
   void setFloats(int loc, const float* v, int comps, int count, int columns);
 
   platform::Window& window_;
+  std::filesystem::path cacheFolder_;  // SPIR-V (spirv\) and pipeline (pipelines.bin) caches; empty = none
   std::string info_;
   float maxAniso_ = 1;
   bool vsync_ = true;
@@ -901,6 +902,9 @@ class VkDeviceImpl final : public Device {
 
 bool VkDeviceImpl::init(bool vsync, std::string* error) {
   vsync_ = vsync;
+  // REGS_VK_CACHE=0: no caches on disk (measurements of a cold start)
+  if (const char* c = regs::envVar("REGS_VK_CACHE"); c && std::strcmp(c, "0") == 0) cacheFolder_.clear();
+  vk::setCacheFolder(cacheFolder_.empty() ? cacheFolder_ : cacheFolder_ / "spirv");
   lib_ = LoadLibraryW(L"vulkan-1.dll");
   if (!lib_) {
     if (error) *error = "vulkan-1.dll not found (no Vulkan driver)";
@@ -1357,6 +1361,9 @@ void VkDeviceImpl::shutdown() {
   if (dev_) {
     fgStop();
     vkDeviceWaitIdle(dev_);
+    if (vk::CacheStats cs = vk::cacheStats(); cs.hits || cs.compiled)
+      LOG_INFO("vulkan: SPIR-V cache: %d programs read (%.0f ms), %d compiled (%.0f ms), %d entries rejected", cs.hits,
+               cs.loadMs, cs.compiled, cs.compileMs, cs.rejected);
 #if REGS_FFX
     fsr::shutdown();
 #endif
@@ -3028,8 +3035,9 @@ void VkDeviceImpl::buildScene(const Instance* instances, int count) {
 
 }  // namespace
 
-std::unique_ptr<Device> createVulkanDevice(platform::Window& window, bool vsync, std::string* error) {
-  auto d = std::make_unique<VkDeviceImpl>(window);
+std::unique_ptr<Device> createVulkanDevice(platform::Window& window, bool vsync, std::string* error,
+                                           const std::filesystem::path& cacheFolder) {
+  auto d = std::make_unique<VkDeviceImpl>(window, cacheFolder);
   if (!d->init(vsync, error)) return nullptr;
   LOG_INFO("vulkan: %s", d->info().c_str());
   return d;

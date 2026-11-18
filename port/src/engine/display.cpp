@@ -31,6 +31,7 @@
 #include "engine/settings.h"
 #include "engine/texture_upscale.h"
 #include "engine/ui_graphs.h"
+#include "engine/user_folders.h"
 #include "render/gpu.h"
 #include "render/glsl.h"
 #include "render/image.h"
@@ -154,7 +155,11 @@ bool Display::open(const platform::WindowDesc& desc, bool vulkan, std::string* e
     window_ = platform::createWindow();
     std::string why;
     std::unique_ptr<render::gpu::Device> device;
-    if (window_->create(vd, &why)) device = render::gpu::createVulkanDevice(*window_, desc.vsync, &why);
+    // the shader and pipeline caches in the player's OpenCiM folder (follows --documents)
+    std::filesystem::path cache;
+    if (!host().userFolder.empty()) cache = host().userFolder / "cache";
+    else if (!host().documents.empty()) cache = host().documents / kPortFolderName / "cache";
+    if (window_->create(vd, &why)) device = render::gpu::createVulkanDevice(*window_, desc.vsync, &why, cache);
     if (device) {
       render::gpu::setDevice(std::move(device));
     } else {

@@ -11,4 +11,7 @@ bool compileProgram(const std::string&, const std::string&, const std::vector<st
   return false;
 }
 
+void setCacheFolder(const std::filesystem::path&) {}
+CacheStats cacheStats() { return {}; }
+
 }  // namespace regs::render::vk

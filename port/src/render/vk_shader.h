@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,5 +39,16 @@ struct ProgramSpirv {
 bool available();
 bool compileProgram(const std::string& vs, const std::string& fs,
                     const std::vector<std::pair<int, const char*>>& attribs, ProgramSpirv& out, std::string* error);
+
+// The SPIR-V disk cache (docs/renderer/vulkan.md §3): one file per program in this folder, keyed by a hash of both
+// sources, the attribute table and the compiler and cache version; the file holds the SPIR-V of both stages and the
+// reflection above. compileProgram looks there first and writes what it compiles; an unreadable, corrupt or foreign
+// entry is compiled anew and overwritten. Empty folder (the default): no cache.
+void setCacheFolder(const std::filesystem::path& folder);
+struct CacheStats {
+  int hits = 0, compiled = 0, rejected = 0;  // rejected: entries present but unusable (corrupt, other version)
+  double loadMs = 0, compileMs = 0;
+};
+CacheStats cacheStats();
 
 }  // namespace regs::render::vk
