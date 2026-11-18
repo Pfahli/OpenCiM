@@ -762,6 +762,12 @@ class VkDeviceImpl final : public Device {
   uint32_t program_ = 0, boundVi_ = 0, boundFb_ = 0;
   int renderingFb_ = -1;
   bool nullDrawLogged_ = false;
+  // draw()'s scratch lists: cleared per draw, their storage kept (no heap traffic per draw)
+  std::vector<VkBuffer> drawVbs_;
+  std::vector<VkDeviceSize> drawOffs_;
+  std::vector<uint32_t> drawSeen_;
+  std::vector<VkWriteDescriptorSet> drawWrites_;
+  std::vector<VkDescriptorImageInfo> drawImages_;
 
   // GPU frame time: two timestamps per frame slot, read when the slot's fence has passed
   VkQueryPool timestamps_ = VK_NULL_HANDLE;
@@ -2452,9 +2458,10 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
   vkCmdSetDepthBiasEnable(c, st_.polyOn);
   vkCmdSetDepthBias(c, st_.polyOn ? st_.polyUnits : 0, 0, st_.polyOn ? st_.polyFactor : 0);
   // vertex buffers in the pipeline's binding order
-  std::vector<VkBuffer> vbs;
-  std::vector<VkDeviceSize> offs;
-  std::vector<uint32_t> seen;
+  std::vector<VkBuffer>& vbs = drawVbs_;
+  std::vector<VkDeviceSize>& offs = drawOffs_;
+  std::vector<uint32_t>& seen = drawSeen_;
+  vbs.clear(), offs.clear(), seen.clear();
   for (const VertexAttrib& a : vi.attribs) {
     if (std::find(p.inputs.begin(), p.inputs.end(), a.slot) == p.inputs.end()) continue;
     if (std::find(seen.begin(), seen.end(), a.buffer) != seen.end()) continue;
@@ -2474,9 +2481,10 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
   }
   if (!vbs.empty()) vkCmdBindVertexBuffers(c, 0, uint32_t(vbs.size()), vbs.data(), offs.data());
   // descriptors: the uniform block (copied into the ring) and the images of the units the samplers point at
-  std::vector<VkWriteDescriptorSet> writes;
-  std::vector<VkDescriptorImageInfo> images;
-  images.reserve(p.uniforms.size());
+  std::vector<VkWriteDescriptorSet>& writes = drawWrites_;
+  std::vector<VkDescriptorImageInfo>& images = drawImages_;
+  writes.clear(), images.clear();
+  images.reserve(p.uniforms.size());  // the writes point into it: it must not reallocate while they are made
   VkDescriptorBufferInfo ubo{};
   if (p.blockBinding >= 0 && !p.block.empty()) {
     VkBuffer ub;

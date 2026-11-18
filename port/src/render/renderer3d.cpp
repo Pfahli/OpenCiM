@@ -941,7 +941,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   // per bone group: the palette's skin matrices (invBind · world; identity = bind pose), then its index range
   // (gsHWSkinSubMesh_OGL draw 0x10054140)
   static const Mat4 identity;
-  std::vector<float> palette;
+  std::vector<float>& palette = palette_;
   for (const GpuMesh::Part::SkinGroup& g : p.groups) {
     palette.clear();
     for (uint16_t b : g.palette) {

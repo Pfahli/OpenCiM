@@ -342,6 +342,7 @@ class Renderer3D {
   GpuMesh particleMesh_;            // stream VBO of the billboards, static quad index buffer
   size_t particleQuads_ = 0;        // quads the index buffer holds
   std::vector<uint8_t> particleVerts_;
+  std::vector<float> palette_;  // drawCombined's bone palette, reused (no heap traffic per skinned draw)
 };
 
 }  // namespace regs::render
