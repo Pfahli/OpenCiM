@@ -150,3 +150,26 @@ in 685 ms`, `first view drawn ahead in 1117 ms (88 shader programs)`.
 
 Still to measure: speed 10 (citizen `process` work scales with game speed), a zoomed-out view, and a profile of a map
 load and of the rebuild after an import.
+
+## Results of the first round (2026-11-18)
+
+Done: A1 (cached getenv, core/env.h), A2, A3, A4 (allocations only), A5 (once-per-view program setup and the
+indexed program table; the opaque queue is still unsorted: sorting would change which of two coplanar parts wins),
+A6 (caster culling: correct, but it culls almost nothing in the tested views), A8, A9, B1 (header read and worker
+decode), B2 (table-driven inflate, 133 to 482 MB/s, output identical on all 22,848 archive entries; the install
+archives keep a file handle), B5, B6, C1. New test switches: REGS_FIXED_DT, REGS_DEBUG_PROGRAM_SETUP,
+REGS_DEBUG_NO_CASTER_CULL.
+
+| Save, engine | fps before | fps after | Render CPU ms before / after |
+|---|---|---|---|
+| Berlin, Vulkan | 44.1 | 81.5 | 13.6 / 7.1 |
+| Berlin, OpenGL | (not measured) | 88.7 | (not measured) / 6.3 |
+| Vienna, Vulkan | 82.7 | 119.5 | 6.6 / 4.5 |
+
+Same method as above; the after runs had another session compiling in the background, so they are if anything low.
+Loading: Vienna grid items 4.4 s to 0.7 s, Berlin 3.0 s to 0.35 s; night masks about 2.6 times faster.
+
+Next by the new profile (Berlin, Vulkan): the stop bubbles still spend ~13 % in script member lookups
+(`placeTracer` reading about 15 fields by name per bubble per frame; A11 and a per-frame camera cache), the
+Vulkan draw path (~16 %, the state and descriptor skipping of A4), `stepCitizens` (~14 %), and the Vulkan hitches
+(still up to 720 ms; pipeline and SPIR-V caches).
