@@ -1284,10 +1284,11 @@ Mat4 poseMatrix(const PlacedPose& p) {
   return w;
 }
 
-// every unit of every live mover: line vehicles first, then the traffic
-template <typename F>
-void forEachUnit(const SimState& s, F fn) {
+// every unit of every live mover that keep(mover) lets through: line vehicles first, then the traffic
+template <typename K, typename F>
+void forEachUnitOf(const SimState& s, K keep, F fn) {
   auto units = [&](const Mover& m) {
+    if (!keep(m)) return;
     float r = m.dist;
     for (size_t k = 0; k < m.units.size(); ++k) {
       const Unit& u = m.units[k];
@@ -1300,6 +1301,11 @@ void forEachUnit(const SimState& s, F fn) {
     if (v.mover >= 0 && s.movers[size_t(v.mover)].live && !s.movers[size_t(v.mover)].track.nodes.empty()) units(s.movers[size_t(v.mover)]);
   for (const Mover& m : s.movers)
     if (m.live && !m.transit && !m.track.nodes.empty()) units(m);
+}
+
+template <typename F>
+void forEachUnit(const SimState& s, F fn) {
+  forEachUnitOf(s, [](const Mover&) { return true; }, fn);
 }
 
 // the doors a boarding pedestrian walks to (FUN_10108350): the point beside the nearest car of the vehicle, on the
@@ -2920,10 +2926,59 @@ int simBusPlatformAtTramStop(VM& vm, GridObj* grid, int item) {
 
 bool simBusAtTramStops(VM& vm) { return settingNumber(vm, u"regsBusAtTramStops", 1.0f) != 0.0f; }
 
-void forEachSimVehicle(GridObj* grid, const std::function<void(const SimVehicleView&)>& fn) {
+namespace {
+
+// The pick cull of a mover (SimPickCull). A unit's origin lies on the line through its two anchor points on the
+// track, at the fraction f = rearAnchor / span (unitPose), and the track curve moves at most 5 world units per unit
+// of track distance: each node is a cubic from its start to its end point with end tangents of a third of its chord
+// (|b − a| = |d − c| = L/3, |c − b| ≤ |d − a| + 2L/3 = 5L/3, so |dP/ds| ≤ 3·(5L/3)/L), and consecutive nodes meet
+// (trackPoint's halfway points). So every origin lies within 5·D·g of the point where the head's node starts, D the
+// farthest anchor distance from that node's start, g = 1 for f in [0, 1], else 1 + 2|f|. Factor 6 and a cell's
+// margin cover lanes whose ends do not quite meet. A hit lies within 0.8 + 1.3 + |model centre| + max(half length,
+// 0.5) of its unit's origin and on the segment or at most 2.1 units past its end (intersectGrid).
+bool moverMayBeHit(const SimState& s, const Mover& m, const SimPickCull& c) {
+  // only a vehicle with an object can be picked (SimVehicleView::object)
+  if (!(m.transit && m.vehicle >= 0 ? s.vehicles[size_t(m.vehicle)].object.get() : m.controller.get())) return false;
+  const Track& tr = m.track;
+  const size_t i = tr.at(m.dist);
+  const LaneNode& n = s.graph.nodes[size_t(tr.nodes[i])];
+  const Vec3 ref = i > 0 ? (s.graph.nodes[size_t(tr.nodes[i - 1])].p1 + n.p0) * 0.5f : n.p0;
+  const float si = tr.start[i], end = tr.end(s.graph);
+  float lo = si, hi = si, g = 1, reach = 0, r = m.dist;
+  for (size_t k = 0; k < m.units.size(); ++k) {
+    const Unit& u = m.units[k];
+    if (k > 0) r -= unitLength(s, u);
+    if (u.model < 0) continue;
+    const UnitModel& um = s.models[size_t(u.model)];
+    const float span = um.frontAnchor + um.rearAnchor, s1 = r + um.rearOffset - um.rearAnchor, s2 = s1 + span;
+    lo = std::min({lo, s1, s2});
+    hi = std::max({hi, s1, s2});
+    const float f = span > 0 ? um.rearAnchor / span : 0;
+    if (f < 0 || f > 1) g = std::max(g, 1 + 2 * std::fabs(f));
+    const Vec3 mc = (um.boundsMin + um.boundsMax) * 0.5f;
+    reach = std::max(reach, 2.1f + std::sqrt(dot(mc, mc)) + std::max((um.boundsMax.z - um.boundsMin.z) * 0.5f, 0.5f));
+  }
+  lo = std::clamp(lo, 0.0f, end), hi = std::clamp(hi, 0.0f, end);
+  const float spread = 6 * std::max(si - lo, hi - si) * g + std::sqrt(dot(m.crashOffset, m.crashOffset)) + c.cellSize;
+  // a unit's cell can be in the rectangle (int() truncates toward zero: cell 0 starts one cell early)
+  const float minX = float(c.x0 - 1) * c.cellSize - c.halfWidth, maxX = float(c.x1 + 1) * c.cellSize - c.halfWidth;
+  const float minZ = float(c.z0 - 1) * c.cellSize - c.halfLength, maxZ = float(c.z1 + 1) * c.cellSize - c.halfLength;
+  if (ref.x + spread < minX || ref.x - spread > maxX || ref.z + spread < minZ || ref.z - spread > maxZ) return false;
+  // and near the segment
+  const Vec3 d = c.end - c.start, w = ref - c.start;
+  const float dd = dot(d, d), t = dd > 0 ? std::clamp(dot(w, d) / dd, 0.0f, 1.0f) : 0.0f;
+  const Vec3 e = w - d * t;
+  const float lim = spread + reach + 2.5f;
+  return dot(e, e) <= lim * lim;
+}
+
+}  // namespace
+
+void forEachSimVehicle(GridObj* grid, const std::function<void(const SimVehicleView&)>& fn, const SimPickCull* cull) {
   SimState* s = simOf(grid);
   if (!s) return;
-  forEachUnit(*s, [&](const Mover& mv, int k, const Unit& u, const PlacedPose& p) {
+  forEachUnitOf(*s, [&](const Mover& mv) { return !cull || moverMayBeHit(*s, mv, *cull); },
+                [&](const Mover& mv, int k, const Unit& u, const PlacedPose& p) {
     const UnitModel& m = s->models[size_t(u.model)];
     Mat4 w = poseMatrix(p);
     Vec3 mc = (m.boundsMin + m.boundsMax) * 0.5f, half = (m.boundsMax - m.boundsMin) * 0.5f;

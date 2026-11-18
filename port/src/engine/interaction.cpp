@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <string_view>
 #include <unordered_map>
 
 #include "core/log.h"
@@ -213,9 +214,13 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
   Value vmv = member(vm, grid, u"viewMode");
   uint32_t viewMode = vmv.type() == VT::Int ? uint32_t(vm.toInt(vmv)) : 0xFEu;
 
-  // vehicles (§2.3): one flat rectangle per unit, 2.6 wide, 0.8 above the pivot, ranked 2 units nearer. Port: the
-  // length is the model's bounds along the track (the original stretches front/rear offsets by 1 + 0.15·speed)
-  if (vehicles)
+  // vehicles and characters, every pick (the original re-picks every tick, so the hover follows what moves under a
+  // still cursor). The simulation skips what cannot be hit before working out its pose (SimPickCull: intersectGrid's
+  // rectangle below and the hit reach around the segment). REGS_DEBUG_NO_PICK_CULL=1 tests everything as before,
+  // =check does both and logs where they differ.
+  auto movers = [&](Hit& h, const SimPickCull* cull) {
+    // vehicles (§2.3): one flat rectangle per unit, 2.6 wide, 0.8 above the pivot, ranked 2 units nearer. Port: the
+    // length is the model's bounds along the track (the original stretches front/rear offsets by 1 + 0.15·speed)
     forEachSimVehicle(grid, [&](const SimVehicleView& v) {
       if (!v.object) return;
       int cx = int((v.position.x + hW) / cs), cz = int((v.position.z + hL) / cs);
@@ -232,30 +237,49 @@ Hit intersectGrid(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end, boo
         h.item = -1;
         h.y = int(std::lround(v.position.y / cs * 256.0f));
       }
-    });
+    }, cull);
 
-  // characters (§2.4): within 1 unit of the point 1 above the feet, ranked by the distance to that point minus 2
+    // characters (§2.4): within 1 unit of the point 1 above the feet, ranked by the distance to that point minus 2
+    forEachSimCharacter(grid, [&](const SimCharacterView& c) {
+      int cx = int((c.position.x + hW) / cs), cz = int((c.position.z + hL) / cs);
+      if (cx < rx0 - 3 || cx > rx1 + 3 || cz < rz0 - 3 || cz > rz1 + 3) return;
+      Vec3 L = c.position + Vec3{0, 1, 0}, w = start - L, x = cross(D, w);
+      float dd = dot(D, D), d2 = dd > 0 ? dot(x, x) / dd : 0;
+      if (d2 >= 1.0f) return;
+      float t = (std::sqrt(dot(w, w)) - 2.0f + std::sqrt(d2)) * invLen;
+      if (t >= 0 && t < h.t) {
+        // the controller only for a hit (getController in the original's pick, docs/ui/selection.md §5.2)
+        Object* ctrl = c.object ? c.object : simCharacterController(grid, c.index);
+        if (!ctrl) return;  // no controller: not pickable
+        h.t = t;
+        h.cellX = cx;
+        h.cellZ = cz;
+        h.vehicle = nullptr;
+        h.character = ctrl;
+        h.item = -1;
+        h.y = int(std::lround(c.position.y / cs * 256.0f));
+      }
+    }, cull);
+  };
   // The tools pick without vehicles and characters (intersectGrid(..., null, null), tools.h toolPick).
-  if (vehicles) forEachSimCharacter(grid, [&](const SimCharacterView& c) {
-    int cx = int((c.position.x + hW) / cs), cz = int((c.position.z + hL) / cs);
-    if (cx < rx0 - 3 || cx > rx1 + 3 || cz < rz0 - 3 || cz > rz1 + 3) return;
-    Vec3 L = c.position + Vec3{0, 1, 0}, w = start - L, x = cross(D, w);
-    float dd = dot(D, D), d2 = dd > 0 ? dot(x, x) / dd : 0;
-    if (d2 >= 1.0f) return;
-    float t = (std::sqrt(dot(w, w)) - 2.0f + std::sqrt(d2)) * invLen;
-    if (t >= 0 && t < h.t) {
-      // the controller only for a hit (getController in the original's pick, docs/ui/selection.md §5.2)
-      Object* ctrl = c.object ? c.object : simCharacterController(grid, c.index);
-      if (!ctrl) return;  // no controller: not pickable
-      h.t = t;
-      h.cellX = cx;
-      h.cellZ = cz;
-      h.vehicle = nullptr;
-      h.character = ctrl;
-      h.item = -1;
-      h.y = int(std::lround(c.position.y / cs * 256.0f));
+  if (vehicles) {
+    static const char* noCull = regs::envVar("REGS_DEBUG_NO_PICK_CULL");
+    SimPickCull cull;
+    cull.start = start, cull.end = end;
+    cull.halfWidth = hW, cull.halfLength = hL, cull.cellSize = cs;
+    cull.x0 = rx0 - 3, cull.z0 = rz0 - 3, cull.x1 = rx1 + 3, cull.z1 = rz1 + 3;
+    const bool check = noCull && std::string_view(noCull) == "check";
+    Hit all = h;
+    movers(h, noCull && !check ? nullptr : &cull);
+    if (check) {
+      movers(all, nullptr);
+      if (all.t != h.t || all.vehicle != h.vehicle || all.character != h.character || all.cellX != h.cellX ||
+          all.cellZ != h.cellZ)
+        LOG_ERROR("pick cull: t %.5f vehicle %p character %p, without the cull t %.5f vehicle %p character %p", h.t,
+                  static_cast<void*>(h.vehicle), static_cast<void*>(h.character), all.t, static_cast<void*>(all.vehicle),
+                  static_cast<void*>(all.character));
     }
-  });
+  }
 
   // items (§2.5): a flat rectangle over the footprint, at most a quarter cell above the base, then the cell cover
   if (!terrainOnly && st.cols > 0) {

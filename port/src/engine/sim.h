@@ -30,8 +30,21 @@ struct SimVehicleView {
   float radius = 0;                  // bounding sphere radius around center
 };
 
-// Calls fn for every unit of every spawned vehicle of the grid's simulation, line vehicles first.
-void forEachSimVehicle(GridObj* grid, const std::function<void(const SimVehicleView&)>& fn);
+// The hover pick's pre-cull (intersectGrid): what lies farther from the pick segment than a hit can is skipped
+// before its pose is worked out. The cells are intersectGrid's rectangle, its margin included: a pedestrian is only
+// passed on when its feet are in it and the point 1 above them is within 1 of the segment's line (the tests
+// intersectGrid makes), a vehicle only when it has an object and one of its units can be in it and within hit reach
+// of the segment.
+struct SimPickCull {
+  render::Vec3 start, end;                            // the pick segment
+  float halfWidth = 0, halfLength = 0, cellSize = 1;  // world → cell: int((x + halfWidth) / cellSize)
+  int x0 = 0, z0 = 0, x1 = -1, z1 = -1;
+};
+
+// Calls fn for every unit of every spawned vehicle of the grid's simulation, line vehicles first; with a cull only
+// the units of the vehicles that may be hit, in the same order.
+void forEachSimVehicle(GridObj* grid, const std::function<void(const SimVehicleView&)>& fn,
+                       const SimPickCull* cull = nullptr);
 
 // One visible pedestrian (gsGridCharacters) in map world space.
 struct SimCharacterView {
@@ -47,8 +60,10 @@ struct SimCharacterView {
   float radius = 0;
 };
 
-// Calls fn for every visible pedestrian of the grid's simulation. Creates no controllers.
-void forEachSimCharacter(GridObj* grid, const std::function<void(const SimCharacterView&)>& fn);
+// Calls fn for every visible pedestrian of the grid's simulation (with a cull only those whose feet are in its
+// cells). Creates no controllers.
+void forEachSimCharacter(GridObj* grid, const std::function<void(const SimCharacterView&)>& fn,
+                         const SimPickCull* cull = nullptr);
 
 // The gsGridCharacterController of a pedestrian (index as in SimCharacterView::index), created on first use and
 // cached, parented to the grid; null for an unknown or dead character.

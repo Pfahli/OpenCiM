@@ -2911,12 +2911,19 @@ void registerCitizenNatives(VM& vm) {
 // ---------------------------------------------------------------------------------------------------------------
 // sim.h
 
-void forEachSimCharacter(GridObj* grid, const std::function<void(const SimCharacterView&)>& fn) {
+void forEachSimCharacter(GridObj* grid, const std::function<void(const SimCharacterView&)>& fn, const SimPickCull* cull) {
   SimState* s = sim::stateOf(grid);
   if (!s) return;
   for (size_t i = 0; i < s->characters.size(); ++i) {
     const sim::Character& ch = s->characters[i];
     if (!ch.alive || ch.model < 0 || ch.virtualLeft > 0) continue;
+    if (cull) {  // intersectGrid's own first tests: the feet's cell in the pick rectangle, 1 above them near the line
+      int cx = int((ch.pos.x + cull->halfWidth) / cull->cellSize), cz = int((ch.pos.z + cull->halfLength) / cull->cellSize);
+      if (cx < cull->x0 || cx > cull->x1 || cz < cull->z0 || cz > cull->z1) continue;
+      Vec3 D = cull->end - cull->start, L = ch.pos + Vec3{0, 1, 0}, w = cull->start - L, x = cross(D, w);
+      float dd = dot(D, D), d2 = dd > 0 ? dot(x, x) / dd : 0;
+      if (d2 >= 1.0f) continue;
+    }
     const sim::UnitModel& m = s->models[size_t(ch.model)];
     SimCharacterView view;
     view.object = ch.controller.get();  // made on demand: simCharacterController
