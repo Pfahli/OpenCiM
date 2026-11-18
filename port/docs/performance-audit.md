@@ -276,3 +276,35 @@ caused by shaders or pipelines in the measured runs; render CPU about 0.7 ms (10
 (After-numbers from one merged run each with `REGS_FIXED_DT=0.016`; other sessions were running.) Left: the
 pedestrian A* (it must find exactly the same paths), bloom's per-frame readback wait, Vulkan programs still built one
 by one, the editor's tool-preview rescans (C2), `restampWalk` after big edits, and the script compile cache (B8).
+
+## Vulkan programs in parallel (2026-11-18)
+
+The Vulkan device now implements `queueProgram`: the programs a draw list misses (`assignPrograms`) are read from the
+SPIR-V cache or compiled by glslang on worker threads (hardware threads − 1, at most 8; the main thread helps while it
+waits) and finished in queue order, so the program handles stay as before. Pipelines: before a draw list, when
+programs were made since its target's formats last had one or the formats are new, `Renderer3D::draw` runs the list
+once with the device only collecting the pipeline keys it lacks (the draw's own key code, so exact keys, not guesses),
+the device creates them side by side through the shared `VkPipelineCache` (internally synchronized), then the list is
+drawn for real. `REGS_VK_SERIAL=1` brings back one-by-one compiles and draw-time pipelines. Details in
+`docs/renderer/vulkan.md` §3 and §5.
+
+Berlin, Vulkan, 1920×1080, `REGS_FIXED_DT=0.016`, two runs per build, alternating (other sessions were running):
+
+| | Before | After |
+|---|---|---|
+| First view, cold (`REGS_VK_CACHE=0`) | 1.79 s, 1.79 s (3.66 s with the machine loaded) | 0.83 s, 0.89 s (0.91 s loaded) |
+| of it: programs (72) / pipelines (55) | 1.04 s / 0.31 s | 0.22 s / 0.22 s (batches of 2, 8, 21, 22) |
+| First view, caches on but empty | 1.79 s | 0.98 s |
+| First view, warm caches | 0.46 s, 0.54 s | 0.45 s, 0.40 s |
+| Worst frame of `REGS_BENCH=300:1400`, cold | 53.5, 54.2 ms | 62.0, 53.2 ms |
+| Worst frame, warm | 53.9, 54.0 ms | 53.1, 53.3 ms |
+
+The worst frames hold no shader work (no programs or pipelines made in them; the 62 ms one was a single hitch while
+other sessions ran). Pipelines scale less than compiles (22 in 90 ms on 9 threads, ~11 ms each one by one): the
+driver serializes part of that work. Same output: the SPIR-V cache files of a cold run (both stages and the
+reflection, 70 programs) are byte for byte the old serial build's; screenshots at frames 400 and 1705 without the
+weather mod are pixel-identical across two runs of each build; with the weather mod the snow tyre tracks (and in one
+cold run a traffic light's phase) differ by a few levels from run to run in both builds alike. OpenGL is unaffected
+(one virtual call per draw list): first view with its program binaries 0.66 s in both builds, 98-99 fps in the
+undisturbed runs. Left: particles, post-effect quads and the GUI still make their few pipelines at first draw, and a
+program first needed during play (the snow particles) still compiles in its frame, now on a worker thread.

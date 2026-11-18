@@ -1026,6 +1026,20 @@ void Renderer3D::setupFallback(const SceneView& v) {
 }
 
 void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
+  // Vulkan: the pipelines this list lacks are made side by side first (gpu::Device::wantsPipelineCollect): the list
+  // runs once with the device only collecting their keys (no particles: their programs and state are their own and
+  // their vertices would be streamed twice), then for real
+  if (dev().wantsPipelineCollect()) {
+    SceneView collect = v;
+    collect.particles = nullptr;
+    dev().beginPipelineCollect();
+    drawList(collect, items);
+    dev().endPipelineCollect();
+  }
+  drawList(v, items);
+}
+
+void Renderer3D::drawList(const SceneView& v, const std::vector<DrawItem>& items) {
   const uint64_t view = ++viewSerial_;  // each program's per-view uniforms once per call (ProgramLocs::setupView)
   static const GpuMaterial fallbackMaterial;
   auto materialOf = [&](const DrawItem& it, const GpuMesh::Part& p) -> const GpuMaterial& {

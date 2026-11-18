@@ -30,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/log.h"
@@ -301,6 +302,82 @@ void imageBarrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlags aspect, V
   vkCmdPipelineBarrier2(cmd, &di);
 }
 
+// ---- worker threads for the builds of a batch (docs/renderer/vulkan.md §3, §5) ----
+// glslang compiles (one TShader/TProgram per job; InitializeProcess once, vk_shader.cpp) and vkCreateGraphicsPipelines
+// (the device and a VkPipelineCache made without EXTERNALLY_SYNCHRONIZED are synchronized by the driver) run on these
+// threads. The threads start with the first job. wait() runs queued jobs on the calling thread while the one it
+// waits for is not done, so a lone job never waits for a thread hop and the main thread helps with a batch.
+class WorkerPool {
+ public:
+  struct Job {
+    std::function<void()> run;
+    int state = 0;  // 0 queued, 1 running, 2 done (under the pool's mutex)
+  };
+  ~WorkerPool() { stop(); }
+  std::shared_ptr<Job> submit(std::function<void()> fn) {
+    auto j = std::make_shared<Job>();
+    j->run = std::move(fn);
+    {
+      std::lock_guard<std::mutex> lk(m_);
+      if (threads_.empty() && !stopping_) {
+        const unsigned hw = std::thread::hardware_concurrency();
+        const unsigned n = std::clamp(hw > 1 ? hw - 1 : 1u, 1u, 8u);
+        for (unsigned i = 0; i < n; ++i) threads_.emplace_back([this] { loop(); });
+      }
+      queue_.push_back(j);
+    }
+    work_.notify_one();
+    return j;
+  }
+  void wait(const std::shared_ptr<Job>& j) {
+    std::unique_lock<std::mutex> lk(m_);
+    while (j->state != 2) {
+      if (!queue_.empty()) {  // the job itself when no thread took it yet, else any other: help instead of idling
+        auto it = std::find(queue_.begin(), queue_.end(), j);
+        std::shared_ptr<Job> mine = it != queue_.end() ? *it : queue_.front();
+        queue_.erase(it != queue_.end() ? it : queue_.begin());
+        runLocked(mine, lk);
+      } else {
+        done_.wait(lk);
+      }
+    }
+  }
+  void stop() {
+    {
+      std::lock_guard<std::mutex> lk(m_);
+      stopping_ = true;
+    }
+    work_.notify_all();
+    for (std::thread& t : threads_) t.join();
+    threads_.clear();
+  }
+
+ private:
+  void runLocked(const std::shared_ptr<Job>& j, std::unique_lock<std::mutex>& lk) {
+    j->state = 1;
+    lk.unlock();
+    j->run();
+    lk.lock();
+    j->state = 2;
+    done_.notify_all();
+  }
+  void loop() {
+    std::unique_lock<std::mutex> lk(m_);
+    while (true) {
+      work_.wait(lk, [&] { return stopping_ || !queue_.empty(); });
+      if (queue_.empty()) return;  // stopping, nothing left
+      std::shared_ptr<Job> j = queue_.front();
+      queue_.pop_front();
+      runLocked(j, lk);
+    }
+  }
+  std::mutex m_;
+  std::condition_variable work_, done_;
+  std::deque<std::shared_ptr<Job>> queue_;
+  std::vector<std::thread> threads_;
+  bool stopping_ = false;
+};
+
 // ---- the device ----
 
 class VkDeviceImpl final : public Device {
@@ -451,6 +528,15 @@ class VkDeviceImpl final : public Device {
   // ---- programs ----
   uint32_t createProgram(const std::string& vs, const std::string& fs,
                          const std::vector<std::pair<int, const char*>>& attribs, std::string* error) override;
+  // a batch: glslang compiles (or the SPIR-V cache reads) each queued program on a worker thread; finishProgram waits
+  // for it and makes the Vulkan objects on this thread. REGS_VK_SERIAL=1: compiled in queueProgram, one at a time.
+  uint32_t queueProgram(const std::string& vs, const std::string& fs,
+                        const std::vector<std::pair<int, const char*>>& attribs) override;
+  uint32_t finishProgram(uint32_t ticket, std::string* error) override;
+  // pipelines made ahead for a draw list (Renderer3D::draw): a pass that records nothing collects the keys it lacks
+  bool wantsPipelineCollect() override;
+  void beginPipelineCollect() override;
+  void endPipelineCollect() override;
   void useProgram(uint32_t prog) override { program_ = prog < programs_.size() ? prog : 0; }
   uint32_t currentProgram() const override { return program_; }
   int uniformLocation(uint32_t prog, const char* name) override;
@@ -732,6 +818,38 @@ class VkDeviceImpl final : public Device {
   void fbExtent(uint32_t fb, int& w, int& h, VkFormat& color, VkFormat& depth, int& samples);
   VkPipeline pipelineFor(Prim p);
   VkPipeline pipelineForKey(Prim p);  // builds the key, finds or makes the pipeline
+  // a pipeline's creation, split so that the middle part can run on a worker thread: pipeBuild copies what it needs
+  // from the bound state, createPipeline calls the driver, storePipeline counts, logs and keeps it
+  struct PipeBuild {
+    PipeKey key{};
+    uint32_t fb = 0;  // for the log
+    VkShaderModule vs = VK_NULL_HANDLE, fs = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    Prim prim = Prim::Triangles;
+    Blend src = Blend::One, dst = Blend::Zero;
+    std::vector<VkVertexInputBindingDescription> binds;
+    std::vector<VkVertexInputAttributeDescription> attrs;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    VkResult result = VK_SUCCESS;
+    double ms = 0;
+    bool ahead = false;  // made by a collecting pass
+  };
+  PipeKey keyFor(Prim p);
+  std::unique_ptr<PipeBuild> pipeBuild(Prim p, const PipeKey& key);
+  void createPipeline(PipeBuild& b) const;
+  VkPipeline storePipeline(const PipeBuild& b);
+  void collectPipeline(Prim p);
+  // the bound framebuffer's formats (wantsPipelineCollect)
+  struct TargetSig {
+    VkFormat color = VK_FORMAT_UNDEFINED, depth = VK_FORMAT_UNDEFINED, color1 = VK_FORMAT_UNDEFINED;
+    int samples = 0;
+    bool operator==(const TargetSig& o) const {
+      return color == o.color && depth == o.depth && color1 == o.color1 && samples == o.samples;
+    }
+  };
+  TargetSig targetSig();
+  uint32_t installProgram(bool compiled, vk::ProgramSpirv& sp, const std::string& fs, const std::string& compileError,
+                          std::string* error);
   void draw(Prim p, bool indexed, int count, size_t first);
   int locIndex(int loc) const { return loc >> 10; }
   int locElement(int loc) const { return loc & 1023; }
@@ -856,6 +974,33 @@ class VkDeviceImpl final : public Device {
   KeyInputs lastKeyInputs_;
   VkPipeline lastPipeline_ = VK_NULL_HANDLE;
   uint64_t targetsVersion_ = 1;  // bumped when an image is (re)made or a framebuffer's attachments change
+
+  // worker threads: program compiles of a batch, pipelines of a collecting pass
+  WorkerPool pool_;
+  struct ProgramJob {  // a queued program (queueProgram) until finishProgram
+    std::string vs, fs;
+    std::vector<std::pair<int, std::string>> attribs;
+    vk::ProgramSpirv sp;
+    std::string error;
+    bool ok = false;
+    std::shared_ptr<WorkerPool::Job> job;  // null: compiled in queueProgram (REGS_VK_SERIAL)
+  };
+  std::unordered_map<uint32_t, std::unique_ptr<ProgramJob>> programJobs_;
+  uint32_t nextTicket_ = 0;
+  uint64_t programSerial_ = 0;  // programs made so far
+  // collecting passes (beginPipelineCollect … endPipelineCollect): draws record nothing, the pipelines they lack are
+  // noted and made side by side at the end; per target formats, the program count at its last pass
+  bool collecting_ = false;
+  KeyInputs collectLast_;
+  bool collectLastValid_ = false;
+  std::vector<std::unique_ptr<PipeBuild>> pending_;
+  std::unordered_set<PipeKey, PipeHash> pendingKeys_;
+  std::vector<std::pair<TargetSig, uint64_t>> collected_;
+  struct {
+    State st;
+    std::array<std::pair<uint32_t, bool>, kUnits> units;
+    uint32_t program, vi;
+  } collectSaved_{};
 
   // GPU frame time: two timestamps per frame slot, read when the slot's fence has passed
   VkQueryPool timestamps_ = VK_NULL_HANDLE;
@@ -1515,6 +1660,7 @@ void VkDeviceImpl::shutdown() {
     return;
   }
   if (dev_) {
+    pool_.stop();  // no compile or pipeline job runs past this point
     fgStop();
     vkDeviceWaitIdle(dev_);
     if (vk::CacheStats cs = vk::cacheStats(); cs.hits || cs.compiled)
@@ -2245,10 +2391,49 @@ void VkDeviceImpl::bufferSubData(uint32_t buf, size_t offset, size_t bytes, cons
 
 uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& fs,
                                      const std::vector<std::pair<int, const char*>>& attribs, std::string* error) {
+  vk::ProgramSpirv sp;
+  std::string why;
+  const bool compiled = vk::compileProgram(vs, fs, attribs, sp, &why);
+  return installProgram(compiled, sp, fs, why, error);
+}
+
+uint32_t VkDeviceImpl::queueProgram(const std::string& vs, const std::string& fs,
+                                    const std::vector<std::pair<int, const char*>>& attribs) {
+  auto job = std::make_unique<ProgramJob>();
+  job->vs = vs;
+  job->fs = fs;
+  for (const auto& [slot, name] : attribs) job->attribs.emplace_back(slot, name ? name : "");
+  ProgramJob* j = job.get();
+  auto compile = [j] {
+    std::vector<std::pair<int, const char*>> a;
+    for (const auto& [slot, name] : j->attribs) a.emplace_back(slot, name.c_str());
+    j->ok = vk::compileProgram(j->vs, j->fs, a, j->sp, &j->error);
+  };
+  static const bool serial = regs::envVar("REGS_VK_SERIAL") != nullptr;
+  if (serial) compile();
+  else j->job = pool_.submit(compile);
+  if (++nextTicket_ == 0) ++nextTicket_;
+  programJobs_[nextTicket_] = std::move(job);
+  return nextTicket_;
+}
+
+uint32_t VkDeviceImpl::finishProgram(uint32_t ticket, std::string* error) {
+  auto it = programJobs_.find(ticket);
+  if (it == programJobs_.end()) return 0;
+  std::unique_ptr<ProgramJob> j = std::move(it->second);
+  programJobs_.erase(it);
+  if (j->job) pool_.wait(j->job);
+  return installProgram(j->ok, j->sp, j->fs, j->error, error);
+}
+
+// the device's objects for a compiled program (this thread): shader modules, the descriptor set and pipeline layouts,
+// the uniform table; returns its handle (0 with the error when it did not compile)
+uint32_t VkDeviceImpl::installProgram(bool compiled, vk::ProgramSpirv& sp, const std::string& fs,
+                                      const std::string& compileError, std::string* error) {
   Program p;
   p.used = true;
-  vk::ProgramSpirv sp;
-  if (!vk::compileProgram(vs, fs, attribs, sp, error)) {
+  if (!compiled) {
+    if (error) *error = compileError;
     if (vk::available()) return 0;
     p.null = true;  // bring-up without glslang: a program that draws nothing
   } else {
@@ -2311,6 +2496,7 @@ uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& f
                  u.arraySize, u.arrayStride, u.columns, u.components, u.binding);
     }
   }
+  ++programSerial_;  // the next draw lists collect their pipelines (wantsPipelineCollect)
   for (uint32_t i = 1; i < programs_.size(); ++i)
     if (!programs_[i].used) {
       programs_[i] = std::move(p);
@@ -2500,7 +2686,7 @@ VkPipeline VkDeviceImpl::pipelineFor(Prim prim) {
   return lastPipeline_;
 }
 
-VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
+VkDeviceImpl::PipeKey VkDeviceImpl::keyFor(Prim prim) {
   const Program& p = programs_[program_];
   const VertexInput& vi = vertexInputs_[boundVi_];
   int w, h, samples;
@@ -2517,13 +2703,34 @@ VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
     key.color1 = textures_[fbo.color1].vkFormat;
     key.mask1 = p.writesData && st_.mask1 ? 1 : 0;
   }
+  return key;
+}
+
+VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
+  const PipeKey key = keyFor(prim);
   auto it = pipelines_.find(key);
   if (it != pipelines_.end()) return it->second;
+  std::unique_ptr<PipeBuild> b = pipeBuild(prim, key);
+  createPipeline(*b);
+  pipelineMs_ += b->ms;
+  return storePipeline(*b);
+}
 
+// what the pipeline of this key needs from the bound state, copied (createPipeline may run on another thread)
+std::unique_ptr<VkDeviceImpl::PipeBuild> VkDeviceImpl::pipeBuild(Prim prim, const PipeKey& key) {
+  const Program& p = programs_[program_];
+  const VertexInput& vi = vertexInputs_[boundVi_];
+  auto b = std::make_unique<PipeBuild>();
+  b->key = key;
+  b->fb = boundFb_;
+  b->vs = p.vs;
+  b->fs = p.fs;
+  b->layout = p.layout;
+  b->prim = prim;
+  b->src = st_.src;
+  b->dst = st_.dst;
   // vertex input: one binding per buffer of the layout; inputs the program reads but the layout lacks come from the
   // constant (0, 0, 0, 1) binding with stride 0 (GL's default attribute value)
-  std::vector<VkVertexInputBindingDescription> binds;
-  std::vector<VkVertexInputAttributeDescription> attrs;
   std::vector<uint32_t> bufs;
   for (const VertexAttrib& a : vi.attribs) {
     if (std::find(p.inputs.begin(), p.inputs.end(), a.slot) == p.inputs.end()) continue;
@@ -2531,29 +2738,35 @@ VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
     uint32_t binding = uint32_t(bi - bufs.begin());
     if (bi == bufs.end()) {
       bufs.push_back(a.buffer);
-      binds.push_back({binding, uint32_t(a.stride), VK_VERTEX_INPUT_RATE_VERTEX});
+      b->binds.push_back({binding, uint32_t(a.stride), VK_VERTEX_INPUT_RATE_VERTEX});
     }
     VkFormat f = a.type == AttribType::UByteNorm ? VK_FORMAT_R8G8B8A8_UNORM
                  : a.components == 1 ? VK_FORMAT_R32_SFLOAT
                  : a.components == 2 ? VK_FORMAT_R32G32_SFLOAT
                  : a.components == 3 ? VK_FORMAT_R32G32B32_SFLOAT
                                      : VK_FORMAT_R32G32B32A32_SFLOAT;
-    attrs.push_back({uint32_t(a.slot), binding, f, uint32_t(a.offset)});
+    b->attrs.push_back({uint32_t(a.slot), binding, f, uint32_t(a.offset)});
   }
   for (int loc : p.inputs) {
-    if (std::any_of(attrs.begin(), attrs.end(), [&](const auto& a) { return int(a.location) == loc; })) continue;
-    uint32_t binding = uint32_t(binds.size());
-    if (binds.empty() || binds.back().stride != 0) binds.push_back({binding, 0, VK_VERTEX_INPUT_RATE_VERTEX});
-    else binding = binds.back().binding;
-    attrs.push_back({uint32_t(loc), binding, VK_FORMAT_R32G32B32A32_SFLOAT, 0});
+    if (std::any_of(b->attrs.begin(), b->attrs.end(), [&](const auto& a) { return int(a.location) == loc; })) continue;
+    uint32_t binding = uint32_t(b->binds.size());
+    if (b->binds.empty() || b->binds.back().stride != 0) b->binds.push_back({binding, 0, VK_VERTEX_INPUT_RATE_VERTEX});
+    else binding = b->binds.back().binding;
+    b->attrs.push_back({uint32_t(loc), binding, VK_FORMAT_R32G32B32A32_SFLOAT, 0});
   }
+  return b;
+}
+
+// vkCreateGraphicsPipelines for a build; reads nothing but the build and the device handles, so any thread may run it
+void VkDeviceImpl::createPipeline(PipeBuild& b) const {
+  const PipeKey& key = b.key;
   VkPipelineVertexInputStateCreateInfo vis{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-  vis.vertexBindingDescriptionCount = uint32_t(binds.size());
-  vis.pVertexBindingDescriptions = binds.data();
-  vis.vertexAttributeDescriptionCount = uint32_t(attrs.size());
-  vis.pVertexAttributeDescriptions = attrs.data();
+  vis.vertexBindingDescriptionCount = uint32_t(b.binds.size());
+  vis.pVertexBindingDescriptions = b.binds.data();
+  vis.vertexAttributeDescriptionCount = uint32_t(b.attrs.size());
+  vis.pVertexAttributeDescriptions = b.attrs.data();
   VkPipelineInputAssemblyStateCreateInfo ias{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-  ias.topology = prim == Prim::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  ias.topology = b.prim == Prim::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
   vps.viewportCount = 1;
   vps.scissorCount = 1;
@@ -2561,16 +2774,16 @@ VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
   rs.polygonMode = VK_POLYGON_MODE_FILL;
   rs.lineWidth = 1;
   VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-  ms.rasterizationSamples = VkSampleCountFlagBits(samples);
+  ms.rasterizationSamples = VkSampleCountFlagBits(key.samples);
   VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
   // one blend for both attachments, as GL applies it; the second's writes per key.mask1
   VkPipelineColorBlendAttachmentState cba[2] = {};
-  for (VkPipelineColorBlendAttachmentState& b : cba) {
-    b.blendEnable = key.blendOn;
-    b.srcColorBlendFactor = b.srcAlphaBlendFactor = vkBlend(st_.src);
-    b.dstColorBlendFactor = b.dstAlphaBlendFactor = vkBlend(st_.dst);
-    b.colorBlendOp = b.alphaBlendOp = VK_BLEND_OP_ADD;
-    b.colorWriteMask = 0xF;
+  for (VkPipelineColorBlendAttachmentState& c : cba) {
+    c.blendEnable = key.blendOn;
+    c.srcColorBlendFactor = c.srcAlphaBlendFactor = vkBlend(b.src);
+    c.dstColorBlendFactor = c.dstAlphaBlendFactor = vkBlend(b.dst);
+    c.colorBlendOp = c.alphaBlendOp = VK_BLEND_OP_ADD;
+    c.colorWriteMask = 0xF;
   }
   cba[1].colorWriteMask = key.mask1 ? 0xF : 0;
   const VkFormat colorFormats[2] = {key.color, key.color1};
@@ -2589,8 +2802,8 @@ VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
   prci.pColorAttachmentFormats = colorFormats;
   prci.depthAttachmentFormat = key.depth;
   VkPipelineShaderStageCreateInfo stages[2] = {
-      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, p.vs, "main", nullptr},
-      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, p.fs, "main", nullptr}};
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, b.vs, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, b.fs, "main", nullptr}};
   VkGraphicsPipelineCreateInfo gci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &prci};
   gci.stageCount = 2;
   gci.pStages = stages;
@@ -2602,21 +2815,114 @@ VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
   gci.pDepthStencilState = &ds;
   gci.pColorBlendState = &cbs;
   gci.pDynamicState = &dys;
-  gci.layout = p.layout;
-  VkPipeline pipe = VK_NULL_HANDLE;
+  gci.layout = b.layout;
   auto t0 = std::chrono::steady_clock::now();
-  if (VkResult r = vkCreateGraphicsPipelines(dev_, pipeCache_, 1, &gci, nullptr, &pipe); r != VK_SUCCESS)
-    LOG_ERROR("vulkan: %s", vkError("vkCreateGraphicsPipelines", r).c_str());
+  b.result = vkCreateGraphicsPipelines(dev_, pipeCache_, 1, &gci, nullptr, &b.pipe);
+  if (b.result != VK_SUCCESS) b.pipe = VK_NULL_HANDLE;
+  b.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// counts, logs and keeps a created pipeline (this thread)
+VkPipeline VkDeviceImpl::storePipeline(const PipeBuild& b) {
+  const PipeKey& key = b.key;
+  if (b.result != VK_SUCCESS) LOG_ERROR("vulkan: %s", vkError("vkCreateGraphicsPipelines", b.result).c_str());
   ++pipelinesCreated_;
-  const double took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-  pipelineMs_ += took;
   static const bool logPipelines = regs::envVar("REGS_VK_LOG_PIPELINES") != nullptr;
   if (logPipelines)  // REGS_VK_LOG_PIPELINES: each pipeline made, with its key (where draw-time creation happens)
-    LOG_INFO("vulkan: pipeline %d in %.1f ms: program %u layout %d prim %d blend %d %d-%d fb %u colour %d depth %d samples %d colour1 %d/%d",
-             pipelinesCreated_, took, key.program, key.layout, int(key.prim), int(key.blendOn), int(key.src), int(key.dst),
-             boundFb_, int(key.color), int(key.depth), key.samples, int(key.color1), key.mask1);
-  pipelines_[key] = pipe;
-  return pipe;
+    LOG_INFO("vulkan: pipeline %d in %.1f ms%s: program %u layout %d prim %d blend %d %d-%d fb %u colour %d depth %d samples %d colour1 %d/%d",
+             pipelinesCreated_, b.ms, b.ahead ? " (ahead)" : "", key.program, key.layout, int(key.prim), int(key.blendOn),
+             int(key.src), int(key.dst), b.fb, int(key.color), int(key.depth), key.samples, int(key.color1), key.mask1);
+  pipelines_[key] = b.pipe;
+  return b.pipe;
+}
+
+// the target formats a draw list goes to: pipelines differ by them, so a new one is worth a collecting pass
+VkDeviceImpl::TargetSig VkDeviceImpl::targetSig() {
+  TargetSig s{};
+  int w, h;
+  VkFormat color, depth;
+  fbExtent(boundFb_, w, h, color, depth, s.samples);
+  s.color = color, s.depth = depth;
+  if (const Fb& fbo = framebuffers_[boundFb_]; fbo.color && fbo.color1) s.color1 = textures_[fbo.color1].vkFormat;
+  return s;
+}
+
+bool VkDeviceImpl::wantsPipelineCollect() {
+  // REGS_VK_SERIAL=1: no collecting passes, every pipeline made at its first draw (comparisons)
+  static const bool serial = regs::envVar("REGS_VK_SERIAL") != nullptr;
+  if (serial) return false;
+  // a program made since this target's last pass, or targets of formats not seen yet
+  const TargetSig s = targetSig();
+  for (const auto& [sig, serialAt] : collected_)
+    if (sig == s) return serialAt != programSerial_;
+  return true;
+}
+
+void VkDeviceImpl::beginPipelineCollect() {
+  collecting_ = true;
+  collectLast_ = KeyInputs{};
+  collectLastValid_ = false;
+  // the GL-style state the pass leaves behind is put back at its end: the real pass starts from what the caller set
+  collectSaved_ = {st_, units_, program_, boundVi_};
+}
+
+// draw() while collecting: the key this draw would need, noted when the device lacks its pipeline
+void VkDeviceImpl::collectPipeline(Prim prim) {
+  const VertexInput& vi = vertexInputs_[boundVi_];
+  KeyInputs in;
+  in.program = program_;
+  in.layout = vi.layout;
+  in.prim = prim;
+  in.blendOn = st_.blendOn;
+  in.src = st_.src;
+  in.dst = st_.dst;
+  in.fb = boundFb_;
+  in.mask1 = st_.mask1;
+  in.targets = targetsVersion_;
+  if (collectLastValid_ && in == collectLast_) return;
+  collectLast_ = in;
+  collectLastValid_ = true;
+  const PipeKey key = keyFor(prim);
+  if (pipelines_.count(key) || pendingKeys_.count(key)) return;
+  pendingKeys_.insert(key);
+  pending_.push_back(pipeBuild(prim, key));
+}
+
+// the pipelines the pass collected, made side by side on the worker threads (one alone: here)
+void VkDeviceImpl::endPipelineCollect() {
+  collecting_ = false;
+  st_ = collectSaved_.st;
+  units_ = collectSaved_.units;
+  program_ = collectSaved_.program;
+  boundVi_ = collectSaved_.vi;
+  const TargetSig s = targetSig();
+  bool found = false;
+  for (auto& [sig, serialAt] : collected_)
+    if (sig == s) serialAt = programSerial_, found = true;
+  if (!found) collected_.push_back({s, programSerial_});
+  if (pending_.empty()) return;
+  auto t0 = std::chrono::steady_clock::now();
+  if (pending_.size() == 1) {
+    createPipeline(*pending_[0]);
+  } else {
+    std::vector<std::shared_ptr<WorkerPool::Job>> jobs;
+    for (auto& b : pending_) {
+      PipeBuild* pb = b.get();
+      jobs.push_back(pool_.submit([this, pb] { createPipeline(*pb); }));
+    }
+    for (auto& j : jobs) pool_.wait(j);
+  }
+  const double wall = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  pipelineMs_ += wall;  // the time the frame spent on them, not the sum over the threads
+  for (auto& b : pending_) {
+    b->ahead = true;
+    storePipeline(*b);
+  }
+  static const bool logPipelines = regs::envVar("REGS_VK_LOG_PIPELINES") != nullptr;
+  if (logPipelines) LOG_INFO("vulkan: %zu pipelines made ahead in %.1f ms", pending_.size(), wall);
+  pending_.clear();
+  pendingKeys_.clear();
+  lastPipeline_ = VK_NULL_HANDLE;
 }
 
 void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
@@ -2627,6 +2933,7 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     nullDrawLogged_ = true;
     return;
   }
+  if (collecting_) return collectPipeline(prim);  // a collecting pass records nothing
   const VertexInput& vi = vertexInputs_[boundVi_];
   VkPipeline pipe = pipelineFor(prim);
   if (!pipe) return;

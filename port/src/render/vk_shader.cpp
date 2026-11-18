@@ -18,8 +18,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <atomic>
 #include <map>
 #include <mutex>
+#include <thread>
 
 namespace regs::render::vk {
 
@@ -275,10 +277,11 @@ bool compileUncached(const std::string& vs, const std::string& fs,
       if (size_t at = s->find("#version 330 core"); at != std::string::npos) s->replace(at, 17, "#version 460 core");
   matchVaryings(vsText, fsText);
   vsText = remapDepth(vsText);
+  // (compileProgram runs on the device's worker threads: everything here is per call but this counter)
   static const bool debug = regs::envVar("REGS_VK_DEBUG") != nullptr;
-  static int dumped = 0;
-  if (debug && dumped < 8) {  // REGS_VK_DEBUG: the first programs as Vulkan compiles them, in the working directory
-    std::FILE* file = std::fopen(("vkdump-" + std::to_string(dumped++) + ".glsl").c_str(), "wb");
+  static std::atomic<int> dumped{0};
+  if (int n = debug ? dumped++ : 8; n < 8) {  // REGS_VK_DEBUG: the first programs as Vulkan compiles them, in the working directory
+    std::FILE* file = std::fopen(("vkdump-" + std::to_string(n) + ".glsl").c_str(), "wb");
     if (file) {
       std::fprintf(file, "// vertex\n%s\n// fragment\n%s\n", vsText.c_str(), fsText.c_str());
       std::fclose(file);
@@ -548,8 +551,9 @@ void storeEntry(const std::filesystem::path& folder, const std::filesystem::path
   std::error_code ec;
   std::filesystem::create_directories(folder, ec);
   // written next to the entry and renamed over it: a run that dies mid-write leaves no half entry under the name
+  // (the temporary name is the thread's: two jobs of one batch may store the same program)
   std::filesystem::path tmp = file;
-  tmp += L".tmp";
+  tmp += L"." + std::to_wstring(std::hash<std::thread::id>()(std::this_thread::get_id())) + L".tmp";
   bool ok;
   {
     std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
