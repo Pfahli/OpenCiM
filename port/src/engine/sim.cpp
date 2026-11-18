@@ -1326,9 +1326,66 @@ bool vehicleDoorPoint(const SimState& s, const VehicleState& v, const Vec3& from
   return best >= 0;
 }
 
+namespace {
+// the keys of the synced fields, built once (a key over 7 characters costs a heap string per lookup)
+const std::u16string kPositionKey = u"position", kGlobalPosKey = u"globalPos", kOrientationKey = u"orientation";
+const std::u16string kModelKey = u"<model>", kInstanceKey = u"<instance>";
+
+void writePose(Object* o, FieldSlots* slots, const Vec3& p, float qx, float qy, float qz, float qw) {
+  Value pos = Value::vector(p.x, p.y, p.z), q = Value::quat(qx, qy, qz, qw);
+  if (!slots) {
+    o->fieldValues[kPositionKey] = pos;
+    o->fieldValues[kGlobalPosKey] = pos;
+    o->fieldValues[kOrientationKey] = q;
+    return;
+  }
+  FieldSlots& c = fieldSlots(o, *slots);
+  if (!c.position) c.position = &o->fieldValues[kPositionKey];
+  if (!c.globalPos) c.globalPos = &o->fieldValues[kGlobalPosKey];
+  if (!c.orientation) c.orientation = &o->fieldValues[kOrientationKey];
+  setSlot(*c.position, pos);
+  setSlot(*c.globalPos, pos);
+  setSlot(*c.orientation, q);
+}
+}  // namespace
+
+FieldSlots& fieldSlots(Object* o, FieldSlots& slots) {
+  if (slots.serial != o->serial) slots = FieldSlots{}, slots.serial = o->serial;
+  return slots;
+}
+
+void setSlot(Value& slot, const Value& v) {
+  if (slot.type() == v.type()) {
+    switch (v.type()) {
+      case VT::Vector:
+      case VT::Quat:
+        if (std::memcmp(slot.vec(), v.vec(), 4 * sizeof(float)) == 0) return;
+        break;
+      case VT::Bool:
+        if (slot.b() == v.b()) return;
+        break;
+      case VT::Object:
+        if (slot.heapPtr() == v.heapPtr()) return;
+        break;
+      default: break;
+    }
+  }
+  slot = v;
+}
+
+// a character's orientation from its yaw: the pose matrix is a turn by yaw + π about +Y, so the quaternion below is
+// ±(0, cos(yaw/2), 0, sin(yaw/2)), with the sign setPoseFields' trace branches pick (trace 1 − 2·cos yaw > 0: w ≥ 0;
+// else the y branch: y ≤ 0); equal to the matrix path within float rounding
+void setCharacterPoseFields(Object* o, const Vec3& pos, float yaw, FieldSlots* slots) {
+  float c = std::cos(yaw), h = std::cos(yaw * 0.5f), sh = std::sin(yaw * 0.5f);
+  bool neg = 1.0f - 2.0f * c > 0 ? sh < 0 : h > 0;
+  if (neg) h = -h, sh = -sh;
+  writePose(o, slots, pos, 0.0f, h, 0.0f, sh);
+}
+
 // position, globalPos, orientation of a gs3DElement from a pose (orientation in the engine's convention, the
 // conjugate of ours: q·(0,0,−1) = forward there)
-void setPoseFields(Object* o, const PlacedPose& p) {
+void setPoseFields(Object* o, const PlacedPose& p, FieldSlots* slots) {
   Mat4 w = poseMatrix(p);
   float m00 = w.at(0, 0), m11 = w.at(1, 1), m22 = w.at(2, 2), tr = m00 + m11 + m22;
   float qx, qy, qz, qw;
@@ -1345,27 +1402,32 @@ void setPoseFields(Object* o, const PlacedPose& p) {
     float k = std::sqrt(1 + m22 - m00 - m11) * 2;
     qw = (w.at(1, 0) - w.at(0, 1)) / k, qx = (w.at(0, 2) + w.at(2, 0)) / k, qy = (w.at(1, 2) + w.at(2, 1)) / k, qz = 0.25f * k;
   }
-  Value pos = Value::vector(p.position.x, p.position.y, p.position.z);
-  o->fieldValues[u"position"] = pos;
-  o->fieldValues[u"globalPos"] = pos;
-  o->fieldValues[u"orientation"] = Value::quat(-qx, -qy, -qz, qw);
+  writePose(o, slots, p.position, -qx, -qy, -qz, qw);
 }
 
 // the gs3DElement fields of the vehicles' script objects (their leading unit) and the hidden fields the
-// item-controller natives read (<model>, <instance>: gsGridController.getModel / hasInstance)
-void syncVehicleFields(const SimState& s) {
-  for (const VehicleState& v : s.vehicles) {
+// item-controller natives read (<model>, <instance>: gsGridController.getModel / hasInstance); through cached slots,
+// writing only values that differ
+void syncVehicleFields(SimState& s) {
+  for (VehicleState& v : s.vehicles) {
     Object* o = v.object.get();
     if (!o) continue;
+    FieldSlots& c = fieldSlots(o, v.objectSlots);
     const Unit* head = v.units.empty() || v.units[0].model < 0 ? nullptr : &v.units[0];
-    if (head) o->fieldValues[u"<model>"] = Value::heap(VT::Object, s.models[size_t(head->model)].object);
+    if (head) {
+      if (!c.model) c.model = &o->fieldValues[kModelKey];
+      if (HeapObj* model = s.models[size_t(head->model)].object; !(c.model->type() == VT::Object && c.model->heapPtr() == model))
+        *c.model = Value::heap(VT::Object, model);
+    }
     const Mover* m = v.mover >= 0 ? &s.movers[size_t(v.mover)] : nullptr;
     bool live = head && m && m->live && !m->track.nodes.empty();
-    o->fieldValues[u"<instance>"] = Value::boolean(live);
-    if (live) setPoseFields(o, unitPose(s, *m, *head, m->dist));
+    if (!c.instance) c.instance = &o->fieldValues[kInstanceKey];
+    setSlot(*c.instance, Value::boolean(live));
+    if (live) setPoseFields(o, unitPose(s, *m, *head, m->dist), &v.objectSlots);
   }
-  for (const Mover& m : s.movers)
-    if (m.live && !m.transit && m.controller && !m.track.nodes.empty()) setPoseFields(m.controller.get(), unitPose(s, m, m.units[0], m.dist));
+  for (Mover& m : s.movers)
+    if (m.live && !m.transit && m.controller && !m.track.nodes.empty())
+      setPoseFields(m.controller.get(), unitPose(s, m, m.units[0], m.dist), &m.controllerSlots);
 }
 
 // ---- loading ----

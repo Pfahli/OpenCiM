@@ -35,8 +35,10 @@ void forEachSimVehicle(GridObj* grid, const std::function<void(const SimVehicleV
 
 // One visible pedestrian (gsGridCharacters) in map world space.
 struct SimCharacterView {
-  script::Object* object = nullptr;  // its gsGridCharacterController (created on first use, cached; isCharacter,
-                                     // <model>, <instance>, position / globalPos / orientation, getCitizen())
+  script::Object* object = nullptr;  // its gsGridCharacterController if one exists yet (isCharacter, <model>,
+                                     // <instance>, position / globalPos / orientation, getCitizen()); else
+                                     // simCharacterController(grid, index) makes it
+  int index = -1;                    // the character (simCharacterController)
   int citizen = -1;                  // the citizen it belongs to (simCitizenController), −1 for none
   render::Vec3 position;             // feet, on the walk surface
   float yaw = 0;                     // radians about +Y: forward = (sin yaw, 0, cos yaw)
@@ -45,8 +47,12 @@ struct SimCharacterView {
   float radius = 0;
 };
 
-// Calls fn for every visible pedestrian of the grid's simulation.
+// Calls fn for every visible pedestrian of the grid's simulation. Creates no controllers.
 void forEachSimCharacter(GridObj* grid, const std::function<void(const SimCharacterView&)>& fn);
+
+// The gsGridCharacterController of a pedestrian (index as in SimCharacterView::index), created on first use and
+// cached, parented to the grid; null for an unknown or dead character.
+script::Object* simCharacterController(GridObj* grid, int character);
 
 // The gsGridCitizenController of a citizen (index as in SimCharacterView::citizen), created on first use and cached,
 // parented to the grid; null for an unknown index. Its natives (getID, getClass, getState, getMood, getHome,
