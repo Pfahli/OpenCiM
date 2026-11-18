@@ -1,5 +1,6 @@
 // HDR output passes (engine/hdr.h, docs/renderer/vulkan.md §9.6).
 #include "engine/hdr.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -78,9 +79,9 @@ void hdrSync(Display& d, script::VM& vm) {
   // REGS_HDR=0|1, REGS_HDR_PAPER=<nits>, REGS_HDR_PEAK=<nits> override the settings (test runs)
   bool on = settingNumber(vm, u"regsHdr", 0) > 0;
   float paper = settingNumber(vm, u"regsHdrPaperWhite", 200), peak = settingNumber(vm, u"regsHdrPeak", 1000);
-  if (const char* e = std::getenv("REGS_HDR")) on = std::atoi(e) != 0;
-  if (const char* e = std::getenv("REGS_HDR_PAPER")) paper = float(std::atof(e));
-  if (const char* e = std::getenv("REGS_HDR_PEAK")) peak = float(std::atof(e));
+  if (const char* e = regs::envVar("REGS_HDR")) on = std::atoi(e) != 0;
+  if (const char* e = regs::envVar("REGS_HDR_PAPER")) paper = float(std::atof(e));
+  if (const char* e = regs::envVar("REGS_HDR_PEAK")) peak = float(std::atof(e));
   s.paper = std::clamp(paper, 80.0f, 500.0f);
   s.peak = std::clamp(peak, std::max(400.0f, s.paper), 10000.0f);
   gpu::dev().setHdr(on && !s.failed, s.paper, s.peak);

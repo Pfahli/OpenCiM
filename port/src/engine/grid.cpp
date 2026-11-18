@@ -1,6 +1,7 @@
 // gsGrid: map loading (map.grid terrain and network, docs/save-format/README.md §3) and the item templates that
 // scripts register with loadGridObject. The simulation sections are read by engine/sim.cpp.
 #include "engine/grid.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -461,7 +462,7 @@ void registerGridNatives(VM& vm) {
       return Value::boolean(false);
     }
     prepareTerrainCells(*data);
-    if (const char* t = std::getenv("REGS_TEST_HILL")) {  // port test (tunnels): a smooth hill "x,z,radius,height" in
+    if (const char* t = regs::envVar("REGS_TEST_HILL")) {  // port test (tunnels): a smooth hill "x,z,radius,height" in
                                                          // world units at map load (unlocked corners only)
       float hx = 0, hz = 0, hr = 40, hh = 15;
       std::sscanf(t, "%f,%f,%f,%f", &hx, &hz, &hr, &hh);
@@ -478,7 +479,7 @@ void registerGridNatives(VM& vm) {
         }
       LOG_INFO("test hill at %.0f,%.0f, radius %.0f, height %.0f", hx, hz, hr, hh);
     }
-    if (const char* t = std::getenv("REGS_TEST_PAINT_AREA")) {  // port test: painted areas with cut edges
+    if (const char* t = regs::envVar("REGS_TEST_PAINT_AREA")) {  // port test: painted areas with cut edges
       // around cell "x,z" (default: the map's centre): a turned car park in asphalt (0), a round square in paving
       // stones (2) and an L with an inner corner (2)
       double cx = data->width * 0.5, cz = data->length * 0.5;

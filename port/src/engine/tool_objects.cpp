@@ -5,6 +5,7 @@
 // case 8, gsGridPlayer::removeObject L:0x08198b10). Heights are in the engine's units (1/256 cell, cell heights carry
 // the same shift, see tools.h toolAddPreview).
 #include "engine/tool_objects.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -249,7 +250,7 @@ int createRoadItem(VM& vm, GridObj* grid, int x, int y, int z, uint32_t conn, ui
 
 // REGS_DEBUG_TOOLS=1: what a preview meets
 void debugConflicts(VM& vm, GridObj* grid, uint32_t item, bool conflict) {
-  static const bool on = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool on = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   if (!on) return;
   Info n = infoOf(vm, grid, item);
   LOG_INFO("tool preview %u %s at %d,%d y %d size %dx%d orient %d conn %08x flags %08x: %s", item, n.tpl.name.c_str(), n.x,
@@ -280,7 +281,7 @@ void announcePreviewStop(VM& vm, GridObj* grid, uint32_t item) {
   c->fieldValues[u"type"] = Value::integer(stopType);
   try {
     bool fired = vm.fireEvent(grid, u"transportStopCreated", {obj(c)});
-    static const bool debug = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+    static const bool debug = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
     if (debug) {
       Value tr;
       try {
@@ -568,7 +569,7 @@ int upgradedStop(VM& vm, GridObj* grid, uint32_t preview);
 void moveCreateStop(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   ToolState& t = toolState(player);
   static bool tested = false;
-  if (!tested && std::getenv("REGS_TEST_STOPS")) tested = true, testStops(vm, grid);
+  if (!tested && regs::envVar("REGS_TEST_STOPS")) tested = true, testStops(vm, grid);
   ToolPick p = toolPick(vm, player, mx, my, false);
   if (!p.hit) return;
   int cx = p.cellX, cz = p.cellZ;

@@ -1,6 +1,7 @@
 // Picking and selection in the 3D view (docs/ui/selection.md): gsGrid::intersectGrid, the gsGridPlayer select mode
 // (hover, click, editMode) and the grid controllers of picked items.
 #include "engine/interaction.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -467,7 +468,7 @@ void mouseMoveSelectObject(VM& vm, ControlObj* player, float x, float y) {
     if (h.item >= 0) ctrl = itemController(vm, grid, uint32_t(h.item));
     else if (h.vehicle) ctrl = h.vehicle;
     else if (h.character) ctrl = h.character;
-    static const bool debug = std::getenv("REGS_DEBUG_PICK") != nullptr;  // logs each change of the hovered object
+    static const bool debug = regs::envVar("REGS_DEBUG_PICK") != nullptr;  // logs each change of the hovered object
     if (debug && ctrl && ctrl != player->fieldValues[u"hoverObject"].object()) {
       const GridData& g = *grid->data;
       LOG_INFO("pick (%.0f,%.0f): t %.4f cell %d,%d item %d %s vehicle %p", x, y, h.t, h.cellX, h.cellZ, h.item,

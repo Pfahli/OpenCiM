@@ -1,5 +1,6 @@
 // Traffic maps for the mods' shader hooks (engine/traffic_maps.h).
 #include "engine/traffic_maps.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <chrono>
@@ -339,7 +340,7 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   TrafficMaps& t = *s.trafficMaps;
   if (!t.lanesBuilt || t.graphNodes != s.graph.nodes.size()) {
     paintLanes(t, s.graph);
-    if (std::getenv("REGS_DEBUG_TRAFFIC_MAPS")) {  // where the parked cars are (for close-up checks)
+    if (regs::envVar("REGS_DEBUG_TRAFFIC_MAPS")) {  // where the parked cars are (for close-up checks)
       int parked = 0;
       for (const Mover& m : s.movers)
         if (m.live && m.parked && !m.track.nodes.empty() && ++parked <= 12) {
@@ -421,7 +422,7 @@ void simTrafficMapsTick(script::VM& vm, GridObj* grid, SimState& s, float dt) {
       t.plowAny = true;
     }
   }
-  static const bool debug = std::getenv("REGS_DEBUG_TRAFFIC_MAPS") != nullptr;
+  static const bool debug = regs::envVar("REGS_DEBUG_TRAFFIC_MAPS") != nullptr;
   static float logClock = 0;
   if (debug && (logClock += dt) > 10.0f) {
     logClock = 0;

@@ -12,6 +12,7 @@
 #include <queue>
 
 #include "core/log.h"
+#include "core/env.h"
 #include "core/text.h"
 #include "engine/api.h"
 #include "engine/display.h"
@@ -1642,7 +1643,7 @@ void stepDrive(SimState& s, int ci) {
         m.reckless = true;
       // test switch REGS_TEST_CRASH=<n>: drivers within 150 units of the camera turn reckless until n crashes happened,
       // so a crash can be filmed (the normal rate is far too low to catch one on screen)
-      static const int testCrashes = std::getenv("REGS_TEST_CRASH") ? std::atoi(std::getenv("REGS_TEST_CRASH")) : 0;
+      static const int testCrashes = regs::envVar("REGS_TEST_CRASH") ? std::atoi(regs::envVar("REGS_TEST_CRASH")) : 0;
       if (testCrashes > s.crashes && m.live && m.speed > 1 && !m.reckless && !m.crashing && s.eyeKnown &&
           !m.track.nodes.empty()) {
         Vec3 d = s.graph.nodes[size_t(m.track.nodes[m.track.at(m.dist)])].p0 - s.eye;
@@ -2335,7 +2336,7 @@ void stepCitizens(VM& vm, SimState& s, float dt) {
   // REGS_DEBUG_VISITS (2026-11-16): every 30 grid-seconds the share of the items the port carries (kItemPortHidden: the
   // OSM import's visitors at sights and in its procedural buildings) in the pools and in the citizens' homes, jobs and
   // trips
-  static const bool debugVisits = std::getenv("REGS_DEBUG_VISITS") != nullptr;
+  static const bool debugVisits = regs::envVar("REGS_DEBUG_VISITS") != nullptr;
   static float visitsClock = 0;
   if (debugVisits && (visitsClock += dt) >= 30.0f) {
     visitsClock = 0;
@@ -2457,7 +2458,7 @@ void collectCharacters(Display& d, VM& vm, SimState& s, const Vec3& eye, const M
     if (clip[3] < -5 || std::fabs(clip[0]) > clip[3] + margin || std::fabs(clip[1]) > clip[3] + margin) continue;
     // debugging (REGS_STRIDE_SHOTS=<prefix>): follow the first walker close to the camera with a screenshot every
     // third frame, logging where it is on screen, to check the walk cycle
-    if (static const char* stride = std::getenv("REGS_STRIDE_SHOTS"); stride && *stride && !ch.done() && ch.virtualLeft < 0 && clip[3] > 0) {
+    if (static const char* stride = regs::envVar("REGS_STRIDE_SHOTS"); stride && *stride && !ch.done() && ch.virtualLeft < 0 && clip[3] > 0) {
       static const Character* followed = nullptr;
       static int frame = 0, shots = 0;
       float sx = (clip[0] / clip[3] * 0.5f + 0.5f) * 1600, sy = (0.5f - clip[1] / clip[3] * 0.5f) * 900;

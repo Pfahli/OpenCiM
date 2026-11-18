@@ -1,6 +1,7 @@
 ﻿// Script VM: scheduler, calls, events, load and the interpreter loop. Behaviour follows
 // docs/script-runtime/semantics.md (execution) and values.md (values); operators are in vm_ops.cpp.
 #include "script/vm.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -301,7 +302,7 @@ void VM::runThread(ThreadObj* t) {
 void VM::runThreads(float dt) {
   dt_ = dt;
   if (depth_ != 0) return;
-  static const bool debugGroups = std::getenv("REGS_DEBUG_GROUPS") != nullptr;
+  static const bool debugGroups = regs::envVar("REGS_DEBUG_GROUPS") != nullptr;
   static int calls = 0;
   if (debugGroups && ++calls % 300 == 0)  // the thread groups' state, every 300 frames
     for (auto& g : groups_) {

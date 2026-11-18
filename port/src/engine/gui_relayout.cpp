@@ -10,6 +10,7 @@
 #include <cstdlib>
 
 #include "core/log.h"
+#include "core/env.h"
 #include "engine/display.h"
 #include "engine/gui.h"
 
@@ -51,7 +52,7 @@ int relayoutChildren(VM& vm, ControlObj* parent, float ow, float oh, float nw, f
 
 int placeControl(VM& vm, ControlObj* c, float l, float t, float w, float h) {
   if (l == c->left && t == c->top && w == c->width && h == c->height) return 0;
-  if (std::getenv("REGS_DEBUG_RELAYOUT"))
+  if (regs::envVar("REGS_DEBUG_RELAYOUT"))
     LOG_INFO("relayout %p (%s) in %p: %.0f,%.0f %.0fx%.0f -> %.0f,%.0f %.0fx%.0f", (void*)c, c->cls->name.c_str(),
              (void*)c->parentControl(), c->left, c->top, c->width, c->height, l, t, w, h);
   bool resized = w != c->width || h != c->height;

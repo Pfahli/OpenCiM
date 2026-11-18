@@ -6,6 +6,7 @@
 // the port's own random stream (the original's rand() calls would shift the simulation's sequence), and the camera
 // distance of a vehicle or item stands in for its bucket's eyeDist.
 #include "engine/particles.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <chrono>
@@ -50,11 +51,11 @@ float rnd01() { return float(rng()() - rng().min()) / float(rng().max() - rng().
 float rnd(float a, float b) { return a + (b - a) * rnd01(); }
 
 bool debugParticles() {
-  static const bool on = std::getenv("REGS_DEBUG_PARTICLES") != nullptr;
+  static const bool on = regs::envVar("REGS_DEBUG_PARTICLES") != nullptr;
   return on;
 }
 bool particlesOff() {
-  static const bool off = std::getenv("REGS_NO_PARTICLES") != nullptr;
+  static const bool off = regs::envVar("REGS_NO_PARTICLES") != nullptr;
   return off;
 }
 
@@ -871,7 +872,7 @@ void tickTreeEmitters(VM& vm, ParticleEngineObj* eng, GridObj* grid, SimParticle
 // test switch REGS_TEST_FIRE=<item>: a fire (template fire-medium, as maybeFire places it: one cell before the
 // item's corner) at that item after 60 ticks; put the camera there with REGS_DEBUG_CAMERA=<item>
 void testFire(VM& vm, GridObj* grid, SimParticles& sp) {
-  static const char* f = std::getenv("REGS_TEST_FIRE");
+  static const char* f = regs::envVar("REGS_TEST_FIRE");
   if (!f || !*f || sp.fireDone || !grid->data || ++sp.fireTicks < 60) return;
   sp.fireDone = true;
   int item = std::atoi(f);
@@ -964,7 +965,7 @@ void simParticlesTick(VM& vm, GridObj* grid, SimState& s, float dt) {
   if (dt <= 0) return;
   ParticleEngineObj* eng = gridEngine(vm, grid);
   if (!eng || !s.eyeKnown) return;  // the main camera of the last drawn frame
-  if (std::getenv("REGS_TEST_FIREWORKS"))  // test switch: the new-year bit (game.script:639-643) stays on
+  if (regs::envVar("REGS_TEST_FIREWORKS"))  // test switch: the new-year bit (game.script:639-643) stays on
     vm.setMember(Value::heap(VT::Object, grid), u"effectConditions",
                  Value::integer(fieldInt(vm, grid, u"effectConditions", 0) | 1));
   if (debugParticles() && s.followed >= 0 && size_t(s.followed) < s.vehicles.size()) {  // the followed vehicle's rotor
@@ -1128,7 +1129,7 @@ void collectParticles(Display& d, VM& vm, Object* scene, const Vec3& eye, const 
     if (p.landed) a = std::min(a, 3.0f * (1.0f - p.age / p.life));  // a landed particle fades over its last third
     uint32_t col = multAlpha(lerpArgb(p.c0, p.c1, std::clamp(p.age / p.life, 0.0f, 1.0f)), a);
     if ((col >> 24) == 0) continue;
-    static const bool marked = std::getenv("REGS_DEBUG_PARTICLES") && std::atoi(std::getenv("REGS_DEBUG_PARTICLES")) == 2;
+    static const bool marked = regs::envVar("REGS_DEBUG_PARTICLES") && std::atoi(regs::envVar("REGS_DEBUG_PARTICLES")) == 2;
     if (marked) col = 0xFFFF00FF, size *= 3;  // debugging: opaque magenta, three times the size
     order.push_back({d2, uint32_t(out.sprites.size())});
     out.sprites.push_back({p.pos, size, p.orient, col, uint32_t(si.batch), axis});

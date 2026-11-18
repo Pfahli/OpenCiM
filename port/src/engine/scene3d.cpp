@@ -1,6 +1,7 @@
 // 3D scene objects and the viewport's 3D pass for what the main menu needs: .object meshes with their materials,
 // colorize, a fixed camera, the sun's light, render-to-texture. Conventions: docs/renderer/scene-basics.md.
 #include "engine/scene3d.h"
+#include "core/env.h"
 
 #include <chrono>
 #include <algorithm>
@@ -167,7 +168,7 @@ void cameraView(VM& vm, Object* cam, Vec3& eye, Vec3& look, Vec3& up) {
   // fourth number d looks at it from d units south instead (at the ground height y, a fifth number; a sixth turns the
   // eye that many degrees from the south toward the east)
   if (floating)
-    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) {
+    if (const char* td = regs::envVar("REGS_DEBUG_TOPDOWN"); td && *td) {
       float x = 0, z = 0, h = 200, d = 0, y = 0, az = 0;
       int n = std::sscanf(td, "%f,%f,%f,%f,%f,%f", &x, &z, &h, &d, &y, &az);
       const float ar = az * 0.017453293f;
@@ -240,7 +241,7 @@ GpuMaterial gpuMaterial(Display& d, VM& vm, const MaterialDef& m) {
 // and platforms only (-1: unknown, none)
 uint32_t programFor(Display& d, VM& vm, const std::string& shader, uint32_t flags, uint32_t env, uint32_t meshFlags = 0,
                     int surfaceClass = -1) {
-  static const bool off = std::getenv("REGS_NO_COMBINER") != nullptr;  // debugging: the built-in shader only
+  static const bool off = regs::envVar("REGS_NO_COMBINER") != nullptr;  // debugging: the built-in shader only
   if (off) return 0;
   ShaderCombiner* c = getCombiner(vm, utf8ToUtf16(shader));
   if (!c) return 0;
@@ -476,7 +477,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   Object* scene = fieldOf(vm, vp, u"scene").object();
   Object* cam = fieldOf(vm, vp, u"camera").object();
   if (cam && !cam->destroyed && isFloatingCamera(vm, cam)) updateFloatingCamera(vm, cam, vm.frameDt(), false);
-  if (std::getenv("REGS_DEBUG_VIEWPORT")) {
+  if (regs::envVar("REGS_DEBUG_VIEWPORT")) {
     static std::map<std::pair<Object*, Object*>, int> seen;
     if (seen[{vp, scene}]++ == 0)
       LOG_INFO("viewport %p: scene %s camera %s visible %d size %.0fx%.0f", (void*)vp, scene ? scene->cls->name.c_str() : "-",
@@ -561,7 +562,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   applyAtmosphere(atmosphereOf(vm, scene), v);  // the port's atmosphere fields of the scene (mods: weather)
   // the debug camera (REGS_DEBUG_TOPDOWN) high up: the fog starts where the game camera's would, behind the eye's
   // distance to its point (installer shots, 2026-11-17: 1000 units up the town was all fog colour)
-  if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td && v.fog) {
+  if (const char* td = regs::envVar("REGS_DEBUG_TOPDOWN"); td && *td && v.fog) {
     const float dx = eye.x - look.x, dy = eye.y - look.y, dz = eye.z - look.z;
     const float away = std::sqrt(dx * dx + dy * dy + dz * dz);
     v.fogStart += away;
@@ -602,7 +603,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   bool rayShadows = false;
   if (shadow && !rt && !grids.empty() && render::gpu::dev().rayTracing()) {
     rayShadows = settingNumber(vm, u"regsRtShadows", 0) > 0;
-    if (const char* e = std::getenv("REGS_RT_SHADOWS")) rayShadows = std::atoi(e) != 0;
+    if (const char* e = regs::envVar("REGS_RT_SHADOWS")) rayShadows = std::atoi(e) != 0;
   }
   bool rayScene = false;  // the frame's ray-query scene, built once for the shadows and the occlusion
   auto ensureRayScene = [&] { return rayScene || (rayScene = d.r3d().buildRayScene(items)); };
@@ -650,7 +651,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         if (rayShadows && ensureRayScene()) {
           v.env |= kEnvRayShadows;
           // REGS_RT_SHADOWS=2 (a check): the ray programs and the foliage-only map, but the rays switched off
-          static const bool raysOff = std::getenv("REGS_RT_SHADOWS") && std::atoi(std::getenv("REGS_RT_SHADOWS")) == 2;
+          static const bool raysOff = regs::envVar("REGS_RT_SHADOWS") && std::atoi(regs::envVar("REGS_RT_SHADOWS")) == 2;
           v.rayShadows = !raysOff;
           v.sunWorld = sun.position;
         }
@@ -665,7 +666,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   // the reflective materials (glass) trace their environment-cube lookups; Vulkan with ray queries, the map view
   if (!rt && !grids.empty() && render::gpu::dev().rayReflections()) {
     bool on = settingNumber(vm, u"regsRtReflections", 0) > 0;
-    if (const char* e = std::getenv("REGS_RT_REFLECTIONS")) on = std::atoi(e) != 0;
+    if (const char* e = regs::envVar("REGS_RT_REFLECTIONS")) on = std::atoi(e) != 0;
     if (on && ensureRayScene()) {
       v.env |= kEnvRayReflections;
       if (!v.rayShadows)  // the hits are lit by the sun (with ray shadows its position is known already)
@@ -740,7 +741,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   } else {
     d.r3d().begin(rt, x, y, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);
-    if (const char* dump = std::getenv("REGS_DUMP_TARGET"); dump && rt) d.dumpTarget(*rt, dump);
+    if (const char* dump = regs::envVar("REGS_DUMP_TARGET"); dump && rt) d.dumpTarget(*rt, dump);
     d.r3d().end(bw, bh);
   }
   if (styled) {
@@ -775,7 +776,7 @@ void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ) 
     float want = std::clamp(std::sqrt(off.x * off.x + off.y * off.y + off.z * off.z) * 0.1f, 1.0f, 30.0f);
     // the debug camera also sees far (installer shots from high up, 2026-11-17: the viewport's far plane left a
     // camera 1000 units up looking at nothing)
-    if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td) want = 2.0f, farZ = std::max(farZ, 8000.0f);
+    if (const char* td = regs::envVar("REGS_DEBUG_TOPDOWN"); td && *td) want = 2.0f, farZ = std::max(farZ, 8000.0f);
     nearZ = std::min(nearZ, want);
   }
 }
@@ -896,7 +897,7 @@ void registerSceneNatives(VM& vm) {
     const auto& mats = o->data->materials;
     auto it = std::find_if(mats.begin(), mats.end(), [&](const MaterialDef& m) { return m.name == name; });
     if (it == mats.end()) {
-      if (std::getenv("REGS_DEBUG_MATERIALS")) {
+      if (regs::envVar("REGS_DEBUG_MATERIALS")) {
         std::string have;
         for (const auto& m : mats) have += " \"" + m.name + "\"";
         LOG_INFO("getMaterial(\"%s\") on %s: not among%s", name.c_str(), o->pendingPath.c_str(), have.c_str());

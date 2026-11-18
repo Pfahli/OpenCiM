@@ -1,5 +1,6 @@
 // TAA and render scale (engine/temporal.h, docs/renderer/vulkan.md §9.1-9.2).
 #include "engine/temporal.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <chrono>
@@ -84,14 +85,14 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
   // REGS_TAA=0|1 and REGS_RENDER_SCALE=<percent> override the settings (test runs)
   bool taa = settingNumber(vm, u"regsTaa", 0) > 0;
   float percent = settingNumber(vm, u"regsRenderScale", 100);
-  if (const char* e = std::getenv("REGS_TAA")) taa = std::atoi(e) != 0;
-  if (const char* e = std::getenv("REGS_RENDER_SCALE")) percent = float(std::atof(e));
+  if (const char* e = regs::envVar("REGS_TAA")) taa = std::atoi(e) != 0;
+  if (const char* e = regs::envVar("REGS_RENDER_SCALE")) percent = float(std::atof(e));
   float scale = std::clamp(percent, 50.0f, 100.0f) / 100.0f;
   // raytraced ambient occlusion (regsRtAo, REGS_RT_AO=0|1): needs ray queries; runs on the temporal input
   bool ao = false;
   if (gpu::dev().rayTracing() && !s.aoFailed) {
     ao = settingNumber(vm, u"regsRtAo", 0) > 0;
-    if (const char* e = std::getenv("REGS_RT_AO")) ao = std::atoi(e) != 0;
+    if (const char* e = regs::envVar("REGS_RT_AO")) ao = std::atoi(e) != 0;
   }
   if (ao && !s.ao) {
     s.ao = postProgram(d, vm, "ao.fragment", true);
@@ -105,7 +106,7 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
   // the upscaler (regsUpscaler, REGS_UPSCALER): 0 = the port's TAA / spatial upscaler, 1 = AMD FSR 3.1 (Vulkan built
   // with the FidelityFX SDK). FSR antialiases too, so it runs at 100 % as well and takes the place of TAA.
   int upscaler = int(settingNumber(vm, u"regsUpscaler", 0));
-  if (const char* e = std::getenv("REGS_UPSCALER")) upscaler = std::atoi(e);
+  if (const char* e = regs::envVar("REGS_UPSCALER")) upscaler = std::atoi(e);
   bool fsr = upscaler == 1 && gpu::dev().fsrAvailable() && !s.fsrFailed;
   if (fsr && !s.motion) {
     s.motion = postProgram(d, vm, "motion.fragment");
@@ -119,7 +120,7 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
   // FSR 3 frame generation (regsFrameGen, REGS_FRAMEGEN=0|1): with the FSR upscaler only (it reads its dilated depth
   // and motion)
   bool fg = settingNumber(vm, u"regsFrameGen", 0) > 0;
-  if (const char* e = std::getenv("REGS_FRAMEGEN")) fg = std::atoi(e) != 0;
+  if (const char* e = regs::envVar("REGS_FRAMEGEN")) fg = std::atoi(e) != 0;
   fg = fg && fsr && gpu::dev().frameGenAvailable();
   gpu::dev().setFrameGen(fg);
   s.frameGen = fg;
@@ -214,7 +215,7 @@ void temporalFinish(Display& d, script::VM& vm, const TemporalPass& t, int x, in
     r.drawQuad(s.aoBlur, blurIn, 2, c0, uv);
     g.bindFramebuffer(s.input.fbo);
     // REGS_RT_AO=2 (a check): the occlusion alone instead of multiplied into the colour
-    static const bool aoOnly = std::getenv("REGS_RT_AO") && std::atoi(std::getenv("REGS_RT_AO")) == 2;
+    static const bool aoOnly = regs::envVar("REGS_RT_AO") && std::atoi(regs::envVar("REGS_RT_AO")) == 2;
     r.drawQuad(s.copy, &s.aoSmooth.color, 1, nullptr, uv, nullptr, nullptr, nullptr, !aoOnly);
   }
   auto into = [&](const RenderTarget* target) {  // a target's bottom-left w×h, or the back-buffer rect

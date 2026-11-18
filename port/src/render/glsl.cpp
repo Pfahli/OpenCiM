@@ -1,4 +1,5 @@
 #include "render/glsl.h"
+#include "core/env.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -552,7 +553,7 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     head += "#extension GL_EXT_buffer_reference : require\n#extension GL_EXT_buffer_reference_uvec2 : require\n"
             "#extension GL_EXT_nonuniform_qualifier : require\n";
   // REGS_SHADER_SALT=<text>: a comment that makes every source new to the driver's shader cache (cold-start tests)
-  static const char* salt = std::getenv("REGS_SHADER_SALT");
+  static const char* salt = regs::envVar("REGS_SHADER_SALT");
   if (salt) head += std::string("// ") + salt + "\n";
   head += kBuiltins;
   // shadow2D as GLSL 1.10 has it (vec4); the particle shader samples the shadow map in its vertex shader too
@@ -581,7 +582,7 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     if (rays || reflections) head += "uniform accelerationStructureEXT regs_Scene;\nuniform vec4 regs_SunPos;\n";
     if (reflections) {
       // REGS_RT_REFL_DEBUG=1|2|3 (a check): a constant, green hits, the hit record's colour
-      static const char* dbg = std::getenv("REGS_RT_REFL_DEBUG");
+      static const char* dbg = regs::envVar("REGS_RT_REFL_DEBUG");
       head += std::string("#define REGS_REFL_DEBUG ") + (dbg ? dbg : "0") + "\n";
       head += kReflectionCode;
     }

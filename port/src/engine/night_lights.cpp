@@ -1,6 +1,7 @@
 ﻿// Night lights of the port's day/night cycle: lit windows and street lamps (engine/night_lights.h,
 // docs/renderer/night-lights.md).
 #include "engine/night_lights.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <atomic>
@@ -35,7 +36,7 @@ using namespace regs::render;
 namespace {
 
 bool debugNight() {
-  static const bool on = std::getenv("REGS_DEBUG_NIGHT") != nullptr;
+  static const bool on = regs::envVar("REGS_DEBUG_NIGHT") != nullptr;
   return on;
 }
 

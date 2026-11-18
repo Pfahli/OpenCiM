@@ -12,6 +12,7 @@
 #include <string>
 
 #include "core/log.h"
+#include "core/env.h"
 #include "core/text.h"
 #include "engine/api.h"
 
@@ -50,7 +51,7 @@ double num(VM& vm, const Value& v) {
 // what: 0 month, 1 year; called by gsClock after it fired onMonth / onYear
 void debugEconomyClock(VM& vm, Object* clock, int what) {
   static const bool on = [] {
-    const char* e = std::getenv("REGS_DEBUG_ECONOMY");
+    const char* e = regs::envVar("REGS_DEBUG_ECONOMY");
     return e && *e && *e != '0';
   }();
   if (!on) return;

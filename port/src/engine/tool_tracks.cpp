@@ -10,6 +10,7 @@
 // works the same way on its own piece list (Piece) while a preview is built, and only then adds the pieces to the map
 // as TEMP items (tools.h), so the map sees one batch per rebuilt preview.
 #include "engine/tool_tracks.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <chrono>
@@ -721,7 +722,7 @@ void createTramBlock(Ctx& c, int x, int z, uint32_t conn, bool isStart, bool isE
 
 // REGS_DEBUG_TOOLS=2: the pieces of each rebuilt preview
 void logPieces(Ctx& c) {
-  static const bool verbose = std::getenv("REGS_DEBUG_TOOLS") && std::string(std::getenv("REGS_DEBUG_TOOLS")) == "2";
+  static const bool verbose = regs::envVar("REGS_DEBUG_TOOLS") && std::string(regs::envVar("REGS_DEBUG_TOOLS")) == "2";
   if (!verbose) return;
   for (const Piece& p : c.W) {
     Piece par = p.parentLive >= 0 ? c.live(p.parentLive) : Piece{};
@@ -734,7 +735,7 @@ void logPieces(Ctx& c) {
 // mouseMoveLayTram (L:0x08193b00): the drag from the start block to the block under the cursor, following the roads
 // (large roads and avenues by their two-block pieces, slopes and bridges to their far end), one tram piece per block
 void moveLayTram(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
-  static const bool debugTiming = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool debugTiming = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   auto t0 = std::chrono::steady_clock::now();
   ToolPick pick = toolPick(vm, player, mx, my, false);
   if (!pick.hit) return;
@@ -1361,7 +1362,7 @@ bool checkConflicts(Ctx& c) {
     if (!(s.flags & kItemOptional)) {
       bool a1 = gridCheckConflict(c.vm, c.grid, i, c.t.replaced);
       bool a2 = last >= 0 && gridItemsConflict(c.vm, c.grid, uint32_t(last), i);
-      static const bool dbg = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+      static const bool dbg = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
       if (dbg && (a1 || a2)) LOG_INFO("conflict: %s (%d,%d) map %d, with previous %d", c.g.types[c.g.items[i].type].c_str(), c.g.items[i].x, c.g.items[i].z, a1, a2);
       if (a1 || a2) error = true;
       last = int(i);
@@ -1471,7 +1472,7 @@ void layRoadTo(Ctx& c, int ex, int ez, int y) {
   bool error = checkConflicts(c);
   if (c.W.size() != t.newItems.size()) error = true;
   for (uint32_t i : t.newItems) gridSelectObjectArea(vm, grid, i, error);
-  static const bool debugTools = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool debugTools = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   if (debugTools) logPieces(c);
   t.cellX = ex, t.cellZ = ez, t.cellY = y;
   gridEditEnd(vm, grid);
@@ -1520,7 +1521,7 @@ void moveLayBridge(VM& vm, ControlObj* player, GridObj* grid, float mx, float my
   };
   const uint32_t fwd = dirBit(dz, dx), back = dirBit(-dz, -dx);
   const int x0 = t.startX, z0 = t.startZ;
-  static const bool debugSpan = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool debugSpan = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   if (debugSpan)
     LOG_INFO("%s: start %d,%d end %d,%d (%s) blocks %d, %d per span, type %d design %d", tunnel ? "tunnel" : "bridge", x0,
              z0, ex, ez, t.inProgress ? "dragging" : "hover", n, span, T, c.toolType);
@@ -1580,7 +1581,7 @@ void moveLayBridge(VM& vm, ControlObj* player, GridObj* grid, float mx, float my
   bool error = checkConflicts(c);
   if (c.W.size() != t.newItems.size()) error = true;
   for (uint32_t i : t.newItems) gridSelectObjectArea(vm, grid, i, error);
-  static const bool debugTools = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool debugTools = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   if (debugTools) logPieces(c);
   t.cellX = ex, t.cellZ = ez;
   gridEditEnd(vm, grid);
@@ -1591,7 +1592,7 @@ void moveLayBridge(VM& vm, ControlObj* player, GridObj* grid, float mx, float my
 // diagonal, turning by at most 45° per block; one createTrackBlock per block. Elevated tracks keep above what is
 // under them; then the slopes, the pieces' parts (pillars) and the conflicts.
 void moveLayTrack(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
-  static const bool debugTiming = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool debugTiming = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   auto t0 = std::chrono::steady_clock::now();
   Ctx c(vm, player, grid);
   ToolState& t = c.t;
@@ -1842,7 +1843,7 @@ int toolBuildRoadNetwork(VM& vm, ControlObj* player, GridObj* grid, std::map<std
     return false;
   };
   // masks without a piece lose connections (and their neighbours the matching ones) until every block has one
-  static const bool dbgNet = std::getenv("REGS_DEBUG_OSM") != nullptr;
+  static const bool dbgNet = regs::envVar("REGS_DEBUG_OSM") != nullptr;
   std::set<std::pair<int, int>> dirty;
   for (auto& [k, m] : blocks) dirty.insert(k);
   auto cut = [&](std::pair<int, int> at, uint32_t bitMask) {  // removes connection bits here and at the neighbours

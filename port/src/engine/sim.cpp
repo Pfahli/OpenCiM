@@ -5,6 +5,7 @@
 // every sub-step (no far-away round robin), platoons queue on one node instead of the leader's whole chain, a crash
 // drifts the whole consist by one offset and leaves no crash marker or emergency vehicle (§6.6 crashSettled).
 #include "engine/sim.h"
+#include "core/env.h"
 #include "engine/night_lights.h"
 
 #include <algorithm>
@@ -90,7 +91,7 @@ float rndFloat(SimState& s, float a, float b) { return a + (b - a) * (float(rnd(
 
 float densityOf(SimState& s, Object* module, const char16_t* field) {
   // debugging: REGS_POPULATION_DENSITY / REGS_TRAFFIC_DENSITY override the fields
-  if (const char* e = std::getenv(field[4] == u'P' ? "REGS_POPULATION_DENSITY" : "REGS_TRAFFIC_DENSITY"); e && *e)
+  if (const char* e = regs::envVar(field[4] == u'P' ? "REGS_POPULATION_DENSITY" : "REGS_TRAFFIC_DENSITY"); e && *e)
     return std::clamp(float(std::atof(e)), 0.25f, 8.0f);
   if (!module || !s.vm) return 1.0f;
   auto it = module->fieldValues.find(field);
@@ -185,7 +186,7 @@ int lengthNodesOf(const SimState& s, const std::vector<Unit>& units, bool fromLe
 // REGS_DEBUG_SIM=1 logs the stop cycle of the line vehicles and the traffic counts
 bool debugSim() {
   static const bool on = [] {
-    const char* e = std::getenv("REGS_DEBUG_SIM");
+    const char* e = regs::envVar("REGS_DEBUG_SIM");
     return e && *e && *e != '0';
   }();
   return on;
@@ -842,11 +843,11 @@ void appendHalfLength(SimState& s, VehicleState& v, const LineState& line, int k
       v.turnSkip = skip;
     }
   }
-  if (static const bool dbg = std::getenv("REGS_DEBUG_HALT") != nullptr; dbg)
+  if (static const bool dbg = regs::envVar("REGS_DEBUG_HALT") != nullptr; dbg)
     LOG_INFO("sim: halt length: line type %d, stop %d: %d of %d nodes past the platform (%s)", line.type,
              (k + 1) % int(line.stops.size()), int(m.track.nodes.size()) - 1 - before, extra,
              nx.legStart == st.legEnd ? "next leg" : !v.turnNodes.empty() ? "straight on before the turn" : "none: the next leg starts on another lane");
-  if (static const bool dbg = std::getenv("REGS_DEBUG_HALT") != nullptr; dbg && nx.legStart >= 0 && nx.legStart != st.legEnd) {
+  if (static const bool dbg = regs::envVar("REGS_DEBUG_HALT") != nullptr; dbg && nx.legStart >= 0 && nx.legStart != st.legEnd) {
     const LaneNode &a = G.nodes[size_t(st.legEnd)], &b = G.nodes[size_t(nx.legStart)];
     LOG_INFO("sim: turn: platform %d %.1f,%.1f->%.1f,%.1f len %.1f; next leg %d %.1f,%.1f->%.1f,%.1f; opposite %d",
              st.legEnd, a.p0.x, a.p0.z, a.p1.x, a.p1.z, a.length, nx.legStart, b.p0.x, b.p0.z, b.p1.x, b.p1.z, oppositeNode(G, st.legEnd));
@@ -1077,14 +1078,14 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
     // debugging: REGS_DEBUG_FOLLOW films the followed bus halting at a tram stop (docs/ui/lines.md §6), and
     // REGS_DEBUG_CAMERA every vehicle halting at the camera's stop item (halt-<line type>-<burst>-<n>.png)
     if (!v.halted && (s.followShots == 0 || line.type == 0)) {  // a bus takes over another vehicle's burst
-      static const int camItem = std::getenv("REGS_DEBUG_CAMERA") ? std::atoi(std::getenv("REGS_DEBUG_CAMERA")) : -1;
+      static const int camItem = regs::envVar("REGS_DEBUG_CAMERA") ? std::atoi(regs::envVar("REGS_DEBUG_CAMERA")) : -1;
       static int bursts = 0;
       if (s.followed == vi && line.type == 0 && b.stop && fieldInt(vm, b.stop.get(), u"type", 0) == 1)
         s.followShots = 16, s.followShotName = "follow-bustram-";
       else if (camItem >= 0 && b.item == camItem)
         s.followShots = 16, s.followShotName = "halt-" + std::to_string(line.type) + "-" + std::to_string(++bursts) + "-";
     }
-    if (static const bool dbgHalt = std::getenv("REGS_DEBUG_HALT") != nullptr; dbgHalt && !v.halted && !v.units.empty()) {
+    if (static const bool dbgHalt = regs::envVar("REGS_DEBUG_HALT") != nullptr; dbgHalt && !v.halted && !v.units.empty()) {
       const LineStopState& arr = line.stops[size_t(v.stopA)];
       int plat = arr.legEnd;
       if (plat >= 0) {
@@ -1184,7 +1185,7 @@ void stepVehicle(VM& vm, SimState& s, LineState& line, int vi, float dt) {
   float condition = v.object ? fieldFloat(vm, v.object.get(), u"condition", 1.0f) : 1.0f;
   // test switch REGS_TEST_BREAKDOWN=<seconds>: the vehicle REGS_DEBUG_FOLLOW follows breaks down once after that much
   // simulated time (for its smoke, docs/renderer/particles.md)
-  static const float testBreak = std::getenv("REGS_TEST_BREAKDOWN") ? float(std::atof(std::getenv("REGS_TEST_BREAKDOWN"))) : -1;
+  static const float testBreak = regs::envVar("REGS_TEST_BREAKDOWN") ? float(std::atof(regs::envVar("REGS_TEST_BREAKDOWN"))) : -1;
   if (testBreak >= 0 && s.followed == vi && !v.broken) {
     static float clock = 0;
     static bool done = false;
@@ -1505,7 +1506,7 @@ void collectSources(SimState& s) {
     if ((f & kPathStart) && !(f & kPathStop)) s.trainStarts[0].push_back(int(i));
     if ((f & kPathEnd) && !(f & kPathStop)) s.trainEnds[0].push_back(int(i));
   }
-  if (std::getenv("REGS_DEBUG_SIM")) {  // with a path from a map-edge way in to a way out when there is one
+  if (regs::envVar("REGS_DEBUG_SIM")) {  // with a path from a map-edge way in to a way out when there is one
     int ext = 0, routed = -1;
     for (int a : s.roadStarts)
       if (s.graph.nodes[size_t(a)].flags & kPathExternal) {
@@ -1757,7 +1758,7 @@ int relinkLine(VM& vm, GridObj* grid, SimState& s, LineState& line) {
   size_t n = line.stops.size();
   for (size_t k = 0; k < n; ++k)
     if (!computeSegment(s, line, k) && (k + 1 < n || line.closed)) ++unreachable;
-  if (static const bool dbg = std::getenv("REGS_DEBUG_LEGS") != nullptr; dbg)
+  if (static const bool dbg = regs::envVar("REGS_DEBUG_LEGS") != nullptr; dbg)
     for (size_t k = 0; k < n; ++k) {
       const LineStopState& st = line.stops[k];
       LOG_INFO("legs: line type %d stop %zu (item %d): platform %d alt %d; leg %d -> %d, %zu nodes, cost %.0f, %s", line.type, k,
@@ -1972,7 +1973,7 @@ void loadTransport(VM& vm, GridObj* grid, SimState& s, const std::vector<uint8_t
 
 void loadSimulation(VM& vm, GridObj* grid, const std::vector<uint8_t>& file) {
   if (!grid || !grid->data) return;
-  if (const char* off = std::getenv("REGS_NO_SIM"); off && *off && *off != '0') return;  // debugging: no simulation
+  if (const char* off = regs::envVar("REGS_NO_SIM"); off && *off && *off != '0') return;  // debugging: no simulation
   // the old state's script objects leave the lines module and the grid
   if (grid->sim) {
     grid->sim->tearingDown = true;
@@ -2067,7 +2068,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   int n = 1 + int(5.0f * x);  // 1 − ftol(dt·timeSpeed·−5): steps of at most 0.2 s
   float step = x / float(n);
   // debugging: REGS_DEBUG_FOLLOW=<line type>[:<n>] keeps the camera (ui.setCameraPos) on the n-th vehicle of that type
-  if (const char* f = std::getenv("REGS_DEBUG_FOLLOW")) {
+  if (const char* f = regs::envVar("REGS_DEBUG_FOLLOW")) {
     int type = std::atoi(f), nth = std::strchr(f, ':') ? std::atoi(std::strchr(f, ':') + 1) : 0;
     for (const LineState& line : s->lines)
       for (int vi : line.vehicles) {
@@ -2085,7 +2086,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
       }
   }
   // debugging: REGS_DEBUG_CAMERA=<item> puts the camera on that item once, 30 ticks into the game (for scripted clicks)
-  if (const char* c = std::getenv("REGS_DEBUG_CAMERA"); c && *c) {
+  if (const char* c = regs::envVar("REGS_DEBUG_CAMERA"); c && *c) {
     static int ticks = 0;
     int item = std::atoi(c);
     if (++ticks == 30 && item >= 0 && size_t(item) < grid->data->items.size()) {
@@ -2099,7 +2100,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   }
   // test harness: REGS_TEST_TERMINUS=<line> removes (gridEditRemoveItem) the stop items of that line except its first
   // two after 300 ticks, so the line's trains must turn round at both ends (transport.md §4.4)
-  if (const char* t = std::getenv("REGS_TEST_TERMINUS")) {
+  if (const char* t = regs::envVar("REGS_TEST_TERMINUS")) {
     static int ticks = 0;
     size_t li = size_t(std::atoi(t));
     if (++ticks == 300 && li < s->lines.size() && s->lines[li].stops.size() > 2) {
@@ -2115,13 +2116,13 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   // test harness: REGS_TEST_LINE=<type> (0 bus, 1 tram, 2 metro) 60 ticks into the game: a new line of that type (the
   // line panel's createLine) through every stop of it on the map (bus stops, tram stops, metro stations by template
   // name, in map order), with one vehicle of REGS_TEST_LINE_MODEL (default bus01 / tram-01 / metro-01), switched on
-  if (const char* t = std::getenv("REGS_TEST_LINE")) {
+  if (const char* t = regs::envVar("REGS_TEST_LINE")) {
     static int ticks = 0;
     if (++ticks == 60) {
       int type = std::atoi(t);
       static const char* kPrefix[] = {"stop_bus", "stop_tram", "station_metro"};
       static const char* kModel[] = {"bus01", "tram-01", "metro-01"};  // the game's own names (buses without a dash)
-      const char* model = std::getenv("REGS_TEST_LINE_MODEL");
+      const char* model = regs::envVar("REGS_TEST_LINE_MODEL");
       if (!model) model = kModel[std::clamp(type, 0, 2)];
       try {
         Value* main = vm.findGlobal(u"MAIN");
@@ -2136,12 +2137,12 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
           // trams also take the train stations (trams on railway tracks); REGS_TEST_LINE_STATIONS=1: only those,
           // REGS_TEST_LINE_ITEMS=a,b,...: only those items, in that order (added after this loop)
           const bool station = type == 1 && simIsTrainStation(name);
-          if (std::getenv("REGS_TEST_LINE_ITEMS")) continue;
-          if (std::getenv("REGS_TEST_LINE_STATIONS") && !station) continue;
+          if (regs::envVar("REGS_TEST_LINE_ITEMS")) continue;
+          if (regs::envVar("REGS_TEST_LINE_STATIONS") && !station) continue;
           if (name.rfind(kPrefix[std::clamp(type, 0, 2)], 0) != 0 && !station) continue;
           if (lineAddStop(vm, grid, *s, li, item, false) >= 0) ++added;
         }
-        if (const char* items = std::getenv("REGS_TEST_LINE_ITEMS")) {
+        if (const char* items = regs::envVar("REGS_TEST_LINE_ITEMS")) {
           int first = -1;
           for (const char* p = items; *p;) {
             int item = std::atoi(p);
@@ -2153,7 +2154,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
           if (first >= 0) lineAddStop(vm, grid, *s, li, first, false);  // the first again: the line becomes a loop
         }
         // REGS_TEST_LINE_STATIONS with REGS_DEBUG_SIM: which train stations' platforms reach which (trams)
-        if (std::getenv("REGS_TEST_LINE_STATIONS") && debugSim()) {
+        if (regs::envVar("REGS_TEST_LINE_STATIONS") && debugSim()) {
           std::vector<std::pair<int, int>> plat;  // item, platform
           for (const auto& [item, stop] : s->stopOfItem) {
             const GridData& g = *grid->data;
@@ -2182,14 +2183,14 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
         vm.call(vm.getMember(line, u"addVehicle"), {tpl});
         vm.setMember(line, u"active", Value::boolean(true));
         LOG_INFO("test: line %d (type %d) with %d stops and a %s", li, type, added, model);
-        if (std::getenv("REGS_DEBUG_LEGS") && li >= 0 && size_t(li) < s->lines.size()) relinkLine(vm, grid, *s, s->lines[size_t(li)]);
+        if (regs::envVar("REGS_DEBUG_LEGS") && li >= 0 && size_t(li) < s->lines.size()) relinkLine(vm, grid, *s, s->lines[size_t(li)]);
       } catch (const std::exception& e) {
         LOG_WARN("test: line failed: %s", e.what());
       }
     }
   }
   // debugging: REGS_DEBUG_SAVE_AT=<ticks>:<name> saves the game (main.saveGameData) after that many simulation ticks
-  if (const char* at = std::getenv("REGS_DEBUG_SAVE_AT")) {
+  if (const char* at = regs::envVar("REGS_DEBUG_SAVE_AT")) {
     static int ticks = 0;
     const char* colon = std::strchr(at, ':');
     if (colon && ++ticks == std::atoi(at))
@@ -2199,7 +2200,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
   // test harness: REGS_TEST_SCENARIO_CALL=<ticks>:<function>[,<function>…] calls those scenario functions through
   // MAIN.$scenario.callFunction(name, 0) (scenario, location and default layers) after that many simulation ticks,
   // e.g. start_sandbox_task90 to start a random task at once (playable-todo.md §5)
-  if (const char* at = std::getenv("REGS_TEST_SCENARIO_CALL")) {
+  if (const char* at = regs::envVar("REGS_TEST_SCENARIO_CALL")) {
     static int ticks = 0;
     const char* colon = std::strchr(at, ':');
     if (colon && ++ticks == std::atoi(at))

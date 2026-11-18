@@ -1,5 +1,6 @@
 // Snowplows for the mods (engine/snowplows.h).
 #include "engine/snowplows.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -66,7 +67,7 @@ void spawnPlow(script::VM& vm, SimState& s) {
   for (const Mover& o : s.movers)
     if (&o != &m && o.live && o.plow && !o.units.empty()) ++others, purple |= o.units[0].tint == kPurple;
   for (Unit& unit : m.units) unit.tint = !purple && others >= 4 ? kPurple : kOrange;  // the fifth on the streets
-  static const bool debug = std::getenv("REGS_DEBUG_TRAFFIC_MAPS") != nullptr;
+  static const bool debug = regs::envVar("REGS_DEBUG_TRAFFIC_MAPS") != nullptr;
   if (debug)
     LOG_INFO("snowplows: plow %d out at (%.0f, %.0f), %zu nodes, %.0f m away; %d on the streets", id, a.x, a.z,
              path.size(), std::sqrt(best), s.plowsLive);
@@ -201,7 +202,7 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
   };
   s.roadSpeed = factor(u"regsRoadSpeed");
   s.roadSpeedCleared = factor(u"regsRoadSpeedCleared");
-  if (const char* d = std::getenv("REGS_DEBUG_ROAD_SPEED")) {  // the factors and the mean speed of road traffic
+  if (const char* d = regs::envVar("REGS_DEBUG_ROAD_SPEED")) {  // the factors and the mean speed of road traffic
     static float logClock = 0;
     if ((logClock += dt) > 10.0f && *d) {
       logClock = 0;
@@ -237,7 +238,7 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
                                {"REGS_TEST_CURVE_METRO", kPathMetro, "metro-01", "metro"},
                                {"REGS_TEST_CURVE_TRAINS", kPathTrain, "diesel-locomotive", "train"}};
   for (TestTrips& tt : tests) {
-    const char* t = std::getenv(tt.env);
+    const char* t = regs::envVar(tt.env);
     if (!t) continue;
     float& carClock = tt.clock;
     float& logClock = tt.logClock;
@@ -246,7 +247,7 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     cars.erase(std::remove_if(cars.begin(), cars.end(), [&](int id) {
                  return id < 0 || size_t(id) >= s.movers.size() || !s.movers[size_t(id)].live;
                }), cars.end());
-    if ((logClock += dt) >= 1.0f && std::getenv("REGS_DEBUG_CURVES")) {
+    if ((logClock += dt) >= 1.0f && regs::envVar("REGS_DEBUG_CURVES")) {
       logClock = 0;
       for (int id : cars) {
         const Mover& m = s.movers[size_t(id)];
@@ -271,7 +272,7 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
       float cost = 0;
       // REGS_TEST_CURVE_TURN=1: back the way it came instead, to the lane beside the start running the other way (trams
       // turning on a roundabout)
-      const bool turn = std::getenv("REGS_TEST_CURVE_TURN") != nullptr;
+      const bool turn = regs::envVar("REGS_TEST_CURVE_TURN") != nullptr;
       if (turn) {
         const LaneNode& f = s.graph.nodes[size_t(from)];
         for (int e : lanes) {
@@ -311,13 +312,13 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
         int turns = 0;
         for (int n : path) turns += (s.graph.nodes[size_t(n)].flags & kPathIntersection) ? 1 : 0;
         LOG_INFO("curve cars: %s %d, %zu lanes, %d through junctions, %.0f m", tt.what, id, path.size(), turns, std::sqrt(best));
-      } else if (std::getenv("REGS_DEBUG_CURVES")) {
+      } else if (regs::envVar("REGS_DEBUG_CURVES")) {
         LOG_INFO("curve cars: no route from lane %d to %d", from, to);
       }
     }
   }
   // test switch REGS_TEST_PLOWS=<n>: that many plows whenever the mod asks for any
-  if (const char* t = std::getenv("REGS_TEST_PLOWS"); t && want > 0) want = std::atoi(t);
+  if (const char* t = regs::envVar("REGS_TEST_PLOWS"); t && want > 0) want = std::atoi(t);
   static float clock = 0;
   clock += dt;
   if (want > s.plowsLive && clock >= 2.0f) {  // at most one new plow every 2 s
@@ -325,7 +326,7 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
     spawnPlow(vm, s);
   }
   // debugging: REGS_DEBUG_FOLLOW_PLOW=<n> keeps the camera (ui.setCameraPos) on the n-th plow, =purple on the purple one
-  if (const char* f = std::getenv("REGS_DEBUG_FOLLOW_PLOW")) {
+  if (const char* f = regs::envVar("REGS_DEBUG_FOLLOW_PLOW")) {
     const bool purple = std::strcmp(f, "purple") == 0;
     int nth = purple ? 0 : std::atoi(f);
     for (const Mover& m : s.movers) {

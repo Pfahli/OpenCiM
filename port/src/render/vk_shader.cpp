@@ -3,6 +3,7 @@
 // shader's clip depth is mapped from GL's âˆ’1..1 to Vulkan's 0..1. Loose uniforms go into one uniform block through
 // glslang's relaxed Vulkan rules; reflection gives the device every uniform's offset and every sampler's binding.
 #include "render/vk_shader.h"
+#include "core/env.h"
 
 #include "core/log.h"
 
@@ -154,7 +155,7 @@ bool compileProgram(const std::string& vs, const std::string& fs,
       if (size_t at = s->find("#version 330 core"); at != std::string::npos) s->replace(at, 17, "#version 460 core");
   matchVaryings(vsText, fsText);
   vsText = remapDepth(vsText);
-  static const bool debug = std::getenv("REGS_VK_DEBUG") != nullptr;
+  static const bool debug = regs::envVar("REGS_VK_DEBUG") != nullptr;
   static int dumped = 0;
   if (debug && dumped < 8) {  // REGS_VK_DEBUG: the first programs as Vulkan compiles them, in the working directory
     std::FILE* file = std::fopen(("vkdump-" + std::to_string(dumped++) + ".glsl").c_str(), "wb");

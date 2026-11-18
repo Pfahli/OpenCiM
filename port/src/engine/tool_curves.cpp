@@ -21,6 +21,7 @@
 #include <string>
 
 #include "core/log.h"
+#include "core/env.h"
 #include "core/text.h"
 #include "vfs/vfs.h"
 #include "engine/api.h"
@@ -212,7 +213,7 @@ Snap findSnap(VM& vm, ControlObj* player, GridObj* grid, const Vec3& p) {
         bestD = d, best = Snap{true, rp.p, rp.out, false, {}};
       }
     }
-    if (best.ok && std::getenv("REGS_DEBUG_CURVES"))
+    if (best.ok && regs::envVar("REGS_DEBUG_CURVES"))
       LOG_INFO("curve tool: ramp port at %.1f,%.1f,%.1f, out %.2f,%.2f", best.p.x, best.p.y, best.p.z, best.out.x, best.out.z);
   }
   // the map's edge (roads, express roads, the railway): the end on the border, leaving the map straight out
@@ -652,14 +653,14 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
       lowest = std::min(lowest, ground - k.p.y);
     }
     if (lowest < 6.0f) bad = true;
-    if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: tunnel, ground over the tube at least %.1f over the road", lowest);
+    if (regs::envVar("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: tunnel, ground over the tube at least %.1f over the road", lowest);
   }
   // at a junction point the new road must keep 30 degrees from the roads there
   float jAngle = 180.0f;
   if (st.startSnap.junction) jAngle = std::min(jAngle, junctionAngle(st.startSnap, Vec3{c.dx0, 0, c.dz0}));
   if (sn.junction && !(st.mode == 1 && st.step == 1)) jAngle = std::min(jAngle, junctionAngle(sn, Vec3{-c.dx1, 0, -c.dz1}));
   if (jAngle < 30.0f) bad = true;
-  if (std::getenv("REGS_DEBUG_CURVES") && (st.startSnap.junction || sn.junction))
+  if (regs::envVar("REGS_DEBUG_CURVES") && (st.startSnap.junction || sn.junction))
     LOG_INFO("curve tool: junction start %d end %d, angle %.0f, fits %d/%d, guard %.1f/%.1f, chains %zu+%zu, blocks %zu", st.startSnap.junction,
              sn.junction, jAngle, st.startSnap.fits ? 1 : 0, sn.fits ? 1 : 0, st.startSnap.guard, sn.guard, st.startSnap.chain[0].size(),
              st.startSnap.chain[1].size(), st.startSnap.blocks.size());
@@ -667,7 +668,7 @@ void move(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (!(st.mode == 1 && st.step == 1))
     for (uint32_t b : sn.blocks) select(vm, grid, b, bad);
   for (uint32_t i : blocking) select(vm, grid, i, true);
-  if (std::getenv("REGS_DEBUG_CURVES"))
+  if (regs::envVar("REGS_DEBUG_CURVES"))
     LOG_INFO("curve tool: preview length %.1f, min radius %.1f, %zu items in the way%s", curveLength(c), curveMinRadius(c),
              blocking.size(), blocking.empty() ? "" : (" (first type " + std::to_string(gridItemShape(vm, grid, blocking[0]).type) + ")").c_str());
   if (st.startBlock) select(vm, grid, st.startEnd.item, bad);
@@ -840,7 +841,7 @@ void bulldozerMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y) 
       grid->curvePreviewBad = true;  // red, as the bulldozer shows what it takes
       ++grid->curvesVersion;
       litPreview(vm, grid, {grid->data->curves[size_t(k)]}, true);
-      if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: curve %d shown", k);
+      if (regs::envVar("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: curve %d shown", k);
     }
     return;
   }
@@ -930,7 +931,7 @@ void renameMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
       g_renamer.proxy = vm.newObject(vm.findClass("gsGridItemController"), nullptr);
       g_renamer.proxy->fieldValues[u"<curveName>"] = Value::string(utf8ToUtf16(name));
       t.extraReplaced = {g_renamer.proxy.get()};
-      if (std::getenv("REGS_DEBUG_CURVES"))
+      if (regs::envVar("REGS_DEBUG_CURVES"))
         LOG_INFO("rename: curve %d, %zu curves marked, name \"%s\"", k, g_renamer.curves.size(), name.c_str());
       vm.fireEvent(player, u"onHoverRename", {Value::heap(VT::Object, g_renamer.proxy.get())});
     }
@@ -967,7 +968,7 @@ void renameCancel(VM& vm, ControlObj* player, GridObj* grid) {
 }
 
 void bulldozerCancel(VM& vm, ControlObj* player, GridObj* grid) {
-  if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: cancel (curve %d)", g_bulldozer.curve);
+  if (regs::envVar("REGS_DEBUG_CURVES")) LOG_INFO("bulldozer: cancel (curve %d)", g_bulldozer.curve);
   if (grid && g_bulldozer.curve >= 0) {
     g_bulldozer.curve = -1;
     clearPreview(grid);
@@ -979,7 +980,7 @@ void up(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   if (!grid->data) return;
   State& st = g_state;
   move(vm, player, grid, x, y);  // the preview at the release point
-  if (std::getenv("REGS_DEBUG_CURVES"))
+  if (regs::envVar("REGS_DEBUG_CURVES"))
     LOG_INFO("curve tool: click, step %d, mode %d, snap %d (block %d), preview %s", st.step, st.mode, st.endSnap.ok ? 1 : 0,
              st.endSnap.block ? 1 : 0, st.previewOk ? "fits" : "none or red");
   if (st.mode == 3) {
@@ -1161,7 +1162,7 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
   if (!t.inProgress) {
     ToolPick pick = toolPick(vm, player, x, y, false);
     int k = pick.hit ? curveUnder(g, pick.point) : -1;
-    if (std::getenv("REGS_DEBUG_CURVES") && k != w.curve)
+    if (regs::envVar("REGS_DEBUG_CURVES") && k != w.curve)
       LOG_INFO("curve tool: mode %d hover %d -> %d (hit %d at %.1f %.1f)", w.mode, w.curve, k, pick.hit ? 1 : 0, pick.point.x, pick.point.z);
     if (k >= 0 && w.curve == k) {  // the same target: keep the preview (no new preview items per mouse move)
       if (w.mode == 0x11) return;
@@ -1216,7 +1217,7 @@ void wrapMove(VM& vm, ControlObj* player, GridObj* grid, float x, float y, Wrap&
         float ay = curveAt(shape, std::clamp(s, 0.0f, L)).p.y;
         w.stopAnchor = invisiblePreview(vm, player, grid, stopTemplateName(st, c.kind), ax, int(ay * 256.0f / cs), az, ao, !w.ok);
         if (w.stopAnchor < 0) w.ok = false;
-        if (std::getenv("REGS_DEBUG_CURVES"))
+        if (regs::envVar("REGS_DEBUG_CURVES"))
           LOG_INFO("curve tool: stop target kind %d design %d at s %.1f of %.1f side %d, anchor %d (%s), %s", int(st.kind),
                    int(st.design), s, L, int(st.side), w.stopAnchor, stopTemplateName(st, c.kind).c_str(), w.ok ? "fits" : "refused");
       }
@@ -1277,7 +1278,7 @@ int openTramJoins(VM& vm, ControlObj* player, GridObj* grid, Object* tl) {
 }
 
 bool wrapFinish(VM& vm, ControlObj* player, GridObj* grid, Wrap& w) {
-  if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: finish mode %d, armed %d, curve %d, ok %d", w.mode, w.armed ? 1 : 0, w.curve, w.ok ? 1 : 0);
+  if (regs::envVar("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: finish mode %d, armed %d, curve %d, ok %d", w.mode, w.armed ? 1 : 0, w.curve, w.ok ? 1 : 0);
   if (!w.armed) {
     bool r = w.orig.finish ? w.orig.finish(vm, player, grid) : toolCommit(vm, player, grid);
     if (w.mode == 0x11) openTramJoins(vm, player, grid, playerTimeline(vm, player));  // a drag up to a curve with tracks
@@ -1336,7 +1337,7 @@ void wrapTool(int mode, Wrap& w) {
   m.down = [&w](VM& v, ControlObj* p, GridObj* g) {
     // the press point itself (a click without a mouse move over the curve since the tool was chosen)
     if (w.curve < 0 && g) wrapMove(v, p, g, toolState(p).toolX, toolState(p).toolY, w);
-    if (std::getenv("REGS_DEBUG_CURVES") && g) {
+    if (regs::envVar("REGS_DEBUG_CURVES") && g) {
       ToolPick pk = toolPick(v, p, toolState(p).toolX, toolState(p).toolY, false);
       LOG_INFO("curve tool: press mode %d on curve %d at %.0f,%.0f: hit %d at %.1f %.1f, under %d, inProgress %d", w.mode, w.curve,
                toolState(p).toolX, toolState(p).toolY, pk.hit ? 1 : 0, pk.point.x, pk.point.z, pk.hit ? curveUnder(*g->data, pk.point) : -2,
@@ -1347,7 +1348,7 @@ void wrapTool(int mode, Wrap& w) {
   };
   m.finish = [&w](VM& v, ControlObj* p, GridObj* g) { return wrapFinish(v, p, g, w); };
   m.cancel = [&w](VM& v, ControlObj* p, GridObj* g) {
-    if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: cancel mode %d (armed %d)", w.mode, w.armed ? 1 : 0);
+    if (regs::envVar("REGS_DEBUG_CURVES")) LOG_INFO("curve tool: cancel mode %d (armed %d)", w.mode, w.armed ? 1 : 0);
     w.armed = false;
     if (g) wrapClear(v, p, g, w);
     if (w.orig.cancel) w.orig.cancel(v, p, g);
@@ -1419,7 +1420,7 @@ void registerCurveTool(VM& vm) {
   }, 0, 1);
   // regsCurveToolBridge([on]): new curves are bridges (true or 1: deck over the ground as it is, the bridge span and
   // pillars), tunnels (2: the tube under the ground, portals at the open ends) or plain (false, 0)
-  if (const char* e = std::getenv("REGS_TEST_CURVE_BRIDGE")) g_state.bridge = std::atoi(e) == 2 ? 2 : 1;
+  if (const char* e = regs::envVar("REGS_TEST_CURVE_BRIDGE")) g_state.bridge = std::atoi(e) == 2 ? 2 : 1;
   implementGlobal(vm, u"regsCurveToolBridge", [](VM& v, Object*, int argc, const Value* a) {
     if (argc > 0) {
       Value x = v.resolve(a[0]);

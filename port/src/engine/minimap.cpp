@@ -4,6 +4,7 @@
 // their targets (§6). The transport marks (raster bytes 0-5) come from the live stops and line legs (§2.4). Not yet:
 // the selected-line ribbon (gsMapRouteCtrl, §7); the traffic, catchment and popularity data views read 0.
 #include "engine/minimap.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -358,7 +359,7 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
 // editor's saved minimaps (metro/maps/<map>.dds, renderMap output; docs/ui/minimap.md §3.7)
 void referenceCheck(VM& vm, const GridObj& grid) {
   static bool done = false;
-  const char* list = std::getenv("REGS_MINIMAP_CHECK");
+  const char* list = regs::envVar("REGS_MINIMAP_CHECK");
   if (done || !list) return;
   done = true;
   std::stringstream ss(list);
@@ -500,7 +501,7 @@ void registerMinimapNatives(VM& vm) {
     std::vector<uint32_t> px = renderMapPixels(*g->data, mapTemplates(v, *g, *g->data), w, h, uint32_t(v.toInt(a[3])), g->sim.get());
     // REGS_MINIMAP_DUMP=<file>: every default-mode render also goes to a raw BGRA file (w × h × 4, rows top-down), to
     // compare the live map (e.g. after city growth) with the shipped per-year thumbnails <map>-timeline.dds
-    if (const char* dump = std::getenv("REGS_MINIMAP_DUMP"); dump && (uint32_t(v.toInt(a[3])) & 0xF0000) == 0)
+    if (const char* dump = regs::envVar("REGS_MINIMAP_DUMP"); dump && (uint32_t(v.toInt(a[3])) & 0xF0000) == 0)
       if (std::FILE* f = std::fopen(dump, "wb")) {
         std::fwrite(px.data(), 4, px.size(), f);
         std::fclose(f);

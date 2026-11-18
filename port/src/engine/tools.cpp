@@ -2,6 +2,7 @@
 // docs/ui/construction.md). The select mode registers itself from interaction.cpp; the other modes from their own
 // files.
 #include "engine/tools.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -460,7 +461,7 @@ void toolMouseMove(VM& vm, ControlObj* player, float x, float y, int buttons) {
   t.buttons = buttons;
   t.lastX = x, t.lastY = y;
   // debugging: REGS_DEBUG_HIGHLIGHT=1 highlights 5×5 cells under the cursor (green) and the item there (red)
-  static const bool debugHighlight = std::getenv("REGS_DEBUG_HIGHLIGHT") != nullptr;
+  static const bool debugHighlight = regs::envVar("REGS_DEBUG_HIGHLIGHT") != nullptr;
   if (debugHighlight)
     if (GridObj* grid = toolGrid(vm, player)) {
       static int lastX = -100, lastZ = -100, lastItem = -1;

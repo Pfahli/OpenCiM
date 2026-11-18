@@ -1,6 +1,7 @@
 // gsWindow_OGL / gsVideo_OGL back end: the OS window, the per-frame update/render/present order of
 // gsWindow_OGL::tick (0x10057160) and the GUI pass (docs/renderer/interfaces-2d-output.md §1.5).
 #include "engine/display.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -187,7 +188,7 @@ float Display::chooseUiScale(VM& vm, int w, int h) {
   float s = pickUiScale(vm, w, h);
   float want = settingNumber(vm, u"regsUiScale", 0);
   if (want != 0 && s != want) LOG_WARN("ui scale %.1f does not fit a %dx%d window, using %.1f", double(want), w, h, double(s));
-  if (const char* f = std::getenv("REGS_UI_FILTER")) uiFilterSharp_ = std::string(f) != "linear";
+  if (const char* f = regs::envVar("REGS_UI_FILTER")) uiFilterSharp_ = std::string(f) != "linear";
   return uiScale = s;
 }
 
@@ -310,7 +311,7 @@ bool Display::loadTextureImage(VM& vm, TextureObj* t, render::Image& img, std::s
 void Display::syncTextureUpscale(VM& vm) {
   // graphics page "Upscaled textures" (live); REGS_TEXTURE_UPSCALE=0|1 overrides it for test runs
   bool on = settingNumber(vm, u"regsTextureUpscale", 0) != 0;
-  if (const char* e = std::getenv("REGS_TEXTURE_UPSCALE")) on = std::atoi(e) != 0;
+  if (const char* e = regs::envVar("REGS_TEXTURE_UPSCALE")) on = std::atoi(e) != 0;
   if (host().userFolder.empty()) on = false;
   auto reloadable = [](TextureObj* t) {
     return t->gl && !t->renderTarget && !t->cube && !t->loadFailed && t->cpuBGRA.empty() && !t->path.empty() && t->path[0] != u'<';
@@ -412,7 +413,7 @@ struct GuiPass {
     // updateBackGround (§4): border-inset rect, crop uvs, hot colour while hovered or active, own visibility only
     uint32_t col = mulA((c->hot || c->active) ? c->hotBackground : c->background, c->visibility);
     if (!(col >> 24)) return;
-    if (std::getenv("REGS_DEBUG_VIEWPORT") && c->width * c->height > 500000) {
+    if (regs::envVar("REGS_DEBUG_VIEWPORT") && c->width * c->height > 500000) {
       static std::map<ControlObj*, int> seen;
       auto* t = dynamic_cast<TextureObj*>(c->texture.get());
       if (seen[c]++ == 0)
@@ -569,11 +570,11 @@ struct GuiPass {
 
 void Display::renderFrame(VM& vm, Object* win, Object* video) {
   // REGS_LOG_TIME: frames over 250 ms are logged with the shader programs linked in them
-  static const bool logTime = std::getenv("REGS_LOG_TIME") != nullptr;
+  static const bool logTime = regs::envVar("REGS_LOG_TIME") != nullptr;
   const auto frameStart = std::chrono::steady_clock::now();
   // REGS_FRAME_STATS=<from>:<to> (measurements): frame times between those frames, the bytes of the uploaded file
   // textures and the driver's free video memory (GL_NVX_gpu_memory_info) at the end
-  if (static const char* fs = std::getenv("REGS_FRAME_STATS"); fs && std::strchr(fs, ':')) {
+  if (static const char* fs = regs::envVar("REGS_FRAME_STATS"); fs && std::strchr(fs, ':')) {
     static const int from = std::atoi(fs), to = std::atoi(std::strchr(fs, ':') + 1);
     static int frame = 0;
     static std::vector<double> ms;
@@ -655,7 +656,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     if (saveScreenshot(shot_)) LOG_INFO("screenshot: %s", shot_.string().c_str());
     else LOG_ERROR("screenshot failed: %s", shot_.string().c_str());
     // REGS_HDR_DUMP=1 (a check): in HDR, the encoded frame too (PQ code values as an image, <shot>-pq.png)
-    static const bool pqDump = std::getenv("REGS_HDR_DUMP") != nullptr;
+    static const bool pqDump = regs::envVar("REGS_HDR_DUMP") != nullptr;
     if (pqDump && render::gpu::dev().hdrActive()) pqShot = shot_.parent_path() / (shot_.stem().string() + "-pq.png");
     shot_.clear();
   }
@@ -671,7 +672,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
 // presents (the whole game frame: simulation, scripts, rendering and waiting for the GPU) and the CPU time of the
 // render call before the present, then one summary line in the log. Run with vsync and the frame limit off.
 void Display::benchFrame(double renderCpuMs) {
-  static const char* spec = std::getenv("REGS_BENCH");
+  static const char* spec = regs::envVar("REGS_BENCH");
   if (!spec) return;
   static int first = 0, count = 0, frame = 0;
   static bool parsed = false, done = false;
@@ -940,7 +941,7 @@ void registerDisplayNatives(VM& vm) {
     // graphics engine (settings regsRenderer): 0 = OpenGL 3.3, 1 = Vulkan, the default (falls back to OpenGL when it cannot start);
     // REGS_RENDERER=gl|vulkan overrides the setting (test runs)
     int engine = int(settingNumber(v, u"regsRenderer", 1));
-    if (const char* r = std::getenv("REGS_RENDERER")) engine = std::string(r) == "vulkan" ? 1 : 0;
+    if (const char* r = regs::envVar("REGS_RENDERER")) engine = std::string(r) == "vulkan" ? 1 : 0;
     // the engine put MSAA into the window's pixel format without post-processing (and into the effect buffers with
     // it). Port: never into the pixel format, which cannot change once set; views without effects draw into a
     // multisampled target (msaaTarget), so the antialiasing setting applies while the game runs

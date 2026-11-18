@@ -7,6 +7,7 @@
 // The map's cells are laid over the Web Mercator plane around the rectangle's centre: cell size 3 m times the scale
 // factor at that latitude, x to the east, z to the south (the minimap's top is north).
 #include "engine/osm.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <array>
@@ -838,7 +839,7 @@ void classifyRoads(std::vector<RoadIn>& roads, const std::vector<std::vector<std
       if (pts.empty() || std::hypot(q.first - pts.back().first, q.second - pts.back().second) > 0.05) pts.push_back(q);
     r.pts.swap(pts);
   }
-  if (std::getenv("REGS_DEBUG_OSM")) {
+  if (regs::envVar("REGS_DEBUG_OSM")) {
     LOG_INFO("osm: %d divided roads merged, %zu points moved", pairsMerged, moved.size());
     for (RoadIn& r : roads)
       if (!r.dropped && r.oneway && r.kind != 2 && r.cls >= 1)
@@ -1251,7 +1252,7 @@ void tramBeds(ImportData& d) {
     for (int e = 0; e < 2; ++e) {
       if (joinedAt[k][size_t(e)]) continue;
       std::pair<double, double> q = e ? out[k].pts.back() : out[k].pts.front(), at;
-      if (std::getenv("REGS_DEBUG_OSM")) {
+      if (regs::envVar("REGS_DEBUG_OSM")) {
         double best = 1e9;
         int kind = -1;
         for (const RoadIn& r : d.roads)
@@ -1561,7 +1562,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
       std::snprintf(name, sizeof name, "%016llx.json", (unsigned long long)h);
       return cacheRoot() / "overpass" / name;
     };
-    static const bool keep = std::getenv("REGS_OSM_KEEP_CACHE") != nullptr;
+    static const bool keep = regs::envVar("REGS_OSM_KEEP_CACHE") != nullptr;
     auto fromCache = [&](const std::filesystem::path& p, std::vector<uint8_t>& out) {
       std::error_code ec;
       if (!std::filesystem::exists(p, ec)) return false;
@@ -2343,7 +2344,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
         data->trees.push_back({x, z, k});
       });
     }
-    if (std::getenv("REGS_DEBUG_OSM")) {
+    if (regs::envVar("REGS_DEBUG_OSM")) {
       int byKind[5] = {0, 0, 0, 0, 0}, areas[5] = {0, 0, 0, 0, 0};
       for (auto& t : data->trees) ++byKind[std::clamp(t.kind, 0, 4)];
       for (auto& ta : treeAreas) ++areas[std::clamp(ta.kind, 0, 4)];
@@ -3557,7 +3558,7 @@ void rebuildRings(Plan& P) {
         }
     }
     const double R = std::clamp(std::max(rr, 4.5 * double(arms.size()) + 4.0), 10.0, 40.0);
-    if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: roundabout at world %.1f, %.1f, radius %.1f, %zu arms", cx, cz, R, arms.size());
+    if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: roundabout at world %.1f, %.1f, radius %.1f, %zu arms", cx, cz, R, arms.size());
     for (int n : members) P.nodes[size_t(n)].alive = false;
     // the points on the circle: one per arm (arms closer than 20° share one), more where arcs pass 90°
     std::sort(arms.begin(), arms.end(), [](const Arm& x, const Arm& y) { return x.ang < y.ang; });
@@ -3690,7 +3691,7 @@ void tidy(Plan& P) {
         continue;
       }
       // a short stub (a free end, an edge stub's leg, or nothing left to merge): the leg goes
-      if (std::getenv("REGS_DEBUG_OSM"))
+      if (regs::envVar("REGS_DEBUG_OSM"))
         LOG_INFO("streets: leg dropped at (%.0f,%.0f)-(%.0f,%.0f) kind %d len %.1f need %.1f, arms %zu/%zu, radius %.1f/%.1f, exit %d/%d",
                  A.x, A.z, B.x, B.z, s.kind, len, need, G.arms[size_t(s.a)].size(), G.arms[size_t(s.b)].size(), ra, rb, A.exit, B.exit);
       s.alive = false;
@@ -3804,7 +3805,7 @@ std::vector<CurveRoad> curves(Plan& P) {
         if (smooth(P, G, n)) P.nodes[size_t(n)].corner = marked = true, ++P.corners;
       if (marked && round < 4) again = true;
       else if (round == 4 || !marked) {
-        if (std::getenv("REGS_DEBUG_OSM"))
+        if (regs::envVar("REGS_DEBUG_OSM"))
           LOG_INFO("streets: curve dropped at (%.0f,%.0f)-(%.0f,%.0f) kind %d radius %.1f length %.1f", c.x0, c.z0, c.x1, c.z1, c.kind,
                    curveMinRadius(c), curveLength(c));
         P.segs[i].alive = false, ++P.dropped, again = again || round < 4;
@@ -4039,7 +4040,7 @@ int frontOrient(int side) {
   static bool init = false;
   if (!init) {
     init = true;
-    if (const char* e = std::getenv("REGS_OSM_FRONT"); e && std::strlen(e) == 4)
+    if (const char* e = regs::envVar("REGS_OSM_FRONT"); e && std::strlen(e) == 4)
       for (int i = 0; i < 4; ++i) table[i] = e[i] - '0';
   }
   return table[side & 3];
@@ -4729,7 +4730,7 @@ struct Painter {
       const uint16_t f = g.flags[i];
       return !(f & (0x2000 | 0x8 | 0x20 | 0x80)) && allow(i) && !green(i);
     };
-    if (const char* dc = std::getenv("REGS_DEBUG_OSM_CELLS")) {  // x,z;x,z;... (world): what the pockets see there
+    if (const char* dc = regs::envVar("REGS_DEBUG_OSM_CELLS")) {  // x,z;x,z;... (world): what the pockets see there
       std::string list = dc;
       for (size_t at = 0; at < list.size();) {
         size_t e = list.find(';', at);
@@ -4777,7 +4778,7 @@ struct Painter {
         }
       }
       if (edge || region.size() > 900 || urbanN * 4 < (urbanN + otherN) * 3 || greenN * 10 > urbanN + otherN) {
-        static const char* dbg = std::getenv("REGS_DEBUG_OSM_POCKETS");  // x,z,r (world): the pockets left around there
+        static const char* dbg = regs::envVar("REGS_DEBUG_OSM_POCKETS");  // x,z,r (world): the pockets left around there
         if (dbg && region.size() >= 15) {
           float px = 0, pz = 0, pr = 80;
           std::sscanf(dbg, "%f,%f,%f", &px, &pz, &pr);
@@ -4801,7 +4802,7 @@ struct Painter {
       }
       filled += int(region.size()), ++pockets;
     }
-    if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d pockets of plain ground paved (%d cells)", pockets, filled);
+    if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %d pockets of plain ground paved (%d cells)", pockets, filled);
     return filled;
   }
   // the grass slivers between the paving it laid and other paving (owner 2026-11-15): a ground cell allow(cell) accepts
@@ -4912,7 +4913,7 @@ bool placeTemplate(VM& vm, GridObj* grid, Apply& a, const std::vector<TplArea>& 
     double fx = p.fx * c - p.fz * s, fz = p.fx * s + p.fz * c;
     if (placeAt(vm, grid, a, p.name, px, pz, fx, fz, ok, 6) >= 0) ++placed;
   }
-  if (std::getenv("REGS_DEBUG_OSM"))
+  if (regs::envVar("REGS_DEBUG_OSM"))
     LOG_INFO("osm: %s of %zu cells at world %.0f, %.0f from a template of %s (%zu cells, IoU %.2f): %d of %zu things", what,
              target.size(), (cx - W * 0.5) * grid->data->cellSize, (cz - grid->data->length * 0.5) * grid->data->cellSize,
              f.t->from.c_str(), f.t->cells.size(), f.iou, placed, f.t->props.size());
@@ -4967,7 +4968,7 @@ int riverRailings(VM& vm, GridObj* grid, Apply& a) {
   const ImportData& d = *a.d;
   const int W = g.width, L = g.length;
   const float cs = g.cellSize;
-  static const char* pick = std::getenv("REGS_OSM_RAILING");
+  static const char* pick = regs::envVar("REGS_OSM_RAILING");
   const std::string name = pick && grid->templates.count(pick) ? std::string(pick) : firstOf(grid, {"garden-fence", "iron-fence", "street-railing-02"});
   auto groundAt = [&](float wx, float wz) {
     const int x = std::clamp(int(std::floor(wx / cs + W * 0.5f)), 0, W - 1), z = std::clamp(int(std::floor(wz / cs + L * 0.5f)), 0, L - 1);
@@ -5007,7 +5008,7 @@ int riverRailings(VM& vm, GridObj* grid, Apply& a) {
         if (!alongX) armFront(n.x, n.z, fx, fz);  // (the model's +x away from the street)
         if (placeAt(vm, grid, a, name, px, pz, fx, fz, [](uint8_t u) { return u != 3; }, 0,
                     int(std::lround(sm.p.y * 256.0f / cs))) >= 0) {
-          if (made % 10 == 0 && std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: railing at world %.0f, %.0f", e.x, e.z);
+          if (made % 10 == 0 && regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: railing at world %.0f, %.0f", e.x, e.z);
           ++made;
         }
       }
@@ -5043,7 +5044,7 @@ int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
   int nOneWay = 0;
   auto cellOf = [&](const render::Vec3& p, double& x, double& z) { x = p.x / cs + W * 0.5, z = p.z / cs + L * 0.5; };
   auto ok = [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6 && u != 7; };
-  if (const char* t = std::getenv("REGS_OSM_SIGNTEST")) {
+  if (const char* t = regs::envVar("REGS_OSM_SIGNTEST")) {
     float wx = 0, wz = 0;
     std::sscanf(t, "%f,%f", &wx, &wz);
     // (two rows each: the first facing −z, the second +z, so one of them shows its face)
@@ -5125,7 +5126,7 @@ int junctionSigns(VM& vm, GridObj* grid, Apply& a) {
       if (signals) armFront(arm.out.x, arm.out.z, fx, fz);
       if (!name.empty() && placeAt(vm, grid, a, name, px, pz, fx, fz, ok, 6, y) >= 0) {
         ++(signals ? nLights : nSigns);
-        if (std::getenv("REGS_DEBUG_OSM"))
+        if (regs::envVar("REGS_DEBUG_OSM"))
           LOG_INFO("osm: %s at world %.0f, %.0f (junction at %.0f, %.0f)", name.c_str(), (px - W * 0.5) * cs, (pz - L * 0.5) * cs, j.centre.x, j.centre.z);
       }
       if (!direction.empty() && arm.kind >= 1 && big >= 3 && arm.curve >= 0 && curveLength(g.curves[size_t(arm.curve)]) > 45.0f) {
@@ -5416,7 +5417,7 @@ void placePoints(VM& vm, GridObj* grid, Apply& a, std::vector<std::pair<double, 
         if (model > 0.2) {
           const float s = float(std::clamp(want / model, 0.35, 3.0));
           if (std::fabs(s - 1.0f) > 0.04f) grid->data->items[size_t(item)].scale = s;
-          if (std::getenv("REGS_DEBUG_OSM"))
+          if (regs::envVar("REGS_DEBUG_OSM"))
             LOG_INFO("osm: statue %s: model %.1f m, %s %.1f m, scale %.2f", name.c_str(), model, pt.heightM > 0 ? "OSM" : "usual", want, s);
         }
       }
@@ -5789,7 +5790,7 @@ int fillSquare(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, const Furnish&
       if (std::string(name) == "old-streetlamp") armFront(fx, fz, ffx, ffz);
       if (putIn(vm, grid, a, ar.pts, firstOf(grid, {name, "pbench-01"}), px, pz, ffx, ffz) >= 0) ++made;
     }
-  if (made && std::getenv("REGS_DEBUG_OSM"))
+  if (made && regs::envVar("REGS_DEBUG_OSM"))
     LOG_INFO("osm: square filled at world %.0f, %.0f (%d things, %.0f cells)", (cx - W * 0.5) * g.cellSize, (cz - L * 0.5) * g.cellSize, made, area);
   return made;
 }
@@ -6227,7 +6228,7 @@ int parkingAccess(VM& vm, GridObj* grid, Apply& a, const AreaIn& ar, Painter& pa
     const double px = best.sx + best.nx * (best.hw - 0.35) + best.tx * side * (hwid + 0.7);
     const double pz = best.sz + best.nz * (best.hw - 0.35) + best.tz * side * (hwid + 0.7);
     if (placeAt(vm, grid, a, sign, px, pz, -best.nx, -best.nz, [](uint8_t u) { return u != 1 && u != 3 && u != 4 && u != 6 && u != 7; }, 6) >= 0) {
-      if (std::getenv("REGS_DEBUG_OSM"))
+      if (regs::envVar("REGS_DEBUG_OSM"))
         LOG_INFO("osm: parking way at world %.0f, %.0f (gap %.1f cells)", (best.sx - W * 0.5) * g.cellSize, (best.sz - L * 0.5) * g.cellSize, best.gap);
       return 1;
     }
@@ -6552,7 +6553,7 @@ void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const
   // turn, GridData::Item::yaw): the rectangle's axes u (its x side) and v (its z side)
   const double quarter = kPi / 2;
   double rem = ang - std::round(ang / quarter) * quarter;
-  static const bool noTurn = std::getenv("REGS_OSM_NOTURN") != nullptr;
+  static const bool noTurn = regs::envVar("REGS_OSM_NOTURN") != nullptr;
   if (noTurn || std::fabs(rem) < 1.0 * kPi / 180.0) rem = 0;
   const double ux = std::cos(rem), uz = std::sin(rem), vx = -uz, vz = ux;
   // the side facing the street: 0 north (−v), 1 east (+u), 2 south (+v), 3 west (−u)
@@ -6597,7 +6598,7 @@ void placeBuildingAs(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const
     for (const Candidate& c : it->second)
       if (c.name == "fastfood" && c.w * c.l * 3.0 >= ex * ez) cands.push_back(c);
     fastFood = !cands.empty();
-    if (fastFood && std::getenv("REGS_DEBUG_OSM"))
+    if (fastFood && regs::envVar("REGS_DEBUG_OSM"))
       LOG_INFO("osm: fast food restaurant at world %.0f, %.0f", (ccx - W * 0.5) * g.cellSize, (ccz - L * 0.5) * g.cellSize);
   }
   auto fb = kFallback.find(b.category);
@@ -7003,7 +7004,7 @@ std::vector<PassageRun> passageRuns(const GridData& g, const Ring& ring) {
       while (j + 1 < s.size() && in[j + 1]) ++j;
       const bool enter = i > 0 || joined(c, c.x0, c.z0), leave = j + 1 < s.size() || joined(c, c.x1, c.z1);
       const float lenIn = s[j].s - s[i].s;
-      if (std::getenv("REGS_DEBUG_OSM"))
+      if (regs::envVar("REGS_DEBUG_OSM"))
         LOG_INFO("osm: passage? kind %d at %.0f, %.0f: in %s, out %s, %.1f inside, %.1f from the walls", c.kind, s[i].p.x, s[i].p.z,
                  enter ? "yes" : "no", leave ? "yes" : "no", lenIn, edgeDist(toCell(s[(i + j) / 2].p)));
       // (a gate through a castle's wing 2.2 thick: 1.5 inside will do, its middle 0.9 from the walls for a footpath)
@@ -7048,7 +7049,7 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
   const bool special = b.castle || b.church >= 0;  // (palaces, castles, churches: their own styles at any size)
   if ((b.terraced && !special) || b.pts.size() < 3) return false;
   static const double kMinDefault = [] {
-    const char* e = std::getenv("REGS_OSM_PROC_MIN");
+    const char* e = regs::envVar("REGS_OSM_PROC_MIN");
     return e ? std::atof(e) : 300.0;
   }();
   // (special ones from 8 cells, 50 m²: a castle's gatehouses and small wings, which its paths run through, 2026-11-16)
@@ -7115,7 +7116,7 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
   }
   const double area = polyArea(ring);
   if (area < kMin) {
-    if (special && std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %s at cells %.0f, %.0f left out: %.0f cells", b.castle ? "castle" : "church", ring[0].first, ring[0].second, area);
+    if (special && regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %s at cells %.0f, %.0f left out: %.0f cells", b.castle ? "castle" : "church", ring[0].first, ring[0].second, area);
     return false;
   }
   double x0 = 1e30, z0 = 1e30, x1 = -1e30, z1 = -1e30;
@@ -7146,7 +7147,7 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     }
   // (special ones: up to 30 % over roads or paths: footpaths run through a castle's gates and a palace's passages)
   if (cells.empty() || busy * 100 > int(cells.size() + busy) * (special ? 30 : 15)) {
-    if (special && std::getenv("REGS_DEBUG_OSM"))
+    if (special && regs::envVar("REGS_DEBUG_OSM"))
       LOG_INFO("osm: %s at cells %.0f, %.0f left out: %d of %zu cells taken, %zu passages", b.castle ? "castle" : "church", x0, z0, busy, cells.size() + size_t(busy), runs.size());
     return false;
   }
@@ -7203,10 +7204,10 @@ bool placeProcBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b) {
     GridData::ProcBuilding::Passage q = r.q;
     q.y1 = std::min(r.top + r.clear, pb.y + pb.height - 1.2f);
     if (q.y1 - q.y0 >= 2.4f) pb.passages.push_back(q);
-    if (std::getenv("REGS_DEBUG_OSM"))
+    if (regs::envVar("REGS_DEBUG_OSM"))
       LOG_INFO("osm: passage from %.1f, %.1f to %.1f, %.1f, half %.1f, %.1f to %.1f%s", q.x0, q.z0, q.x1, q.z1, q.half, q.y0, q.y1, q.y1 - q.y0 >= 2.4f ? "" : " (too low)");
   }
-  if (std::getenv("REGS_DEBUG_OSM"))
+  if (regs::envVar("REGS_DEBUG_OSM"))
     LOG_INFO("osm: procedural %s at world %.0f, %.0f: %.0f cells, %zu corners, height %.1f, roof %d, %zu passages",
              pb.style == 7 ? "church" : pb.style == 5 ? "palace" : pb.style == 6 ? "castle" : hall ? "hall" : pb.style == 1 ? "plaster" : pb.style == 2 ? "brick" : pb.style == 3 ? "office" : bigStore ? "store" : "shop",
              (cx - W * 0.5) * cs, (cz - L * 0.5) * cs, area, ring.size(), pb.height, pb.roof, pb.passages.size());
@@ -7229,7 +7230,7 @@ void placeBuilding(VM& vm, GridObj* grid, Apply& a, const BuildingIn& b, const V
   if (a.buildingsPlaced == before && fillFootprint(vm, grid, a, b, buildingsList, cache) > 0) ++a.footprintsFilled;
   if (a.buildingsPlaced == before) {
     ++a.buildingsLeft;
-    if (const char* pd = std::getenv("REGS_DEBUG_OSM_PAINT")) {  // x,z,r (world): the buildings left out around there
+    if (const char* pd = regs::envVar("REGS_DEBUG_OSM_PAINT")) {  // x,z,r (world): the buildings left out around there
       float px = 0, pz = 0, pr = 60;
       std::sscanf(pd, "%f,%f,%f", &px, &pz, &pr);
       const GridData& g = *grid->data;
@@ -7489,13 +7490,13 @@ std::vector<LevelCrossing> cutLevelCrossings(std::vector<CurveRoad>& cs) {
       cs[size_t(ri)] = fresh[0];
       for (size_t k = 1; k < fresh.size(); ++k) cs.push_back(fresh[k]);
       out.push_back({{P.x, y, P.z}, t});
-      if (std::getenv("REGS_DEBUG_OSM"))
+      if (regs::envVar("REGS_DEBUG_OSM"))
         LOG_INFO("osm: level crossing at world %.1f, %.1f, height %.1f (bend %.0f deg, %zu streets moved)", P.x, P.z, y, bend * 57.3f,
                  S0.moved.size() + S1.moved.size());
       placed = true;
     } else {
       why = "no room";
-      if (std::getenv("REGS_DEBUG_OSM"))
+      if (regs::envVar("REGS_DEBUG_OSM"))
         LOG_INFO("osm: crossing %.0f,%.0f: road %.1f/%.1f (%x), track %.1f/%.1f, bend %.0f (%s/%s)", P.x, P.z, sR, LR, R.ends, sT,
                  LT, bend * 57.3f, S0.why, S1.why);
     }
@@ -7533,7 +7534,7 @@ std::vector<LevelCrossing> cutLevelCrossings(std::vector<CurveRoad>& cs) {
     while (s1 < LT && s1 - sT < 45 && onRoad(s1)) s1 += 0.25f;
     if (s0 < 2.0f || s1 > LT - 2.0f || sT - s0 >= 45 || s1 - sT >= 45) {
       ++skipped;
-      if (std::getenv("REGS_DEBUG_OSM"))
+      if (regs::envVar("REGS_DEBUG_OSM"))
         LOG_INFO("osm: crossing %.0f,%.0f left (%s; rails in the road: %.1f..%.1f of %.1f)", P.x, P.z, why, s0, s1, LT);
       continue;
     }
@@ -7547,7 +7548,7 @@ std::vector<LevelCrossing> cutLevelCrossings(std::vector<CurveRoad>& cs) {
       cs[size_t(ti)] = A1;
       cs.push_back(mid), cs.push_back(C3);
       ++embedded;
-      if (std::getenv("REGS_DEBUG_OSM"))
+      if (regs::envVar("REGS_DEBUG_OSM"))
         LOG_INFO("osm: crossing %.0f,%.0f: rails in the road over %.1f units (%s)", P.x, P.z, s1 - s0, why);
     }
   }
@@ -7620,7 +7621,7 @@ void placeLevelCrossings(VM& vm, GridObj* grid, Apply& a, const std::vector<Leve
     }
   }
   gridEditEnd(vm, grid);
-  if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d level crossing pieces placed", made);
+  if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %d level crossing pieces placed", made);
 }
 
 void debugRails(const GridData& g, const ImportData& d, const char* path) {
@@ -7683,7 +7684,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     a.timeline = playerTimeline(vm, player);
     if (a.timeline) timelineBeginGroup(vm, a.timeline, "%9 OpenStreetMap");
     a.used.assign(size_t(W) * size_t(L), 0);
-    a.gridStreets = std::getenv("REGS_OSM_GRID") != nullptr;
+    a.gridStreets = regs::envVar("REGS_OSM_GRID") != nullptr;
     if (d.flags & kClear) {
       gridEditBegin(vm, grid);
       for (uint32_t i = 0; i < g.items.size(); ++i) {
@@ -7866,7 +7867,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
             }
           }
         g.height = heights;
-        if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu beaches, %d cells shaped", d.beaches.size(), shaped);
+        if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu beaches, %d cells shaped", d.beaches.size(), shaped);
       }
       if (!d.heights.empty()) levelUnderRoads(g, a.network, d.water, heights);
       // car parks and squares painted with exact edges (no saw tooth along slanted outlines; owner 2026-11-14): whole
@@ -7922,13 +7923,13 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
             flags[i] = uint16_t(g.flags[i] & kGround);
             ++closed;
           }
-        if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d grass slivers between paved areas closed", closed);
+        if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %d grass slivers between paved areas closed", closed);
       }
       gridEditCellsChanged(grid, 0, 0, W - 1, L - 1, true);
       if (a.timeline) timelineRecordPatch(vm, a.timeline, 0, 0, W, L, heights, flags);
       if (a.timeline && !d.paintAreas.empty()) timelineRecordPaintEdges(vm, a.timeline, g, 0, 0, W, L);
-      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu areas painted with exact edges (%d cells)", d.paintAreas.size(), painted);
-      if (const char* pd = std::getenv("REGS_DEBUG_OSM_PAINT")) {  // x,z,r (world): the paint areas around there
+      if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu areas painted with exact edges (%d cells)", d.paintAreas.size(), painted);
+      if (const char* pd = regs::envVar("REGS_DEBUG_OSM_PAINT")) {  // x,z,r (world): the paint areas around there
         float px = 0, pz = 0, pr = 60;
         std::sscanf(pd, "%f,%f,%f", &px, &pz, &pr);
         for (size_t k = 0; k < d.paintAreas.size(); ++k) {
@@ -8078,7 +8079,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
             if (onRun) plan.nodes[i].y = top;
           }
       }
-      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu bridge runs", deck.size());
+      if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu bridge runs", deck.size());
       (void)runs;
     }
     std::vector<CurveRoad> cs = streets::curves(plan);
@@ -8110,7 +8111,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         }
         if (all && on * 10 >= all * 6) {
           c.ends |= 0x4, ++tracked;
-          if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: tram tracks on a curve at world %.0f, %.0f", (c.x0 + c.x1) * 0.5, (c.z0 + c.z1) * 0.5);
+          if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: tram tracks on a curve at world %.0f, %.0f", (c.x0 + c.x1) * 0.5, (c.z0 + c.z1) * 0.5);
         }
       }
       LOG_INFO("osm: %zu tram lines, %d street curves with tram tracks", d.tramLines.size(), tracked);
@@ -8119,18 +8120,18 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     addCurvesBulk(vm, grid, a.timeline, cs);
     markCurveCells(g, cs, a.used);
     placeLevelCrossings(vm, grid, a, crossings);
-    if (std::getenv("REGS_DEBUG_OSM")) {
+    if (regs::envVar("REGS_DEBUG_OSM")) {
       int w;
       float up = groundAbovePavement(g, cs, w);
       LOG_INFO("osm: ground above pavement: %.2f (curve %d)", up, w);
     }
     a.curvesMade = int(cs.size());
-    if (const char* dr = std::getenv("REGS_DEBUG_OSM_RAILS")) debugRails(g, d, dr);
+    if (const char* dr = regs::envVar("REGS_DEBUG_OSM_RAILS")) debugRails(g, d, dr);
     size_t exits = 0;
     for (const streets::Exit& e : plan.exits) exits += e.node >= 0;
     LOG_INFO("osm: streets: %zu curves, %zu edge stubs, %d legs merged, %d dropped, %d bends made junctions", cs.size(), exits,
              plan.merged, plan.dropped, plan.corners);
-    if (std::getenv("REGS_DEBUG_CURVES")) LOG_INFO("osm: %zu curve junctions", findCurveJunctions(g).size());
+    if (regs::envVar("REGS_DEBUG_CURVES")) LOG_INFO("osm: %zu curve junctions", findCurveJunctions(g).size());
   }
   if (a.stage == 2) {  // the road network at once, then the alleys a drag at a time
     if (!a.network.empty()) {
@@ -8167,14 +8168,14 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
   if (a.stage == 3) {  // buildings
     static std::map<std::string, std::vector<Candidate>> cache;
     if (a.next == 0) cache.clear(), g_streets.build(g);
-    if (a.next == 0 && std::getenv("REGS_DEBUG_OSM_BUILDINGS"))
+    if (a.next == 0 && regs::envVar("REGS_DEBUG_OSM_BUILDINGS"))
       if (MapObj* m = vm.resolve(buildings).map())
         for (auto& [k, v] : m->entries) {
           std::string cat = utf16ToUtf8(vm.toStr(k)), all;
           for (const Candidate& c : categoryTemplates(vm, grid, buildings, cat)) all += c.name + "(" + std::to_string(c.w) + "x" + std::to_string(c.l) + ") ";
           LOG_INFO("osm: buildings '%s': %s", cat.c_str(), all.c_str());
         }
-    if (a.next == 0 && std::getenv("REGS_DEBUG_OSM_PROPS"))  // every template: name, footprint, type
+    if (a.next == 0 && regs::envVar("REGS_DEBUG_OSM_PROPS"))  // every template: name, footprint, type
       for (auto& [name, o] : grid->templates) {
         int w = 1, l = 1;
         templateSize(vm, grid, name, w, l);
@@ -8247,7 +8248,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     painter.owner = &a.paintOwner;
     {  // generated places (owner 2026-11-15)
       auto where = [&](const char* what, double x, double z, int n) {
-        if (n > 0 && std::getenv("REGS_DEBUG_OSM"))
+        if (n > 0 && regs::envVar("REGS_DEBUG_OSM"))
           LOG_INFO("osm: %s at world %.0f, %.0f (%d things)", what, (x - W * 0.5) * g.cellSize, (z - L * 0.5) * g.cellSize, n);
         return n;
       };
@@ -8298,7 +8299,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         if (low.find("markt") != std::string::npos || low.find("market") != std::string::npos || low.find("march") != std::string::npos) market = true;
         for (const PointIn& pt : d.points)
           if (pt.kind == 21 && insideRing(ar.pts, pt.x, pt.z)) market = true;
-        if (std::getenv("REGS_DEBUG_OSM"))
+        if (regs::envVar("REGS_DEBUG_OSM"))
           LOG_INFO("osm: square %s, %.0f cells, market %d", ar.name.c_str(), polyArea(ar.pts), int(market));
         if (market && polyArea(ar.pts) >= 40 && where("market", ringCentre(ar.pts).first, ringCentre(ar.pts).second, buildMarket(vm, grid, a, ar.pts, hashOf(ar.pts[0].first, ar.pts[0].second), keepOut)))
           ++markets, marketAreas.insert(&ar);
@@ -8344,7 +8345,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
     if (!a.gridStreets) placeAds(vm, grid, a);
     placeFences(vm, grid, a);
     decorateYards(vm, grid, a, fu, painter);
-    if (std::getenv("REGS_DEBUG_OSM")) {  // what stands more than 1.5 units over the highest ground under it (2026-11-16)
+    if (regs::envVar("REGS_DEBUG_OSM")) {  // what stands more than 1.5 units over the highest ground under it (2026-11-16)
       int floating = 0;
       for (int i : a.made) {
         if (i < 0 || size_t(i) >= g.items.size() || g.items[size_t(i)].removed) continue;
@@ -8375,7 +8376,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       painter.fillPockets(groundCell,
                           [&](size_t i) { return !d.green.empty() && d.green[i] != 0; },
                           [&](size_t i) { const uint8_t u = a.used[i]; return u == 2 || u == 3 || u == 5 || u == 7; });
-      if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %d grass slivers by the yards' paving closed", gaps);
+      if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %d grass slivers by the yards' paving closed", gaps);
     }
     if (painter.x1 >= painter.x0) {  // the yards' pavement: on the timeline as a patch and the edges
       gridEditCellsChanged(grid, painter.x0, painter.z0, painter.x1, painter.z1, false);
@@ -8394,7 +8395,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       }
     }
     gridEditEnd(vm, grid);
-    if (std::getenv("REGS_DEBUG_OSM")) {
+    if (regs::envVar("REGS_DEBUG_OSM")) {
       std::string all;
       for (auto& [n, c] : g_placedCount) all += n + " " + std::to_string(c) + ", ";
       LOG_INFO("osm: placed: %s", all.c_str());
@@ -8411,7 +8412,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
         std::string n = utf16ToUtf8(vm.toStr(v));
         if (grid->templates.count(n)) names.push_back(n);
       }
-    if (std::getenv("REGS_DEBUG_OSM") && a.next == 0) {
+    if (regs::envVar("REGS_DEBUG_OSM") && a.next == 0) {
       std::string all;
       for (auto& n : names) all += n + " ";
       LOG_INFO("osm: tree templates: %s", all.c_str());
@@ -8478,7 +8479,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       static int slice = 0;
       static double sumLoop = 0, sumEnd = 0;
       sumLoop += tLoop - t0, sumEnd += now() - tLoop;
-      if (std::getenv("REGS_DEBUG_OSM") && (++slice % 25 == 0 || a.next >= d.trees.size()))
+      if (regs::envVar("REGS_DEBUG_OSM") && (++slice % 25 == 0 || a.next >= d.trees.size()))
         LOG_INFO("osm: trees slice %d: %zu of %zu cells, %d trees, %.1f s planting, %.1f s finishing (so far)", slice, a.next,
                  d.trees.size(), a.treesPlaced, sumLoop, sumEnd);
     }
@@ -8492,8 +8493,8 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
   const double tDone = now();
   timelineRecordCreateMany(vm, a.timeline, grid, a.made);
   if (a.timeline) timelineEndGroup(vm, a.timeline);
-  if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu objects on the timeline in %.1f s", a.made.size(), now() - tDone);
-  if (std::getenv("REGS_DEBUG_OSM")) {
+  if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: %zu objects on the timeline in %.1f s", a.made.size(), now() - tDone);
+  if (regs::envVar("REGS_DEBUG_OSM")) {
     int w;
     float up = groundAbovePavement(g, g.curves, w);
     LOG_INFO("osm: ground above pavement at the end: %.2f (curve %d)", up, w);
@@ -8509,7 +8510,7 @@ bool applySlice(VM& vm, GridObj* grid, ControlObj* player, const Value& building
       LOG_ERROR("onCreateInstance: %s", e.what());
     }
   }
-  if (std::getenv("REGS_DEBUG_OSM")) LOG_INFO("osm: their creation events after %.1f s", now() - tDone);
+  if (regs::envVar("REGS_DEBUG_OSM")) LOG_INFO("osm: their creation events after %.1f s", now() - tDone);
   if (!d.satellite.empty()) {
     GroundOverlay& o = groundOverlay();
     o.bgra = d.satellite;

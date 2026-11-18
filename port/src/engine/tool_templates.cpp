@@ -11,6 +11,7 @@
 //   heights around the target area's mean height, the template's objects are added. Everything is recorded on the
 //   timeline as one group (a terrain patch action, deletions, creations), so undo and saving work as for any edit.
 #include "engine/tool_templates.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <climits>
@@ -63,7 +64,7 @@ void show(VM& vm, GridObj* grid, Rect r, bool negative) {
   if (g_shown.valid()) gridUnselectArea(vm, grid, g_shown.x, g_shown.z, g_shown.w, g_shown.l);
   if (r.valid()) gridSelectArea(vm, grid, r.x, r.z, r.w, r.l, negative);
   gridEditEnd(vm, grid);
-  static const bool dbg = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool dbg = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   if (dbg) LOG_INFO("template tool: shown %d,%d %dx%d -> %d,%d %dx%d, %zu items highlighted", g_shown.x, g_shown.z, g_shown.w, g_shown.l, r.x, r.z, r.w, r.l, grid->highlightItems.size());
   g_shown = r;
 }
@@ -248,7 +249,7 @@ void upSelect(VM& vm, ControlObj* player, GridObj* grid, float x, float y) {
   }
   g_drag = Rect{};
   showSelection(vm, grid);
-  static const bool dbg = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
+  static const bool dbg = regs::envVar("REGS_DEBUG_TOOLS") != nullptr;
   if (dbg) LOG_INFO("select: up start %d,%d hit %d cell %d,%d shift %d -> area %d,%d %dx%d, %zu objects", t.startX, t.startZ, cell.hit, cell.cellX, cell.cellZ, g_dragShift, g_area.x, g_area.z, g_area.w, g_area.l, g_items.size());
 }
 

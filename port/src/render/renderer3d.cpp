@@ -1,4 +1,5 @@
 #include "render/renderer3d.h"
+#include "core/env.h"
 
 #include <chrono>
 #include <algorithm>
@@ -982,7 +983,7 @@ void Renderer3D::setupFallback(const SceneView& v) {
   dev().uniformMatrix3fv(dev().uniformLocation(program_, "uViewToWorld"), 1, v2w);
   dev().uniform4fv(u_.fogColor, 1, v.fogColor);
   dev().uniform1f(u_.alphaRef, 0.2f);
-  static const int debugShade = std::getenv("REGS_DEBUG_SHADE") ? std::atoi(std::getenv("REGS_DEBUG_SHADE")) : 0;
+  static const int debugShade = regs::envVar("REGS_DEBUG_SHADE") ? std::atoi(regs::envVar("REGS_DEBUG_SHADE")) : 0;
   dev().uniform1i(dev().uniformLocation(program_, "uDebug"), debugShade);
 }
 

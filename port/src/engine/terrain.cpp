@@ -5,6 +5,7 @@
 // them. The underground view (docs/renderer/underground.md) builds tunnel divisions as an earth plane with inward walls.
 // The data layer draws the stops' catchment circles over the layerable parts (dataMaterial, terrain.md Â§5.2).
 #include "engine/terrain.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <chrono>
@@ -538,7 +539,7 @@ struct Builder {
         }
       if (lo == hi && lo == y) continue;
       // debugging: REGS_DEBUG_BASE=1 lists the walled items (world x/z of the footprint centre for the cam:x,z test action)
-      if (static const bool debug = std::getenv("REGS_DEBUG_BASE") != nullptr; debug)
+      if (static const bool debug = regs::envVar("REGS_DEBUG_BASE") != nullptr; debug)
         LOG_INFO("base walls: item %u %s at %d,%d size %dx%d y %d ground %d..%d world %.0f,%.0f", i, g.types[it.type].c_str(),
                  x0, z0, sx, sz, y, lo, hi, (x0 + sx * 0.5f - W() * 0.5f) * cs, (z0 + sz * 0.5f - L() * 0.5f) * cs);
       auto vertex = [&](int gx, int gz, int hy, const Vec3& normal, bool diagonal) {
@@ -787,7 +788,7 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
                      tc.cols * tc.n * cs, tc.rows * tc.n * cs);
     }
     LOG_INFO("terrain: %dx%d divisions of %d cells", tc.cols, tc.rows, tc.n);
-    if (std::getenv("REGS_DEBUG_BASE")) {  // every division once, for the walled items' list
+    if (regs::envVar("REGS_DEBUG_BASE")) {  // every division once, for the walled items' list
       for (int index = 0; index < int(tc.divisions.size()); ++index) {
         MeshData scratch;
         buildTerrain(g, tc, index, 1, scratch);
@@ -1109,7 +1110,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           }
           pieces(straight ? straight : pf.straight, first, last);
         }
-        static const bool debugBridge = std::getenv("REGS_DEBUG_CURVES") != nullptr;
+        static const bool debugBridge = regs::envVar("REGS_DEBUG_CURVES") != nullptr;
         if (debugBridge && straight) {  // the span's drawn extent and the live ground under the curve's middle
           float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
           for (size_t k = before; k + 2 < m.positions.size(); k += 3)
@@ -1212,7 +1213,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
           // shorter than 3/4 of a span piece (after the junctions' trims): the plain road (a span squeezed that much
           // shows its girders instead of a deck)
           const float kept = curveLength(c) - t0 - t1, piece = curveProfile(c.kind).piece;
-          static const bool debugCurves = std::getenv("REGS_DEBUG_CURVES") != nullptr;
+          static const bool debugCurves = regs::envVar("REGS_DEBUG_CURVES") != nullptr;
           if (debugCurves)
             LOG_INFO("curves: bridge kind %d from %.1f %.1f %.1f to %.1f %.1f %.1f, length %.1f, trims %.1f / %.1f, %s",
                      c.kind, c.x0, c.y0, c.z0, c.x1, c.y1, c.z1, curveLength(c), t0, t1,
@@ -1435,7 +1436,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     return true;
   };
   float reach = std::min(kCullDistance * viewScale, farZ), freeDistance = kFreeDistance * viewScale;
-  if (const char* td = std::getenv("REGS_DEBUG_TOPDOWN"); td && *td)  // the debug camera high up sees the whole map
+  if (const char* td = regs::envVar("REGS_DEBUG_TOPDOWN"); td && *td)  // the debug camera high up sees the whole map
     reach = farZ, freeDistance = std::max(freeDistance, farZ * 1.5f);
   // a division's terrain and items of one LOD are built together and shown only together: terrain without its items
   // has holes where the items cover it (fixGrid), which showed as glitches at the screen edges while panning

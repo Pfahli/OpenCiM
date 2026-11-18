@@ -6,6 +6,7 @@
 #include <string>
 
 #include "engine/api.h"
+#include "core/env.h"
 #include "engine/display.h"
 #include "engine/gui.h"
 #include "engine/scene3d.h"
@@ -76,7 +77,7 @@ void registerLinePanelNatives(VM& vm) {
     if (!d || !vp || vp->destroyed) return Value();
     renderViewportScene(*d, v, vp);
     // debugging: REGS_DEBUG_PREVIEW=<file stem> saves the first previews (<stem>-<n>.png, rows bottom first)
-    if (const char* stem = std::getenv("REGS_DEBUG_PREVIEW")) {
+    if (const char* stem = regs::envVar("REGS_DEBUG_PREVIEW")) {
       static int n = 0;
       auto fx = vp->fieldValues.find(u"<effects>");
       if (n < 8 && fx != vp->fieldValues.end() && fx->second.array())

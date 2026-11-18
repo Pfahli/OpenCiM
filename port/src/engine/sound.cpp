@@ -1,4 +1,5 @@
 #include "engine/sound.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -66,10 +67,10 @@ Sounds& snd() {
 // REGS_AUDIO_ONLY=<text>: only sounds whose file name contains the text are heard (the others play at volume 0), so a
 // capture measures one kind of sound alone
 float solo(const std::string& name) {
-  static const char* only = std::getenv("REGS_AUDIO_ONLY");
+  static const char* only = regs::envVar("REGS_AUDIO_ONLY");
   return !only || !*only || name.find(only) != std::string::npos ? 1.0f : 0.0f;
 }
-float solo(const std::u16string& path) { return std::getenv("REGS_AUDIO_ONLY") ? solo(utf16ToUtf8(path)) : 1.0f; }
+float solo(const std::u16string& path) { return regs::envVar("REGS_AUDIO_ONLY") ? solo(utf16ToUtf8(path)) : 1.0f; }
 
 // effective enabled (1) and audible (4) bits along the owner chain (gsModule status)
 uint32_t effectiveStatus(const Object* o) {
@@ -516,7 +517,7 @@ void soundsShutdown() {
 
 void registerSoundNatives(VM& vm) {
   Sounds& S = snd();
-  S.debug = std::getenv("REGS_DEBUG_AUDIO") && std::atoi(std::getenv("REGS_DEBUG_AUDIO")) != 0;
+  S.debug = regs::envVar("REGS_DEBUG_AUDIO") && std::atoi(regs::envVar("REGS_DEBUG_AUDIO")) != 0;
   S.elementClass = vm.findClass("gs3DElement");
   S.cameraClass = vm.findClass("gs3DCamera");
   S.gridClass = vm.findClass("gsGrid");
@@ -536,7 +537,7 @@ void registerSoundNatives(VM& vm) {
     audio::InitOptions o;
     if (argc > 0) o.device = utf16ToUtf8(v.toStr(a[0]));
     if (argc > 1) o.layout = audio::layoutFromName(utf16ToUtf8(v.toStr(a[1])));
-    if (const char* cap = std::getenv("REGS_AUDIO_CAPTURE"); cap && *cap) o.capture = cap;
+    if (const char* cap = regs::envVar("REGS_AUDIO_CAPTURE"); cap && *cap) o.capture = cap;
     if (host().headless) {
       LOG_INFO("audio: headless, sounds stay off");
       return Value();

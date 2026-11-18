@@ -25,6 +25,7 @@
 #include <unordered_map>
 
 #include "core/log.h"
+#include "core/env.h"
 #include "engine/sim.h"
 #include "engine/sim_state.h"
 
@@ -47,7 +48,7 @@ constexpr float kPlatformWait = 120.0f;  // step 3: seconds the respawn waits fo
 
 bool reliefOff() {
   static const bool off = [] {
-    const char* e = std::getenv("REGS_NO_JAM_RELIEF");
+    const char* e = regs::envVar("REGS_NO_JAM_RELIEF");
     return e && *e && *e != '0';
   }();
   return off;
@@ -578,7 +579,7 @@ void stepJamTest(VM& vm, SimState& s, float dt) {
   TestJam& t = g_test;
   if (!t.parsed) {
     t.parsed = true;
-    if (const char* e = std::getenv("REGS_TEST_JAM"); e && *e) {
+    if (const char* e = regs::envVar("REGS_TEST_JAM"); e && *e) {
       t.on = true;
       t.type = std::atoi(e) == 0 && *e == '0' ? 0 : 1;
       t.hard = std::strstr(e, "hard") != nullptr;

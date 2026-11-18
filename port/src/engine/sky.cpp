@@ -1,6 +1,7 @@
 // The sky dome and the sun disc (gsSky::generateBackground, gsSun::generateMesh), the port's day/night cycle and
 // gsTracerCtrl.enableFade. Spec: docs/renderer/sky-and-night.md.
 #include "engine/sky.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -215,7 +216,7 @@ void applyLights(VM& vm, Object* light, Object* sky, Object* mat, const LightSet
 
 void SkyObj::dayNight(VM& vm, float dt) {
   if (mainVar(vm, u"sky") != this) return;  // the game's sky only (not the menu or object-list scenes)
-  static const char* debugTime = std::getenv("REGS_DEBUG_TIME");
+  static const char* debugTime = regs::envVar("REGS_DEBUG_TIME");
   float minutes = settingNumber(vm, u"regsDayNight", 1) != 0 ? std::max(1.0f, settingNumber(vm, u"regsDayLength", 12)) : 0.0f;
   Object* sun = mainVar(vm, u"sun");
   Object* clock = mainVar(vm, u"sceneClock");
@@ -262,7 +263,7 @@ void SkyObj::dayNight(VM& vm, float dt) {
   float day = smooth(-0.14f, 0.14f, e);
   float dusk = smooth(-0.14f, 0.0f, e) * (1 - smooth(0.05f, 0.45f, e));
   dn.night01 = 1 - day;
-  static const bool logSky = std::getenv("REGS_DEBUG_SKY") != nullptr;
+  static const bool logSky = regs::envVar("REGS_DEBUG_SKY") != nullptr;
   if (logSky && int(dn.hours * 4) != dn.logged) {  // every quarter hour of the cycle
     dn.logged = int(dn.hours * 4);
     LOG_INFO("day/night: %02d:%02d, sun %.1f deg, day %.2f, dusk %.2f", int(dn.hours), int(dn.hours * 60) % 60,

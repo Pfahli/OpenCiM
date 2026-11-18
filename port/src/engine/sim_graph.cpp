@@ -2,6 +2,7 @@
 // L:0x081808b0) and setPathFlags / addPath, one node per path of every placed item (gsGridObject::addPaths,
 // L:0x08186df0), successor links by endpoint distance and direction (FUN_100e4dd0) and the lane search (FUN_100e5fe0).
 #include "engine/sim_graph.h"
+#include "core/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -638,7 +639,7 @@ void linkTramsToRail(LaneGraph& G) {
     G.railLinks.push_back(ci);
   }
   if (loops) LOG_INFO("lane graph: %d tram turning loops at railway dead ends", loops);
-  if (std::getenv("REGS_DEBUG_SIM")) {  // the rail twins and how many of them cross the railway lane under them
+  if (regs::envVar("REGS_DEBUG_SIM")) {  // the rail twins and how many of them cross the railway lane under them
     int twins = 0, crossing = 0;
     for (const LaneNode& n : G.nodes)
       if (n.railTwin && !(n.flags & kPathDeleted)) {
@@ -699,7 +700,7 @@ void addPaths(const GridData& g, LaneGraph& G, size_t i, const Tpl& tp, std::vec
 
 // REGS_DUMP_TEMPLATES=a,b,...: size, mesh bounds per material and paths of the named templates (curved-road research)
 void dumpTemplates(VM& vm, GridObj* grid) {
-  const char* env = std::getenv("REGS_DUMP_TEMPLATES");
+  const char* env = regs::envVar("REGS_DUMP_TEMPLATES");
   if (!env) return;
   std::string list = env;
   size_t at = 0;
@@ -727,7 +728,7 @@ void dumpTemplates(VM& vm, GridObj* grid) {
           if (m.uv0.size() > v * 2 + 1)
             for (int a = 0; a < 2; ++a) ulo[a] = std::min(ulo[a], m.uv0[v * 2 + a]), uhi[a] = std::max(uhi[a], m.uv0[v * 2 + a]);
         }
-        if (std::getenv("REGS_DUMP_VERTICES"))
+        if (regs::envVar("REGS_DUMP_VERTICES"))
           for (uint32_t k = sm.firstVertex; k < sm.firstVertex + sm.vertexCount; ++k)
             LOG_INFO("dump %s:     v %.2f %.2f %.2f uv %.4f %.4f", name.c_str(), m.positions[k * 3], m.positions[k * 3 + 1],
                      m.positions[k * 3 + 2], m.uv0.size() > k * 2 + 1 ? m.uv0[k * 2] : 0.0f, m.uv0.size() > k * 2 + 1 ? m.uv0[k * 2 + 1] : 0.0f);
@@ -950,7 +951,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
     }
   };
   std::vector<CurveJunction> junctions = findCurveJunctions(g);
-  if (std::getenv("REGS_DEBUG_CURVES"))
+  if (regs::envVar("REGS_DEBUG_CURVES"))
     for (size_t ci = 0; ci < g.curves.size(); ++ci) {
       const CurveRoad& c = g.curves[ci];
       LOG_INFO("curve %zu: kind %d ends %02x from %.1f,%.1f dir %.2f,%.2f to %.1f,%.1f dir %.2f,%.2f", ci, c.kind, c.ends, c.x0, c.z0,
@@ -1001,7 +1002,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
       return fallback;
     };
     float tramDy0 = 0, tramDy1 = 0;
-    if ((c.ends & 4) && std::getenv("REGS_DEBUG_CURVES"))
+    if ((c.ends & 4) && regs::envVar("REGS_DEBUG_CURVES"))
       for (const CurveSample* e : {&s.front(), &s.back()})
         for (float sd : {1.5f, -1.5f}) {
           Vec3 at = e->p + e->right * sd;
@@ -1139,7 +1140,7 @@ void rebuildCurveNodes(VM& vm, GridObj* grid, const GridData& g, LaneGraph& G) {
   }
   linkCrossings(G, first);
   linkTramsToRail(G);
-  if (std::getenv("REGS_DEBUG_CURVES"))  // express ramps: the lanes meeting at each port and their links
+  if (regs::envVar("REGS_DEBUG_CURVES"))  // express ramps: the lanes meeting at each port and their links
     for (const RampPort& rp : usedRampPorts(g)) {
       int in = 0, out = 0, linked = 0;
       for (size_t i = first; i < G.nodes.size(); ++i) {

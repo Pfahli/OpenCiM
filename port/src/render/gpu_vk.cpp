@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "core/env.h"
 #include "platform/window.h"
 #include "render/gpu.h"
 #include "render/vk_shader.h"
@@ -922,7 +923,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
       if (std::strcmp(e.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0) colorspaceExt_ = true;
     if (colorspaceExt_) exts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
   }
-  if (const char* v = std::getenv("REGS_VK_VALIDATION"); v && *v == '1') {
+  if (const char* v = regs::envVar("REGS_VK_VALIDATION"); v && *v == '1') {
     uint32_t n = 0;
     vkEnumerateInstanceLayerProperties(&n, nullptr);
     std::vector<VkLayerProperties> lp(n);
@@ -1041,7 +1042,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     bool exts = has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) && has(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
                 has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
     if (exts) vkGetPhysicalDeviceFeatures2(phys_, &q2);
-    rt_ = exts && rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && !std::getenv("REGS_VK_NO_RT");
+    rt_ = exts && rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && !regs::envVar("REGS_VK_NO_RT");
     hdrMetadataExt_ = has(VK_EXT_HDR_METADATA_EXTENSION_NAME);
     {
       VkPhysicalDeviceVulkan12Features t12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -1061,7 +1062,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
                                            p12.maxPerStageDescriptorUpdateAfterBindSampledImages});
       bindless_ = di.runtimeDescriptorArray && di.shaderSampledImageArrayNonUniformIndexing &&
                   di.descriptorBindingPartiallyBound && di.descriptorBindingSampledImageUpdateAfterBind &&
-                  di.descriptorBindingUpdateUnusedWhilePending && bindlessCount_ >= 4096 && !std::getenv("REGS_VK_NO_BINDLESS");
+                  di.descriptorBindingUpdateUnusedWhilePending && bindlessCount_ >= 4096 && !regs::envVar("REGS_VK_NO_BINDLESS");
     }
   }
   float prio = 1;
@@ -1627,7 +1628,7 @@ bool VkDeviceImpl::fgPresent() {
   fullBarrier(cmd());
   fgPrevOk_ = true;
   // REGS_FG_DUMP=<n> (a check): the n-th generated frame and its real frame as fg-<n>-gen.ppm / fg-<n>-real.ppm
-  static const long dumpAt = std::getenv("REGS_FG_DUMP") ? std::atol(std::getenv("REGS_FG_DUMP")) : -1;
+  static const long dumpAt = regs::envVar("REGS_FG_DUMP") ? std::atol(regs::envVar("REGS_FG_DUMP")) : -1;
   VkBuffer dumpBuf = VK_NULL_HANDLE;
   Allocation dumpMem;
   size_t bpp = back.format == Format::RGBA16F ? 8 : 4, dumpBytes = size_t(backW_) * size_t(backH_) * bpp;
@@ -2121,7 +2122,7 @@ uint32_t VkDeviceImpl::createProgram(const std::string& vs, const std::string& f
     plci.pSetLayouts = sets;
     vkCreatePipelineLayout(dev_, &plci, nullptr, &p.layout);
     for (size_t i = 0; i < p.uniforms.size(); ++i) p.locations[p.uniforms[i].name] = int(i);
-    static const bool debug = std::getenv("REGS_VK_DEBUG") != nullptr;
+    static const bool debug = regs::envVar("REGS_VK_DEBUG") != nullptr;
     static int dumped = 0;
     if (debug && dumped < 6) {  // the reflection of the first programs (REGS_VK_DEBUG)
       ++dumped;
