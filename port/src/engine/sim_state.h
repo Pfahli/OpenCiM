@@ -23,6 +23,7 @@ class Display;
 struct SimState;
 struct SimSounds;
 struct SimParticles;
+struct SimFires;
 struct TrafficMaps;
 class TransportObj;
 
@@ -360,6 +361,8 @@ bool debugSim();
 void buildDoors(script::VM& vm, GridObj* grid, SimState& s);
 // one item update of the door items (gsGridItem::move), every sub-step and with dt = 0 at game speed 0
 void stepDoors(SimState& s, float dt);
+// ---- the building pass (engine/sim_fires.cpp): fires on buildings and the timer items that remove them ----
+void stepBuildingPass(script::VM& vm, GridObj* grid, SimState& s, float dt);
 // the port's stand-in for gsGridItem::move running in an active bucket: within this horizontal distance of the eye
 constexpr float kActiveRadius = 450.0f;
 // the port's density knobs for new sandbox games (gsGridCitizens.regsPopulationDensity, gsGridVehicles.regsTrafficDensity;
@@ -483,6 +486,7 @@ struct SimState {
   bool tearingDown = false;  // a new map replaces this state: its script objects go without touching it
   std::shared_ptr<SimSounds> sounds;  // world sound slots (engine/sim_sounds.cpp), made on first use
   std::shared_ptr<SimParticles> particles;  // emitter instances of vehicles and items (engine/particles.cpp)
+  std::shared_ptr<SimFires> fires;  // the building pass: fires and timer items (engine/sim_fires.cpp)
   std::shared_ptr<TrafficMaps> trafficMaps;  // recent traffic for the mods' shader hooks (engine/traffic_maps.h)
 };
 

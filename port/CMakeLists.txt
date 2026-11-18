@@ -90,6 +90,7 @@ add_library(regs_engine STATIC
   src/engine/sound.cpp
   src/engine/sim_sounds.cpp
   src/engine/sim_doors.cpp
+  src/engine/sim_fires.cpp
   src/engine/sim_jams.cpp
   src/engine/particles.cpp
   src/engine/mods.cpp
