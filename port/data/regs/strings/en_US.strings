@@ -263,21 +263,30 @@ $regs_controller_enable = "Play with a controller (mouse and keyboard keep worki
 $regs_controller_cursor = "Cursor speed: %0%%";
 $regs_controller_camera = "Camera speed: %0%%";
 $regs_controller_invert = "Invert tilt (stick up looks down)";
-$regs_controller_legend = "Buttons (PlayStation in brackets)";
-$regs_controller_legend_items = [
-  ["Left stick", "Cursor (finer over panels); at the screen edge: pan"],
-  ["LB (L1) + left stick", "Pan the map, the cursor stays"],
-  ["Right stick", "Turn (sideways), tilt (up and down)"],
-  ["R3 (click the right stick)", "Tilt back to the game's angle"],
-  ["LT / RT (L2 / R2)", "Zoom out / in"],
-  ["A (Cross)", "Left click; hold to drag (tracks, sliders)"],
-  ["B (Circle)", "Right click (turn an object, stop a drag); hold: leave the tool"],
-  ["Start (Options)", "Esc: pause menu, close windows"],
-  ["Y (Triangle)", "Construction menu"],
-  ["X (Square)", "Bulldozer"],
-  ["View / Back (Create, touchpad)", "Underground view"],
-  ["RB (R1)", "Pause / resume"],
-  ["D-pad left / right", "Game speed slower / faster"],
-  ["D-pad up / down", "Line panel / vehicle panel"],
-  ["L3 (click the left stick)", "Selection tool"]
-];
+$regs_controller_legend = "Buttons";
+$regs_pad_layouts = ["Xbox", "PlayStation", "Steam Deck", "Steam Controller"];
+$regs_controller_deck = "Steam Deck (read directly, Steam not running)";
+$regs_controller_sc = "Steam Controller (read directly, Steam not running)";
+$regs_controller_steaminput_deck = "Steam Input on a Steam Deck (touchpads come as the mouse)";
+$regs_controller_steaminput_sc = "Steam Input with a Steam Controller (touchpads come as the mouse)";
+$regs_pad_do_cursor = "Move the cursor (finer over panels); against the screen edge: pan the map";
+$regs_pad_do_panHold = "Pan the map, the cursor stays";
+$regs_pad_do_turnTilt = "Turn (sideways), tilt (up and down)";
+$regs_pad_do_tiltReset = "Click: tilt back to the game's angle";
+$regs_pad_do_zoom = "Zoom out / in";
+$regs_pad_do_click = "Left click; hold to drag (tracks, sliders)";
+$regs_pad_do_rclick = "Right click (turn an object, stop a drag); B held: leave the tool";
+$regs_pad_do_esc = "Esc: pause menu, close windows";
+$regs_pad_do_construct = "Construction menu";
+$regs_pad_do_bulldoze = "Bulldozer";
+$regs_pad_do_underground = "Underground view";
+$regs_pad_do_pause = "Pause / resume";
+$regs_pad_do_speed = "Game speed slower / faster";
+$regs_pad_do_panels = "Line panel / vehicle panel";
+$regs_pad_do_select = "Click: selection tool";
+$regs_pad_do_rpad = "Cursor like a trackball (glides on after a swipe); click: left click";
+$regs_pad_do_lpad = "Drag the map (glides on after a swipe)";
+$regs_pad_do_lpadSc = "Drag the map; click at the edge: d-pad";
+$regs_pad_do_lpadCam = "Held together: turn (sideways), tilt (up and down); click: tilt back";
+$regs_pad_do_speedSc = "Left pad clicked left / right: game speed";
+$regs_pad_do_panelsSc = "Left pad clicked up / down: line panel / vehicle panel";

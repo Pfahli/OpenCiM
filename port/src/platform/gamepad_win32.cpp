@@ -3,6 +3,7 @@
 #include <xinput.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <unordered_map>
 #include <vector>
 
@@ -154,6 +155,7 @@ bool parseSonyReport(uint32_t pid, const uint8_t* d, uint32_t n, PadState& out) 
   if (b + 10 > n) return false;
   out.connected = true;
   out.kind = 2;
+  out.layout = kLayoutPlayStation;
   out.lx = axis8(d[b]);
   out.ly = -axis8(d[b + 1]);
   out.rx = axis8(d[b + 2]);
@@ -212,7 +214,16 @@ bool gamepadRawInput(void* lparam) {
 
 bool readGamepad(PadState& out) {
   out = PadState{};
-  if (readXInput(out)) return true;
+  if (readXInput(out)) {
+    // XInput does not say which pad it is: Steam Input's pad on a Steam Deck (Steam sets SteamDeck=1 for the games
+    // it starts there) or with a Steam Controller plugged in shows that pad's buttons
+    const char* deck = std::getenv("SteamDeck");
+    const int valve = valvePadPresent();
+    out.layout = deck && deck[0] == '1' ? kLayoutDeck : valve >= 0 ? valve : kLayoutXbox;
+    return true;
+  }
+  out = PadState{};
+  if (readValvePad(out)) return true;
   out = PadState{};
   // a PlayStation pad reports many times a second while the window has the focus; none for a second: gone
   if (g_sony.lastReport && GetTickCount64() - g_sony.lastReport < 1000) {

@@ -42,6 +42,7 @@ namespace fs = std::filesystem;
 int cmdCut(int argc, char** argv);      // mod_assets.cpp
 int cmdSoftDot(int argc, char** argv);  // mod_assets.cpp
 int cmdLeaf(int argc, char** argv);     // mod_assets.cpp
+int cmdPadGlyphs(int argc, char** argv);  // pad_glyphs.cpp
 int cmdUpscaleTextures(int argc, char** argv);  // texture_tools.cpp
 int cmdUpscaleCompare(int argc, char** argv);   // texture_tools.cpp
 int cmdPngRoundtrip(int argc, char** argv);     // texture_tools.cpp
@@ -896,6 +897,7 @@ int main(int argc, char** argv) {
     else if (cmd == "cut") rc = cmdCut(argc, argv);
     else if (cmd == "softdot") rc = cmdSoftDot(argc, argv);
     else if (cmd == "leaf") rc = cmdLeaf(argc, argv);
+    else if (cmd == "padglyphs") rc = cmdPadGlyphs(argc, argv);
     else if (cmd == "texpng") rc = cmdTexPng(argc, argv);
     else if (cmd == "materials") rc = cmdMaterials(argc, argv);
     else if (cmd == "windowmask") rc = cmdWindowMask(argc, argv);

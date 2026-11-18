@@ -250,8 +250,12 @@ right stick turns and tilts the camera (R3 resets the tilt), LT / RT zoom, Start
 the bulldozer, View the underground view, RB pause, the d-pad the game speed (left / right) and the line and vehicle
 panels (up / down). The keyed buttons follow the player's `controls.keys`. Settings > Controls > **Controller**:
 on/off (`$regsController`), cursor and camera speed (`$regsControllerCursor`, `$regsControllerCamera`), invert tilt
-(`$regsControllerInvertTilt`) and the button legend. XInput is loaded at run time (Steam Input pads appear as XInput);
-a DualShock 4 / DualSense without Steam is read from raw HID. Details and the test switch
+(`$regsControllerInvertTilt`) and the button legend with each layout's glyphs (Xbox, PlayStation, Steam Deck, Steam
+Controller; drawn at build time by `regs-tool padglyphs`). XInput is loaded at run time (Steam Input pads appear as
+XInput); a DualShock 4 / DualSense without Steam is read from raw HID. **Steam Deck and Steam Controller**: the right
+touchpad is a trackball cursor (click = left click), the left one drags the map, the left grip (L4) + left pad turns
+and tilts, the right grip (R4) right-clicks; under Steam they come through Steam Input (a recommended layout is in the
+doc), without Steam the port reads them itself over Valve's HID protocol (`hid.dll`). Details and the test switch
 `--at N:pad:<button|axis>,<value>`: [docs/controller.md](docs/controller.md).
 
 ## Tools

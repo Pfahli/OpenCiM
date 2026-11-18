@@ -46,11 +46,13 @@ void cameraPadInput(const CameraPad& p);
 
 // Game controllers (gamepad.cpp, port/docs/controller.md): once a frame after the OS pump, before dispatchInput. Reads
 // the pad (or the simulated one), moves the virtual cursor and presses buttons and keys by adding OS-style events to
-// host().input, so the game sees a mouse and keys; camera amounts go to cameraPadInput. warp: the system cursor
-// follows the virtual one (off in scripted runs)
-void gamepadFrame(Engine& eng, float dt, bool warp);
+// host().input, so the game sees a mouse and keys; camera amounts go to cameraPadInput. realInput: false in scripted
+// runs (no real pad is read then, only the simulated one, and the system cursor stays where it is)
+void gamepadFrame(Engine& eng, float dt, bool realInput);
 // --at N:pad:<name>,<value> (tests): the simulated pad (a, b, x, y, lb, rb, back, start, l3, r3, up, down, left,
-// right, guide: 1 pressed / 0 released; lx, ly, rx, ry: -1..1, up positive; lt, rt: 0..1; off: the real pads again)
+// right, guide, lpadclick, rpadclick, l4, r4, l5, r5: 1 pressed / 0 released; lx, ly, rx, ry: -1..1, up positive;
+// lt, rt: 0..1; lpad / rpad,<x>,<y> a finger on a touchpad, lpad / rpad,off lifted; lswipe / rswipe,<x0>,<y0>,<x1>,
+// <y1>,<frames> a finger moving then lifted; layout,xbox|ps|deck|sc; off: the real pads again)
 void gamepadSimulate(const std::string& arg);
 void registerGamepadNatives(script::VM& vm);
 
