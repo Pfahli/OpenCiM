@@ -319,6 +319,7 @@ class Renderer3D {
   void end(int backW, int backH);
 
  private:
+  void drawList(const SceneView& v, const std::vector<DrawItem>& items);
   uint32_t program_ = 0;
   uint32_t quadVao_ = 0, quadVbo_ = 0;
   struct {

@@ -93,6 +93,16 @@ start-up. So:
    `REGS_VK_CACHE=0` turns both disk caches (this one and the pipeline cache, §5) off. The device logs hits and
    compiles at shutdown (`vulkan: SPIR-V cache: …`). The rewrites themselves are plain string scans (they were
    `std::regex`; the scans match the same declarations, checked on every variant `regs-tool shaders` builds).
+   **Side by side** (2026-11-18): the programs a draw list misses are queued together (`Device::queueProgram`, from
+   `assignPrograms` in `engine/scene3d.cpp`, as on OpenGL), and the Vulkan device hands each to a pool of worker
+   threads (hardware threads − 1, at most 8; `WorkerPool` in `gpu_vk.cpp`): the cache lookup and the glslang compile
+   run there, each job with its own `TShader`/`TProgram` (glslang's pools are per thread; `InitializeProcess` runs
+   once). `finishProgram` waits for its job, running queued jobs itself in the meantime, and makes the shader modules
+   and layouts on the main thread in the order the engine finishes them, so the program handles are the ones a serial
+   run gives. Cache entries are written through a per-thread temporary name (two jobs of a batch may store the same
+   program). The SPIR-V and reflection are the serial path's: the 70 cache files of a cold Berlin run were byte for
+   byte the same with the old serial build. `REGS_VK_SERIAL=1` compiles each program in `queueProgram` and makes
+   every pipeline at its first draw (comparisons).
 4. The port's own built-in shaders (2D GUI, the default-shader fallback, post hooks) go the same way, so there is no
    separate offline step and no SPIR-V binaries in the repository.
 
@@ -135,6 +145,17 @@ GL and Vulkan differ in three conventions. The device keeps every engine-visible
   (RGBA16F + BGRA8, other pipelines), which the weather mod turns on a few seconds into play; with a cold pipeline
   cache that frame made ~25 pipelines at once (0.3-0.4 s). The slow-frame log counts pipelines made in that frame;
   `REGS_VK_LOG_PIPELINES=1` logs each pipeline made with its key, to find draw-time creation.
+* **Pipelines made ahead** (2026-11-18): before a draw list (`Renderer3D::draw`) the device is asked whether it wants a
+  collecting pass (`Device::wantsPipelineCollect`): yes when programs were made since the bound target's formats
+  (colour, depth, samples, second attachment) last had one, or those formats are new (the shadow map, each scene
+  target, the post-hook target, a bloom/TAA/MSAA switch). The list then runs once between `beginPipelineCollect` and
+  `endPipelineCollect` without particles: draws record nothing, each notes the key it would need when the device has
+  no pipeline for it (the draw's own key code, so the keys are exact, not guessed), and the end creates them on the
+  worker threads through the shared `VkPipelineCache`, made without `EXTERNALLY_SYNCHRONIZED`, so the driver
+  synchronizes it (`vkCreateGraphicsPipelines` needs no outside lock for the device either). The GL-style state the
+  pass leaves (blend, units, program, vertex input) is put back, and the real pass finds every pipeline. The log marks
+  them `(ahead)` and prints `N pipelines made ahead in … ms`; the frame's pipeline time counts the batch's wall time.
+  Particles, post-effect quads and the GUI still make theirs at their first draw (a few).
 * **Recording a draw** skips what the command buffer already holds: the device remembers the bound pipeline, the
   dynamic states, the vertex and index buffer binds and, per binding, the descriptors last pushed for the current
   program's layout, and records only what differs (push descriptors keep what an earlier push with the same layout
@@ -485,3 +506,6 @@ What it says:
   0.8 s). The NVIDIA driver keeps its own shader cache, so "empty caches" is not a cold driver. Draw recording with
   state skipping (§5) costs ~0.7 ms less render CPU per Berlin frame than recording everything
   (`REGS_VK_RECORD_ALL=1`, three alternating pairs: 6.2-6.5 vs 6.8-7.2 ms).
+  Programs compiled and pipelines made side by side (2026-11-18, §3 and §5), Berlin: with both caches off
+  (`REGS_VK_CACHE=0`) the first view takes 0.83-0.89 s (was 1.79 s; the 72 programs 0.22 s instead of 1.04 s, the 55
+  pipelines 0.22 s instead of 0.31 s), with warm caches 0.40-0.45 s (was 0.46-0.54 s).

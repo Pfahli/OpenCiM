@@ -195,6 +195,14 @@ class Device {
   // pipeline state objects created so far and the milliseconds spent on them (the slow-frame log)
   virtual int pipelinesCreated() const { return 0; }
   virtual double pipelineMs() const { return 0; }
+  // Pipelines made ahead for a draw list (Vulkan, docs/renderer/vulkan.md §5): Renderer3D::draw asks before a list
+  // whether the device wants a collecting pass (programs were made since the bound target's last pass, or its formats
+  // are new); if so it runs the list once between begin and endPipelineCollect, where draws record nothing and the
+  // device only notes the pipelines they would need and lacks, and endPipelineCollect makes those side by side. The
+  // real pass then finds them all. The defaults: never.
+  virtual bool wantsPipelineCollect() { return false; }
+  virtual void beginPipelineCollect() {}
+  virtual void endPipelineCollect() {}
 
   // ---- ray queries (docs/renderer/vulkan.md §9.3): Vulkan with VK_KHR_ray_query only; the defaults do nothing ----
   virtual bool rayTracing() const { return false; }

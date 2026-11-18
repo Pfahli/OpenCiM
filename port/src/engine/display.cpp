@@ -780,12 +780,14 @@ void Display::benchFrame(double renderCpuMs) {
       for (double v : intervals) sum += v;
       for (double v : cpu) cpuSum += v;
       auto pct = [&](double p) { return s[std::min(s.size() - 1, size_t(p * double(s.size())))]; };
+      // the worst frame's number (as REGS_BENCH and --at count frames)
+      const int worst = first + 1 + int(std::max_element(intervals.begin(), intervals.end()) - intervals.begin());
       std::sort(gpu.begin(), gpu.end());
       double gpuMedian = gpu.empty() ? -1 : gpu[gpu.size() / 2];
       double gpuP95 = gpu.empty() ? -1 : gpu[std::min(gpu.size() - 1, size_t(0.95 * double(gpu.size())))];
-      LOG_INFO("bench: %s, %dx%d, %d frames: %.1f fps average, frame ms median %.2f, p95 %.2f, p99 %.2f, max %.2f; render cpu ms %.2f; gpu ms median %.2f, p95 %.2f",
+      LOG_INFO("bench: %s, %dx%d, %d frames: %.1f fps average, frame ms median %.2f, p95 %.2f, p99 %.2f, max %.2f (frame %d); render cpu ms %.2f; gpu ms median %.2f, p95 %.2f",
                render::gpu::dev().name(), r2d_.frameWidth(), r2d_.frameHeight(), count, 1000.0 * double(s.size()) / sum,
-               pct(0.5), pct(0.95), pct(0.99), s.back(), cpuSum / double(cpu.size()), gpuMedian, gpuP95);
+               pct(0.5), pct(0.95), pct(0.99), s.back(), worst, cpuSum / double(cpu.size()), gpuMedian, gpuP95);
     }
   }
   last = now;
