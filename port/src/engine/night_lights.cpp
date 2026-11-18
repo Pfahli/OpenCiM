@@ -880,19 +880,24 @@ std::map<std::string, uint32_t>& maskCache() {
 }
 
 struct MaskJob {
+  const Vfs* vfs = nullptr;
   const MeshData* mesh = nullptr;
   int material = -1;
-  std::string key, spec, objectPath;
-  std::vector<uint8_t> specData, illumData;
+  std::string key, spec, illum, objectPath;
   Image mask;
   WindowMaskInfo info;
   bool ok = false;
 };
 
+// the reading and inflating of the source maps is part of the job: prepareWindowMasks runs the jobs on worker threads
+// (Vfs::read only reads; nothing rescans or writes the file system while they run)
 void runMaskJob(MaskJob& j) {
+  std::vector<uint8_t> specData, illumData;
+  j.vfs->read(j.spec, specData);
+  if (!j.illum.empty()) j.vfs->read(j.illum, illumData);
   Image si, ii;
-  bool haveIllum = !j.illumData.empty() && parseDds(j.illumData, ii, nullptr);
-  j.ok = !j.specData.empty() && parseDds(j.specData, si, nullptr) && makeWindowMask(si, haveIllum ? &ii : nullptr, j.mask, &j.info, j.mesh, j.material);
+  bool haveIllum = !illumData.empty() && parseDds(illumData, ii, nullptr);
+  j.ok = !specData.empty() && parseDds(specData, si, nullptr) && makeWindowMask(si, haveIllum ? &ii : nullptr, j.mask, &j.info, j.mesh, j.material);
 }
 
 void finishMaskJob(Display& d, MaskJob& j) {
@@ -904,14 +909,12 @@ void finishMaskJob(Display& d, MaskJob& j) {
 }
 
 bool newJob(VM& vm, const MaterialDef& m, const std::string& objectPath, MaskJob& j, const MeshData* mesh, int material) {
+  j.vfs = &vm.vfs();
   j.mesh = mesh, j.material = material;
-  std::string illum;
-  if (!maskSources(m, objectPath, j.spec, illum)) return false;
-  j.key = j.spec + "|" + illum;
+  if (!maskSources(m, objectPath, j.spec, j.illum)) return false;
+  j.key = j.spec + "|" + j.illum;
   if (maskCache().count(j.key)) return false;
   j.objectPath = objectPath;
-  vm.vfs().read(j.spec, j.specData);
-  if (!illum.empty()) vm.vfs().read(illum, j.illumData);
   return true;
 }
 
