@@ -1151,7 +1151,9 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
           // the per-view uniforms once per program and view: they stay in the program while others draw, and the
           // units hookState binds hold this view's maps for the whole call (the draws bind units 0-5 only)
           locsCurrent = &locs(prog);
-          if (locsCurrent->setupView != view) {
+          // REGS_DEBUG_PROGRAM_SETUP: on every program switch, as before (comparisons)
+          static const bool setupEverySwitch = regs::envVar("REGS_DEBUG_PROGRAM_SETUP") != nullptr;
+          if (locsCurrent->setupView != view || setupEverySwitch) {
             setupProgram(v, prog);
             locsCurrent->setupView = view;
           }
