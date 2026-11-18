@@ -756,6 +756,37 @@ void registerInteractionNatives(VM& vm) {
     if (!controllerItem(v, s, &grid, &i)) return Value::integer(0);
     return Value::integer(int32_t(itemFlags(*grid->data, pickState(v, grid), i)));
   });
+  // activate / deactivate (method_activate L:0x08187650, method_deactivate L:0x08187610 = W:0x100ecca0 / 0x100ecce0):
+  // the item's own type (+0x58) becomes GRID_ITEM_NONE or GRID_ITEM_MARKER, then updateMesh and updateGraph. The
+  // demonstrations and parades of default.scenario (startAnimationEvent) show and hide their crowd items with them.
+  // Port: the renderer buckets an activated marker into its division and rebuilds it; fixGrid and the graphs read the
+  // override when they are next built (the lane graph is not rebuilt here).
+  auto setItemType = [](VM& v, Object* s, int type) {
+    GridObj* grid = nullptr;
+    uint32_t i = 0;
+    if (!controllerItem(v, s, &grid, &i)) return;
+    GridData::Item& it = grid->data->items[i];
+    if (it.typeOverride == type) return;
+    it.typeOverride = int8_t(type);
+    LOG_INFO("grid item %u (%d,%d): %s", i, it.x, it.z, type ? "deactivated" : "activated");
+    if (TerrainCache* tc = grid->terrain.get(); tc && tc->cols > 0) {
+      int d = itemDivision(*grid->data, *tc, i);
+      if (d >= 0) {
+        auto& list = tc->divisionItems[size_t(d)];
+        if (type != 0x15 && std::find(list.begin(), list.end(), i) == list.end()) list.push_back(i);
+        tc->dirtyItems.insert(d);
+      }
+    }
+    ++grid->itemsVersion;
+  };
+  implement(vm, "gsGridItemController", u"activate", [setItemType](VM& v, Object* s, int, const Value*) {
+    setItemType(v, s, 0);
+    return Value();
+  });
+  implement(vm, "gsGridItemController", u"deactivate", [setItemType](VM& v, Object* s, int, const Value*) {
+    setItemType(v, s, 0x15);
+    return Value();
+  });
   // getStats: the item's traffic word (+0x5c), maintained by the simulation's building pass (not ported yet)
   implement(vm, "gsGridItemController", u"getStats", [](VM&, Object*, int, const Value*) { return Value::integer(0); });
   implement(vm, "gsGridItemController", u"getConnections", [](VM&, Object*, int, const Value*) { return emptyArray(); });

@@ -26,11 +26,17 @@ struct GridData {
     uint32_t parent = 0;         // parent index + 1
     uint32_t variation = 0, flags = 0;
     bool removed = false;        // live map edits: a tombstone (indices stay stable while the map is loaded; not saved)
+    // gsGridItemController.activate / deactivate (L:0x08187650 / 0x08187610) set the item's own type (gsGridItem +0x58)
+    // to GRID_ITEM_NONE (0) or GRID_ITEM_MARKER (0x15); -1: the template's type (not saved)
+    int8_t typeOverride = -1;
   };
   std::vector<std::string> types;
   std::vector<Item> items;
   std::vector<std::string> names;
 };
+
+// the item's GRID_ITEM type: its activate/deactivate override, else the template's
+inline int gridItemType(const GridData::Item& it, int templateType) { return it.typeOverride >= 0 ? it.typeOverride : templateType; }
 
 bool parseGridFile(const std::vector<uint8_t>& file, GridData& out, std::string* error);
 

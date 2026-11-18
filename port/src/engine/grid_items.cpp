@@ -267,7 +267,8 @@ int bucketOf(const GridData& g, const TerrainCache& tc, uint32_t i) {
   if (ti < 0 || it.removed) return -1;
   const GridTemplate& tp = tc.templates[size_t(ti)];
   uint32_t flags = it.flags | tp.flags;
-  if ((flags & kFlagHidden) || tp.type == kTypeMarker || tp.type == kTypeSpawnPoint) return -1;
+  int type = gridItemType(it, tp.type);
+  if ((flags & kFlagHidden) || type == kTypeMarker || type == kTypeSpawnPoint) return -1;
   return itemDivision(g, tc, i);
 }
 
@@ -349,7 +350,7 @@ void fixGridCover(VM& vm, GridData& g, const TerrainCache& tc, uint32_t viewMode
     if (ti < 0 || it.removed) continue;
     const GridTemplate& tp = tc.templates[size_t(ti)];
     uint32_t flags = it.flags | tp.flags, cc = flags;
-    if ((flags & 0x500000) || tp.type == kTypeMarker) continue;  // gsGridItem::fixGrid() L:0x08185a40: not temporary or hidden
+    if ((flags & 0x500000) || gridItemType(it, tp.type) == kTypeMarker) continue;  // gsGridItem::fixGrid() L:0x08185a40: not temporary or hidden
     if (it.parent && it.parent <= g.items.size() && tp.type >= 10 && tp.type <= 12) {  // tram tracks follow the road
       const GridData::Item& p = g.items[it.parent - 1];
       int pti = p.type < tc.typeTemplate.size() ? tc.typeTemplate[p.type] : -1;
@@ -421,7 +422,7 @@ void fixGridCoverArea(VM& vm, GridObj* grid, int x0, int z0, int x1, int z1) {
     if (it.x > x1 || it.z > z1 || it.x + f.sx <= x0 || it.z + f.sz <= z0) continue;
     if (it.x < 0 || it.z < 0 || it.x + f.sx > g.width || it.z + f.sz > g.length) continue;
     uint32_t flags = it.flags | tp.flags, cc = flags;
-    if ((flags & 0x500000) || tp.type == kTypeMarker) continue;  // as fixGridCover
+    if ((flags & 0x500000) || gridItemType(it, tp.type) == kTypeMarker) continue;  // as fixGridCover
     if (it.parent && it.parent <= g.items.size() && tp.type >= 10 && tp.type <= 12) {  // tram tracks follow the road
       const GridData::Item& p = g.items[it.parent - 1];
       if (p.type < info.size() && info[p.type].valid) cc = (cc | 0xC000) & (p.flags | info[p.type].tp.flags);
@@ -479,7 +480,7 @@ void buildGridItems(const GridData& g, const TerrainCache& tc, int division, int
   std::map<std::pair<int, uint32_t>, Group> groups;
   for (uint32_t i : tc.divisionItems[size_t(division)]) {
     const GridData::Item& it = g.items[i];
-    if (it.removed) continue;
+    if (it.removed || it.typeOverride == kTypeMarker) continue;  // deactivated items stay bucketed, undrawn
     if (view != 0xFE && !gridItemVisible(g, tc, i, view)) continue;
     const GridTemplate& tp = tc.templates[size_t(tc.typeTemplate[it.type])];
     if (tp.skinned) continue;  // drawn per item (collectSkinnedItems)
@@ -632,7 +633,7 @@ void collectSkinnedItems(Display& d, VM& vm, const GridData& g, const TerrainCac
   for (uint32_t i : tc.divisionItems[size_t(division)]) {
     const GridData::Item& it = g.items[i];
     int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
-    if (ti < 0 || it.removed || !tc.templates[size_t(ti)].skinned) continue;
+    if (ti < 0 || it.removed || it.typeOverride == kTypeMarker || !tc.templates[size_t(ti)].skinned) continue;
     if (view != 0xFE && !gridItemVisible(g, tc, i, view)) continue;
     const GridTemplate& tp = tc.templates[size_t(ti)];
     uint32_t flags = it.flags | tp.flags;
