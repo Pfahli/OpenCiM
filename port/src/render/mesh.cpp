@@ -234,6 +234,13 @@ bool loadObject(const std::string& path, const std::function<bool(const std::str
   for (int k = 0; k < 4; ++k) out.nodeRotation[k] = b.f32(8 + 0x2c + 4 * k);
   size_t end = std::min(d.size(), size_t(8) + b.u32(4));
   b.children(8 + 60, end, [&](uint32_t tag, size_t body, size_t stop) {
+    if (tag == 0x02600000 && body + 64 <= end) {  // a locator: name at +4, position at +0x24, rotation at +0x30
+      ObjectLocator l;
+      l.name = b.str(body + 4, 31);
+      for (int k = 0; k < 3; ++k) l.pos[size_t(k)] = b.f32(body + 0x24 + 4 * size_t(k));
+      for (int k = 0; k < 4; ++k) l.rot[size_t(k)] = b.f32(body + 0x30 + 4 * size_t(k));
+      out.locators.push_back(std::move(l));
+    }
     if (tag == 0x02010000) parseMesh(b, body, stop, dir, read, out.mesh, out.materials);
     else if (tag == 0x02040000) {
       parseMesh(b, body, stop, dir, read, out.lod1, out.materials);

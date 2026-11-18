@@ -46,6 +46,13 @@ struct MeshData {
   size_t vertexCount() const { return positions.size() / 3; }
 };
 
+// A locator of an .object (top-level chunk 0x02600000): name, position and rotation as stored.
+struct ObjectLocator {
+  std::string name;
+  std::array<float, 3> pos{};
+  std::array<float, 4> rot{};
+};
+
 // A loaded .object: the LOD-0 render mesh (lod1 kept for later), its materials, and the 3ds Max node placement.
 struct ObjectData {
   std::string name;
@@ -54,6 +61,7 @@ struct ObjectData {
   MeshData mesh, lod1;
   bool hasLod1 = false;
   std::vector<MaterialDef> materials;
+  std::vector<ObjectLocator> locators;  // in file order (the grid templates' locator paths, engine/sim_graph.cpp)
 };
 
 // Reads an .object file; 'read' fetches a VFS file (returns false when missing). Material files are looked up as

@@ -99,35 +99,42 @@ void applyFlags(PathSetObj* set, const std::string& name, uint32_t flags) {
 
 // the locator pairs of the template's mesh: consecutive names "x-…n", "x-…m" that differ only in the last character
 void addLocatorPaths(VM& vm, ObjectObj* tpl, PathSetObj* set) {
-  std::vector<uint8_t> d;
-  if (tpl->pendingPath.empty() || !vm.vfs().read(tpl->pendingPath, d) || d.size() < 8 + 60) return;
-  auto u32 = [&](size_t at) {
-    uint32_t v = 0;
-    if (at + 4 <= d.size()) std::memcpy(&v, d.data() + at, 4);
-    return v;
-  };
-  auto f32 = [&](size_t at) {
-    float v = 0;
-    if (at + 4 <= d.size()) std::memcpy(&v, d.data() + at, 4);
-    return v;
-  };
-  if (u32(0) != 0x02000000) return;
+  if (tpl->pendingPath.empty()) return;
   struct Locator {
     Vec3 pos;
     Quat rot;
   };
   std::map<std::string, Locator> locators;  // gsObject+0x134, by name
-  size_t end = std::min(d.size(), size_t(8) + u32(4));
-  for (size_t at = 8 + 60; at + 8 <= end;) {
-    uint32_t tag = u32(at), size = u32(at + 4);
-    size_t b = at + 8;
-    if (tag == 0x02600000 && b + 64 <= end) {
-      std::string name;
-      for (size_t i = 0; i < 31 && d[b + 4 + i]; ++i) name += char(d[b + 4 + i]);
-      locators[name] = {{f32(b + 0x24), f32(b + 0x28), f32(b + 0x2c)},
-                        {f32(b + 0x30), f32(b + 0x34), f32(b + 0x38), f32(b + 0x3c)}};
+  // the loader keeps them (render/mesh.cpp loadObject), so the .object is not read and inflated a second time
+  if (auto od = loadObjectCached(vm, tpl->pendingPath)) {
+    for (const render::ObjectLocator& l : od->locators)
+      locators[l.name] = {{l.pos[0], l.pos[1], l.pos[2]}, {l.rot[0], l.rot[1], l.rot[2], l.rot[3]}};
+  } else {  // not loadable as a mesh (none in it): its locators from the file
+    std::vector<uint8_t> d;
+    if (!vm.vfs().read(tpl->pendingPath, d) || d.size() < 8 + 60) return;
+    auto u32 = [&](size_t at) {
+      uint32_t v = 0;
+      if (at + 4 <= d.size()) std::memcpy(&v, d.data() + at, 4);
+      return v;
+    };
+    auto f32 = [&](size_t at) {
+      float v = 0;
+      if (at + 4 <= d.size()) std::memcpy(&v, d.data() + at, 4);
+      return v;
+    };
+    if (u32(0) != 0x02000000) return;
+    size_t end = std::min(d.size(), size_t(8) + u32(4));
+    for (size_t at = 8 + 60; at + 8 <= end;) {
+      uint32_t tag = u32(at), size = u32(at + 4);
+      size_t b = at + 8;
+      if (tag == 0x02600000 && b + 64 <= end) {
+        std::string name;
+        for (size_t i = 0; i < 31 && d[b + 4 + i]; ++i) name += char(d[b + 4 + i]);
+        locators[name] = {{f32(b + 0x24), f32(b + 0x28), f32(b + 0x2c)},
+                          {f32(b + 0x30), f32(b + 0x34), f32(b + 0x38), f32(b + 0x3c)}};
+      }
+      at = b + size;
     }
-    at = b + size;
   }
   // the load rotation of the diagonal "b" variants (+0x1b8): positions and directions turn with the mesh
   float cb = tpl->loadYaw != 0 ? std::cos(tpl->loadYaw) : 1, sb = tpl->loadYaw != 0 ? std::sin(tpl->loadYaw) : 0;
