@@ -98,7 +98,7 @@ Debugging switches (environment variables): `REGS_NO_COMBINER=1` (built-in shade
 (fallback shader views), `REGS_DUMP_TARGET=<file.png>` (render-target contents), `REGS_DEBUG_VIEWPORT=1` (viewport
 scene/camera and large GUI images, once each), `REGS_DEBUG_MATERIALS=1` (failed `getMaterial` lookups), `REGS_MINIMAP_CHECK=amsterdam,tutorialcity` (renders
 shipped maps with the loaded templates and compares them with the editor's saved minimaps, `metro/maps/<map>.dds`),
-`REGS_DEBUG_PICK=1` (logs each newly hovered item or vehicle), `REGS_DEBUG_TOOLS=1` (pieces and time of each rebuilt track preview; `=2` lists the pieces), `REGS_DEBUG_HALT=1` (where each line vehicle stands at a halt: front, rear and middle along the platform node; how many nodes it pulled past the platform), `REGS_REPORT_MISSING=1` (lists the unimplemented natives
+`REGS_DEBUG_PICK=1` (logs each newly hovered item or vehicle), `REGS_DEBUG_NO_PICK_CULL=1` (the hover pick tests every vehicle and pedestrian without the pre-cull; `=check` does both and logs where they differ), `REGS_DEBUG_TOOLS=1` (pieces and time of each rebuilt track preview; `=2` lists the pieces), `REGS_DEBUG_HALT=1` (where each line vehicle stands at a halt: front, rear and middle along the platform node; how many nodes it pulled past the platform), `REGS_REPORT_MISSING=1` (lists the unimplemented natives
 the scripts called, at exit), `REGS_DEBUG_GROUPS=1` (the script thread groups' pause count, speed and time every 300
 frames), `REGS_DEBUG_SAVE_AT=<ticks>:<name>` (saves the game after that many simulation ticks, for round trips),
 `REGS_DEBUG_ECONOMY=1` (after every month and year: the money, each book entry, loans, reputation, company value,

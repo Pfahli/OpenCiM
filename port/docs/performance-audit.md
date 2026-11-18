@@ -173,3 +173,22 @@ Next by the new profile (Berlin, Vulkan): the stop bubbles still spend ~13 % in 
 (`placeTracer` reading about 15 fields by name per bubble per frame; A11 and a per-frame camera cache), the
 Vulkan draw path (~16 %, the state and descriptor skipping of A4), `stepCitizens` (~14 %), and the Vulkan hitches
 (still up to 720 ms; pipeline and SPIR-V caches).
+
+## Results of the second round (2026-11-18)
+
+Done: A7 (hover pick pre-cull in `forEachSimVehicle` / `forEachSimCharacter`; the last-hit reuse was left out, it
+only helps while paused), A11 in part (`U16Map`: heterogeneous lookup on `fieldValues`, `varIndex`, the class
+maps, `functionIndex` and the globals; the generated field getters keep their name's hash; no flattened per-class
+cache), and the per-pass camera cache for the tracers (`TracerViews`, shared by organized and unorganized tracers,
+cleared when a viewport inside the pass eases its camera). New test switch: REGS_DEBUG_NO_PICK_CULL (=check).
+
+| Save, view, engine | fps before | fps after |
+|---|---|---|
+| Berlin, start view, Vulkan | 86.3 / 86.3 / 86.3 | 104.9 / 104.9 / 103.4 |
+| Berlin, start view, OpenGL | 86.1 / 88.2 | 100.5 / 98.7 |
+| Berlin, zoomed out over the lines (~40 bubbles), Vulkan | 69.7 / 69.2 | 81.3 / 80.8 |
+
+REGS_BENCH=300:1400, REGS_FIXED_DT=0.016, before and after runs alternated on a quiet machine. Profile of the start
+view after: `placeTracer` 5.0 % (was ~15 %; what is left are the bubbles' own field reads), `intersectGrid` 2.7 %
+(was 3-5 %; now mostly the per-mover cull test itself). Screenshots (Vulkan, OpenGL) and a 1,034-position pick sweep
+are identical to the build before, apart from the few snow pixels that also differ between two runs of one build.
