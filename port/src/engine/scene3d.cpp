@@ -655,6 +655,15 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
         lv.lights.clear();
         lv.fog = false;
         lv.shadowMapLeftovers = rayShadows;
+        // the main camera's list keeps its LOD and order; parts that cannot reach the map are dropped: outside the
+        // light's clip sides as the shadow programs warp them (gl_Position = shadowWarp · clip, shadows.md §4.4) and
+        // as a program without the warp would draw them (REGS_DEBUG_NO_CASTER_CULL: every part, for comparisons)
+        static const bool noCasterCull = regs::envVar("REGS_DEBUG_NO_CASTER_CULL") != nullptr;
+        if (!noCasterCull) {
+          lv.casterClipCount = 2;
+          lv.casterClip[0] = fit.warp * fit.lightProj * fit.lightView;
+          lv.casterClip[1] = fit.lightProj * fit.lightView;
+        }
         assignPrograms(d, vm, items, lv.env);
         if (v.particles) prepareParticlePrograms(d, vm, particles, lv.env);
         d.r3d().begin(map, 0, 0, map->width, map->height, 0, false, bw, bh);

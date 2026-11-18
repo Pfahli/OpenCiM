@@ -192,6 +192,12 @@ struct SceneView {
   Mat4 shadowTransform, shadowWarp;
   float shadowParams[4] = {0, 0, 0, 0};
   bool flipCull = false;  // env 0x20: cull front faces (shadow pass with useBackSide)
+  // shadow-map pass: the light's clip matrices (engine/scene3d.cpp: warped and unwarped, model space not included).
+  // A part whose bound lies wholly outside a left, right, bottom or top clip side of each of them cannot reach the map
+  // and is skipped. Near and far are not tested: the shadow programs write z = 0 and their own depth, so casters nearer
+  // than the light's near plane still count (docs/renderer/shadows.md §4.4). 0 = no such culling.
+  int casterClipCount = 0;
+  Mat4 casterClip[2];
   // raytraced shadows (docs/renderer/vulkan.md §9.3): the main pass's programs trace toward sunWorld; the shadow-map
   // pass then draws only what the rays leave out (alpha-tested and blended materials, skinned meshes)
   bool rayShadows = false;

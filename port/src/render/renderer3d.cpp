@@ -1015,6 +1015,65 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     uint32_t program;
   };
   std::vector<Q> opaque, tested, blended;
+  // shadow-map pass: the light's clip sides as world-space planes (SceneView::casterClip), n·x + d ≥ 0 inside, n unit
+  struct Plane {
+    Vec3 n;
+    float d;
+  };
+  Plane casterPlanes[2][4];
+  const int casterVolumes = shadowPass ? std::clamp(v.casterClipCount, 0, 2) : 0;
+  for (int k = 0; k < casterVolumes; ++k) {
+    const Mat4& c = v.casterClip[k];
+    for (int s = 0; s < 4; ++s) {  // w + x, w − x, w + y, w − y
+      const int row = s / 2;
+      const float sign = s % 2 ? -1.0f : 1.0f;
+      Vec3 n{c.at(3, 0) + sign * c.at(row, 0), c.at(3, 1) + sign * c.at(row, 1), c.at(3, 2) + sign * c.at(row, 2)};
+      float d = c.at(3, 3) + sign * c.at(row, 3), len = std::sqrt(dot(n, n));
+      casterPlanes[k][s] = len > 0 ? Plane{n * (1.0f / len), d / len} : Plane{{0, 0, 0}, 1.0f};  // degenerate: never out
+    }
+  }
+  // the largest column of a matrix's 3×3: how much it can grow a radius
+  auto scaleOf = [](const Mat4& m) {
+    float s = 0;
+    for (int c = 0; c < 3; ++c) s = std::max(s, m.at(0, c) * m.at(0, c) + m.at(1, c) * m.at(1, c) + m.at(2, c) * m.at(2, c));
+    return std::sqrt(s);
+  };
+  // true when the part cannot reach the shadow map. Its bound: the part's sphere through the item's world matrix plus a
+  // margin for vertex animation (tree sway moves a 30 m tree's top by about 5 m); a skinned part's posed vertices are
+  // blends of the vertex through its bones' skin matrices, so they lie in the hull of the sphere through each bone
+  // of its palettes, and a side cuts the part away only when it cuts away every one of those spheres
+  constexpr float kCasterMargin = 10.0f;
+  std::vector<std::pair<Vec3, float>> casterSpheres;
+  auto casterOut = [&](const DrawItem& it, const GpuMesh::Part& p) {
+    const float ws = scaleOf(it.world);
+    casterSpheres.clear();
+    if (!p.groups.empty() && it.bones) {
+      for (const GpuMesh::Part::SkinGroup& g : p.groups)
+        for (uint16_t b : g.palette) {
+          if (b < it.bones->size()) {
+            const Mat4& s = (*it.bones)[b];
+            casterSpheres.push_back({transformPoint(it.world, transformPoint(s, p.center)), p.radius * scaleOf(s) * ws});
+          } else {
+            casterSpheres.push_back({transformPoint(it.world, p.center), p.radius * ws});  // identity: the bind pose
+          }
+        }
+    }
+    if (casterSpheres.empty()) casterSpheres.push_back({transformPoint(it.world, p.center), p.radius * ws});
+    for (int k = 0; k < casterVolumes; ++k) {
+      bool out = false;
+      for (int s = 0; s < 4 && !out; ++s) {
+        const Plane& pl = casterPlanes[k][s];
+        out = true;
+        for (const auto& [c, r] : casterSpheres)
+          if (dot(pl.n, c) + pl.d >= -(r + kCasterMargin)) {
+            out = false;
+            break;
+          }
+      }
+      if (!out) return false;  // inside (or across) this volume
+    }
+    return casterVolumes > 0;
+  };
   for (const DrawItem& it : items) {
     if (!it.mesh || (it.shadowOnly && !shadowPass)) continue;
     for (const auto& p : it.mesh->parts) {
@@ -1029,6 +1088,7 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
       if (shadowPass && v.shadowMapLeftovers && !(m.flags & kMatAlphaBlend) && m.surfaceClass != kSurfaceFoliage &&
           p.groups.empty())
         continue;
+      if (casterVolumes && casterOut(it, p)) continue;
       Vec3 dv = transformPoint(it.world, p.center) - v.eye;
       // MATERIAL_ZERO_RADIUS (water): radius −100, so it sorts before other blended parts nearby (terrain.md §6.4)
       float radius = (m.flags & 0x02000000u) ? -100.0f : p.radius;
