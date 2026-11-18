@@ -57,7 +57,10 @@ class Vfs {
 
   bool exists(const std::string& path) const { return records_.count(path) != 0; }
   const Record* find(const std::string& path) const;
+  // Both are safe from several threads at once while nothing rescans or writes the file system.
   bool read(const std::string& path, std::vector<uint8_t>& out, std::string* error = nullptr) const;
+  // The first n bytes of a file (all of it when shorter), e.g. a header: packed archive entries are inflated only so far.
+  bool readHead(const std::string& path, std::vector<uint8_t>& out, size_t n) const;
 
   // Writes a file: "memory/..." becomes a RAM file; anything else is mapped to disk ("userdata/" -> userdata root,
   // otherwise relative to the install root) and registered as a loose record. Directories are not created.

@@ -75,8 +75,9 @@ const uint8_t kLenExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3
 const uint16_t kDistBase[30] = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
 const uint8_t kDistExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
-bool inflateBlock(BitReader& br, std::vector<uint8_t>& out, const Huffman& lit, const Huffman& dist) {
-  for (;;) {
+// limit: the block stops early once the output holds that many bytes
+bool inflateBlock(BitReader& br, std::vector<uint8_t>& out, const Huffman& lit, const Huffman& dist, size_t limit) {
+  while (out.size() < limit) {
     int sym = lit.decode(br);
     if (sym < 0 || br.overrun) return false;
     if (sym < 256) {
@@ -90,16 +91,16 @@ bool inflateBlock(BitReader& br, std::vector<uint8_t>& out, const Huffman& lit, 
       int ds = dist.decode(br);
       if (ds < 0 || ds >= 30) return false;
       size_t d = kDistBase[ds] + br.get(kDistExtra[ds]);
-      if (d > out.size()) return false;
+      if (d > out.size() || br.overrun) return false;
       size_t from = out.size() - d;
       for (size_t i = 0; i < len; ++i) out.push_back(out[from + i]);
     }
   }
+  return true;
 }
 
-}  // namespace
-
-bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out) {
+// the stream up to its last block, or until the output holds `limit` bytes (then true, the output possibly longer)
+bool inflateStream(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t limit) {
   BitReader br{in.data(), in.data() + in.size()};
   static Huffman fixedLit, fixedDist;
   static bool fixedReady = false;
@@ -117,6 +118,7 @@ bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out) {
   }
   int last;
   do {
+    if (out.size() >= limit) return true;
     last = int(br.get(1));
     int type = int(br.get(2));
     if (type == 0) {
@@ -133,11 +135,16 @@ bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out) {
       uint16_t nlen = uint16_t(br.p[2] | (br.p[3] << 8));
       if (uint16_t(~nlen) != len) return false;
       br.p += 4;
-      if (br.end - br.p < len) return false;
+      if (br.end - br.p < len) {  // a head may stop inside a stored block
+        size_t have = size_t(br.end - br.p);
+        if (out.size() + have < limit) return false;
+        out.insert(out.end(), br.p, br.end);
+        return true;
+      }
       out.insert(out.end(), br.p, br.p + len);
       br.p += len;
     } else if (type == 1) {
-      if (!inflateBlock(br, out, fixedLit, fixedDist)) return false;
+      if (!inflateBlock(br, out, fixedLit, fixedDist, limit)) return false;
     } else if (type == 2) {
       int hlit = int(br.get(5)) + 257, hdist = int(br.get(5)) + 1, hclen = int(br.get(4)) + 4;
       static const uint8_t order[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
@@ -168,7 +175,7 @@ bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out) {
       }
       Huffman lit, dist;
       if (!lit.build(lengths, hlit) || !dist.build(lengths + hlit, hdist)) return false;
-      if (!inflateBlock(br, out, lit, dist)) return false;
+      if (!inflateBlock(br, out, lit, dist, limit)) return false;
     } else {
       return false;
     }
@@ -176,6 +183,16 @@ bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out) {
   } while (!last);
   return true;
 }
+
+bool zlibHeaderOk(std::span<const uint8_t> in) {
+  if (in.size() < 6) return false;
+  uint8_t cmf = in[0], flg = in[1];
+  return (cmf & 0x0F) == 8 && ((cmf << 8) | flg) % 31 == 0 && !(flg & 0x20);
+}
+
+}  // namespace
+
+bool rawInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out) { return inflateStream(in, out, SIZE_MAX); }
 
 uint32_t adler32(std::span<const uint8_t> data) {
   uint32_t a = 1, b = 0;
@@ -187,15 +204,20 @@ uint32_t adler32(std::span<const uint8_t> data) {
 }
 
 bool zlibInflate(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t expectedSize) {
-  if (in.size() < 6) return false;
-  uint8_t cmf = in[0], flg = in[1];
-  if ((cmf & 0x0F) != 8 || ((cmf << 8) | flg) % 31 != 0 || (flg & 0x20)) return false;
+  if (!zlibHeaderOk(in)) return false;
   out.clear();
   if (expectedSize) out.reserve(expectedSize);
   if (!rawInflate(in.subspan(2, in.size() - 6), out)) return false;
   const uint8_t* t = in.data() + in.size() - 4;
   uint32_t want = (uint32_t(t[0]) << 24) | (uint32_t(t[1]) << 16) | (uint32_t(t[2]) << 8) | t[3];
   return adler32(out) == want;
+}
+
+bool zlibInflateHead(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t limit) {
+  out.clear();
+  if (!zlibHeaderOk(in) || !inflateStream(in.subspan(2), out, limit) || out.size() < limit) return false;
+  out.resize(limit);
+  return true;
 }
 
 }  // namespace regs

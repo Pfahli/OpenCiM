@@ -103,6 +103,48 @@ int cmdVfs(int argc, char** argv) {
     std::printf("verified %zu entries (%llu bytes), %zu failures\n", ok, (unsigned long long)bytes, bad);
     return bad ? 1 : 0;
   }
+  if (sub == "hashes") {
+    // one line per archive entry: archive, entry, unpacked size and a 64-bit FNV-1a of the bytes read, to compare
+    // two builds' inflaters (diff the outputs); then the time spent reading
+    std::vector<uint8_t> buf;
+    auto t1 = std::chrono::steady_clock::now();
+    uint64_t bytes = 0;
+    size_t bad = 0;
+    for (auto& a : vfs.archives())
+      for (auto& e : a.entries) {
+        uint64_t h = 1469598103934665603ull;
+        if (a.read(e, buf)) {
+          for (uint8_t c : buf) h = (h ^ c) * 1099511628211ull;
+          bytes += buf.size();
+        } else {
+          ++bad;
+          h = 0;
+        }
+        std::printf("%s|%s|%zu|%016llx\n", a.file.filename().string().c_str(), e.name.c_str(), buf.size(), (unsigned long long)h);
+      }
+    std::fprintf(stderr, "read %llu bytes in %lld ms, %zu failures\n", (unsigned long long)bytes,
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t1).count(), bad);
+    return bad ? 1 : 0;
+  }
+  if (sub == "heads") {
+    // Archive::readHead against the start of the whole entry, for every entry and a few lengths
+    std::vector<uint8_t> all, head;
+    size_t checked = 0, bad = 0;
+    for (auto& a : vfs.archives())
+      for (auto& e : a.entries) {
+        if (!a.read(e, all)) continue;
+        for (size_t n : {size_t(0), size_t(4), size_t(128), size_t(5000), size_t(70000)}) {
+          ++checked;
+          size_t want = std::min(n, all.size());
+          if (!a.readHead(e, head, n) || head.size() != want || std::memcmp(head.data(), all.data(), want) != 0) {
+            ++bad;
+            std::printf("FAIL %s:%s head %zu\n", a.file.filename().string().c_str(), e.name.c_str(), n);
+          }
+        }
+      }
+    std::printf("checked %zu heads, %zu failures\n", checked, bad);
+    return bad ? 1 : 0;
+  }
   if (sub == "list") {
     std::string prefix = argc > 4 ? argv[4] : "";
     for (auto& [k, r] : vfs.records())

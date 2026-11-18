@@ -30,6 +30,8 @@ struct Archive {
   bool open(const std::filesystem::path& path, std::string* error = nullptr);
   // Reads and unpacks one entry.
   bool read(const ArchiveEntry& e, std::vector<uint8_t>& out, std::string* error = nullptr) const;
+  // The first min(n, size) bytes of one entry; a packed entry is inflated only that far.
+  bool readHead(const ArchiveEntry& e, std::vector<uint8_t>& out, size_t n) const;
 
   // Virtual path prefix of this archive's entries. relPath is the archive's path relative to the root it was found
   // under, with '/' separators and without the ".gs" extension.

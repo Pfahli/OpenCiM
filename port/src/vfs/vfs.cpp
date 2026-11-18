@@ -212,6 +212,29 @@ bool Vfs::read(const std::string& path, std::vector<uint8_t>& out, std::string* 
   return false;
 }
 
+bool Vfs::readHead(const std::string& path, std::vector<uint8_t>& out, size_t n) const {
+  const Record* r = find(path);
+  if (!r) return false;
+  switch (r->kind) {
+    case Kind::Memory:
+      out.assign(r->memory->begin(), r->memory->begin() + std::ptrdiff_t(std::min(n, r->memory->size())));
+      return true;
+    case Kind::ArchiveEntry: {
+      const Archive& a = archives_[r->archive];
+      return a.readHead(a.entries[r->entry], out, n);
+    }
+    case Kind::Loose: {
+      FILE* f = _wfopen(r->disk.wstring().c_str(), L"rb");
+      if (!f) return false;
+      out.resize(n);
+      out.resize(std::fread(out.data(), 1, n, f));
+      std::fclose(f);
+      return true;
+    }
+  }
+  return false;
+}
+
 fs::path Vfs::diskPathFor(const std::string& path) const {
   auto w = utf8ToUtf16(path);
   fs::path rel(std::wstring(w.begin(), w.end()));

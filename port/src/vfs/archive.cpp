@@ -118,6 +118,26 @@ bool Archive::read(const ArchiveEntry& e, std::vector<uint8_t>& out, std::string
   return true;
 }
 
+bool Archive::readHead(const ArchiveEntry& e, std::vector<uint8_t>& out, size_t n) const {
+  n = std::min<size_t>(n, e.size);
+  if (e.tag == kStored) {
+    File f(file);
+    out.resize(n);
+    return f.f && f.readAt(e.offset, out.data(), n);
+  }
+  if (n < e.size) {
+    // the start of the packed data is usually enough (a few hundred bytes give a DDS header); else all of it
+    File f(file);
+    if (!f.f) return false;
+    std::vector<uint8_t> packed(std::min<size_t>(e.packedSize, 4096 + 2 * n));
+    if (!f.readAt(e.offset, packed.data(), packed.size())) return false;
+    if (zlibInflateHead(packed, out, n)) return true;
+  }
+  if (!read(e, out)) return false;
+  out.resize(n);
+  return true;
+}
+
 std::string Archive::virtualPrefix(const std::string& relPathNoExt) const {
   if (mountPath) return *mountPath;
   return parentPrefix.value_or("") + relPathNoExt + "/";

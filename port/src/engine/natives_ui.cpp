@@ -56,7 +56,8 @@ Ref<Object> getTexture(VM& vm, std::u16string path) {
   if (auto it = cache.find(path); it != cache.end()) return it->second;
   std::vector<uint8_t> data;
   int w = 0, h = 0;
-  if (!vm.vfs().read(utf16ToUtf8(path), data) || !ddsSize(data, w, h)) {
+  // the size from the 128-byte header only: the upload reads the whole file (Display::texture)
+  if (!vm.vfs().readHead(utf16ToUtf8(path), data, 128) || !ddsSize(data, w, h)) {
     if (path != u"textures/default.dds") return getTexture(vm, u"textures/default.dds");
     w = h = 1;
   }
