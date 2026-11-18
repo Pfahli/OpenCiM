@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "platform/gamepad.h"
 #include "platform/touchpad_win32.h"
 #include "platform/window.h"
 
@@ -166,6 +167,7 @@ class Win32Window final : public Window {
                                                 GC_PAN_WITH_INERTIA}};
     SetGestureConfig(hwnd_, 0, UINT(sizeof(gc) / sizeof(gc[0])), gc, sizeof(GESTURECONFIG));
     touchpad_.attach(hwnd_);
+    gamepadAttach(hwnd_);  // PlayStation pads without XInput (platform/gamepad.h)
     RECT cr;
     GetClientRect(hwnd_, &cr);
     width_ = cr.right;
@@ -193,6 +195,14 @@ class Win32Window final : public Window {
     if (swapInterval_) swapInterval_(on ? 1 : 0);
   }
   void showCursor(bool on) override { cursor_ = on; }
+  // the controller's virtual cursor (engine/gamepad.cpp): the system cursor follows it while the window has the
+  // focus, so the mouse goes on from where the cursor is
+  void warpCursor(int x, int y) override {
+    if (GetForegroundWindow() != hwnd_) return;
+    POINT p{x, y};
+    ClientToScreen(hwnd_, &p);
+    SetCursorPos(p.x, p.y);
+  }
   int width() const override { return width_; }
   int height() const override { return height_; }
   bool fullscreen() const override { return fullscreen_; }
@@ -340,6 +350,7 @@ class Win32Window final : public Window {
         return 0;
       }
       case WM_INPUT: {
+        if (gamepadRawInput(reinterpret_cast<void*>(l))) break;  // a PlayStation pad report
         float angle = 0;
         bool ended = false;
         if (touchpad_.input(l, angle, ended)) {

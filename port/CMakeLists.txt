@@ -41,6 +41,7 @@ add_library(regs_engine STATIC
   src/engine/font.cpp
   src/engine/input.cpp
   src/engine/camera_input.cpp
+  src/engine/gamepad.cpp
   src/render/gl.cpp
   src/render/gpu_gl.cpp
   src/render/image.cpp
@@ -101,6 +102,8 @@ add_library(regs_engine STATIC
   src/engine/debug_economy.cpp
   src/platform/window_win32.cpp
   src/platform/touchpad_win32.cpp
+  src/platform/gamepad_win32.cpp
+  src/platform/steam_hid_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp
 )
@@ -266,7 +269,7 @@ else()
   target_sources(regs_engine PRIVATE src/render/gpu_vk_stub.cpp)
 endif()
 
-add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/texture_tools.cpp src/tools/crash_win32.cpp)
+add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/pad_glyphs.cpp src/tools/texture_tools.cpp src/tools/crash_win32.cpp)
 target_include_directories(regs-tool PRIVATE third_party/miniaudio)
 target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
 
@@ -277,7 +280,8 @@ target_link_libraries(regs PRIVATE regs_engine dbghelp winmm)
 # executable; copied on every build (also when only data/ changed and nothing relinks)
 # Built-in mods (data/mods, disabled until listed in the user's mods.json) come along; the weather mod's seamless loops
 # are cut here from its CC0 recordings by regs-tool cut (data/mods/weather/sounds/LICENSES.txt), its soft particle
-# sprite drawn by regs-tool softdot, its falling-leaf sprite by regs-tool leaf
+# sprite drawn by regs-tool softdot, its falling-leaf sprite by regs-tool leaf; the controller legend's button glyphs
+# by regs-tool padglyphs (data/regs/ui/pad, docs/controller.md)
 set(WEATHER_SOUNDS $<TARGET_FILE_DIR:regs>/data/mods/weather/sounds)
 add_custom_target(regs_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data
@@ -287,9 +291,10 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/cars-rainy-street.mp3 ${WEATHER_SOUNDS}/wet-traffic.wav 2 30 3 loop
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/thunder-clap.mp3 ${WEATHER_SOUNDS}/thunder-mid.wav 0 14 4
   COMMAND $<TARGET_FILE:regs-tool> softdot $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/softdot.dds 32
-  COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32)
+  COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32
+  COMMAND $<TARGET_FILE:regs-tool> padglyphs $<TARGET_FILE_DIR:regs>/data/regs/ui/pad)
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
-  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid)
+  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid setupapi)
 endif()
 

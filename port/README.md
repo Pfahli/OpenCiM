@@ -84,7 +84,7 @@ original does (for comparisons). `--frames <n>` quits after n frames and `--scre
 saves the last one (used for checks). `--at <frame>:<action>` injects input for screenshot checks: `move:x,y`,
 `click:left|right|middle`, `down:…`/`up:…`, `key:<VK>` (press and release), `keydown:<VK>`/`keyup:<VK>` (hold), `text:<chars>` (typed into edit controls),
 `shot:<file.png>`, `vsync:on|off` (e.g. off after a frame-timed load, for frame-time measurements), `wheel:<notches>`
-(mouse wheel at the mouse position, negative zooms out), `hwheel:<notches>` (sideways wheel), `gesture:zoom,<f>|turn,<rad>|pan,<dx>,<dy>|end` (a two-finger gesture, docs/camera.md), `tilt:`/`zoom:`/`dir:` (the game camera), `cam:x,z` (the game camera over a world point through
+(mouse wheel at the mouse position, negative zooms out), `hwheel:<notches>` (sideways wheel), `gesture:zoom,<f>|turn,<rad>|pan,<dx>,<dy>|end` (a two-finger gesture, docs/camera.md), `pad:<button|axis>,<value>` (the simulated controller, docs/controller.md), `tilt:`/`zoom:`/`dir:` (the game camera), `cam:x,z` (the game camera over a world point through
 `MAIN.$gameUI.setCameraPos`; clamped to the map, so `cam:0,99999` shows the south edge). Loading the save
 `Cim2` and entering the game, for example:
 
@@ -242,6 +242,21 @@ also takes a tram stop that sits in a street (small and large roads, where the t
 buses halt there in the tram's lane and serve passengers like at a bus stop; tram lines keep the stop. Tram stops in an
 avenue's middle strip or on their own track stay refused. Settings key `$regsBusAtTramStops` in `settings.script`
 (`false` turns it off for the tool; saves with such lines keep running either way). Rules and data: `docs/ui/lines.md` §6.
+
+**Controller** (owner's request 2026-11-18): the game can be played with an Xbox- or PlayStation-style pad, with mouse
+and keyboard working alongside. The left stick moves a virtual cursor (A = left click and drag, B = right click, B held
+= selection tool; pushed against the screen edge it pans the map, LB + left stick pans with the cursor still), the
+right stick turns and tilts the camera (R3 resets the tilt), LT / RT zoom, Start is Esc, Y the construction menu, X
+the bulldozer, View the underground view, RB pause, the d-pad the game speed (left / right) and the line and vehicle
+panels (up / down). The keyed buttons follow the player's `controls.keys`. Settings > Controls > **Controller**:
+on/off (`$regsController`), cursor and camera speed (`$regsControllerCursor`, `$regsControllerCamera`), invert tilt
+(`$regsControllerInvertTilt`) and the button legend with each layout's glyphs (Xbox, PlayStation, Steam Deck, Steam
+Controller; drawn at build time by `regs-tool padglyphs`). XInput is loaded at run time (Steam Input pads appear as
+XInput); a DualShock 4 / DualSense without Steam is read from raw HID. **Steam Deck and Steam Controller**: the right
+touchpad is a trackball cursor (click = left click), the left one drags the map, the left grip (L4) + left pad turns
+and tilts, the right grip (R4) right-clicks; under Steam they come through Steam Input (a recommended layout is in the
+doc), without Steam the port reads them itself over Valve's HID protocol (`hid.dll`). Details and the test switch
+`--at N:pad:<button|axis>,<value>`: [docs/controller.md](docs/controller.md).
 
 ## Tools
 
