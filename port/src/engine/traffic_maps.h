@@ -55,7 +55,11 @@ struct TrafficMaps {
   uint32_t laneTrafficTexture = 0;
   int trafficRows = 0;
   // trodden map
-  std::unordered_map<uint32_t, float> trodden;  // cell (z << 16 | x) → seconds
+  // the trodden cells, cell (z << 16 | x) and seconds, in no order, and where each cell's entry is: a decay pass over
+  // flat arrays every grid step (a map walked node by node cost a sixth of a speed-10 frame on Berlin)
+  std::vector<uint32_t> troddenCells;
+  std::vector<float> troddenTime;
+  std::unordered_map<uint32_t, uint32_t> troddenIndex;
   std::vector<uint8_t> troddenBytes;            // laneW × laneH
   bool troddenSynced = false;  // copied into the top map's texture once (then the dirty tiles)
   const void* troddenTarget = nullptr;  // the surface map it was copied into
