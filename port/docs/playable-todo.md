@@ -191,7 +191,8 @@ modes (the editor's roads, terrain and paint tools come later):
   the camera when it follows water bus `REGS_DEBUG_FOLLOW=3:1` (mover 7), so they are culled at farZ 310. Fixed: the
   wake used to need `Mover.boat`, which marks only background boats; now every mover whose model has a wake emitter
   keeps one, and the water bus has its wake (12 points, 155 units from the camera; `port`'s test frame
-  `wake-fix-490` shows at most a faint streak behind it). Next: look at the ribbon closely (zoomed camera, moving
+  `wake-fix-490` shows at most a faint streak behind it; its `planeSize` is 1.2, a ribbon ~2.4 units wide, a hairline from
+  that height). Next: look at the ribbon closely (zoomed camera, moving
   boat) on GL and Vulkan and check its blend, alpha and width (`planeSize`) against the original.
 - [ ] Fires as a simulation event (building pass, `docs/simulation/grid-traffic.md` §4.4).
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
