@@ -2258,8 +2258,12 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
     static int ticks = 0;
     const char* colon = std::strchr(at, ':');
     if (colon && ++ticks == std::atoi(at))
-      if (Value* main = vm.findGlobal(u"MAIN"))
+      if (Value* main = vm.findGlobal(u"MAIN")) {
+        auto t0 = std::chrono::steady_clock::now();
         vm.call(vm.getMember(vm.getMember(*main, u"$main"), u"saveGameData"), {Value::string(utf8ToUtf16(colon + 1))});
+        LOG_INFO("test: saveGameData(\"%s\") took %.0f ms on the main thread", colon + 1,
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+      }
   }
   // test harness: REGS_TEST_SCENARIO_CALL=<ticks>:<function>[,<function>…] calls those scenario functions through
   // MAIN.$scenario.callFunction(name, 0) (scenario, location and default layers) after that many simulation ticks,
