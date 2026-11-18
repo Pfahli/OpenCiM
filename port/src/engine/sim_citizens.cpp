@@ -874,12 +874,22 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
         if (int list = s.walk.deckList[size_t(cz) * size_t(s.walk.width) + size_t(cx)]; list >= 0)
           K = std::max(K, 1 + int(s.walk.decks[size_t(list)].size()));
   if (l0 >= K) l0 = 0;
+  // scratch kept between searches: a q-cell's cost and parent count only when its stamp is this search's (the box
+  // grows up to 800² q-cells; clearing it for every search cost more than most searches), and the open list (a binary
+  // heap with std::priority_queue's push and pop) keeps its storage
   static thread_local std::vector<float> cost;
   static thread_local std::vector<int> parent;
-  cost.assign(size_t(W) * size_t(L) * size_t(K), -1.0f);
-  parent.assign(cost.size(), -1);
+  static thread_local std::vector<uint32_t> stamp;
+  static thread_local std::vector<float> height;  // a reached q-cell's layerHeight (for its expansion)
+  static thread_local uint32_t serial = 0;
+  const size_t cells = size_t(W) * size_t(L) * size_t(K);
+  if (stamp.size() < cells) cost.resize(cells), parent.resize(cells), stamp.resize(cells, 0), height.resize(cells);
+  if (++serial == 0) std::fill(stamp.begin(), stamp.end(), 0u), serial = 1;
+  auto known = [&](int q) { return stamp[size_t(q)] == serial; };  // else as cost −1, parent −1
   using E = std::pair<float, int>;
-  std::priority_queue<E, std::vector<E>, std::greater<E>> open;
+  static thread_local std::vector<E> open;
+  open.clear();
+  auto push = [&](E e) { open.push_back(e), std::push_heap(open.begin(), open.end(), std::greater<E>()); };
   auto idx = [&](int x, int z, int lv) { return ((z - z0) * W + (x - x0)) * K + lv; };
   auto h = [&](int x, int z) {
     float dx = float(std::abs(x - qx1)), dz = float(std::abs(z - qz1));
@@ -887,12 +897,16 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
   };
   int start = idx(qx0, qz0, l0), goal = -1;
   cost[size_t(start)] = 0;
-  open.push({h(qx0, qz0), start});
+  parent[size_t(start)] = -1;
+  stamp[size_t(start)] = serial;
+  height[size_t(start)] = layerHeight(s, qx0, qz0 | l0 << kLayerShift);
+  push({h(qx0, qz0), start});
   static const int dxs[8] = {1, 0, -1, 0, 1, 1, -1, -1}, dzs[8] = {0, 1, 0, -1, 1, -1, 1, -1};
   int expansions = 0;
   while (!open.empty() && expansions < cap * K) {
-    auto [f, p] = open.top();
-    open.pop();
+    std::pop_heap(open.begin(), open.end(), std::greater<E>());
+    auto [f, p] = open.back();
+    open.pop_back();
     int cell = p / K, pl = p % K, px = cell % W + x0, pz = cell / W + z0;
     if (f - h(px, pz) > cost[size_t(p)] + 1e-3f) continue;
     if (px == qx1 && pz == qz1) {
@@ -900,26 +914,50 @@ bool walkPathIn(SimState& s, int qx0, int qz0, int qx1, int qz1, std::vector<uin
       break;
     }
     ++expansions;
-    float y = layerHeight(s, px, pz | pl << kLayerShift);
+    float y = height[size_t(p)];  // = layerHeight(s, px, pz | pl << kLayerShift)
     for (int d = 0; d < 8; ++d) {
       int nx = px + dxs[d], nz = pz + dzs[d];
       if (nx < x0 || nx > x1 || nz < z0 || nz > z1) continue;
-      int nl = stepLayer(s, nx, nz, y, pl == 0);
+      // stepLayer(s, nx, nz, y, pl == 0), keeping the code and height it reads (walk.code and layerHeight of the
+      // layer taken give the same values again)
+      int nl = -1, v = 0, ground = 0;
+      float ny = 0, gy = 0;
+      bool gyKnown = false;
+      if (nx < s.walk.width * 4 && nz < s.walk.length * 4) {
+        ground = s.walk.code(nx, nz);
+        if (ground) {
+          gy = layerHeight(s, nx, nz), gyKnown = true;
+          if (std::abs(gy - y) <= 160.0f) nl = 0;
+        }
+        if (nl < 0)
+          if (int list = s.walk.deckList[size_t(nz >> 2) * size_t(s.walk.width) + size_t(nx >> 2)]; list >= 0) {
+            const auto& decks = s.walk.decks[size_t(list)];
+            for (size_t k = 0; k < decks.size(); ++k) {
+              int bits = int((decks[k].word >> (2 * ((nx & 3) + (nz & 3) * 4))) & 3);
+              if (bits && std::abs(float(decks[k].height) - y) <= 160.0f) {
+                nl = int(k) + 1, v = bits, ny = float(decks[k].height);
+                break;
+              }
+            }
+          }
+        if (nl < 0 && ground && pl == 0) nl = 0;
+      }
       bool end = nx == qx1 && nz == qz1;
       if (nl < 0 && !end) continue;
       nl = std::max(nl, 0);
       if (nl >= K) continue;
-      int nzl = nz | nl << kLayerShift;
-      int v = s.walk.code(nx, nzl);
-      float c = (d < 4 ? 1.0f : 1.4142135f) + 0.05f * std::abs(layerHeight(s, nx, nzl) - y);
+      if (nl == 0) v = ground, ny = gyKnown ? gy : layerHeight(s, nx, nz);
+      float c = (d < 4 ? 1.0f : 1.4142135f) + 0.05f * std::abs(ny - y);
       if (v == 1) c *= 3;
       else if (v == 3) c *= 4;
       int q = idx(nx, nz, nl);
       float ng = cost[size_t(p)] + c;
-      if (cost[size_t(q)] >= 0 && cost[size_t(q)] <= ng) continue;
+      if (known(q) && cost[size_t(q)] <= ng) continue;
       cost[size_t(q)] = ng;
       parent[size_t(q)] = p;
-      open.push({ng + h(nx, nz), q});
+      stamp[size_t(q)] = serial;
+      height[size_t(q)] = ny;
+      push({ng + h(nx, nz), q});
     }
   }
   if (goal < 0) {
