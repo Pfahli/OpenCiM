@@ -1226,7 +1226,6 @@ int roadType(const Ctx& c) {
 int roadShift(int type) { return type == 5 ? 8 : type == 6 ? 16 : type == 7 || type == 9 || (type >= 0xd && type <= 0xf) ? 24 : 0; }
 
 void createRoadBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, int variant, int y) {
-  (void)variant;
   const int T = roadType(c), S = roadShift(T), B = T == 1 ? 1 : 4;
   size_t mark = c.W.size();
   uint32_t E = T == 4 ? kFlagBridge : 0;
@@ -1253,29 +1252,66 @@ void createRoadBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, int va
   }
   std::optional<Piece> res;
   int resRepl = -1;
-  uint32_t b0 = conn, extra = 0;
-  auto bit = [&](uint32_t v) { return v << S; };
-  {  // a road on this block merges anywhere along the drag (junctions); the neighbours join at the ends
-    std::vector<Piece> list = c.getObjects(x - B - 1, z - B - 1, 3 * B + 2, 3 * B + 2);
+  uint32_t b0 = conn;
+  // the roads that join (L:0x08190700.c:491-493): types 2-7 (alleys: alleys), an elevated ramp only at its own height,
+  // no bridge piece without cover but the elevated ramp; stops stay as they are (port)
+  auto joins = [&](const Piece& o) {
+    uint32_t of = o.flags();
+    if (T == 1 ? o.type() != 1 : unsigned(o.type() - 2) >= 6) return false;
+    if (of & kFlagStop) return false;
+    if (T == 4 && y != kNoY && o.y != y) return false;
+    return (of & 0x4004) != 0x4000 || o.type() == 4;
+  };
+  // the connection byte two roads meet in: the narrower one's (small 0, large 1, avenue 2, express 3); the small
+  // tools (toolMode 0-2) always use byte 0 (:507-529, :674-689, :776-783)
+  auto kindOf = [](int type) { return type == 5 ? 1 : type == 6 ? 2 : type == 7 ? 3 : 0; };
+  const int toolKind = T == 1 || c.toolMode < 3 ? 0 : kindOf(T);
+  auto shiftFor = [&](const Piece& o) { return 8 * std::min(toolKind, kindOf(o.type())); };
+  // join neighbour o by direction bit d (in o's byte): o gets d, this block the opposite (:580-649, :798-867); the
+  // masks keep both from joining across one of their diagonals (spreadD: the test on o reads every byte)
+  auto tryJoin = [&](const Piece& o, uint32_t d, bool spreadD) {
+    if (!d) return;
+    uint32_t r4 = rot(d, 4), oc = o.conn;
+    uint32_t m1 = rot(d, 1) | rot(d, 7), m2 = spread(rot(r4, 1) | rot(r4, 7));
+    if (spreadD) m1 = spread(m1);
+    if (d == (d & oc) || (b0 & r4) == r4 || (m1 & oc) != 0 || (b0 & m2) != 0) return;
+    uint32_t f = o.flags();
+    if (!(f & 0xc000)) f &= ~0xf0u;
+    auto [rx, rz] = roadXZ(o);
+    Piece q = make(rx, o.y, rz, d | oc, o.conn2, o.type(), o.tvar(), f);
+    q.variation = o.variation;
+    q.name = o.name;
+    int yy = y;
+    if (res) yy = res->y, res.reset();
+    res = make(x, yy, z, r4 | b0, c2, T, c.toolType, flags);
+    res->variation = uint32_t(std::max(0, texture));
+    if ((q.flags() & kItemNegative) || (res->flags() & kItemNegative)) {
+      if (resRepl >= 0) c.t.replaced.erase(uint32_t(resRepl)), resRepl = -1, b0 = conn;
+      res.reset();
+      return;
+    }
+    q.iflags |= kFlagJoin;
+    c.W.push_back(q);
+    c.t.replaced.insert(uint32_t(o.live));
+    b0 |= r4;
+  };
+  {
+    std::vector<Piece> list = c.getObjects(x - B - 1, z - B - 1, 3 * B + 2, 3 * B + 2);  // (x − 5, z − 5, 14, 14)
+    // orthogonal neighbours (:483-653): wide roads lie 8 cells apart, and so does a small road from a wide one
     for (const Piece& o : list) {
-      uint32_t of = o.flags();
-      if (o.type() != T || (of & kFlagStop)) continue;
-      if (y != kNoY && o.y != y && T == 4) continue;
+      if (!joins(o)) continue;
       auto [rx, rz] = roadXZ(o);
-      uint32_t d;
-      if (rx + B == x && rz == z) d = bit(0x04);
-      else if (rx == x + B && rz == z) d = bit(0x40);
-      else if (x != rx) d = 0;
-      else if (rz + B == z) d = bit(0x10);
-      else d = rz == z + B ? bit(0x01) : 0;
-      uint32_t r4 = rot(d, 4);
-      if (rx == x && rz == z && !(of & 0xf0)) {  // a road on this block: the new piece merges with it
+      uint32_t of = o.flags();
+      // a road of the same kind (small roads and ramps together) on this block: the new piece merges with it. The
+      // original merges only at the ends of a drag; the port anywhere along it (junctions where a road crosses one)
+      if (rx == x && rz == z && (y == kNoY || o.y == y) && (o.type() == T || (T < 5 && o.type() < 5)) && !(of & 0xf0)) {
         uint32_t f = of;
         if (!(f & 0xc000)) f &= ~0xf0u;
-        Piece p = make(rx, o.y, rz, b0 | o.conn, o.conn2, T, o.tvar(), f);
+        Piece p = make(rx, o.y, rz, b0 | o.conn, o.conn2, o.type(), c.toolType, f);
         if (!(p.flags() & kItemNegative)) {
           p.iflags |= kFlagJoin;
           p.variation = o.variation;
+          p.name = o.name;
           flags |= kFlagJoin;
           c.t.replaced.insert(uint32_t(o.live));
           if (resRepl >= 0) c.t.replaced.erase(uint32_t(resRepl));
@@ -1286,63 +1322,68 @@ void createRoadBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, int va
         continue;
       }
       if (!(a || b)) continue;
-      uint32_t oc = o.conn;
-      if (d && d != (d & oc) && (b0 & r4) != r4 && ((rot(d, 6) | rot(d, 2)) & oc) == 0 &&
-          (b0 & (rot(r4, 6) | rot(r4, 2))) == 0 &&
-          (((rot(d, 7) | rot(d, 1)) & oc) == 0 || ((rot(d, 5) | rot(d, 3) | r4) & oc) != 0) &&
-          ((b0 & (rot(r4, 7) | rot(r4, 1))) == 0 || (b0 & (rot(r4, 5) | rot(r4, 3) | r4)) != 0)) {
-        uint32_t f = of;
-        if (!(f & 0xc000)) f &= ~0xf0u;
-        Piece q = make(rx, o.y, rz, d | oc, o.conn2, T, o.tvar(), f);
-        q.variation = o.variation;
-        int yy = y;
-        if (res) yy = res->y, res.reset();
-        uint32_t nb = r4 | b0;
-        res = make(x, yy, z, nb, c2, T, c.toolType, flags);
-        if (!(q.flags() & kItemNegative) && !(res->flags() & kItemNegative)) {
-          q.iflags |= kFlagJoin;
-          c.W.push_back(q);
-          c.t.replaced.insert(uint32_t(o.live));
-          if (rot(d, 1) & o.conn) extra |= rot(d, 3) | rot(d, 1);
-          if (rot(d, 7) & o.conn) extra |= rot(d, 5) | rot(d, 7);
-          b0 = nb;
-        } else {
-          if (resRepl >= 0) c.t.replaced.erase(uint32_t(resRepl)), resRepl = -1, b0 = conn;
-          res.reset();
-        }
-      }
+      const int s = T == 1 ? 1 : c.toolMode >= 3 ? 8 : o.type() < 5 ? 4 : 8;
+      uint32_t d = 0;
+      if (rx + s == x && rz == z) d = 0x04;
+      else if (rx == x + s && rz == z) d = 0x40;
+      else if (rx == x && rz + s == z) d = 0x10;
+      else if (rx == x && rz == z + s) d = 0x01;
+      tryJoin(o, d << shiftFor(o), true);
     }
-    for (const Piece& o : list) {  // diagonal neighbours
-      uint32_t of = o.flags();
-      if (!(a || b) || o.type() != T || (of & kFlagStop)) continue;
+    // diagonal neighbours, and a small road beside a straight wide road at the half of its 8 cells (:656-870): which
+    // half is the side of the block the cursor is on (variant: bit 0 the low x half, bit 1 the low z half; −1 either)
+    for (const Piece& o : list) {
+      if (!(a || b) || !joins(o)) continue;
       auto [rx, rz] = roadXZ(o);
       uint32_t d = 0;
-      if (rx + B == x) d = rz + B == z ? bit(0x08) : rz == z + B ? bit(0x02) : 0;
-      else if (rx == x + B) d = rz + B == z ? bit(0x20) : rz == z + B ? bit(0x80) : 0;
-      uint32_t r4 = rot(d, 4), oc = o.conn;
-      if (d && d != (d & oc) && ((b0 | extra) & r4) != r4 && ((rot(d, 6) | rot(d, 2)) & oc) == 0 &&
-          (b0 & (rot(r4, 6) | rot(r4, 2))) == 0 &&
-          (((rot(d, 7) | rot(d, 1)) & oc) == 0 || ((rot(d, 5) | rot(d, 3) | r4) & oc) != 0) &&
-          ((b0 & (rot(r4, 7) | rot(r4, 1))) == 0 || (b0 & (rot(r4, 5) | rot(r4, 3) | r4)) != 0)) {
-        uint32_t f = of;
-        if (!(f & 0xc000)) f &= ~0xf0u;
-        Piece q = make(rx, o.y, rz, d | oc, o.conn2, T, o.tvar(), f);
-        q.variation = o.variation;
-        int yy = y;
-        if (res) yy = res->y, res.reset();
-        res = make(x, yy, z, r4 | b0, c2, T, c.toolType, flags);
-        if (!(q.flags() & kItemNegative) && !(res->flags() & kItemNegative)) {
-          q.iflags |= kFlagJoin;
-          c.W.push_back(q);
-          c.t.replaced.insert(uint32_t(o.live));
-          b0 |= r4;
-        } else {
-          if (resRepl >= 0) c.t.replaced.erase(uint32_t(resRepl)), resRepl = -1, b0 = conn;
-          res.reset();
+      bool spreadD = true;
+      if (rx + B == x && (rz + B == z || rz == z + B)) d = rz + B == z ? 0x08 : 0x02;
+      else if (rx == x + B && (rz + B == z || rz == z + B)) d = rz + B == z ? 0x20 : 0x80;
+      else if (T != 1 && c.toolMode < 3) {
+        const uint32_t oc = o.conn;
+        const bool ns = oc == 0x1100 || (oc & 0xffffff55u) == 0x11000000u;
+        const bool ew = oc == 0x4400 || (oc & 0xffffff55u) == 0x44000000u;
+        auto open = [&](uint32_t no, uint32_t noUnlessEmpty) { return !(b0 & no) && (!(b0 & noUnlessEmpty) || b0 == 0); };
+        if (ns) {
+          if (variant == -1 || (variant & 2)) {
+            if (rx + 8 == x && rz + 4 == z && open(2, 0x20)) d = 0x08;
+            if (rx == x + 8 && rz + 4 == z && open(0x80, 8)) d = 0x20;
+          }
+          if (variant == -1 || !(variant & 2)) {
+            if (rx + 8 == x && rz == z + 4 && open(8, 0x80)) d = 0x02;
+            if (rx == x + 8 && rz == z + 4 && open(0x20, 2)) d = 0x80;
+          }
+        } else if (ew) {
+          if (variant == -1 || (variant & 1)) {
+            if (rx + 4 == x && rz + 8 == z && open(2, 0x20)) d = 0x08;
+            if (rx + 4 == x && rz == z + 8 && open(8, 0x80)) d = 0x02;
+          }
+          if (variant == -1 || !(variant & 1)) {
+            if (rx == x + 4 && rz + 8 == z && open(0x80, 8)) d = 0x20;
+            if (rx == x + 4 && rz == z + 8 && open(0x20, 2)) d = 0x80;
+          }
         }
+        spreadD = false;
       }
+      tryJoin(o, d << shiftFor(o), spreadD);
     }
     if (a && b) mark = (c.W.size() + mark) >> 1;
+  }
+  // a small road straight across a straight double track on this block becomes the track's crossing piece
+  // (:876-907, as createTrackBlock does the other way round), at the track's height
+  if ((b0 == 0x11 || b0 == 0x44) && !(flags & 0xc000)) {
+    for (const Piece& o : c.getObjects(x, z, 4, 4)) {
+      if (o.type() != 9) continue;
+      auto [rx, rz] = roadXZ(o);
+      if (rx != x || rz != z || rot(o.conn, 2) != b0 << 24) continue;
+      int orient = 0;
+      const TInfo* tp = c.lookup(uint32_t(T), uint32_t(c.toolType), o.conn | b0, o.conn2, 0x1000, &orient);
+      if (!tp) continue;
+      res = c.piece(tp, x, o.y, z, orient, kFlagJoin);
+      res->variation = uint32_t(std::max(0, texture));
+      c.t.replaced.insert(uint32_t(o.live));
+      break;
+    }
   }
   if (!res) {
     res = make(x, y, z, b0, c2, T, c.toolType, flags);
@@ -1351,7 +1392,6 @@ void createRoadBlock(Ctx& c, int x, int z, uint32_t conn, bool a, bool b, int va
   if (b) c.W.insert(c.W.begin() + std::ptrdiff_t(std::min(mark, c.W.size())), *res);
   else c.W.push_back(*res);
 }
-
 // checkConflicts (L:0x0818d5c0): a conflicting optional piece (pillars) is hidden, any other one makes it red
 bool checkConflicts(Ctx& c) {
   bool error = false;
@@ -1378,7 +1418,7 @@ bool checkConflicts(Ctx& c) {
 // never go diagonal. The elevated ramp lies two cells over the ground (or over the item under the cursor). One
 // createRoadBlock per block with the connections back and forward; then the slopes (0x100 per block), the parts and
 // the conflicts.
-void layRoadTo(Ctx& c, int ex, int ez, int y);
+void layRoadTo(Ctx& c, int ex, int ez, int y, int half = -1);
 
 void moveLayRoad(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) {
   Ctx c(vm, player, grid);
@@ -1402,12 +1442,15 @@ void moveLayRoad(VM& vm, ControlObj* player, GridObj* grid, float mx, float my) 
     if (std::abs(fz) < std::abs(fx)) ex = (pick.cellX + 4 + (fx < 0 ? -8 : 0)) & ~3;
     else ez = (pick.cellZ + 4 + (fz < 0 ? -8 : 0)) & ~3;
   }
-  if (ex == t.cellX && ez == t.cellZ && y == t.cellY) return;
-  layRoadTo(c, ex, ez, y);
+  // the side of the block the cursor is on (bit 0: the low x half, bit 1: the low z half): where a small road ends beside a
+  // wide one (createRoadBlock's variant)
+  const int half = (pick.cellZ <= ez + 1 ? 2 : 0) | (pick.cellX <= ex + 1 ? 1 : 0);
+  if (ex == t.cellX && ez == t.cellZ && y == t.cellY && half == t.cellW) return;
+  layRoadTo(c, ex, ez, y, half);
 }
 
 // the drag's preview from the start block (t.start*, or this block when no drag is in progress) to block (ex, ez)
-void layRoadTo(Ctx& c, int ex, int ez, int y) {
+void layRoadTo(Ctx& c, int ex, int ez, int y, int half) {
   VM& vm = c.vm;
   GridObj* grid = c.grid;
   ControlObj* player = c.player;
@@ -1415,7 +1458,7 @@ void layRoadTo(Ctx& c, int ex, int ez, int y) {
   const int T = roadType(c), S = roadShift(T), B = T == 1 ? 1 : 4;
   const bool wide = T >= 5, avenue = T == 6;
   gridEditBegin(vm, grid);
-  if (!t.inProgress) t.startX = ex, t.startZ = ez, t.startY = y;
+  if (!t.inProgress) t.startX = ex, t.startZ = ez, t.startY = y, t.startW = half;
   clearPreview(c);
   int cx = t.startX, cz = t.startZ, dz = 0, dx = 0;
   uint32_t back = 0;
@@ -1441,7 +1484,7 @@ void layRoadTo(Ctx& c, int ex, int ez, int y) {
     }
     bool isStart = cx == t.startX && cz == t.startZ;
     int by = T == 4 ? (isStart ? t.startY : (t.startY < y && !end) ? t.startY : y) : kNoY;
-    createRoadBlock(c, cx, cz, (back | fwd) << S, isStart, end, 0, by);
+    createRoadBlock(c, cx, cz, (back | fwd) << S, isStart, end, end ? half : isStart ? t.startW : 0, by);
     if (end) break;
     cx += dx * step;
     cz += dz * step;
@@ -1449,20 +1492,39 @@ void layRoadTo(Ctx& c, int ex, int ez, int y) {
   }
   auto& W = c.W;
   if (T == 4) {  // the elevated ramp keeps over what is under it, rising and falling half a cell per block
+    // (mouseMoveLayRoad L:0x081975b0.c:413-527) a bridge piece clears what stands under it by a cell (items of types
+    // below 0x15 that are not optional and not replaced) and the ground by 2.25 cells; then the neighbours keep within
+    // half a cell of each other, forwards and backwards. Joined pieces (flags 6) break the chain.
     Piece* prevP = nullptr;
     for (Piece& p : W) {
       if (p.flags() & 6) {
         prevP = nullptr;
         continue;
       }
-      for (int pz = 0; pz <= p.sz; ++pz)
-        for (int px = 0; px <= p.sx; ++px) {
-          int x2 = p.x + px, z2 = p.z + pz;
-          if (x2 < 0 || z2 < 0 || x2 >= c.g.width || z2 >= c.g.length) continue;
-          p.y = std::max(p.y, (int(c.g.height[size_t(z2) * size_t(c.g.width) + size_t(x2)]) + 0x240) & ~0x7f);
+      if (p.flags() & kFlagBridge) {
+        for (const Piece& o : c.getObjects(p.x, p.z, p.sx, p.sz)) {
+          if (o.type() >= 0x15 || (o.flags() & kItemOptional) || c.t.replaced.count(uint32_t(o.live))) continue;
+          if (o.y - 0xff <= p.y + p.height()) p.y = (std::max(p.y, o.y + o.height() + 0x100) + 0x40) & ~0x7f;
         }
+        for (int pz = 0; pz <= p.sz; ++pz)
+          for (int px = 0; px <= p.sx; ++px) {
+            int x2 = p.x + px, z2 = p.z + pz;
+            if (x2 < 0 || z2 < 0 || x2 >= c.g.width || z2 >= c.g.length) continue;
+            p.y = std::max(p.y, (int(c.g.height[size_t(z2) * size_t(c.g.width) + size_t(x2)]) + 0x240) & ~0x7f);
+          }
+      }
       if (prevP) p.y = std::max(p.y, prevP->y - 0x80), prevP->y = std::max(prevP->y, p.y);
       prevP = &p;
+    }
+    Piece* nextP = nullptr;
+    for (size_t k = W.size(); k-- > 0;) {
+      Piece& p = W[k];
+      if (p.flags() & 6) {
+        nextP = nullptr;
+        continue;
+      }
+      if (nextP) p.y = std::max(p.y, nextP->y - 0x80);
+      nextP = &p;
     }
   }
   checkRoadSlopes(c, 0x100);
@@ -1473,7 +1535,7 @@ void layRoadTo(Ctx& c, int ex, int ez, int y) {
   for (uint32_t i : t.newItems) gridSelectObjectArea(vm, grid, i, error);
   static const bool debugTools = std::getenv("REGS_DEBUG_TOOLS") != nullptr;
   if (debugTools) logPieces(c);
-  t.cellX = ex, t.cellZ = ez, t.cellY = y;
+  t.cellX = ex, t.cellZ = ez, t.cellY = y, t.cellW = half;
   gridEditEnd(vm, grid);
   vm.fireEvent(player, u"onHoverConstruct", {});
 }
