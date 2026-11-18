@@ -1,9 +1,8 @@
 // The in-game minimap after docs/ui/minimap.md: gsGrid::renderMap paints the map texture from a fixed 256×256 raster
 // of per-pixel counters (§2-3), gsMapCtrl maps world ↔ control pixels and shifts the image through minimap.shader's
 // custom0 (§4), gsMapViewportCtrl draws the main camera's ground footprint (§5) and gsMapItemCtrl centres pins on
-// their targets (§6). Not yet: the transport marks (raster bytes 0-5, from stops and line segments) and the
-// selected-line ribbon (gsMapRouteCtrl, §7), which need the simulation; the traffic, catchment and popularity data
-// views read 0 for the same reason.
+// their targets (§6). The transport marks (raster bytes 0-5) come from the live stops and line legs (§2.4). Not yet:
+// the selected-line ribbon (gsMapRouteCtrl, §7); the traffic, catchment and popularity data views read 0.
 #include "engine/minimap.h"
 
 #include <algorithm>
