@@ -18,7 +18,7 @@ Field offsets: Linux first, Windows (`docs/native-api.md`) in brackets.
   emits; `gsEmittingParticleEmitter` (2 uses: fire sparks, city-hall fireworks) gives each of its particles its
   child emitters, which then stream from the moving particle or burst where it dies; `gsParticleEngine`
   (`engine.script:5`: `$scene.particleEngine = new_particleEngine($scene)`) owns and moves every particle of a scene.
-  `gsBoatContrain` derives from the emitter but builds a wake ribbon on the water instead of particles (§7).
+  `gsBoatContrain` derives from the emitter but builds a wake ribbon on the water instead of particles (§6.1).
 * **Particles live in the scene's engine**, not in the emitter: `emitParticle` returns nothing when the emitter's scene
   (`+0x98`) has no `particleEngine` (`+0x108` [W `+0x140`]). So emitters in scenes without an engine (vehicle shop
   previews, the menu) never emit.
@@ -268,10 +268,30 @@ the rotor runs down, and at take-off.
   take off; the dust follows the rotor with the original's thresholds, so there is no dust while boarding
   ([`../simulation/boats-aircraft.md`](../simulation/boats-aircraft.md) §6.3).
 
+## 6.1 Boat wakes (`gsBoatContrain`)
+
+`gsBoatContrain::emitParticle` (`L:0x081748b0`; instance data `createInstanceData` `L:0x08174780`, 0xd4 bytes):
+
+* Instance data: a ring of 16 positions (+4), a bit mask (+0xc4), the next slot (+0xc8), the count (+0xcc, up to 16)
+  and the mesh in the grid bucket (+0xd0). Each emission (the emitter's steady stream, `density` per second) stores
+  the emitter's placed position in the next slot; its bit is set when it lies within 1 unit of the slot before (a
+  halted boat), cleared otherwise.
+* With 2 or more points the ribbon is rebuilt: from the oldest point, two vertices per point at ± side, side =
+  ((a + b).z, 0, −(a + b).x) · (1 − a·b / 2) · `planeSize`, a and b the directions of the segments before and after
+  the point (the first point uses its own segment for both, the last the one before). u = 0 / 1, v = the point's
+  index, normal +Y, colour white, alpha 0 where the bit is set. Two triangles per segment (k, k+1, k+2), (k+2, k+1,
+  k+3).
+* custom0 of the material at that moment: ((16 − count) / density + timer, 1 / density, timer − count / density, 0).
+  `contrain-alter.vertex` fades a point by `custom0.x − timer + v · custom0.y − 1` (old points fade out over one
+  second as time passes) and by `timer − custom0.z − v · custom0.y − 1` (the newest points fade in), lifts the
+  vertices on a small sine swell and scales alpha by it; `contrain-maps.fragment` mixes the texture with its mirror
+  over time.
+* The original inserts the mesh (flags 0x202) into the grid bucket under the boat (created there on demand).
+  Port: `engine/particles.cpp` `tickWakes` (the ring, in the simulation's particle tick, for the first wake emitter of a
+  boat mover's head unit within the emitter's `maxDistance`, 400 when 0) and `collectBoatWakes` (the mesh, a draw item
+  of the frame with the emitter's `material` and the stored custom0).
+
 ## 7. Open
 
-* `gsBoatContrain` (`L:0x081748b0` emitParticle): a 16-point ring of positions per boat turned into a quad strip
-  (`planeSize` wide, alpha by age) that is inserted as a mesh into the grid bucket under the boat, with the script's
-  `metro/shaders/water/contrain.shader` material. Not ported: the port creates the object but emits nothing.
 * Fires as a simulation event (grid-traffic.md §4.4, the building pass) are not ported; `REGS_TEST_FIRE` places one.
 * `sortParticles` and `active` are stored but have no effect, as in the code read.
