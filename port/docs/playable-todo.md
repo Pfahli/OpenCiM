@@ -165,9 +165,13 @@ modes (the editor's roads, terrain and paint tools come later):
   marching columns and vans on the street; road traffic still drives through it (not compared with the original). Left: the lane/walk graph is not
   rebuilt on the call, picking ignores the override, the override is not saved. `setClusterData` (scenario 4) is
   ported (clusters.bmp, citizens pick workplaces and visit places in their home's cluster) but not run yet.
-- [ ] Still to run: the tutorial past its first tasks (needs building), scenarios 3–12 (scenario 4 for
-  `setClusterData`), a whole campaign. This branch has no `REGS_START` start switch (other branches do), so scenario
-  runs need the menu clicks.
+- [x] Scenarios 1–12 and the tutorial start from `REGS_START=scenario:<n>` (also `campaign`, `tutorial`; the
+  instructions dialog still needs its Start click, at 782,693 in 1920×1080) and run 5000 frames at speed 3 without
+  script errors or missing natives. Fixed on the way: the older grid names section 0x07020300 (scenario maps lost all
+  item names), the train station stops' attractiveness and maintenance cost, achievements as no-ops. Scenario 4
+  loads `clusters.bmp` (1280×1280).
+- [ ] Still to run: the scenarios past their first tasks (F2 forces an objective), the tutorial past its first
+  tasks, a whole campaign; the `campaign` and `tutorial` start flags are untested.
 - [x] Statistics and graphs: `gsGraphCtrl` (`setArg`, `update`, `reset`, `setColor`, `getColor`, its fields and the
   automatic update) draws series strips, the grid and the value labels as the original computes them
   (`engine/ui_graphs.cpp`, spec `docs/ui/graphs.md`). The graphs panel (12 company and economy graphs, the 12–60 month
