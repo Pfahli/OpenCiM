@@ -160,6 +160,24 @@ it is, what already exists, and the open decisions. Order is not priority.
   in every measured case (§10.4); background trains already give up after 60 s.
 * **Sandbox densities.** Traffic and population density (0.5×-4×) for new sandbox games: **done** (README, "Port files
   and graphics options").
+* **Multiscreen support.** Use two or more monitors (owner's request, 2026-11-19; the owner's PC has two 2560x1440
+  screens, plus a 4K one at times).
+  * What there is: one window (`platform/window_win32.cpp`), borderless at the desktop size of the screen it opens on;
+    the game's interface lays out for one viewport (`engine/gui_relayout.cpp` handles size changes and UI scale);
+    the renderer draws one main view plus the game's own small render targets (the corner preview, the follow camera).
+  * Ways, smallest first:
+    1. **Choose the screen:** a setting (or remembering the last one) for which monitor fullscreen opens on, and
+       moving there cleanly when the window is dragged across (DPI per monitor is already on).
+    2. **Span:** one borderless window over all screens side by side, the 3D view across them (wide field of view, the
+       bezels left out of the projection so roads line up), the HUD on the middle or main screen only.
+    3. **Second-screen panels:** the map on the main screen, and on the other one a window of its own with the minimap
+       at full size, the line and vehicle panels, finances and graphs, or a second camera (follow a vehicle, watch a
+       station). Each extra window needs its own swapchain (Vulkan) or shared GL context, and the GUI's windows would
+       need to be movable onto it.
+  * Open decisions: which of these first (choosing the screen is cheap; span and panels are the real feature), what the
+    second screen shows by default, how input works across screens (one cursor over both; the edge-scroll of the
+    camera only at the outer edges), mixed resolutions and refresh rates, and whether controllers and the Steam Deck
+    (one screen) keep the old layout.
 
 ## Maps
 
