@@ -10,8 +10,15 @@ moves of their own while they have the focus, either fullscreen or as a resizabl
 * **Where it opens:** the first time in the middle of another monitor at three quarters of its size (beside the game's
   window when there is only one). After that each view reopens where it was last closed (`<OpenCiM folder>\popouts.cfg`),
   as long as that place is still on a monitor.
-* **Window:** drag it anywhere, resize or maximise it. **F11** or **Alt+Enter** switches between the window and
-  fullscreen on the monitor it is on (borderless), **Esc** leaves fullscreen. The close box closes the view.
+* **Window** (like the setup program, owner's request 2026-11-19): no Windows title bar, round corners with the system's
+  thin edge (Windows 11; a rounded region on Windows 10), and two round buttons at the top right: **fullscreen** (four
+  corners; blue under the pointer; in fullscreen its corners point inward and it goes back to the window) and **close**
+  (the cross; red under the pointer). Drag the **band along the top** (it darkens under the pointer) to move the window,
+  double-click it to maximise or go back; drag the **edges and corners** to resize. **F11** or **Alt+Enter** also
+  switch to fullscreen on the monitor it is on, **Esc** leaves fullscreen.
+* Moving and resizing are done by the game itself, not by Windows' own move/size loop: that loop holds the program
+  until the mouse is let go, so both windows froze while dragging (owner: "the window is severely lagging"). The price:
+  no snapping to the screen's halves while dragging (Win + arrow keys still snap).
 * **Camera** (only while the view's window has the focus; the game's camera is not touched):
 
 | Input | Does |
@@ -52,18 +59,31 @@ scale/FSR, the colour styles, raytraced shadows and reflections). **Cost:** the 
   target blitted into its back buffer, swapped (swap interval 0) and the main window made current again.
 * Focus: a window losing the focus to another window of the game lets go of the keys held in it (their key-up messages
   would go to the other window), so held arrow keys in the game do not scroll on.
+* The borderless window (`WindowDesc::borderless`, `platform/window_win32.cpp`): a sizing frame style without a caption,
+  `WM_NCCALCSIZE` gives the whole window to the client, every hit test is client; the window class itself finds the
+  band, edges and buttons (`zoneAt`, `buttonAt`), sets the sizing cursors, moves and sizes the window from its mouse
+  messages, and sends `Close` / `ToggleFullscreen` events for the buttons. `Window::chrome` / `chromeHot` tell the
+  engine where the buttons are and what the pointer is on; `drawChrome` (`engine/popout.cpp`) draws the band's shade
+  and the buttons (pictures made in code at the window's DPI) over the view through `Renderer2D::beginTarget`. Round
+  corners: `DWMWA_WINDOW_CORNER_PREFERENCE` as in the setup program, square in fullscreen and maximised.
 
 ## Tests
 
 `REGS_POPOUT=<n>` opens n views by themselves once a map is shown (`REGS_POPOUT_RECT=x,y,w,h` places the first). `--at`
 actions: `popout` (one more view), `popshot:<file.png>` (the first view's next picture), `popkey:<vk>`,
 `popkeydown:<vk>`, `popkeyup:<vk>`, `popwheel:<notches>`, `popmove:x,y`, `popdown:<button>`, `popup:<button>` (input
-of the first view's window; in scripted runs real input to the views is ignored as for the game window).
+of the first view's window; in scripted runs real input to the views is ignored as for the game window),
+`popmsg:<msg>,<wparam>,<x>,<y>` (a Win32 message handled by the first view's window as if Windows had sent it, then a
+log line with its place, size, state and what the pointer is on; posting real messages from the test sandbox is
+blocked by Windows).
 
 Checked 2026-11-19 with the campaign driver (Vulkan and OpenGL): the view starts on the game camera's picture, turns,
 zooms, tilts and pans by its own input while the game view stays, goes fullscreen (3840x2160 on the 4K screen) and back,
 the minimap button opens another view on the other monitor, the window on screen shows the picture, its close box closes
-it and its place is saved.
+it and its place is saved. Borderless window (popmsg): the band moves the window by the pointer's way, the right edge
+resizes it, the hover states show, the fullscreen button goes to 3840x2160 and back to the same place, a double-click
+on the band maximises to the work area (3840x2088) and back, the close button closes; a screen capture shows the
+round corners.
 
 Not done yet: views of something else than the map (minimap, panels, a vehicle to follow), the interface (tools,
 selection) inside a view, a view's frame on the minimap.

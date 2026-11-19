@@ -67,6 +67,10 @@ class Renderer2D {
   // Hand the context to other GL code (the 3D pass) and take it back with the same projection and scissor.
   void flushAll() { flush(); }
   void resume();
+  // Drawing into another framebuffer the caller binds (pop-out views' close button): a w × h frame (top-left origin,
+  // pixel units, no scissor) until endTarget, which gives back the back buffer's frame, projection and scissor.
+  void beginTarget(int w, int h);
+  void endTarget();
 
   // Material shaders on GUI items: a GLSL 3.30 program with regs_* inputs (render/glsl.h) drawn under the current
   // projection; texture i is bound to unit i and sampler "texture<i>".
@@ -91,6 +95,9 @@ class Renderer2D {
   void wideLine(const GuiVertex& a, const GuiVertex& b);
   size_t vboSize_ = 0;
   int fw_ = 0, fh_ = 0;
+  int savedFrame_[2] = {};
+  float savedProj_[6] = {};
+  int savedScissor_[4] = {};
   float proj_[6] = {};
   float mvp_[16] = {};
   int scissor_[4] = {-1, -1, -1, -1};

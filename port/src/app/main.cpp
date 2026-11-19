@@ -283,6 +283,9 @@ int main(int argc, char** argv) {
         } else if (sc.action == "popshot") {  // popshot:<file.png>: the first pop-out's next picture
           engine::popoutScreenshot(sc.arg);
           continue;
+        } else if (sc.action == "popmsg") {  // popmsg:<msg>,<wparam>,<x>,<y>: a window message to the first pop-out
+          engine::popoutTestMessage(sc.arg);
+          continue;
         } else if (sc.action.rfind("pop", 0) == 0) {
           // popkey:<vk> | popkeydown:<vk> | popkeyup:<vk> | popwheel:<notches> | popmove:x,y | popdown:<button> |
           // popup:<button>: input of the first pop-out's window
@@ -386,6 +389,7 @@ int main(int argc, char** argv) {
     }
     if (limit > 0) std::this_thread::sleep_until(now + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / limit)));
   }
+  engine::popoutsShutdown();  // the pop-out views' windows go while the device, display and scripts are all still there
   if (std::getenv("REGS_REPORT_MISSING")) {  // natives the scripts called that the port does not implement yet
     std::vector<std::pair<int, std::string>> miss;
     for (auto& [k, n] : eng.vm().missing) miss.emplace_back(n, k);

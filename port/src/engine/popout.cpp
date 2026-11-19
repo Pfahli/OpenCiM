@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 
@@ -77,7 +78,8 @@ struct Popout {
   bool closing = false;
 };
 
-std::vector<std::unique_ptr<Popout>> g_pops;
+// (never destroyed by the C runtime at exit, whose order is not the engine's: popoutsShutdown empties it in time)
+std::vector<std::unique_ptr<Popout>>& g_pops = *new std::vector<std::unique_ptr<Popout>>();
 std::vector<platform::InputEvent> g_injected;  // tests: events for the first pop-out
 std::string g_shot;
 std::chrono::steady_clock::time_point g_last;
@@ -192,6 +194,7 @@ bool popoutOpenAt(VM& vm, const Place* at) {
   desc.title = titleFor(vm, p->number);
   desc.resizable = true;
   desc.secondary = true;
+  desc.borderless = true;  // like the setup program: no title bar, a close button of its own (drawChrome)
   desc.vsync = false;
   desc.openGL = !vulkan;
   desc.shareGL = vulkan ? nullptr : &d->window();
@@ -264,6 +267,7 @@ void handleEvent(VM& vm, Popout& p, const platform::InputEvent& e) {
   const float upp = 2.0f * p.cur.dist * std::tan(p.fov * kPi / 360.0f) / float(h);
   switch (e.type) {
     case T::Close: p.closing = true; break;
+    case T::ToggleFullscreen: toggleFullscreen(p); break;  // the borderless window's own button
     case T::KeyDown:
       if (e.key == kVkReturn && e.system) {  // Alt + Enter
         if (!e.repeat) toggleFullscreen(p);
@@ -349,6 +353,116 @@ void stepCamera(Popout& p, float dt) {
   p.cur.dist = std::exp(std::log(p.cur.dist) + (std::log(p.goal.dist) - std::log(p.cur.dist)) * k);
 }
 
+// the borderless window's buttons, drawn like the setup program's close button (a dark disc with a white symbol and a
+// lighter ring): kind 0 close (a cross; red under the pointer), 1 fullscreen (four corners pointing out), 2 back to a
+// window (four corners pointing in; blue under the pointer); state 0 plain, 1 under the pointer, 2 held. Made at the
+// size they are drawn at; straight alpha, B G R A.
+struct ButtonImages {
+  int size = 0;
+  uint32_t tex[9] = {};  // kind * 3 + state
+};
+ButtonImages g_buttons;
+
+uint32_t buttonTexture(Display& d, int size, int kind, int state) {
+  if (g_buttons.size != size) {
+    for (uint32_t& t : g_buttons.tex)
+      if (t) d.r2d().destroyTexture(t), t = 0;
+    g_buttons.size = size;
+  }
+  uint32_t& slot = g_buttons.tex[kind * 3 + state];
+  if (slot) return slot;
+  struct Look {
+    uint32_t fill;
+    int alpha;
+    uint32_t ring;
+  };
+  const Look plain{0x1e1a16, 200, 0x7a6656};
+  const Look red[2] = {{0xc0392b, 235, 0xf08a6a}, {0x962d22, 245, 0xd0705a}};
+  const Look blue[2] = {{0x3d6ea8, 235, 0x8fb8e8}, {0x2c5486, 245, 0x7aa4d4}};
+  const Look& lk = state == 0 ? plain : kind == 0 ? red[state - 1] : blue[state - 1];
+  const float k = float(size) / 32.0f;  // the setup program draws it 32 pixels wide
+  const float c = float(size) * 0.5f, r = c - 0.5f, half = std::max(1.0f, 1.0f * k);
+  // the symbol as strokes (from, to) in the button's units about its centre
+  struct Seg {
+    float x0, y0, x1, y1;
+  };
+  std::vector<Seg> segs;
+  if (kind == 0) {
+    const float a = 5.5f;
+    segs = {{-a, -a, a, a}, {a, -a, -a, a}};
+  } else {
+    for (int sx = -1; sx <= 1; sx += 2)
+      for (int sy = -1; sy <= 1; sy += 2) {
+        const float fx = float(sx), fy = float(sy);
+        if (kind == 1) {  // corners at the outside, arms inward
+          const float a = 6.0f, l = 3.5f;
+          segs.push_back({fx * a, fy * a, fx * (a - l), fy * a});
+          segs.push_back({fx * a, fy * a, fx * a, fy * (a - l)});
+        } else {  // corners near the middle, arms outward
+          const float a = 2.0f, l = 3.5f;
+          segs.push_back({fx * a, fy * a, fx * (a + l), fy * a});
+          segs.push_back({fx * a, fy * a, fx * a, fy * (a + l)});
+        }
+      }
+  }
+  std::vector<uint8_t> px(size_t(size) * size_t(size) * 4);
+  auto cover = [](float dist) { return std::clamp(0.5f - dist, 0.0f, 1.0f); };  // 1 inside, a pixel's ramp
+  for (int y = 0; y < size; ++y)
+    for (int x = 0; x < size; ++x) {
+      const float fx = float(x) + 0.5f - c, fy = float(y) + 0.5f - c;
+      const float dc = std::sqrt(fx * fx + fy * fy);
+      const float disc = cover(dc - r);
+      const float ring = cover(std::fabs(dc - (r - 0.5f * k)) - 0.5f * std::max(1.0f, k));
+      float symbol = 0;  // round-capped strokes
+      for (const Seg& s : segs) {
+        const float ax = s.x0 * k, ay = s.y0 * k, bx = s.x1 * k, by = s.y1 * k;
+        const float vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy;
+        const float t = len2 > 0 ? std::clamp(((fx - ax) * vx + (fy - ay) * vy) / len2, 0.0f, 1.0f) : 0.0f;
+        const float qx = fx - (ax + t * vx), qy = fy - (ay + t * vy);
+        symbol = std::max(symbol, cover(std::sqrt(qx * qx + qy * qy) - half));
+      }
+      float rr = float(lk.fill >> 16 & 0xFF), gg = float(lk.fill >> 8 & 0xFF), bb = float(lk.fill & 0xFF);
+      float a = float(lk.alpha) / 255.0f;
+      auto mix = [&](uint32_t col, float t, float alphaTo) {
+        rr += (float(col >> 16 & 0xFF) - rr) * t, gg += (float(col >> 8 & 0xFF) - gg) * t, bb += (float(col & 0xFF) - bb) * t;
+        a += (alphaTo - a) * t;
+      };
+      mix(lk.ring, ring, 1.0f);
+      mix(0xFFFFFF, symbol, 1.0f);
+      a *= disc;
+      uint8_t* o = &px[(size_t(y) * size_t(size) + size_t(x)) * 4];
+      o[0] = uint8_t(bb), o[1] = uint8_t(gg), o[2] = uint8_t(rr), o[3] = uint8_t(std::lround(a * 255.0f));
+    }
+  return slot = d.r2d().createTextureBGRA(px.data(), size, size);
+}
+
+// the borderless window's chrome over the picture: a shade along the top while the pointer is on the band that moves
+// the window (drag it there), the fullscreen button and the close button (the window's round corners and thin edge
+// are the system's, engine-side nothing)
+void drawChrome(Display& d, Popout& p, int w, int h) {
+  if (!p.win->borderless()) return;
+  float cx, cy, cs, band;
+  p.win->chrome(cx, cy, cs, band);
+  const int hot = p.win->chromeHot();
+  auto& r = d.r2d();
+  r.beginTarget(w, h);
+  render::gpu::dev().bindFramebuffer(p.target.fbo);
+  r.setProjection(0, 0, float(w), float(h), float(w), float(h));
+  auto quad = [&](uint32_t tex, float x, float y, float qw, float qh, uint32_t argb) {
+    const uint32_t c = render::argbToRgba(argb);
+    const render::GuiVertex v[4] = {{x, y, 0, 0, c}, {x + qw, y, 1, 0, c}, {x + qw, y + qh, 1, 1, c}, {x, y + qh, 0, 1, c}};
+    r.draw(tex, render::Prim::Quads, v, 4);
+  };
+  if (hot == 3 && band > 0) quad(0, 0, 0, float(w), band, 0x50000000u);
+  const int size = std::max(8, int(cs));
+  const int fullState = hot == 5 ? 2 : hot == 4 ? 1 : 0, closeState = hot == 2 ? 2 : hot == 1 ? 1 : 0;
+  quad(buttonTexture(d, size, p.win->fullscreen() ? 2 : 1, fullState), cx - p.win->chromeGap(), cy, float(size),
+       float(size), 0xFFFFFFFFu);
+  quad(buttonTexture(d, size, 0, closeState), cx, cy, float(size), float(size), 0xFFFFFFFFu);
+  r.endTarget();
+  render::gpu::dev().bindFramebuffer(0);
+}
+
 bool ensureTarget(Display& d, Popout& p, int w, int h) {
   const int samples = std::max(0, d.antialiasing);
   if (p.target.fbo && p.target.width == w && p.target.height == h && p.targetSamples == samples) return true;
@@ -374,6 +488,24 @@ bool popoutOpen(VM& vm) { return popoutOpenAt(vm, nullptr); }
 int popoutCount() { return int(g_pops.size()); }
 
 void popoutInject(const platform::InputEvent& e) { g_injected.push_back(e); }
+
+void popoutTestMessage(const std::string& spec) {
+  if (g_pops.empty() || !g_pops.front()->win) return;
+  platform::Window& w = *g_pops.front()->win;
+  unsigned long msg = 0, wp = 0;
+  long x = 0, y = 0;
+  char* e = nullptr;
+  const char* s = spec.c_str();
+  msg = std::strtoul(s, &e, 0);
+  if (*e == ',') wp = std::strtoul(e + 1, &e, 0);
+  if (*e == ',') x = std::strtol(e + 1, &e, 0);
+  if (*e == ',') y = std::strtol(e + 1, &e, 0);
+  w.testMessage(unsigned(msg), uintptr_t(wp), intptr_t((uint32_t(y) << 16) | (uint32_t(x) & 0xFFFF)));
+  int px, py, pw, ph;
+  w.placement(px, py, pw, ph);
+  LOG_INFO("popout test: message 0x%lx at %ld,%ld: window %dx%d at %d,%d, %s, pointer on %d", msg, x, y, w.width(), w.height(),
+           px, py, w.fullscreen() ? "fullscreen" : w.maximized() ? "maximised" : "windowed", w.chromeHot());
+}
 void popoutScreenshot(const std::string& file) { g_shot = file; }
 
 void popoutsPump(VM& vm, const std::vector<platform::InputEvent>& mainInput, bool scripted) {
@@ -404,7 +536,9 @@ void popoutsPump(VM& vm, const std::vector<platform::InputEvent>& mainInput, boo
     events.clear();
     if (p.win) p.win->pump(events);
     if (scripted)
-      std::erase_if(events, [](const platform::InputEvent& e) { return e.type != T::Close && e.type != T::Resize; });
+      std::erase_if(events, [](const platform::InputEvent& e) {
+        return e.type != T::Close && e.type != T::Resize && e.type != T::ToggleFullscreen;  // (the window's own buttons stay)
+      });
     if (i == 0) {
       events.insert(events.end(), g_injected.begin(), g_injected.end());
       g_injected.clear();
@@ -458,6 +592,7 @@ void popoutsRender(Display& d, VM& vm) {
       d.r3d().end(bw, bh);
     }
     d.r3d().resolve(p.target);
+    drawChrome(d, p, w, h);
     if (!g_shot.empty() && &p == g_pops.front().get()) {
       d.saveTargetPng(p.target, w, h, g_shot);
       LOG_INFO("popout screenshot: %s", g_shot.c_str());
@@ -471,6 +606,10 @@ void popoutsRender(Display& d, VM& vm) {
 void popoutsShutdown() {
   for (auto& p : g_pops) closePopout(*p);
   g_pops.clear();
+  if (Display* d = display(); d && render::gpu::hasDevice())
+    for (uint32_t& t : g_buttons.tex)
+      if (t) d->r2d().destroyTexture(t), t = 0;
+  g_buttons.size = 0;
 }
 
 void registerPopoutNatives(VM& vm) {

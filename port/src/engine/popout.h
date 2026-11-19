@@ -27,6 +27,9 @@ void popoutsShutdown();
 // Tests (--at): an event as if it came from the first pop-out's window; its next picture saved as a PNG.
 void popoutInject(const platform::InputEvent& e);
 void popoutScreenshot(const std::string& file);
+// tests: a window message to the first pop-out's window ("msg,wparam,x,y", client pixels; numbers decimal or 0x..)
+// and a line in the log with its place, size, fullscreen state and what the pointer is on
+void popoutTestMessage(const std::string& spec);
 
 void registerPopoutNatives(script::VM& vm);
 

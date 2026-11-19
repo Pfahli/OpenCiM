@@ -225,6 +225,25 @@ void Renderer2D::resume() {
   setScissor(scissor_[0], scissor_[1], scissor_[2], scissor_[3]);
 }
 
+void Renderer2D::beginTarget(int w, int h) {
+  flush();
+  savedFrame_[0] = fw_, savedFrame_[1] = fh_;
+  std::copy(proj_, proj_ + 6, savedProj_);
+  std::copy(scissor_, scissor_ + 4, savedScissor_);
+  fw_ = w, fh_ = h;
+  proj_[0] = proj_[1] = 0, proj_[2] = proj_[4] = float(w), proj_[3] = proj_[5] = float(h);
+  scissor_[0] = scissor_[1] = scissor_[2] = scissor_[3] = -1;
+  resume();
+}
+
+void Renderer2D::endTarget() {
+  flush();
+  fw_ = savedFrame_[0], fh_ = savedFrame_[1];
+  std::copy(savedProj_, savedProj_ + 6, proj_);
+  std::copy(savedScissor_, savedScissor_ + 4, scissor_);
+  resume();
+}
+
 void Renderer2D::setProjection(float px, float py, float pw, float ph, float unitsW, float unitsH) {
   flush();
   const float saved[6] = {px, py, pw, ph, unitsW, unitsH};

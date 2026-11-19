@@ -4,8 +4,12 @@
 // mode change.
 #include <windows.h>
 #include <windowsx.h>
+#include <dwmapi.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #include "platform/gamepad.h"
 #include "platform/touchpad_win32.h"
@@ -51,7 +55,7 @@ class Win32Window final : public Window {
     static bool registered = false;
     if (!registered) {
       WNDCLASSEXW wc{sizeof wc};
-      wc.style = CS_OWNDC;
+      wc.style = CS_OWNDC | CS_DBLCLKS;  // (double-clicks: the main window takes them as presses; pop-outs maximise)
       wc.lpfnWndProc = &Win32Window::proc;
       wc.hInstance = inst;
       wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -87,6 +91,7 @@ class Win32Window final : public Window {
     fullscreen_ = desc.fullscreen;
     resizable_ = desc.resizable;
     secondary_ = desc.secondary;
+    borderless_ = desc.borderless;
     DWORD style = windowedStyle();  // the game's caption window, no resize (pop-outs: sizable)
     RECT r{0, 0, desc.width, desc.height};
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
@@ -109,7 +114,7 @@ class Win32Window final : public Window {
         y = mi.rcMonitor.top;
         oversize_ = true;
       } else {
-        AdjustWindowRectEx(&r, style, FALSE, 0);
+        adjust(r);
         if (placed) x = desc.x, y = desc.y;
       }
     }
@@ -118,6 +123,13 @@ class Win32Window final : public Window {
     if (!hwnd_) {
       if (error) *error = "CreateWindowEx failed";
       return false;
+    }
+    if (borderless_) {  // the messages during CreateWindowEx came before hwnd_ was known: the frame goes now
+      SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+      roundCorners();
+    }
+    if (borderless_ && placed) {  // and the window is exactly the asked client size
+      SetWindowPos(hwnd_, nullptr, desc.x, desc.y, desc.width, desc.height, SWP_NOZORDER | SWP_NOACTIVATE);
     }
     if (!desc.openGL) {  // a bare window for a Vulkan surface
       if (desc.visible) ShowWindow(hwnd_, SW_SHOW);
@@ -256,7 +268,7 @@ class Win32Window final : public Window {
     RECT r = mi.rcMonitor;
     if (!fullscreen) {
       RECT frame{0, 0, w, h};
-      AdjustWindowRectEx(&frame, style, FALSE, 0);
+      adjust(frame);
       int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
       RECT cur;
       GetWindowRect(hwnd_, &cur);
@@ -281,6 +293,7 @@ class Win32Window final : public Window {
     SetWindowLongPtrW(hwnd_, GWL_STYLE, LONG_PTR(style));
     SetWindowPos(hwnd_, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
     fullscreen_ = fullscreen;
+    roundCorners();
     RECT cr;
     GetClientRect(hwnd_, &cr);
     width_ = cr.right;
@@ -304,7 +317,7 @@ class Win32Window final : public Window {
     WINDOWPLACEMENT wp{sizeof wp};
     GetWindowPlacement(hwnd_, &wp);  // the restored rect also while maximised or minimised
     RECT frame{0, 0, 0, 0};
-    AdjustWindowRectEx(&frame, windowedStyle(), FALSE, 0);
+    adjust(frame);
     x = wp.rcNormalPosition.left;
     y = wp.rcNormalPosition.top;
     w = (wp.rcNormalPosition.right - wp.rcNormalPosition.left) - (frame.right - frame.left);
@@ -313,7 +326,7 @@ class Win32Window final : public Window {
   void place(int x, int y, int w, int h) override {
     if (fullscreen_) setMode(false, w, h);
     RECT r{0, 0, std::max(w, 160), std::max(h, 90)};
-    AdjustWindowRectEx(&r, windowedStyle(), FALSE, 0);
+    adjust(r);
     SetWindowPos(hwnd_, nullptr, x, y, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOOWNERZORDER);
     RECT cr;
     GetClientRect(hwnd_, &cr);
@@ -321,6 +334,22 @@ class Win32Window final : public Window {
     height_ = cr.bottom;
   }
   void focus() override { SetForegroundWindow(hwnd_); }
+  bool borderless() const override { return borderless_; }
+  bool maximized() const override { return IsZoomed(hwnd_) != 0; }
+  void chrome(float& closeX, float& closeY, float& closeSize, float& band) const override {
+    const float s = scale();
+    closeSize = std::round(32 * s);
+    closeX = float(width_) - std::round(44 * s);
+    closeY = std::round(10 * s);
+    band = borderless_ && !fullscreen_ ? std::round(40 * s) : 0;
+  }
+  float chromeGap() const override { return std::round(40 * scale()); }
+  int chromeHot() const override { return borderless_ ? hot_ : 0; }
+  void testMessage(unsigned msg, uintptr_t wparam, intptr_t lparam) override {
+    testing_ = true;  // (no leave tracking: the real pointer is elsewhere and would end the hover at once)
+    handle(msg, WPARAM(wparam), LPARAM(lparam));
+    testing_ = false;
+  }
   void* nativeWindow() const override { return hwnd_; }
   void* nativeInstance() const override { return GetModuleHandleW(nullptr); }
   void* glProc(const char* name) const override {
@@ -342,7 +371,147 @@ class Win32Window final : public Window {
   }
 
   DWORD windowedStyle() const {
+    // borderless: a sizing frame for the edges, snapping and the shadow, but no caption; WM_NCCALCSIZE gives the
+    // whole window to the client
+    if (borderless_) return WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
     return resizable_ ? WS_OVERLAPPEDWINDOW : WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+  }
+  void adjust(RECT& r) const {  // client rect → window rect in the windowed style
+    if (!borderless_) AdjustWindowRectEx(&r, windowedStyle(), FALSE, 0);
+  }
+  float scale() const {
+    int d = dpi();
+    return d > 0 ? float(d) / 96.0f : 1.0f;
+  }
+  // which of the two buttons is under a client point: 1 close, 4 fullscreen, 0 neither
+  int buttonAt(int x, int y) const {
+    float cx, cy, cs, band;
+    chrome(cx, cy, cs, band);
+    const float m = 4 * scale();  // a little larger than the circle
+    auto in = [&](float bx) {
+      return float(x) >= bx - m && float(x) < bx + cs + m && float(y) >= cy - m && float(y) < cy + cs + m;
+    };
+    return in(cx) ? 1 : in(cx - chromeGap()) ? 4 : 0;
+  }
+  bool inClose(int x, int y) const { return buttonAt(x, y) != 0; }  // on a button (not the band)
+  // round corners like the setup program while it is a window (Windows 11 draws them antialiased with its thin
+  // border; Windows 10 gets a rounded window region instead); square in fullscreen and maximised
+  void roundCorners() {
+    if (!borderless_) return;
+    const bool square = fullscreen_ || IsZoomed(hwnd_);
+    DWORD pref = square ? 1 : 2;  // DWMWCP_DONOTROUND / DWMWCP_ROUND
+    if (!dwmCornersFailed_ && SUCCEEDED(DwmSetWindowAttribute(hwnd_, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &pref, sizeof pref)))
+      return;
+    dwmCornersFailed_ = true;
+    if (square) {
+      SetWindowRgn(hwnd_, nullptr, TRUE);
+      return;
+    }
+    RECT r;
+    GetWindowRect(hwnd_, &r);
+    const int d = int(16 * scale());
+    SetWindowRgn(hwnd_, CreateRoundRectRgn(0, 0, r.right - r.left + 1, r.bottom - r.top + 1, d, d), TRUE);
+  }
+  // what a client point is on for moving and sizing: kLeft/kRight/kTop/kBottom (edges and corners), kMove (the band
+  // along the top), 0 the picture or a button
+  enum : int { kLeft = 1, kRight = 2, kTop = 4, kBottom = 8, kMove = 16 };
+  int zoneAt(int x, int y) const {
+    if (fullscreen_) return 0;
+    if (!IsZoomed(hwnd_)) {
+      const int e = int(std::round(6 * scale())), c = 2 * e;
+      int z = 0;
+      if (x < e || (x < c && (y < e || y >= height_ - e))) z |= kLeft;
+      if (x >= width_ - e || (x >= width_ - c && (y < e || y >= height_ - e))) z |= kRight;
+      if (y < e || (y < c && (x < e || x >= width_ - e))) z |= kTop;
+      if (y >= height_ - e || (y >= height_ - c && (x < e || x >= width_ - e))) z |= kBottom;
+      if (z) return z;
+    }
+    float cx, cy, cs, band;
+    chrome(cx, cy, cs, band);
+    return !buttonAt(x, y) && float(y) < band ? kMove : 0;
+  }
+  // a move or size under way: the window follows the pointer (client point → screen at the window's place now)
+  void dragTo(int x, int y) {
+    POINT p{x, y};
+    ClientToScreen(hwnd_, &p);
+    const int dx = p.x - opStart_.x, dy = p.y - opStart_.y;
+    RECT r = opRect_;
+    if (op_ == kMove) {
+      OffsetRect(&r, dx, dy);
+      SetWindowPos(hwnd_, nullptr, r.left, r.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+      return;
+    }
+    const int minW = int(320 * scale()), minH = int(200 * scale());
+    if (op_ & kLeft) r.left = std::min(r.left + dx, r.right - minW);
+    if (op_ & kRight) r.right = std::max(r.right + dx, r.left + minW);
+    if (op_ & kTop) r.top = std::min(r.top + dy, r.bottom - minH);
+    if (op_ & kBottom) r.bottom = std::max(r.bottom + dy, r.top + minH);
+    SetWindowPos(hwnd_, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+  void trackLeave(bool client) {
+    if (testing_) return;
+    if (tracking_ == (client ? 1 : 2)) return;
+    TRACKMOUSEEVENT t{sizeof t};
+    t.dwFlags = TME_LEAVE | (client ? 0u : DWORD(TME_NONCLIENT));
+    t.hwndTrack = hwnd_;
+    TrackMouseEvent(&t);
+    tracking_ = client ? 1 : 2;
+  }
+  // the borderless window's own chrome: false when the message is not about it
+  bool chromeMessage(UINT m, WPARAM w, LPARAM l, LRESULT& out) {
+    switch (m) {
+      case WM_NCCALCSIZE:
+        if (!w) return false;
+        out = 0;  // (maximised too: WM_GETMINMAXINFO already keeps the window to the work area)
+        return true;
+      // all client: moving and sizing are done here (WM_LBUTTONDOWN below), not by Windows' own move/size loop, which
+      // holds the game's loop until the mouse is let go (both windows froze while dragging, owner 2026-11-19)
+      case WM_NCHITTEST:
+        out = HTCLIENT;
+        return true;
+      case WM_SETCURSOR:
+        if (LOWORD(l) != HTCLIENT || !cursor_) return false;
+        {
+          POINT pt;
+          GetCursorPos(&pt);
+          ScreenToClient(hwnd_, &pt);
+          const int z = op_ ? op_ : zoneAt(pt.x, pt.y);
+          const wchar_t* c = IDC_ARROW;
+          if (z == (kLeft | kTop) || z == (kRight | kBottom)) c = IDC_SIZENWSE;
+          else if (z == (kRight | kTop) || z == (kLeft | kBottom)) c = IDC_SIZENESW;
+          else if (z == kLeft || z == kRight) c = IDC_SIZEWE;
+          else if (z == kTop || z == kBottom) c = IDC_SIZENS;
+          SetCursor(LoadCursorW(nullptr, c));
+        }
+        out = TRUE;
+        return true;
+      case WM_CAPTURECHANGED:
+        op_ = 0;
+        return false;
+      case WM_NCMOUSEMOVE:
+        hot_ = w == HTCAPTION ? 3 : 0;
+        trackLeave(false);
+        return false;
+      case WM_NCMOUSELEAVE:
+        if (tracking_ == 2) tracking_ = 0, hot_ = 0;
+        return false;
+      case WM_MOUSELEAVE:
+        if (tracking_ == 1) tracking_ = 0;
+        if (!closeHeld_) hot_ = 0;
+        out = 0;
+        return true;
+      case WM_GETMINMAXINFO: {  // maximised: the monitor's work area (a popup would cover the task bar)
+        auto* mmi = reinterpret_cast<MINMAXINFO*>(l);
+        MONITORINFO mi{sizeof mi};
+        GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &mi);
+        mmi->ptMaxPosition = {mi.rcWork.left - mi.rcMonitor.left, mi.rcWork.top - mi.rcMonitor.top};
+        mmi->ptMaxSize = {mi.rcWork.right - mi.rcWork.left, mi.rcWork.bottom - mi.rcWork.top};
+        mmi->ptMinTrackSize = {320, 200};
+        out = 0;
+        return true;
+      }
+      default: return false;
+    }
   }
 
   void emit(InputEvent e) { queued_.push_back(e); }
@@ -356,6 +525,70 @@ class Win32Window final : public Window {
       e.button = button;
       emit(e);
     };
+
+    if (borderless_) {
+      LRESULT r = 0;
+      if (chromeMessage(m, w, l, r)) return r;
+      const int mx = GET_X_LPARAM(l), my = GET_Y_LPARAM(l);
+      // moving (the band along the top; double-click: maximise or back) and sizing (the edges): the view never sees
+      // those presses
+      if (op_ && m == WM_MOUSEMOVE) {
+        dragTo(mx, my);
+        return 0;
+      }
+      if (op_ && m == WM_LBUTTONUP) {
+        op_ = 0;
+        ReleaseCapture();
+        return 0;
+      }
+      if (m == WM_LBUTTONDBLCLK && zoneAt(mx, my) == kMove) {
+        ShowWindow(hwnd_, IsZoomed(hwnd_) ? SW_RESTORE : SW_MAXIMIZE);
+        return 0;
+      }
+      if (m == WM_LBUTTONDOWN) {
+        if (const int z = zoneAt(mx, my)) {
+          if (z == kMove && IsZoomed(hwnd_)) {  // dragging a maximised window: back to its size under the pointer
+            const float rel = float(mx) / float(std::max(1, width_));
+            ShowWindow(hwnd_, SW_RESTORE);
+            RECT wr;
+            GetWindowRect(hwnd_, &wr);
+            POINT sp{mx, my};
+            ClientToScreen(hwnd_, &sp);
+            const int nw = wr.right - wr.left;
+            SetWindowPos(hwnd_, nullptr, sp.x - int(rel * float(nw)), sp.y - my, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+          }
+          op_ = z;
+          POINT sp{mx, my};
+          ClientToScreen(hwnd_, &sp);
+          opStart_ = sp;
+          GetWindowRect(hwnd_, &opRect_);
+          SetCapture(hwnd_);
+          return 0;
+        }
+      }
+      // the two buttons: pressed and released over the same one acts (close, fullscreen); the view never sees those
+      // clicks
+      if (m == WM_MOUSEMOVE) {
+        trackLeave(true);
+        const int b = buttonAt(mx, my);
+        hot_ = b == 0 ? (zoneAt(mx, my) == kMove ? 3 : 0) : b + (held_button_ == b ? 1 : 0);
+        if (held_button_) return 0;
+      } else if ((m == WM_LBUTTONDOWN || m == WM_LBUTTONDBLCLK) && buttonAt(mx, my)) {
+        held_button_ = buttonAt(mx, my);
+        closeHeld_ = true;
+        hot_ = held_button_ + 1;
+        SetCapture(hwnd_);
+        return 0;
+      } else if (m == WM_LBUTTONUP && held_button_) {
+        const int was = held_button_, b = buttonAt(mx, my);
+        held_button_ = 0;
+        closeHeld_ = false;
+        ReleaseCapture();
+        hot_ = b;
+        if (b == was) emit({b == 1 ? T::Close : T::ToggleFullscreen});
+        return 0;
+      }
+    }
     switch (m) {
       case WM_MOUSEMOVE: mouse(T::MouseMove, 0); return 0;
       case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK: SetCapture(hwnd_); mouse(T::MouseDown, 0); return 0;
@@ -493,6 +726,7 @@ class Win32Window final : public Window {
       case WM_SIZE:
         width_ = LOWORD(l);
         height_ = HIWORD(l);
+        roundCorners();
         { InputEvent e{T::Resize}; e.x = width_; e.y = height_; emit(e); }
         return 0;
       // moved to a monitor with another DPI: the client keeps its pixel size (the game's resolution and UI scale were
@@ -538,7 +772,16 @@ class Win32Window final : public Window {
   HGLRC rc_ = nullptr;
   HGLRC sharedRc_ = nullptr;  // a secondary window: the owner's context
   int format_ = 0;
-  bool resizable_ = false, secondary_ = false;
+  bool resizable_ = false, secondary_ = false, borderless_ = false;
+  int hot_ = 0;           // chromeHot()
+  int tracking_ = 0;      // TrackMouseEvent asked for: 1 the client area, 2 the band
+  bool closeHeld_ = false;  // a button is held (the pointer leaving keeps its state)
+  int held_button_ = 0;     // 1 close, 4 fullscreen
+  int op_ = 0;              // a move (kMove) or size (edge bits) under way
+  POINT opStart_{};         // the pointer on the screen when it began
+  RECT opRect_{};           // the window then
+  bool dwmCornersFailed_ = false;
+  bool testing_ = false;
   bool held_[256] = {};
   RECT restore_{0, 0, 0, 0};  // the window rect before fullscreen (setMode)
   int restoreW_ = 0, restoreH_ = 0;
