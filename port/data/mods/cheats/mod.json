@@ -1,0 +1,13 @@
+{
+  "id": "opencim.cheats",
+  "name": "Cheats in Motion",
+  "version": "0.1.0",
+  "authors": ["OpenCiM"],
+  "description": {
+    "en_US": "A cheat window behind a magic wand in the game's left bar: add money or keep it unlimited, skip days, weeks or a month, turn the clock back within the month, complete the next task, maximum reputation, pay off all loans, unlock every vehicle model.",
+    "de": "Ein Cheat-Fenster hinter einem Zauberstab in der linken Leiste: Geld gutschreiben oder unbegrenzt halten, Tage, Wochen oder einen Monat vorspulen, die Uhr innerhalb des Monats zurückdrehen, die nächste Aufgabe erledigen, Ruf auf Maximum, alle Kredite tilgen, alle Fahrzeugmodelle freischalten."
+  },
+  "requires": { "regs": ">=0.1" },
+  "saves": "none",
+  "repository": ""
+}

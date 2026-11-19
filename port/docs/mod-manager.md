@@ -307,6 +307,29 @@ itself with a pull-request workflow (CI validates `mod.json`, checksums and the 
   `regs-tool softdot` (a soft particle sprite), run by `CMakeLists.txt` `regs_data`.
 * **Example**: the weather mod (`data/mods/weather`, README there) extends `metro/scripts/game.script` with one line
   that loads its script into the game's `$gameScripts`, so the game unloads it with the others.
+* **Second example, script-only**: Cheats in Motion (`data/mods/cheats`, README there), described in §10.
 
 Not yet: `.zip` packages, version and dependency checks, conflicts, `addon/` folders, `options.script`, the manager
 page, the `MAIN.$regs` events, save records.
+
+## 10. Built-in mod: Cheats in Motion (`opencim.cheats`)
+
+A cheat window, script-only (no engine fields, no shader hooks), disabled by default like every built-in mod
+(enable: `{ "enabled": ["opencim.cheats"] }` in `mods.json`). Details, the reasons behind the limits and the file list
+are in `data/mods/cheats/README.md`.
+
+* **Where:** a magic wand in the game's left bar (between the roster and the settings wheel; the bar grows by one
+  button) opens the window as one of the left panels (the HQ panel's place, frame, heading bar and close button).
+* **Cheats:** money (+10 000, +100 000, +1 million, a typed amount; `earnMoney(amount, false)`), unlimited money
+  (the account held at the original's cap, saved with the game), skip one day, a week or to the next month (one day
+  per frame, so every dated event and the monthly accounts run), turn the clock back within the current month,
+  complete the next task (the original's F2), maximum reputation, pay off all loans, unlock every vehicle model.
+* **How it hooks in** (examples of the extension mechanism, §9): a one-line `game.script` suffix loads its script into
+  `$gameScripts`; the `levelbar.script` extension adds the button, re-places the bar after the port's own resize
+  handler and wraps `hideOtherLeftPanels` (`//@rename`); the `scenario.script` extension wraps `dateChanged`. Its
+  saved state lives in the scenario's `customData` map (keys `opencimCheats…`), which the save writes and the scenario
+  scripts ignore, so a save stays loadable without the mod.
+* **Turning the clock back** stays inside the month: writing an earlier date fires `onMonth`/`onYear` when they change
+  (in either direction), and `onMonth` runs the monthly accounts. Within the month only `onDay` fires; the days already
+  passed keep their dated scenario events and the map timeline's changes from coming again until the clock passes
+  the latest date reached.

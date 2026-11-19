@@ -1,0 +1,54 @@
+// Cheats in Motion (opencim.cheats) extension of metro/ui/levelbar/levelbar.script, chained after the port's own
+// extension. The left bar gets one more button, the mod's magic wand, between the roster and the settings wheel; the
+// bar grows by one button's spacing (less where the window is too low for that above the minimap, then the seven
+// share the room). The button opens and closes MAIN.$cheats (scripts/cheats.script, loaded with the game scripts
+// after this bar) the way the bar's own buttons open their panels (setLevel), and the cheat window is one of the
+// left panels: opening any of them closes the others.
+//@rename hideOtherLeftPanels regsCheatsBaseHideOtherLeftPanels
+
+//@base
+
+$regsCheatsButton = MAIN.$ui.createChoiceButton($bg, "self", 0, 0, 51, 58, "", macro :: regsCheatsClick(),
+  "/regs/mods/opencim.cheats/textures/cheats.dds", "/regs/mods/opencim.cheats/textures/cheats_se.dds",
+  "/regs/mods/opencim.cheats/textures/cheats_ho.dds");
+$regsCheatsButton.setCropRect(7.0 / 64.0, 3.0 / 64.0, 51.0 / 64.0, 58.0 / 64.0);
+MAIN.$ui.selectChoiceButton(null, $regsCheatsButton);
+
+function regsCheatsClick() {
+  if (MAIN.$cheats : false) {
+    setLevel(MAIN.$cheats);
+  } else {
+    MAIN.$ui.selectChoiceButton(null, $regsCheatsButton);
+  }
+}
+
+function hideOtherLeftPanels($except) {
+  regsCheatsBaseHideOtherLeftPanels($except);
+  if (MAIN.$cheats : false) {
+    if (!MAIN.$cheats.$hidden) {
+      if ($except != MAIN.$cheats) MAIN.$cheats.hide();
+    }
+  }
+}
+
+// the bar's formulas (levelbar.script and the port's extension) with room for a seventh button
+function regsCheatsPlace() {
+  $cheatsTop = 42 + int(clamp($desktop.height - 768, 0, 80) * 0.5);
+  $cheatsH0 = int(clamp($desktop.height - 381, 339, 375));
+  $cheatsH = min($cheatsH0 + ($cheatsH0 - 27) / 6, int($desktop.height) - 302 - $cheatsTop);
+  MAIN.$window.regsSetRect($bg, 0, $cheatsTop, 59, $cheatsH);
+  $buttonH = ($cheatsH - 27) / 7;
+  $cheatsI = 0;
+  foreach ([MAIN.$hqpanel, MAIN.$vehiclepanel, MAIN.$linepanel, MAIN.$graphspanel, MAIN.$rosterpanel]) {
+    .$levelButton.top = $cheatsI * $buttonH + 13;
+    $cheatsI++;
+  }
+  $regsCheatsButton.top = $cheatsI * $buttonH + 13;
+  $settingsButton.top = ($cheatsI + 1) * $buttonH + 13;
+}
+regsCheatsPlace();
+
+// after the port's handler above (bound first), which places the bar for six buttons
+event $desktop.onChangeRect::() {
+  regsCheatsPlace();
+}

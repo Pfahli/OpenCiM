@@ -1,0 +1,8 @@
+// Cheats in Motion (opencim.cheats) extension of metro/scripts/game.script, chained after the port's own extensions
+// (VM::extendSource): the cheat script joins the game's addon scripts, so game.script's unload() deletes it with the
+// game (before the HUD scripts in $ui, so it can take its button back out of the left bar). It loads after
+// game.script's MAIN.$mainClock.onDay handler is bound, so its own onDay handler runs after that one.
+
+//@base
+
+$gameScripts[] = load "/regs/mods/opencim.cheats/scripts/cheats.script";

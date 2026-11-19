@@ -1,0 +1,47 @@
+﻿// Cheats in Motion (opencim.cheats): Texte. Die Texte der Knöpfe und Zeilen sind Muster: ein Prozentzeichen als %%.
+$cheats_title = "Cheats in Motion";
+$cheats_button_hint = "Cheats in Motion";
+
+$cheats_money_heading = "Geld";
+$cheats_add10k = "+10.000";
+$cheats_add100k = "+100.000";
+$cheats_add1m = "+1 Mio.";
+$cheats_add_hint = "Schreibt den Betrag dem Konto gut (zählt nicht als Verkaufserlös).";
+$cheats_amount_placeholder = "Betrag eingeben";
+$cheats_add_button = "Gutschreiben";
+$cheats_amount_hint = "Ein Betrag bis 20 Mio., mit Enter oder dem Knopf daneben.";
+$cheats_unlimited = "Unbegrenztes Geld";
+$cheats_unlimited_hint = "Hält das Konto auf dem Höchststand von 20 Mio., auch nach dem Monatsabschluss. Ausgeschaltet gilt wieder der Kontostand von vorher. Wird mit dem Spielstand gespeichert.";
+$cheats_added = "Gutgeschrieben: %0";
+$cheats_unlimited_on = "Unbegrenztes Geld: an";
+$cheats_unlimited_off = "Unbegrenztes Geld: aus";
+
+$cheats_time_heading = "Zeit";
+$cheats_today = "Heute: %0";
+$cheats_plus_day = "+1 Tag";
+$cheats_plus_week = "+1 Woche";
+$cheats_plus_month = "+1 Monat";
+$cheats_skip_hint = "Spult Tag für Tag vor: Termine, Aufträge, Monatsabschluss und Jahresbericht kommen wie sonst. In den übersprungenen Tagen fährt niemand, es gibt also Kosten, aber keine Fahrgeldeinnahmen.";
+$cheats_minus_day = "-1 Tag";
+$cheats_minus_week = "-1 Woche";
+$cheats_month_start = "Monatserster";
+$cheats_rewind_hint = "Dreht die Uhr zurück, höchstens bis zum Ersten des laufenden Monats. Was bis heute schon geschah (Aufträge, Ereignisse, Stadtentwicklung), geschieht nicht noch einmal.";
+$cheats_time_note = "Zurück geht es nur bis zum Monatsersten, sonst liefen Monatsabschluss, Kreditraten und Statistiken doppelt. Was schon geschah, wiederholt sich nicht.";
+$cheats_skipped = "Vorgespult bis %0";
+$cheats_rewound = "Zurückgedreht auf %0";
+
+$cheats_company_heading = "Firma";
+$cheats_complete = "Erledigen";
+$cheats_complete_hint = "Erledigt die erste offene Aufgabe oder das erste offene Szenarioziel samt Belohnung (wie die Debug-Taste F2 des Originals).";
+$cheats_task_open = "Offen: %0";
+$cheats_task_none = "Keine offene Aufgabe";
+$cheats_completed = "Erledigt: %0";
+$cheats_reputation = "Ruf maximal";
+$cheats_reputation_hint = "Alle Fahrgastgruppen voll zufrieden. Der Bonus klingt wie eine Aufgabenbelohnung ab, nach etwa einem Jahr wirkt wieder der eigene Ruf.";
+$cheats_reputation_done = "Ruf auf Maximum";
+$cheats_loans = "Kredite tilgen";
+$cheats_loans_hint = "Streicht alle laufenden Kredite, ohne sie zurückzuzahlen.";
+$cheats_loans_done = "Getilgte Kredite: %0";
+$cheats_vehicles = "Alle Fahrzeuge";
+$cheats_vehicles_hint = "Alle Fahrzeugmodelle sind sofort zu kaufen, auch künftige und ausgemusterte (gesperrte Modelle eines Szenarios bleiben gesperrt).";
+$cheats_vehicles_done = "Freigeschaltete Modelle: %0";
