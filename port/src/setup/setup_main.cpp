@@ -26,6 +26,7 @@
 #include <shobjidl.h>
 #include <windowsx.h>
 #include <gdiplus.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 #include <chrono>
@@ -121,6 +122,7 @@ struct HotRect {
 struct Pictures {
   std::unique_ptr<Bitmap> title, welcome, notFound, done, maintenance;
   std::unique_ptr<Bitmap> slides[8];
+  std::vector<std::unique_ptr<Bitmap>> welcomeShots;  // the welcome page's cross-fade: bg-welcome, then welcome-*.jpg
 };
 
 struct App {
@@ -149,6 +151,9 @@ struct App {
   // the showcase
   int slide = 0, prevSlide = -1;
   double fadeStart = 0, slideStart = 0;
+  // the welcome page's pictures (summer, snow, sunset, night, autumn), 6 s each with a 1 s cross-fade
+  int shot = 0, prevShot = -1;
+  double shotFade = 0, shotStart = 0;
   // maintenance
   int action = ActUpdate;
   bool keepDocs = true;
@@ -219,6 +224,14 @@ void loadPictures() {
     char c = e.path[5];
     if (c >= '1' && c <= '8' && e.path[6] == '-') g.pics.slides[c - '1'] = decode(payloadFile(e.path));
   }
+  // the welcome page fades through bg-welcome and every show/welcome-*.jpg (the payload's entries are sorted)
+  if (g.pics.welcome) {
+    std::vector<uint8_t> first = payloadFile("show/bg-welcome.jpg");
+    g.pics.welcomeShots.push_back(decode(first));
+  }
+  for (const PayloadEntry& e : g.payload.entries)
+    if (e.path.rfind("show/welcome-", 0) == 0)
+      if (auto b = decode(payloadFile(e.path))) g.pics.welcomeShots.push_back(std::move(b));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -527,7 +540,15 @@ void pageWelcome(Graphics& gr) {
     text(gr, L"This setup program carries no OpenCiM files. Use the full setup from the OpenCiM release page.", 11,
          0xf3b06a, RectF(20, 386, 290, 48));
   noteAtBottom(gr, L"Unofficial port. Needs the original Cities in Motion; nothing of the game is in this download.");
-  cover(gr, g.pics.welcome.get(), kRight);
+  const auto& shots = g.pics.welcomeShots;
+  if (shots.empty()) {
+    cover(gr, g.pics.welcome.get(), kRight);
+  } else {
+    int cur = g.shot % int(shots.size());
+    float fade = g.prevShot < 0 ? 1.f : float(std::clamp((nowSec() - g.shotFade) / 1.0, 0.0, 1.0));
+    if (g.prevShot >= 0 && fade < 1) cover(gr, shots[size_t(g.prevShot)].get(), kRight);
+    cover(gr, shots[size_t(cur)].get(), kRight, fade);
+  }
   uint64_t mb = g.payload.appBytes() / 1048576;
   corner(gr, L"OpenCiM Setup", versionLine() + (mb ? L" \u00b7 " + std::to_wstring(mb) + L" MB" : L""));
 }
@@ -1087,6 +1108,20 @@ int hitTest(float x, float y) {
   return HotNone;
 }
 
+// round corners (owner's request 2026-11-19): Windows 11 rounds the window itself, antialiased and with its thin
+// border (DWMWA_WINDOW_CORNER_PREFERENCE); Windows 10 has no such attribute and gets a rounded window region instead.
+// OPENCIM_SETUP_REGION=1 forces the region (tests).
+void roundCorners(HWND h) {
+  if (!GetEnvironmentVariableW(L"OPENCIM_SETUP_REGION", nullptr, 0)) {
+    DWORD pref = 2;  // DWMWCP_ROUND
+    if (SUCCEEDED(DwmSetWindowAttribute(h, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &pref, sizeof(pref)))) return;
+  }
+  RECT r;
+  GetWindowRect(h, &r);
+  int d = int(16 * g.scale);
+  SetWindowRgn(h, CreateRoundRectRgn(0, 0, r.right - r.left + 1, r.bottom - r.top + 1, d, d), TRUE);
+}
+
 LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
     case WM_PAINT: {
@@ -1147,14 +1182,26 @@ LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     }
     case WM_TIMER: {
-      if (g.page == Page::Installing && nowSec() - g.slideStart > 7.0) showSlide(g.slide + 1);
-      if (g.page == Page::Installing || g.working) redraw();
+      double now = nowSec();
+      if (g.page == Page::Installing && now - g.slideStart > 7.0) showSlide(g.slide + 1);
+      bool fading = false;
+      if (g.page == Page::Welcome && g.pics.welcomeShots.size() > 1) {
+        if (g.shotStart == 0) g.shotStart = now;
+        if (now - g.shotStart > 6.0) {
+          g.prevShot = g.shot;
+          g.shot = (g.shot + 1) % int(g.pics.welcomeShots.size());
+          g.shotFade = g.shotStart = now;
+        }
+        fading = g.prevShot >= 0 && now - g.shotFade < 1.1;
+      }
+      if (g.page == Page::Installing || g.working || fading) redraw();
       return 0;
     }
     case WM_DPICHANGED: {
       g.scale = HIWORD(wp) / 96.0f;
       RECT* r = reinterpret_cast<RECT*>(lp);
       SetWindowPos(h, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+      roundCorners(h);
       redraw();
       return 0;
     }
@@ -1193,6 +1240,7 @@ int runWindow(bool uninstallFirst) {
     g.scale = real / 96.0f;
     SetWindowPos(g.hwnd, nullptr, 0, 0, int(1024 * g.scale), int(640 * g.scale), SWP_NOMOVE | SWP_NOZORDER);
   }
+  roundCorners(g.hwnd);
   if (uninstallFirst && g.page == Page::Maintenance) g.action = ActUninstall;
   ShowWindow(g.hwnd, SW_SHOW);
   SetTimer(g.hwnd, 1, 33, nullptr);

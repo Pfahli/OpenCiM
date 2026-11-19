@@ -194,7 +194,10 @@ search (`core/game_find.*`) and the release script (`make-release.ps1`). Steps 1
 * **Look:** the pages are drawn with GDI+ after the design canvas (Tahoma, Copperplate Gothic Bold when installed, the
   menu's colours, bevelled bars, round icons, the caption box), with the OpenCiM title (the port's own art, a resource)
   and the screenshots on the right; no Windows title bar (owner's request 2026-11-19): a round X at the top right,
-  the window moves by any free spot of the panel, Alt+F4 and the taskbar still close it; the showcase cross-fades every 7 s, a click on the picture moves on, and it keeps
+  the window moves by any free spot of the panel, Alt+F4 and the taskbar still close it; round corners (Windows 11
+  rounds the window itself, Windows 10 gets a rounded window region); the Welcome page fades through seven screenshots
+  (summer, snow, a sunset and a dusk under the port's own sky, trams on a Berlin boulevard, a boat, autumn; 6 s each,
+  `show/bg-welcome.jpg` then `show/welcome-*.jpg`); the showcase cross-fades every 7 s, a click on the picture moves on, and it keeps
   going after the copy until CONTINUE. Not done: drawing with the game's own panel art and fonts read from the install
   (§2.1); the own drawing looks close enough that this can wait.
 * **Not done:** the GitHub download, update check and self-update (§3a; there is no repository yet: UPDATE says new
