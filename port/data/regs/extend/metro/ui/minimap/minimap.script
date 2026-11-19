@@ -1,0 +1,39 @@
+// ReGS extension of the minimap (metro/ui/minimap/minimap.script, used as installed; see VM::extendSource), owner's
+// request 2026-11-19: pop-out views (engine/popout.cpp, docs/popout-views.md). The icon column beside the minimap
+// (data views, underground) grows by one button at its top, which opens one more pop-out view of the map: a window of
+// its own with its own camera, to put on another monitor (F7 does the same).
+
+//@base
+
+$regsPopFile = "regs/strings/"+MAIN.$language+".strings";
+if (!file_exists($regsPopFile)) $regsPopFile = "regs/strings/en_US.strings";
+$regsPopS = load "/"+$regsPopFile;
+$regsPopHint = $regsPopS.$regs_popout_hint;
+delete $regsPopS;
+
+// the column one button (49 pixels) taller, upward; the minimap's right border ends that much higher and the
+// background fills the gap, as the game does for the column's own height
+$regsPopStep = 49;
+$icons.setRect($icons.left, $icons.top - $regsPopStep, $icons.width, $icons.height + $regsPopStep);
+$icons.$content.setRect(1, 10, $icons.width, $icons.height-14);
+$bg.$right.height = $icons.top - $bg.top - $bg.$right.top + 3;
+with (new_control($bg)) {
+  .setRect($bg.$right.left, $bg.$right.top + $bg.$right.height, $bg.$right.width - 1, $regsPopStep);
+  .setImage("/metro/ui/background.dds");
+  .visible = true;
+  .canActivate = false;
+  .sendToBack();
+}
+$datapanelButton.top = $datapanelButton.top + $regsPopStep;
+$undergroundButton.top = $undergroundButton.top + $regsPopStep;
+
+$regsPopoutButton = MAIN.$ui.createChoiceButton($icons.$content, "self", 0, 0, 46, 49, "", regsPopoutClick,
+  "/regs/ui/minimap/popout.dds", "/regs/ui/minimap/popout_se.dds", "/regs/ui/minimap/popout_ho.dds");
+$regsPopoutButton.setCropRect(8.0 / 64.0, 8.0 / 64.0, 46.0 / 64.0, 49.0 / 64.0);
+MAIN.$ui.unselectChoiceButton($regsPopoutButton, $regsPopoutButton);
+MAIN.$ui.setTooltip($regsPopoutButton, $regsPopHint, 1, 0);
+
+function regsPopoutClick() {
+  MAIN.$ui.unselectChoiceButton($regsPopoutButton, $regsPopoutButton);  // an action, not a switch
+  regsPopoutOpen();
+}

@@ -189,6 +189,16 @@ class Device {
   // reading it never waits); −1 until the first is known or when the device cannot measure it (benchmarks)
   virtual double gpuFrameMs() const { return -1; }
 
+  // ---- extra windows (pop-out views, engine/popout.cpp) ----
+  // A second OS window the device shows pictures in: Vulkan gives it its own surface and swapchain, OpenGL draws into
+  // it with the one context (the window made with WindowDesc::shareGL). Returns an id, 0 when the device cannot.
+  virtual uint32_t addWindow(platform::Window& w) { return 0; }
+  virtual void removeWindow(uint32_t id) {}  // before the window itself goes
+  // Shows the colour of a framebuffer's bottom-left w × h (single-sampled) in the window, scaled to its client area.
+  // Vulkan: copied in this frame's commands and presented with present(); OpenGL: swapped at once (without waiting
+  // for the vertical blank). The bound framebuffer is 0 afterwards.
+  virtual void showInWindow(uint32_t id, uint32_t framebuffer, int w, int h) {}
+
   // ---- caches (Vulkan: pipeline state objects and the pipeline cache on disk; OpenGL has none of its own) ----
   // Writes the device's on-disk caches now if they grew (after a map's first view was drawn ahead; also at shutdown).
   virtual void saveCaches() {}

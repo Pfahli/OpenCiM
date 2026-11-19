@@ -290,3 +290,4 @@ $regs_pad_do_lpadSc = "Karte ziehen; Klick am Rand: Steuerkreuz";
 $regs_pad_do_lpadCam = "Zusammen gehalten: drehen (seitlich), neigen (hoch und runter); Klick: Neigung zurück";
 $regs_pad_do_speedSc = "Linkes Pad links / rechts geklickt: Spielgeschwindigkeit";
 $regs_pad_do_panelsSc = "Linkes Pad oben / unten geklickt: Linienfenster / Fahrzeugfenster";
+$regs_popout_hint = "Zusatzansicht: ein eigenes Fenster mit eigener Kamera (F7). Auf einen anderen Bildschirm schieben; F11 für Vollbild";

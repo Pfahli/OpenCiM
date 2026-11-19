@@ -19,6 +19,14 @@ struct WindowDesc {
   bool visible = true;  // false: a hidden window that only provides a context (tools)
   int samples = 0;      // MSAA samples of the window surface (window.antialiasing without postProcess)
   bool openGL = true;   // false: no GL pixel format or context (the Vulkan device makes its own surface)
+  // a second window (pop-out views, engine/popout.cpp): sizable with a maximise box, no controller or touchpad input
+  // of its own, and with openGL the pixel format of `shareGL` and no context of its own (it draws with that window's,
+  // made current on it by makeCurrent)
+  bool resizable = false;
+  bool secondary = false;
+  class Window* shareGL = nullptr;
+  int x = kDefaultPos, y = kDefaultPos;  // outer top-left on the desktop; kDefaultPos lets the OS choose
+  static constexpr int kDefaultPos = -0x7FFFFFFF;
 };
 
 // Raw input as the OS reports it; the engine's input layer turns it into the game's events.
@@ -67,11 +75,26 @@ class Window {
   virtual int dpi() const { return 96; }
   // OpenGL entry point lookup for the current context.
   virtual void* glProc(const char* name) const = 0;
+  // OpenGL: makes the context current on this window (a secondary window: the context it shares); false when it cannot
+  virtual bool makeCurrent() { return false; }
+  // the window has the keyboard focus (it is the foreground window)
+  virtual bool focused() const { return false; }
+  virtual bool minimized() const { return false; }
+  // outer top-left on the desktop and client size of the window (when fullscreen: as it was before), and placing it
+  // there (not fullscreen)
+  virtual void placement(int& x, int& y, int& w, int& h) const { x = y = 0, w = width(), h = height(); }
+  virtual void place(int x, int y, int w, int h) {}
+  virtual void focus() {}
   // The OS handles a Vulkan surface is made from (Win32: HWND and HINSTANCE).
   virtual void* nativeWindow() const = 0;
   virtual void* nativeInstance() const = 0;
 };
 
 std::unique_ptr<Window> createWindow();
+// The work area (desktop minus the task bar) of a monitor other than the one `away` is on, preferring the largest;
+// false (and that monitor's work area) when there is only one.
+bool otherMonitorWorkArea(const Window* away, int& x, int& y, int& w, int& h);
+// Whether an outer window rect lies mostly on some monitor (a remembered place on a monitor since unplugged does not).
+bool onSomeMonitor(int x, int y, int w, int h);
 
 }  // namespace regs::platform

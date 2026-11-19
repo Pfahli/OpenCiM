@@ -32,6 +32,8 @@ class ObjectObj : public script::Object {
 
 // The current eye, look point and up of a camera as the 3D pass uses it (eased for floating cameras).
 void cameraFrame(script::VM& vm, script::Object* cam, render::Vec3& eye, render::Vec3& look, render::Vec3& up);
+// The point a camera turns about and looks at (its position, eased for floating cameras, or its target's).
+render::Vec3 cameraPivot(script::VM& vm, script::Object* cam);
 // The near and far plane of a viewport looking through a camera, as the 3D pass uses them (before the port's view
 // distance option).
 // gameFar (when given): the far distance the game itself asked for, before the port reaches farther toward the
@@ -55,9 +57,25 @@ render::GpuMaterial objectMaterial(Display& d, script::VM& vm, script::Object* o
 // The program of a combiner variant (empty shader = default.shader), compiled on first use; 0 when it fails.
 uint32_t combinerProgram(Display& d, script::VM& vm, const std::string& shader, uint32_t matFlags, uint32_t env);
 
+// A view of a viewport's scene through another camera into a target of its own (pop-out views, engine/popout.cpp):
+// the scene, its sky, fog, weather, lights and shadows as the viewport has them, without the screen-only passes
+// (bloom, TAA, colour styles, raytracing).
+struct ViewOverride {
+  render::Vec3 eye, look, up;
+  float fov = 60;
+  float distance = 100;  // the eye's distance to the point it looks at (near and far plane like the game camera's)
+  const render::RenderTarget* target = nullptr;  // drawn into its bottom-left w × h, always cleared
+  int w = 1, h = 1;
+};
 // Renders the 3D scene of a gsViewPort control into its texture target, if it has a scene, a camera and a
-// gsTextureTarget_OGL effect. Called by the GUI pass when it reaches the viewport.
-void renderViewportScene(Display& d, script::VM& vm, ControlObj* viewport);
+// gsTextureTarget_OGL effect. Called by the GUI pass when it reaches the viewport. With an override: that camera and
+// target instead (the viewport's own camera is left as it is).
+void renderViewportScene(Display& d, script::VM& vm, ControlObj* viewport, const ViewOverride* ov = nullptr);
+// The on-screen viewport that drew a map (a scene with a grid) in the last frame, and its camera; null in the menus.
+void sceneFrameBegin();  // Display::renderFrame, once a frame (lastMapViewport's age)
+script::Object* viewportScene(script::VM& vm, ControlObj* viewport);
+ControlObj* lastMapViewport();
+script::Object* lastMapCamera();
 // seconds per frame phase (load-time measurements): 1 scene nodes, 2 grid, 3 sim vehicles, 4 particles, 5 night lights,
 // 6 programs
 extern double gPhaseSeconds[8];

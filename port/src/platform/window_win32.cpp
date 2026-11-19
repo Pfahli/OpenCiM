@@ -35,6 +35,8 @@ class Win32Window final : public Window {
     if (rc_) {
       wglMakeCurrent(nullptr, nullptr);
       wglDeleteContext(rc_);
+    } else if (sharedRc_ && wglGetCurrentDC() == dc_) {
+      wglMakeCurrent(nullptr, nullptr);  // the owner makes its own current again
     }
     if (dc_) ReleaseDC(hwnd_, dc_);
     if (hwnd_) DestroyWindow(hwnd_);
@@ -61,7 +63,9 @@ class Win32Window final : public Window {
     // a throwaway window and legacy context give access to the WGL extension entry points
     CreateContextAttribs createAttribs = nullptr;
     ChoosePixelFormat choose = nullptr;
-    if (desc.openGL) {
+    // (not for a window sharing another's context: the throwaway context would leave none current)
+    const bool ownContext = desc.openGL && !desc.shareGL;
+    if (ownContext) {
       HWND tmp = CreateWindowExW(0, kClass, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, inst, nullptr);
       HDC tdc = GetDC(tmp);
       PIXELFORMATDESCRIPTOR pfd = legacyFormat();
@@ -75,32 +79,38 @@ class Win32Window final : public Window {
       ReleaseDC(tmp, tdc);
       DestroyWindow(tmp);
     }
-    if (desc.openGL && !createAttribs) {
+    if (ownContext && !createAttribs) {
       if (error) *error = "the graphics driver does not offer OpenGL 3.3 (wglCreateContextAttribsARB missing)";
       return false;
     }
 
     fullscreen_ = desc.fullscreen;
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;  // the game's caption window, no resize
+    resizable_ = desc.resizable;
+    secondary_ = desc.secondary;
+    DWORD style = windowedStyle();  // the game's caption window, no resize (pop-outs: sizable)
     RECT r{0, 0, desc.width, desc.height};
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    const bool placed = desc.x != WindowDesc::kDefaultPos && desc.y != WindowDesc::kDefaultPos;
+    const POINT at = placed ? POINT{desc.x + 40, desc.y + 20} : POINT{0, 0};  // the monitor it opens on
     if (fullscreen_) {
       style = WS_POPUP;
       MONITORINFO mi{sizeof mi};
-      GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
+      GetMonitorInfoW(MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY), &mi);
       r = mi.rcMonitor;
       x = r.left;
       y = r.top;
     } else {
       MONITORINFO mi{sizeof mi};
-      GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
-      if (desc.width >= mi.rcMonitor.right - mi.rcMonitor.left || desc.height >= mi.rcMonitor.bottom - mi.rcMonitor.top) {
+      GetMonitorInfoW(MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY), &mi);
+      if (!secondary_ &&
+          (desc.width >= mi.rcMonitor.right - mi.rcMonitor.left || desc.height >= mi.rcMonitor.bottom - mi.rcMonitor.top)) {
         style = WS_POPUP;  // as large as the monitor or larger (4K screenshots): a plain window at its corner, no frame
         x = mi.rcMonitor.left;
         y = mi.rcMonitor.top;
         oversize_ = true;
       } else {
         AdjustWindowRectEx(&r, style, FALSE, 0);
+        if (placed) x = desc.x, y = desc.y;
       }
     }
     hwnd_ = CreateWindowExW(0, kClass, reinterpret_cast<const wchar_t*>(desc.title.c_str()), style, x, y,
@@ -119,6 +129,27 @@ class Win32Window final : public Window {
       return true;
     }
     dc_ = GetDC(hwnd_);
+    if (auto* owner = dynamic_cast<Win32Window*>(desc.shareGL); owner && owner->rc_) {
+      // a secondary window drawn with the owner's context: the same pixel format, so the context can be made current
+      // on it (wglMakeCurrent wants a device context of the same format)
+      PIXELFORMATDESCRIPTOR spfd{};
+      DescribePixelFormat(owner->dc_, owner->format_, sizeof spfd, &spfd);
+      if (!SetPixelFormat(dc_, owner->format_, &spfd)) {
+        if (error) *error = "SetPixelFormat (shared) failed";
+        return false;
+      }
+      format_ = owner->format_;
+      sharedRc_ = owner->rc_;
+      opengl32_ = owner->opengl32_;
+      swapInterval_ = owner->swapInterval_;
+      if (desc.visible) ShowWindow(hwnd_, SW_SHOW);
+      UpdateWindow(hwnd_);
+      RECT cr;
+      GetClientRect(hwnd_, &cr);
+      width_ = cr.right;
+      height_ = cr.bottom;
+      return true;
+    }
     int format = 0;
     UINT n = 0;
     PIXELFORMATDESCRIPTOR pfd = legacyFormat();
@@ -147,6 +178,7 @@ class Win32Window final : public Window {
       if (error) *error = "SetPixelFormat failed";
       return false;
     }
+    format_ = format;
     const int ctx[] = {WGL_CONTEXT_MAJOR_VERSION_ARB, 3, WGL_CONTEXT_MINOR_VERSION_ARB, 3,
                        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB, 0};
     rc_ = createAttribs(dc_, nullptr, ctx);
@@ -166,8 +198,10 @@ class Win32Window final : public Window {
                           {GID_PAN, GC_PAN, GC_PAN_WITH_SINGLE_FINGER_VERTICALLY | GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY |
                                                 GC_PAN_WITH_INERTIA}};
     SetGestureConfig(hwnd_, 0, UINT(sizeof(gc) / sizeof(gc[0])), gc, sizeof(GESTURECONFIG));
-    touchpad_.attach(hwnd_);
-    gamepadAttach(hwnd_);  // PlayStation pads without XInput (platform/gamepad.h)
+    if (!secondary_) {
+      touchpad_.attach(hwnd_);
+      gamepadAttach(hwnd_);  // PlayStation pads without XInput (platform/gamepad.h)
+    }
     RECT cr;
     GetClientRect(hwnd_, &cr);
     width_ = cr.right;
@@ -218,7 +252,7 @@ class Win32Window final : public Window {
     MONITORINFO mi{sizeof mi};
     GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY), &mi);
     DWORD visible = DWORD(GetWindowLongPtrW(hwnd_, GWL_STYLE)) & WS_VISIBLE;
-    DWORD style = (fullscreen ? WS_POPUP : WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX) | visible;
+    DWORD style = (fullscreen ? WS_POPUP : windowedStyle()) | visible;
     RECT r = mi.rcMonitor;
     if (!fullscreen) {
       RECT frame{0, 0, w, h};
@@ -227,11 +261,22 @@ class Win32Window final : public Window {
       RECT cur;
       GetWindowRect(hwnd_, &cur);
       int x = cur.left, y = cur.top;
-      if (fullscreen_) {  // from fullscreen: centred in the work area
+      if (fullscreen_ && restore_.right > restore_.left) {  // back where it was before fullscreen
+        x = restore_.left;
+        y = restore_.top;
+      } else if (fullscreen_) {  // from fullscreen: centred in the work area
         x = mi.rcWork.left + std::max(0, int(mi.rcWork.right - mi.rcWork.left - fw) / 2);
         y = mi.rcWork.top + std::max(0, int(mi.rcWork.bottom - mi.rcWork.top - fh) / 2);
       }
       r = RECT{x, y, x + fw, y + fh};
+    }
+    if (fullscreen && !fullscreen_) {  // remembered for the way back and for placement()
+      if (IsZoomed(hwnd_)) ShowWindow(hwnd_, SW_RESTORE);
+      GetWindowRect(hwnd_, &restore_);
+      RECT cr0;
+      GetClientRect(hwnd_, &cr0);
+      restoreW_ = cr0.right;
+      restoreH_ = cr0.bottom;
     }
     SetWindowLongPtrW(hwnd_, GWL_STYLE, LONG_PTR(style));
     SetWindowPos(hwnd_, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
@@ -245,6 +290,37 @@ class Win32Window final : public Window {
     DPI_AWARENESS a = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hwnd_));
     return a == DPI_AWARENESS_PER_MONITOR_AWARE ? int(GetDpiForWindow(hwnd_)) : 0;
   }
+  bool makeCurrent() override {
+    HGLRC rc = rc_ ? rc_ : sharedRc_;
+    return rc && dc_ && wglMakeCurrent(dc_, rc);
+  }
+  bool focused() const override { return GetForegroundWindow() == hwnd_; }
+  bool minimized() const override { return IsIconic(hwnd_) != 0; }
+  void placement(int& x, int& y, int& w, int& h) const override {
+    if (fullscreen_ && restore_.right > restore_.left) {
+      x = restore_.left, y = restore_.top, w = restoreW_, h = restoreH_;
+      return;
+    }
+    WINDOWPLACEMENT wp{sizeof wp};
+    GetWindowPlacement(hwnd_, &wp);  // the restored rect also while maximised or minimised
+    RECT frame{0, 0, 0, 0};
+    AdjustWindowRectEx(&frame, windowedStyle(), FALSE, 0);
+    x = wp.rcNormalPosition.left;
+    y = wp.rcNormalPosition.top;
+    w = (wp.rcNormalPosition.right - wp.rcNormalPosition.left) - (frame.right - frame.left);
+    h = (wp.rcNormalPosition.bottom - wp.rcNormalPosition.top) - (frame.bottom - frame.top);
+  }
+  void place(int x, int y, int w, int h) override {
+    if (fullscreen_) setMode(false, w, h);
+    RECT r{0, 0, std::max(w, 160), std::max(h, 90)};
+    AdjustWindowRectEx(&r, windowedStyle(), FALSE, 0);
+    SetWindowPos(hwnd_, nullptr, x, y, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOOWNERZORDER);
+    RECT cr;
+    GetClientRect(hwnd_, &cr);
+    width_ = cr.right;
+    height_ = cr.bottom;
+  }
+  void focus() override { SetForegroundWindow(hwnd_); }
   void* nativeWindow() const override { return hwnd_; }
   void* nativeInstance() const override { return GetModuleHandleW(nullptr); }
   void* glProc(const char* name) const override {
@@ -263,6 +339,10 @@ class Win32Window final : public Window {
     pfd.cDepthBits = 24;
     pfd.cStencilBits = 8;
     return pfd;
+  }
+
+  DWORD windowedStyle() const {
+    return resizable_ ? WS_OVERLAPPEDWINDOW : WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
   }
 
   void emit(InputEvent e) { queued_.push_back(e); }
@@ -367,6 +447,7 @@ class Win32Window final : public Window {
         break;  // DefWindowProc cleans up the raw input
       }
       case WM_KEYDOWN: case WM_SYSKEYDOWN: {
+        if (m == WM_KEYDOWN && w < 256) held_[w] = true;
         InputEvent e{T::KeyDown};
         e.key = int(w);
         e.repeat = (l & (1 << 30)) != 0;
@@ -376,6 +457,7 @@ class Win32Window final : public Window {
         break;
       }
       case WM_KEYUP: case WM_SYSKEYUP: {
+        if (w < 256) held_[w] = false;
         InputEvent e{T::KeyUp};
         e.key = int(w);
         e.system = m == WM_SYSKEYUP;
@@ -393,6 +475,18 @@ class Win32Window final : public Window {
         return 0;
       }
       case WM_ACTIVATEAPP: emit({w ? T::Activate : T::Deactivate}); break;
+      // the focus going to another window of the game (a pop-out view): the keys held here are let go, as their key-up
+      // messages now go to that window (held arrow keys would scroll on for ever)
+      case WM_ACTIVATE:
+        if (LOWORD(w) == WA_INACTIVE)
+          for (int k = 0; k < 256; ++k)
+            if (held_[k]) {
+              held_[k] = false;
+              InputEvent e{T::KeyUp};
+              e.key = k;
+              emit(e);
+            }
+        break;
       case WM_SETCURSOR:
         if (!cursor_ && LOWORD(l) == HTCLIENT) { SetCursor(nullptr); return TRUE; }
         break;
@@ -414,6 +508,12 @@ class Win32Window final : public Window {
       case WM_DPICHANGED: return 0;
       case WM_ERASEBKGND: return 1;
       case WM_GETMINMAXINFO:  // a window larger than the monitor keeps its size
+        if (resizable_) {
+          auto* mmi = reinterpret_cast<MINMAXINFO*>(l);
+          mmi->ptMinTrackSize.x = 320;
+          mmi->ptMinTrackSize.y = 200;
+          return 0;
+        }
         if (oversize_) {
           auto* mmi = reinterpret_cast<MINMAXINFO*>(l);
           mmi->ptMaxTrackSize.x = mmi->ptMaxSize.x = 16384;
@@ -436,6 +536,12 @@ class Win32Window final : public Window {
   HWND hwnd_ = nullptr;
   HDC dc_ = nullptr;
   HGLRC rc_ = nullptr;
+  HGLRC sharedRc_ = nullptr;  // a secondary window: the owner's context
+  int format_ = 0;
+  bool resizable_ = false, secondary_ = false;
+  bool held_[256] = {};
+  RECT restore_{0, 0, 0, 0};  // the window rect before fullscreen (setMode)
+  int restoreW_ = 0, restoreH_ = 0;
   HMODULE opengl32_ = nullptr;
   SwapInterval swapInterval_ = nullptr;
   bool fullscreen_ = false, cursor_ = true;
@@ -451,5 +557,43 @@ class Win32Window final : public Window {
 }  // namespace
 
 std::unique_ptr<Window> createWindow() { return std::make_unique<Win32Window>(); }
+
+bool otherMonitorWorkArea(const Window* away, int& x, int& y, int& w, int& h) {
+  HMONITOR own = away ? MonitorFromWindow(static_cast<HWND>(away->nativeWindow()), MONITOR_DEFAULTTOPRIMARY)
+                      : MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  struct Find {
+    HMONITOR own;
+    RECT best{0, 0, 0, 0};
+    long long area = -1;
+  } f{own};
+  EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT, LPARAM p) -> BOOL {
+    auto* f = reinterpret_cast<Find*>(p);
+    if (m == f->own) return TRUE;
+    MONITORINFO mi{sizeof mi};
+    GetMonitorInfoW(m, &mi);
+    long long a = (long long)(mi.rcWork.right - mi.rcWork.left) * (mi.rcWork.bottom - mi.rcWork.top);
+    if (a > f->area) f->area = a, f->best = mi.rcWork;
+    return TRUE;
+  }, reinterpret_cast<LPARAM>(&f));
+  RECT r = f.best;
+  if (f.area < 0) {
+    MONITORINFO mi{sizeof mi};
+    GetMonitorInfoW(own, &mi);
+    r = mi.rcWork;
+  }
+  x = r.left, y = r.top, w = r.right - r.left, h = r.bottom - r.top;
+  return f.area >= 0;
+}
+
+bool onSomeMonitor(int x, int y, int w, int h) {
+  RECT r{x, y, x + std::max(w, 1), y + std::max(h, 1)};
+  HMONITOR m = MonitorFromRect(&r, MONITOR_DEFAULTTONULL);
+  if (!m) return false;
+  MONITORINFO mi{sizeof mi};
+  GetMonitorInfoW(m, &mi);
+  RECT in{};
+  IntersectRect(&in, &r, &mi.rcMonitor);
+  return (long long)(in.right - in.left) * (in.bottom - in.top) * 2 >= (long long)(r.right - r.left) * (r.bottom - r.top);
+}
 
 }  // namespace regs::platform

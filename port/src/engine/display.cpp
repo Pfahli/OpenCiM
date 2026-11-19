@@ -26,6 +26,8 @@
 #include "engine/host.h"
 #include "engine/input.h"
 #include "engine/interaction.h"
+#include "engine/popout.h"
+#include "engine/scene3d.h"
 #include "engine/minimap.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
@@ -348,7 +350,7 @@ struct Display::UpscaleJob {
   }
 };
 
-Display::~Display() = default;
+Display::~Display() { popoutsShutdown(); }
 
 int Display::textureUpscaleProgress() const {
   if (!upscaleJob_ || upscaleJob_->progress.finished) return -1;
@@ -696,6 +698,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     }
   } slowFrame{logTime, frameStart, linkedBefore, linkBefore, render::gpu::dev().pipelinesCreated(),
               render::gpu::dev().pipelineMs()};
+  sceneFrameBegin();
   syncRenderSettings(vm);
   sweepEffects(*this);
   stylePreviewFrame(*this, vm);
@@ -735,6 +738,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     std::vector<uint8_t> px = r2d_.readPixels();
     fn(px, r2d_.frameWidth(), r2d_.frameHeight());
   }
+  popoutsRender(*this, vm);  // the pop-out views (engine/popout.cpp), each into its own window
   std::filesystem::path pqShot;
   if (!shot_.empty()) {
     if (saveScreenshot(shot_)) LOG_INFO("screenshot: %s", shot_.string().c_str());
@@ -954,6 +958,18 @@ void Display::dumpTarget(const render::RenderTarget& rt, const std::filesystem::
   render::gpu::dev().readPixels(rt.fbo, 0, 0, rt.width, rt.height, px.data());
   std::ofstream f(file, std::ios::binary);
   if (f) writePng(f, px.data(), rt.width, rt.height);
+}
+
+void Display::saveTargetPng(const render::RenderTarget& rt, int w, int h, const std::filesystem::path& file) {
+  w = std::min(w, rt.width);
+  h = std::min(h, rt.height);
+  if (w <= 0 || h <= 0) return;
+  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4), rows(px.size());
+  render::gpu::dev().readPixels(rt.fbo, 0, 0, w, h, px.data());
+  for (int y = 0; y < h; ++y)  // GL rows (bottom first) to image rows
+    std::memcpy(&rows[size_t(y) * size_t(w) * 4], &px[size_t(h - 1 - y) * size_t(w) * 4], size_t(w) * 4);
+  std::ofstream f(file, std::ios::binary);
+  if (f) writePng(f, rows.data(), w, h);
 }
 
 void registerDisplayNatives(VM& vm) {

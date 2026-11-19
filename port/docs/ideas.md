@@ -174,6 +174,9 @@ it is, what already exists, and the open decisions. Order is not priority.
        at full size, the line and vehicle panels, finances and graphs, or a second camera (follow a vehicle, watch a
        station). Each extra window needs its own swapchain (Vulkan) or shared GL context, and the GUI's windows would
        need to be movable onto it.
+  * Done (2026-11-19): **pop-out views**, part of way 3: any number of extra windows showing the map with a camera of
+    their own, windowed or fullscreen on any monitor (`docs/popout-views.md`). Still open from way 3: panels, the
+    minimap and a vehicle to follow in such a window.
   * Open decisions: which of these first (choosing the screen is cheap; span and panels are the real feature), what the
     second screen shows by default, how input works across screens (one cursor over both; the edge-scroll of the
     camera only at the outer edges), mixed resolutions and refresh rates, and whether controllers and the Steam Deck

@@ -290,3 +290,4 @@ $regs_pad_do_lpadSc = "Drag the map; click at the edge: d-pad";
 $regs_pad_do_lpadCam = "Held together: turn (sideways), tilt (up and down); click: tilt back";
 $regs_pad_do_speedSc = "Left pad clicked left / right: game speed";
 $regs_pad_do_panelsSc = "Left pad clicked up / down: line panel / vehicle panel";
+$regs_popout_hint = "Pop-out view: a window of its own with its own camera (F7). Put it on another screen; F11 for fullscreen";

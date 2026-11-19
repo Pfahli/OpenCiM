@@ -585,6 +585,9 @@ class VkDeviceImpl final : public Device {
   // ---- frame ----
   void beginFrame(int width, int height) override;
   void present() override;
+  uint32_t addWindow(platform::Window& w) override;
+  void removeWindow(uint32_t id) override;
+  void showInWindow(uint32_t id, uint32_t framebuffer, int w, int h) override;
   void setVsync(bool on) override {
     if (on != vsync_) vsync_ = on, swapchainDirty_ = true;
   }
@@ -760,6 +763,29 @@ class VkDeviceImpl final : public Device {
     return int(std::find(seen.begin(), seen.end(), a.buffer) - seen.begin());
   }
 
+  // pop-out windows (addWindow): a surface and swapchain each; showInWindow acquires an image, copies the picture onto
+  // it in the frame's commands and marks it, present() waits for and presents every marked one with the main image
+  struct ExtraWindow {
+    platform::Window* window = nullptr;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    VkExtent2D extent{0, 0};
+    std::vector<VkImage> images;
+    std::vector<VkSemaphore> ready;  // per image: the copy has run, the present may go
+    VkSemaphore acquired[kFrames] = {};
+    bool dirty = false;
+    bool pending = false;  // an image acquired and filled in this frame
+    uint32_t image = 0;
+  };
+  std::vector<std::unique_ptr<ExtraWindow>> extra_;
+  bool makeExtraSwapchain(ExtraWindow& x);
+  void destroyExtraSwapchain(ExtraWindow& x);
+  bool extraPending() const {
+    for (const auto& x : extra_)
+      if (x && x->pending) return true;
+    return false;
+  }
+
   // device setup
   bool createSwapchain(std::string* error);
   void destroySwapchain();
@@ -901,6 +927,7 @@ class VkDeviceImpl final : public Device {
   std::vector<VkImage> swapImages_;
   std::vector<VkSemaphore> presentReady_;  // per swapchain image
   std::array<Frame, kFrames> frames_;
+  // (pop-out windows: extra_, declared with ExtraWindow above)
   size_t frame_ = 0;
   struct RedDone {
     std::vector<float> px;
@@ -1729,6 +1756,12 @@ void VkDeviceImpl::shutdown() {
       vkDestroySemaphore(dev_, f.acquired, nullptr);
       vkDestroyCommandPool(dev_, f.pool, nullptr);
     }
+    for (auto& x : extra_)
+      if (x) {
+        destroyExtraSwapchain(*x);
+        for (VkSemaphore s : x->acquired)
+          if (s) vkDestroySemaphore(dev_, s, nullptr);
+      }
     destroySwapchain();
     if (timestamps_) vkDestroyQueryPool(dev_, timestamps_, nullptr);
     if (hitBuffer_) vkDestroyBuffer(dev_, hitBuffer_, nullptr);
@@ -1739,6 +1772,9 @@ void VkDeviceImpl::shutdown() {
     vkDestroyDevice(dev_, nullptr);
     dev_ = VK_NULL_HANDLE;
   }
+  for (auto& x : extra_)
+    if (x && x->surface) vkDestroySurfaceKHR(instance_, x->surface, nullptr);
+  extra_.clear();
   if (surface_) vkDestroySurfaceKHR(instance_, surface_, nullptr);
   vkDestroyInstance(instance_, nullptr);
   instance_ = VK_NULL_HANDLE;
@@ -1834,7 +1870,7 @@ void VkDeviceImpl::present() {
     }
     fgLastPresent_ = now;
   }
-  bool generated = fgWanted_ && fgPresent();
+  bool generated = fgWanted_ && !extraPending() && fgPresent();  // (pop-outs: the plain path presents them too)
   fsrThisFrame_ = false;
   fgHudless_ = 0;
   if (generated) {
@@ -1873,32 +1909,209 @@ void VkDeviceImpl::present() {
   }
   vkEndCommandBuffer(f.cmd);
   VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, f.cmd, 0};
-  VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, f.acquired, 0,
-                             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
-  VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr,
-                               presentable ? presentReady_[image] : VK_NULL_HANDLE, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
+  // the main image and every pop-out's filled this frame: the submit waits for their acquisitions and signals their
+  // presents, one present call shows them all
+  std::vector<VkSemaphoreSubmitInfo> waits, signals;
+  std::vector<VkSemaphore> presentWaits;
+  std::vector<VkSwapchainKHR> chains;
+  std::vector<uint32_t> images;
+  std::vector<ExtraWindow*> who;  // null: the main window
+  auto add = [&](VkSemaphore acquired, VkSemaphore ready, VkSwapchainKHR chain, uint32_t img, ExtraWindow* x) {
+    waits.push_back({VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, acquired, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0});
+    signals.push_back({VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, ready, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0});
+    presentWaits.push_back(ready);
+    chains.push_back(chain);
+    images.push_back(img);
+    who.push_back(x);
+  };
+  if (presentable) add(f.acquired, presentReady_[image], swapchain_, image, nullptr);
+  for (auto& x : extra_)
+    if (x && x->pending) {
+      add(x->acquired[frame_], x->ready[x->image], x->swapchain, x->image, x.get());
+      x->pending = false;
+    }
   VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-  si.waitSemaphoreInfoCount = presentable ? 1 : 0;
-  si.pWaitSemaphoreInfos = &wait;
-  si.signalSemaphoreInfoCount = presentable ? 1 : 0;
-  si.pSignalSemaphoreInfos = &signal;
+  si.waitSemaphoreInfoCount = uint32_t(waits.size());
+  si.pWaitSemaphoreInfos = waits.data();
+  si.signalSemaphoreInfoCount = uint32_t(signals.size());
+  si.pSignalSemaphoreInfos = signals.data();
   si.commandBufferInfoCount = 1;
   si.pCommandBufferInfos = &cbi;
   {
     std::lock_guard<std::mutex> lk(queueMutex_);
     vkQueueSubmit2(queue_, 1, &si, f.fence);
-    if (presentable) {
+    if (!chains.empty()) {
+      std::vector<VkResult> results(chains.size(), VK_SUCCESS);
       VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-      pi.waitSemaphoreCount = 1;
-      pi.pWaitSemaphores = &presentReady_[image];
-      pi.swapchainCount = 1;
-      pi.pSwapchains = &swapchain_;
-      pi.pImageIndices = &image;
-      VkResult r = vkQueuePresentKHR(queue_, &pi);
-      if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
+      pi.waitSemaphoreCount = uint32_t(presentWaits.size());
+      pi.pWaitSemaphores = presentWaits.data();
+      pi.swapchainCount = uint32_t(chains.size());
+      pi.pSwapchains = chains.data();
+      pi.pImageIndices = images.data();
+      pi.pResults = results.data();
+      vkQueuePresentKHR(queue_, &pi);
+      for (size_t i = 0; i < results.size(); ++i)
+        if (results[i] == VK_ERROR_OUT_OF_DATE_KHR || results[i] == VK_SUBOPTIMAL_KHR) {
+          if (who[i]) who[i]->dirty = true;
+          else swapchainDirty_ = true;
+        }
     }
   }
   presentTail();
+}
+
+uint32_t VkDeviceImpl::addWindow(platform::Window& w) {
+  auto x = std::make_unique<ExtraWindow>();
+  x->window = &w;
+  VkWin32SurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+  sci.hinstance = static_cast<HINSTANCE>(w.nativeInstance());
+  sci.hwnd = static_cast<HWND>(w.nativeWindow());
+  if (VkResult r = vkCreateWin32SurfaceKHR(instance_, &sci, nullptr, &x->surface); r != VK_SUCCESS) {
+    LOG_WARN("vulkan: no surface for a pop-out window (%s)", vkError("vkCreateWin32SurfaceKHR", r).c_str());
+    return 0;
+  }
+  VkBool32 ok = VK_FALSE;
+  vkGetPhysicalDeviceSurfaceSupportKHR(phys_, queueFamily_, x->surface, &ok);
+  if (!ok) {  // a monitor on another GPU
+    LOG_WARN("vulkan: the queue cannot present to the pop-out window's surface");
+    vkDestroySurfaceKHR(instance_, x->surface, nullptr);
+    return 0;
+  }
+  for (VkSemaphore& s : x->acquired) {
+    VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    vkCreateSemaphore(dev_, &si, nullptr, &s);
+  }
+  for (size_t i = 0; i < extra_.size(); ++i)
+    if (!extra_[i]) {
+      extra_[i] = std::move(x);
+      return uint32_t(i + 1);
+    }
+  extra_.push_back(std::move(x));
+  return uint32_t(extra_.size());
+}
+
+void VkDeviceImpl::removeWindow(uint32_t id) {
+  if (!id || id > extra_.size() || !extra_[id - 1]) return;
+  ExtraWindow& x = *extra_[id - 1];
+  // (called between frames, from popoutsPump: no image of it is acquired and waiting for this frame's present)
+  vkDeviceWaitIdle(dev_);
+  destroyExtraSwapchain(x);
+  for (VkSemaphore s : x.acquired)
+    if (s) vkDestroySemaphore(dev_, s, nullptr);
+  vkDestroySurfaceKHR(instance_, x.surface, nullptr);
+  extra_[id - 1].reset();
+}
+
+void VkDeviceImpl::destroyExtraSwapchain(ExtraWindow& x) {
+  if (!x.swapchain) return;
+  vkDeviceWaitIdle(dev_);
+  for (VkSemaphore s : x.ready) vkDestroySemaphore(dev_, s, nullptr);
+  x.ready.clear();
+  vkDestroySwapchainKHR(dev_, x.swapchain, nullptr);
+  x.swapchain = VK_NULL_HANDLE;
+  x.images.clear();
+}
+
+bool VkDeviceImpl::makeExtraSwapchain(ExtraWindow& x) {
+  VkSurfaceCapabilitiesKHR caps;
+  if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, x.surface, &caps) != VK_SUCCESS) return false;
+  uint32_t n = 0;
+  vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, x.surface, &n, nullptr);
+  std::vector<VkSurfaceFormatKHR> formats(n);
+  vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, x.surface, &n, formats.data());
+  if (formats.empty()) return false;
+  VkSurfaceFormatKHR fmt = formats[0];
+  for (const auto& f : formats)  // UNORM like the main window (no sRGB conversion anywhere)
+    if ((f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) &&
+        f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+      fmt = f;
+      break;
+    }
+  vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, x.surface, &n, nullptr);
+  std::vector<VkPresentModeKHR> modes(n);
+  vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, x.surface, &n, modes.data());
+  // never waiting for a vertical blank of its own: the frame's pace is the main window's
+  VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
+  for (VkPresentModeKHR m : modes)
+    if (m == VK_PRESENT_MODE_IMMEDIATE_KHR) mode = m;
+  for (VkPresentModeKHR m : modes)
+    if (m == VK_PRESENT_MODE_MAILBOX_KHR) mode = m;
+  VkExtent2D ext = caps.currentExtent;
+  if (ext.width == 0xFFFFFFFFu) ext = {uint32_t(std::max(1, x.window->width())), uint32_t(std::max(1, x.window->height()))};
+  if (ext.width == 0 || ext.height == 0) return false;  // minimised
+  uint32_t count = std::max(caps.minImageCount + 1, 3u);
+  if (caps.maxImageCount) count = std::min(count, caps.maxImageCount);
+  VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+  sci.surface = x.surface;
+  sci.minImageCount = count;
+  sci.imageFormat = fmt.format;
+  sci.imageColorSpace = fmt.colorSpace;
+  sci.imageExtent = ext;
+  sci.imageArrayLayers = 1;
+  sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  sci.preTransform = caps.currentTransform;
+  sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+  sci.presentMode = mode;
+  sci.clipped = VK_TRUE;
+  sci.oldSwapchain = x.swapchain;
+  VkSwapchainKHR sc = VK_NULL_HANDLE;
+  if (VkResult r = vkCreateSwapchainKHR(dev_, &sci, nullptr, &sc); r != VK_SUCCESS) {
+    LOG_WARN("vulkan: pop-out window: %s", vkError("vkCreateSwapchainKHR", r).c_str());
+    return false;
+  }
+  destroyExtraSwapchain(x);
+  x.swapchain = sc;
+  x.extent = ext;
+  vkGetSwapchainImagesKHR(dev_, sc, &n, nullptr);
+  x.images.resize(n);
+  vkGetSwapchainImagesKHR(dev_, sc, &n, x.images.data());
+  for (uint32_t i = 0; i < n; ++i) {
+    VkSemaphoreCreateInfo s{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    VkSemaphore sem;
+    vkCreateSemaphore(dev_, &s, nullptr, &sem);
+    x.ready.push_back(sem);
+  }
+  x.dirty = false;
+  return true;
+}
+
+void VkDeviceImpl::showInWindow(uint32_t id, uint32_t framebuffer, int w, int h) {
+  ExtraWindow* x = id && id <= extra_.size() ? extra_[id - 1].get() : nullptr;
+  if (!x || x->pending || framebuffer >= framebuffers_.size() || !framebuffers_[framebuffer].color || w <= 0 || h <= 0) return;
+  Tex& src = textures_[framebuffers_[framebuffer].color];
+  if (src.samples > 1 || x->window->minimized() || x->window->width() <= 0 || x->window->height() <= 0) return;
+  if (x->dirty || !x->swapchain || int(x->extent.width) != x->window->width() ||
+      int(x->extent.height) != x->window->height())
+    if (!makeExtraSwapchain(*x)) return;
+  uint32_t image = 0;
+  // no waiting: without a free image (the window's compositor still holds them) this frame leaves it as it is
+  VkResult r = vkAcquireNextImageKHR(dev_, x->swapchain, 0, x->acquired[frame_], VK_NULL_HANDLE, &image);
+  if (r == VK_ERROR_OUT_OF_DATE_KHR) {
+    x->dirty = true;
+    return;
+  }
+  if (r == VK_SUBOPTIMAL_KHR) x->dirty = true;
+  else if (r != VK_SUCCESS) return;
+  endRendering();
+  fullBarrier(cmd());
+  VkImage dst = x->images[image];
+  imageBarrier(cmd(), dst, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  VkImageBlit b{};  // GL rows (row 0 at the bottom) onto the image (row 0 at the top): mirrored in y
+  b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  b.srcOffsets[0] = {0, 0, 0};
+  b.srcOffsets[1] = {w, h, 1};
+  b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  b.dstOffsets[0] = {0, int32_t(x->extent.height), 0};
+  b.dstOffsets[1] = {int32_t(x->extent.width), 0, 1};
+  const bool same = w == int(x->extent.width) && h == int(x->extent.height);
+  vkCmdBlitImage(cmd(), src.image, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b,
+                 same ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+  imageBarrier(cmd(), dst, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+  fullBarrier(cmd());
+  x->image = image;
+  x->pending = true;
+  boundFb_ = 0;
 }
 
 // the next frame: wait until its previous use has finished, then reuse its pool, ring and garbage list

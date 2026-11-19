@@ -36,6 +36,7 @@
 #include "engine/host.h"
 #include "engine/user_folders.h"
 #include "engine/mods.h"
+#include "engine/popout.h"
 #include "engine/terrain.h"
 
 namespace regs::engine {
@@ -64,6 +65,7 @@ Engine::Engine(const std::filesystem::path& gameDir, const std::filesystem::path
   registerDisplayNatives(*vm_);
   registerInputNatives(*vm_);
   registerSceneNatives(*vm_);
+  registerPopoutNatives(*vm_);
   registerSkyNatives(*vm_);
   registerParticleNatives(*vm_);
   registerTrafficMapNatives(*vm_);

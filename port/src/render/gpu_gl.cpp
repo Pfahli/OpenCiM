@@ -564,7 +564,37 @@ class GlDevice final : public Device {
     window_.swap();
   }
   double gpuFrameMs() const override { return gpuMs_; }
-  void setVsync(bool on) override { window_.setVsync(on); }
+  void setVsync(bool on) override {
+    vsync_ = on;
+    window_.setVsync(on);
+  }
+
+  // ---- extra windows: the context made current on the pop-out's window, the picture blitted into its back buffer and
+  // swapped without waiting for the vertical blank (the main window keeps its own setting), then back to the main one
+  uint32_t addWindow(platform::Window& w) override {
+    for (size_t i = 0; i < extra_.size(); ++i)
+      if (!extra_[i]) return extra_[i] = &w, uint32_t(i + 1);
+    extra_.push_back(&w);
+    return uint32_t(extra_.size());
+  }
+  void removeWindow(uint32_t id) override {
+    if (id && id <= extra_.size()) extra_[id - 1] = nullptr;
+  }
+  void showInWindow(uint32_t id, uint32_t framebuffer, int w, int h) override {
+    platform::Window* win = id && id <= extra_.size() ? extra_[id - 1] : nullptr;
+    if (!win || win->width() <= 0 || win->height() <= 0 || w <= 0 || h <= 0) return;
+    if (!win->makeCurrent()) return;
+    gl::Disable(gl::SCISSOR_TEST);  // the blit is clipped by it
+    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, framebuffer);
+    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+    const bool same = w == win->width() && h == win->height();
+    gl::BlitFramebuffer(0, 0, w, h, 0, 0, win->width(), win->height(), gl::COLOR_BUFFER_BIT, same ? gl::NEAREST : gl::LINEAR);
+    win->setVsync(false);
+    win->swap();
+    window_.makeCurrent();
+    window_.setVsync(vsync_);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+  }
 
  private:
   static uint32_t issueShader(gl::GLenum type, const std::string& src) {
@@ -650,6 +680,8 @@ class GlDevice final : public Device {
   }
 
   platform::Window& window_;
+  std::vector<platform::Window*> extra_;  // pop-out windows (addWindow ids − 1)
+  bool vsync_ = true;
   struct Timing {
     uint32_t q[2] = {0, 0};
     bool begun = false, pending = false;

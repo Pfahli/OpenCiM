@@ -82,6 +82,8 @@ class Display {
   // the next drawn frame's pixels (RGBA, row 0 the top, width, height) to a callback, once (template previews)
   std::function<void(const std::vector<uint8_t>&, int, int)> captureNext;
   void dumpTarget(const render::RenderTarget& rt, const std::filesystem::path& file);
+  // a target's bottom-left w × h as a PNG the right way up (pop-out screenshots)
+  void saveTargetPng(const render::RenderTarget& rt, int w, int h, const std::filesystem::path& file);
 
  private:
   // The port's frame-rate readout (setting regsShowFps, graphics page): measured and drawn over the GUI only while

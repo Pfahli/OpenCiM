@@ -26,6 +26,7 @@
 #include "engine/host.h"
 #include "engine/input.h"
 #include "engine/platform.h"
+#include "engine/popout.h"
 #include "engine/tools.h"
 #include "engine/user_folders.h"
 
@@ -216,6 +217,7 @@ int main(int argc, char** argv) {
     engine::Display* d = engine::display();
     if (d) {
       d->window().pump(input);
+      engine::popoutsPump(eng.vm(), input, !scripted.empty());  // the pop-out views' windows (engine/popout.cpp)
       if (!screenshot.empty() && frame + 1 == maxFrames) d->requestScreenshot(screenshot);
       using T = platform::InputEvent::Type;
       if (!scripted.empty()) {  // scripted runs: the window counts as focused and the real mouse and keys are ignored
@@ -274,6 +276,28 @@ int main(int argc, char** argv) {
           continue;
         } else if (sc.action == "shot") {
           d->requestScreenshot(widen(sc.arg.c_str()));
+          continue;
+        } else if (sc.action == "popout") {  // popout: one more pop-out view (as F7)
+          engine::popoutOpen(eng.vm());
+          continue;
+        } else if (sc.action == "popshot") {  // popshot:<file.png>: the first pop-out's next picture
+          engine::popoutScreenshot(sc.arg);
+          continue;
+        } else if (sc.action.rfind("pop", 0) == 0) {
+          // popkey:<vk> | popkeydown:<vk> | popkeyup:<vk> | popwheel:<notches> | popmove:x,y | popdown:<button> |
+          // popup:<button>: input of the first pop-out's window
+          platform::InputEvent pe;
+          const std::string a = sc.action.substr(3);
+          static int px = 0, py = 0;
+          pe.x = px, pe.y = py;
+          if (a == "key" || a == "keydown") pe.type = T::KeyDown, pe.key = std::atoi(sc.arg.c_str());
+          else if (a == "keyup") pe.type = T::KeyUp, pe.key = std::atoi(sc.arg.c_str());
+          else if (a == "wheel") pe.type = T::MouseWheel, pe.wheel = float(std::atof(sc.arg.c_str()));
+          else if (a == "move") std::sscanf(sc.arg.c_str(), "%d,%d", &px, &py), pe.type = T::MouseMove, pe.x = px, pe.y = py;
+          else if (a == "down" || a == "up") pe.type = a == "down" ? T::MouseDown : T::MouseUp, pe.button = button;
+          else continue;
+          engine::popoutInject(pe);
+          if (a == "key") pe.type = T::KeyUp, engine::popoutInject(pe);
           continue;
         } else if (sc.action == "cam") {  // cam:x,z puts the game camera over a world point (MAIN.$gameUI.setCameraPos)
           float cx = 0, cz = 0;

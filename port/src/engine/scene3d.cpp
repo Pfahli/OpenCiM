@@ -537,10 +537,30 @@ GpuMaterial scriptMaterial(Display& d, VM& vm, Object* variant) {
 // 2 grid, 3 sim vehicles, 4 particles, 5 night lights, 6 programs
 double gPhaseSeconds[8] = {};
 
-void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
+namespace {
+Ref<ControlObj> g_mapViewport;  // the last frame's map view (pop-out views draw its scene)
+Ref<Object> g_mapCamera;
+uint64_t g_mapFrame = 0, g_frameNo = 0;
+}  // namespace
+
+void sceneFrameBegin() { ++g_frameNo; }
+
+Object* viewportScene(VM& vm, ControlObj* vp) { return vp ? fieldOf(vm, vp, u"scene").object() : nullptr; }
+
+ControlObj* lastMapViewport() {
+  ControlObj* vp = g_mapViewport.get();
+  return vp && !vp->destroyed && g_frameNo - g_mapFrame <= 2 ? vp : nullptr;
+}
+Object* lastMapCamera() {
+  Object* c = g_mapCamera.get();
+  return lastMapViewport() && c && !c->destroyed ? c : nullptr;
+}
+
+void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride* ov) {
   Object* scene = fieldOf(vm, vp, u"scene").object();
   Object* cam = fieldOf(vm, vp, u"camera").object();
-  if (cam && !cam->destroyed && isFloatingCamera(vm, cam)) updateFloatingCamera(vm, cam, vm.frameDt(), false);
+  if (!ov && cam && !cam->destroyed && isFloatingCamera(vm, cam)) updateFloatingCamera(vm, cam, vm.frameDt(), false);
+
   if (regs::envVar("REGS_DEBUG_VIEWPORT")) {
     static std::map<std::pair<Object*, Object*>, int> seen;
     if (seen[{vp, scene}]++ == 0)
@@ -574,8 +594,13 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   int bw = d.window().width(), bh = d.window().height();
   float scale = pixels ? d.uiScale : target ? float(target->height) * d.uiScale : float(bh);
   int x = 0, y = 0, w = std::max(1, int(vp->width * scale)), h = std::max(1, int(vp->height * scale));
-  RenderTarget* rt = nullptr;
-  if (target) {
+  const RenderTarget* rt = nullptr;
+  if (ov) {
+    if (!ov->target) return;
+    rt = ov->target;
+    w = std::max(1, ov->w);
+    h = std::max(1, ov->h);
+  } else if (target) {
     rt = d.renderTarget(target, w, h);
     if (!rt) return;
   } else {
@@ -589,16 +614,42 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   Object* sky = nullptr;
   const SceneClasses sceneClasses{vm.findClass("gsSky"), vm.findClass("gsSun")};
   { auto ts_ = std::chrono::steady_clock::now(); collect(d, vm, scene, items, suns, grids, sky, sceneClasses); gPhaseSeconds[1] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+  if (!ov && !rt && !grids.empty()) {
+    g_mapViewport = Ref<ControlObj>(vp);
+    g_mapCamera = Ref<Object>(cam);
+    g_mapFrame = g_frameNo;
+  }
 
   SceneView v;
   v.timer = d.effectTimer;
   Vec3 eye, look, up;
-  cameraView(vm, cam, eye, look, up);
+  if (ov) eye = ov->eye, look = ov->look, up = ov->up;
+  else cameraView(vm, cam, eye, look, up);
   v.eye = eye;
   v.view = lookAt(eye, look, up);
   float nearZ, farZ;
   float gameFar = 0;
   viewDepthRange(vm, vp, cam, nearZ, farZ, &gameFar);
+  const float camFov = ov ? ov->fov : floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f);
+  if (ov) {
+    // the game camera's planes for this distance (setCameraPos: far 160 + zoom; near a tenth of the distance, 1 to 30,
+    // as viewDepthRange does for the main camera), reaching to the ground under the view's top edge like the main
+    // view; the fog is stretched against the main view's own far plane (the sky's fog follows the main camera's zoom)
+    const float mainFar = gameFar;
+    nearZ = std::clamp(ov->distance * 0.1f, 1.0f, 30.0f);
+    farZ = 160.0f + ov->distance;
+    const Vec3 dir = look - eye;
+    const float len = std::sqrt(dot(dir, dir));
+    if (len > 0.001f) {
+      constexpr float kHorizonFar = 4000.0f;
+      const float pitch = std::asin(std::clamp(-dir.y / len, -1.0f, 1.0f));
+      const float half = camFov * 3.14159265f / 360.0f;
+      const float top = pitch - half, height = std::max(1.0f, ov->distance * std::sin(std::max(pitch, 0.05f)));
+      const float need = top > 0.01f ? height / std::sin(top) * std::cos(half) : kHorizonFar;
+      if (need > farZ) farZ = std::min(need * 1.15f, kHorizonFar);
+    }
+    gameFar = mainFar > 0 ? mainFar : farZ;
+  }
   // port graphics options (settings regsViewDistance / regsDetailDistance, 1 = the original): the map view reaches
   // farther and keeps near detail longer; the shadow fit below keeps the original distance
   float viewScale = 1, detailScale = 1;
@@ -606,7 +657,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
     viewScale = std::clamp(settingNumber(vm, u"regsViewDistance", 1.0f), 0.5f, 4.0f);
     detailScale = std::clamp(settingNumber(vm, u"regsDetailDistance", 1.0f), 0.5f, 4.0f);
   }
-  v.proj = perspective(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f), float(w) / float(h), nearZ, farZ * viewScale);
+  v.proj = perspective(camFov, float(w) / float(h), nearZ, farZ * viewScale);
   { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items); gPhaseSeconds[2] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items); gPhaseSeconds[3] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   addSkyItems(d, vm, sky, suns, eye, farZ * viewScale, items);  // sky dome and sun disc (engine/sky.cpp)
@@ -624,7 +675,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       v.fogEnd = dist;
       // a view reaching farther than the game's (viewDepthRange: toward the horizon) stretches the fog as much, so the
       // town fades into haze at the new distance instead of ending where the game's view did
-      if (gameFar > 0 && farZ > gameFar) {
+      if (gameFar > 0 && (farZ > gameFar || ov)) {  // (a pop-out zoomed nearer than the main view: nearer fog)
         const float stretch = farZ / gameFar;
         v.fogStart *= stretch;
         v.fogEnd *= stretch;
@@ -666,7 +717,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   // the scene's particles as billboards for this camera (engine/particles.cpp, docs/renderer/particles.md)
   ParticleDrawList particles;
   {
-    float t = std::tan(floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f) * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
+    float t = std::tan(camFov * 3.14159265f / 360.0f), ta = t * float(w) / float(h);
     { auto ts_ = std::chrono::steady_clock::now(); collectParticles(d, vm, scene, eye, look - eye, v.proj * v.view, std::sqrt(t * t + ta * ta), particles); gPhaseSeconds[4] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
     // (working traffic lights, by day too: engine/traffic_lights.h; before the night lights, which take their pools)
     addTrafficLights(d, vm, grids, v, particles);
@@ -687,7 +738,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   }
   bool rayScene = false;  // the frame's ray-query scene, built once for the shadows and the occlusion
   auto ensureRayScene = [&] { return rayScene || (rayScene = d.r3d().buildRayScene(items)); };
-  if (shadow && !rt && fieldOf(vm, shadow, u"viewport").object() == vp) {
+  if (shadow && (!rt || ov) && fieldOf(vm, shadow, u"viewport").object() == vp) {
     Object* lightObj = fieldOf(vm, shadow, u"light").object();
     Light sun;
     bool haveLight = false;
@@ -699,7 +750,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
       in.eye = eye;
       in.target = look;
       in.up = up;
-      in.fov = floatOr(vm, fieldOf(vm, cam, u"fov"), 60.0f);
+      in.fov = camFov;
       in.aspect = float(w) / float(h);
       in.near = nearZ;
       in.maxDistance = floatOr(vm, fieldOf(vm, shadow, u"maxDistance"), -1.0f);
@@ -771,6 +822,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
   { auto ts_ = std::chrono::steady_clock::now(); assignPrograms(d, vm, items, v.env); gPhaseSeconds[6] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   if (v.particles) prepareParticlePrograms(d, vm, particles, v.env);
   uint32_t clear = uint32_t(vm.toInt(fieldOf(vm, vp, u"clearColor")));
+  if (ov) clear = (clear >> 24) ? clear : 0xFF000000u;  // its own target: every pixel drawn
   // port TAA and render scale (game view, engine/temporal.h): the scene is drawn jittered and/or smaller into the
   // temporal input, then resolved or upscaled to the view's size (before the colour styles)
   TemporalPass temporal;
@@ -844,6 +896,13 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp) {
 }
 
 void cameraFrame(VM& vm, Object* cam, Vec3& eye, Vec3& look, Vec3& up) { cameraView(vm, cam, eye, look, up); }
+
+Vec3 cameraPivot(VM& vm, Object* cam) {
+  bool eased = isFloatingCamera(vm, cam) && cam->fieldValues.count(u"<orient>") && vm.truthy(fieldOf(vm, cam, u"smoothPosition"));
+  Vec3 p = vec3Of(fieldOf(vm, cam, eased ? u"currentPosition" : u"position"));
+  if (Object* t = fieldOf(vm, cam, u"target").object()) p = vec3Of(fieldOf(vm, t, u"position"));
+  return p;
+}
 
 void viewDepthRange(VM& vm, Object* vp, Object* cam, float& nearZ, float& farZ, float* gameFar) {
   // near = max(viewport, camera), far = min (camera −1 = use the viewport's)
