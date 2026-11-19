@@ -1,0 +1,24 @@
+// Cheats in Motion (opencim.cheats) extension of metro/scripts/scenario.script. After the cheat window turned the clock
+// back, the days up to the latest date the game had reached already had their dated events: the campaign scenarios
+// start tasks on exact dates (`if ($date == mkdate(12,2,1923)) addThread(...)`), so passing such a day again would
+// start the task twice. The latest date is kept in the scenario's customData (saved with the game, unknown to the
+// scenario scripts) while the clock is behind it; until the date passes it, dateChanged is not passed on.
+//@rename dateChanged regsCheatsBaseDateChanged
+
+//@base
+
+function dateChanged($date) {
+  if ($scenario) {
+    if (defined $scenario.$customData) {
+      if (defined $scenario.$customData["opencimCheatsLatestDate"]) {
+        if ($date <= $scenario.$customData["opencimCheatsLatestDate"]) {
+          if (getenv("REGS_TEST_CHEATS") != "") echo "cheats: dateChanged(" + string($date) + ") held back, passed before";
+          return;
+        }
+        map_erase($scenario.$customData, "opencimCheatsLatestDate");
+        if (getenv("REGS_TEST_CHEATS") != "") echo "cheats: past the latest date again at " + string($date);
+      }
+    }
+  }
+  regsCheatsBaseDateChanged($date);
+}

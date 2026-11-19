@@ -1,0 +1,501 @@
+// Cheats in Motion (opencim.cheats): the cheat window. Loaded with the game (extend/metro/scripts/game.script) and
+// deleted with it. The magic wand in the left bar (extend/metro/ui/levelbar/levelbar.script) opens and closes it; it
+// is one of the left panels (HQ, vehicles, lines, graphs, roster): opening one closes the others.
+//   money     earnMoney(amount, false), as the original's debug key F3 (not counted as sales); "unlimited" keeps the
+//             account at the original's cap of 2 000 000 000 cents (spendMoney takes nothing from it), topped up
+//             again after the monthly accounts; the flag is kept in the scenario's customData (saved with the game)
+//   skip      one day per frame, ++date as the original's debug key F1: every day's events run (the timeline, the
+//             scenario's dated tasks, onMonth's accounts, onYear's report); nobody travels on the skipped days
+//   rewind    within the current month only: writing an earlier date fires onDay but no onMonth or onYear, so the
+//             monthly accounts, loan payments and histories do not run again. The latest date reached is kept in
+//             customData until the clock passes it again; meanwhile the scenario's dateChanged is not passed on
+//             (extend/metro/scripts/scenario.script: no dated task starts twice) and the map timeline stays at that
+//             day (holdTimeline: game.script's onDay sets currentDay from the date, and its applyChanges would
+//             otherwise replay the days again)
+//   tasks     the first open objective, as the original's debug key F2 (callFunction("completed_" + task),
+//             objectiveCompleted)
+//   reputation  extraHappiness (the bonus a task reward gives, fading by 0.02 a month) raised so every group is at
+//             1.0 with a year's margin
+//   loans     $gameData.$loanPayments emptied; vehicles: every model's startDate / endDate opened (not "disabled")
+// Test switch REGS_TEST_CHEATS: open (the window open from the start), log (also logs the bar button's and the
+// window's place on the desktop, for scripted clicks).
+
+$root = "/regs/mods/opencim.cheats/";
+$desktop = MAIN.$desktop;
+$strings = MAIN.$strings;
+
+MAIN.$cheats = this;
+
+$textFile = "regs/mods/opencim.cheats/strings/" + MAIN.$language + ".strings";
+if (!file_exists($textFile)) $textFile = "regs/mods/opencim.cheats/strings/en_US.strings";
+$texts = load "/" + $textFile;
+
+$latestKey = "opencimCheatsLatestDate";       // also read by extend/metro/scripts/scenario.script
+$unlimitedKey = "opencimCheatsUnlimitedMoney";
+$timelineStart = mkdate(1, 1, 1920);          // game.script's $startDate: the timeline's day = date - this
+$moneyCap = 2000000000;                       // cents; earnMoney stops here, spendMoney takes nothing from it
+$maxEuros = 20000000;
+$hidden = true;
+$levelButton = null;
+if (MAIN.$levelbar : false) $levelButton = MAIN.$levelbar.$regsCheatsButton : null;
+$skipThread = null;
+$skipLeft = 0;
+$loopThread = null;
+$testThread = null;
+$unlimitedState = false;
+$testMode = getenv("REGS_TEST_CHEATS");
+// the window's controls, made below; named here first so the functions above them use these and not locals
+$box = null;
+$closeButton = null;
+$statusLabel = null;
+$amountInput = null;
+$amountPlaceholder = null;
+$unlimitedBox = null;
+
+// ---- game state ----
+
+// the running scenario script (its $objectives, $money and $customData are saved with the game), or null
+function scen() {
+  $sc = MAIN.$scenario : null;
+  if (!$sc) return null;
+  return $sc.$scenario;
+}
+
+function hasKey($key) {
+  $hs = scen();
+  if (!$hs) return false;
+  if (!(defined $hs.$customData)) return false;
+  return defined $hs.$customData[$key];
+}
+
+function setKey($key, $value) {
+  $ss = scen();
+  if (!$ss) return false;
+  if (!(defined $ss.$customData)) return false;
+  $ss.$customData[$key] = $value;
+  return true;
+}
+
+function eraseKey($key) {
+  if (hasKey($key)) map_erase(scen().$customData, $key);
+}
+
+function moneyText($cents) {
+  return expandPattern($strings.$money_amount_pattern, $cents);
+}
+
+function dateText($d) {
+  $dk = clock(0, $d);
+  $dt = expandPattern($strings.$map_date_pattern, $strings.$map_date_months[$dk.months - 1], $dk.days, $dk.years);
+  delete $dk;
+  return $dt;
+}
+
+function stateText() {
+  $st = "date " + dateText(MAIN.$mainClock.date) + " (" + string(MAIN.$mainClock.date) + ")";
+  $ss2 = scen();
+  if ($ss2) $st += ", money " + string($ss2.$money);
+  if (MAIN.$timeline : false) $st += ", timeline day " + string(MAIN.$timeline.currentDay);
+  if ($testMode != "") {
+    if ($ss2) $st += ", objectives " + string(#$ss2.$objectives);
+    if (MAIN.$gameData : false) $st += ", icons " + string(#MAIN.$gameData.$activeIcons) + ", loans " + string(#MAIN.$gameData.$loanPayments);
+  }
+  return $st;
+}
+
+function setStatus($text) {
+  if ($statusLabel) $statusLabel.text = escapePattern($text);
+  echo "cheats: " + $text + "  [" + stateText() + "]";
+}
+
+// ---- money ----
+
+function addMoney($euros) {
+  if (!(MAIN.$playerData : false)) return;
+  if (!scen()) return;
+  $euros = clamp(int($euros), 0, $maxEuros);
+  if ($euros <= 0) return;
+  MAIN.$playerData.earnMoney($euros * 100, false);
+  setStatus(expandPattern($texts.$cheats_added, moneyText($euros * 100)));
+}
+
+function addTyped() {
+  $typed = $amountInput.text;
+  $amountInput.text = "";
+  $amountPlaceholder.visible = true;
+  addMoney(int($typed));
+}
+
+function setUnlimited($on) {
+  $us = scen();
+  if (!$us) return;
+  $unlimitedState = $on;
+  // the key holds the balance from before, given back when it is switched off: an account just under the cap would
+  // be at the cap again with the next fare (earnMoney stops there)
+  if ($on) {
+    if (!hasKey($unlimitedKey)) setKey($unlimitedKey, min($us.$money, $moneyCap - 100000000));
+    if ($us.$money < $moneyCap) $us.$money = $moneyCap;
+    setStatus($texts.$cheats_unlimited_on);
+  } else {
+    $before = $moneyCap - 100000000;
+    if (hasKey($unlimitedKey)) $before = int(scen().$customData[$unlimitedKey]);
+    eraseKey($unlimitedKey);
+    $us.$money = $before;
+    setStatus($texts.$cheats_unlimited_off);
+  }
+}
+
+function toggleUnlimited() {
+  setUnlimited(!$unlimitedState);
+  if (!$unlimitedState) MAIN.$ui.unselectChoiceButton($unlimitedBox, $unlimitedBox);
+}
+
+// ---- time ----
+
+function skipDays($n) {
+  if ($skipThread) return;
+  $skipLeft = $n;
+  $skipThread = thread "gameUI" :: {
+    while ($skipLeft > 0) {
+      ++MAIN.$mainClock.date;
+      --$skipLeft;
+      skip_frame;
+    }
+    $skipThread = null;
+    setStatus(expandPattern($texts.$cheats_skipped, dateText(MAIN.$mainClock.date)));
+  };
+}
+
+function daysToNextMonth() {
+  $nc = MAIN.$mainClock;
+  $nm = $nc.months + 1;
+  $ny = $nc.years;
+  if ($nm > 12) {
+    $nm = 1;
+    ++$ny;
+  }
+  return mkdate(1, $nm, $ny) - $nc.date;
+}
+
+function firstOfMonth() {
+  return mkdate(1, MAIN.$mainClock.months, MAIN.$mainClock.years);
+}
+
+function rewindDays($n) {
+  if ($skipThread) return;
+  $rc = MAIN.$mainClock;
+  $target = max(firstOfMonth(), $rc.date - $n);
+  if ($target >= $rc.date) return;
+  // the latest date reached: its events and timeline changes are done (the scenario extension and holdTimeline
+  // keep them from coming again); without a scenario to keep it in, no rewind
+  $latest = $rc.date;
+  if (hasKey($latestKey)) $latest = max($latest, scen().$customData[$latestKey]);
+  if (!setKey($latestKey, $latest)) return;
+  $rc.date = $target;   // fires onDay (game.script: timeline, dateChanged), no onMonth: the same month
+  holdTimeline();
+  setStatus(expandPattern($texts.$cheats_rewound, dateText($rc.date)));
+}
+
+// game.script's onDay handler (bound before this script loaded, so it ran first) set the timeline's day from the
+// date; while the clock is behind the latest date, the timeline stays at that date's day
+function holdTimeline() {
+  if (!hasKey($latestKey)) return;
+  if (!(MAIN.$timeline : false)) return;
+  $hold = scen().$customData[$latestKey] - $timelineStart;
+  if (MAIN.$timeline.currentDay < $hold) MAIN.$timeline.currentDay = $hold;
+}
+
+event MAIN.$mainClock.onDay::() {
+  holdTimeline();
+}
+
+// game.script calls this on every game script at each new year
+function updateERA($year) {
+}
+
+// ---- company ----
+
+// [id, objective] of the first open objective (status 0), or null
+function nextTask() {
+  $ts = scen();
+  if (!$ts) return null;
+  if (!(defined $ts.$objectives)) return null;
+  $found = null;
+  foreach (keys $ts.$objectives) {
+    if ($ts.$objectives[current]["status"] == 0) {
+      $found = [current, $ts.$objectives[current]];
+      break;
+    }
+  }
+  return $found;
+}
+
+function completeTask() {
+  $ct = nextTask();
+  if (!$ct) {
+    setStatus($texts.$cheats_task_none);
+    return;
+  }
+  $co = $ct[1];
+  $ctitle = $co["title"];
+  if (defined $co["task"]) MAIN.$scenario.callFunction("completed_" + $co["task"], $co);
+  MAIN.$scenario.objectiveCompleted($ct[0]);
+  setStatus(expandPattern($texts.$cheats_completed, $ctitle));
+}
+
+function maxReputation() {
+  $rd = MAIN.$gameData : null;
+  if (!$rd) return;
+  // updateReputation: clamp(base (the employees) + customerHappiness + extraHappiness, 0, 1) per group
+  $rmul = [0.12, 0.12, 0.12, 0.40];
+  $rbase = 0.0;
+  for ($ri = 0; $ri < 4; ++$ri) $rbase += ($rd.$employeeHappiness[$ri] - 0.5) * $rmul[$ri];
+  for ($ri = 0; $ri < 7; ++$ri) {
+    $need = 1.0 - $rbase - $rd.$customerHappiness[$ri] + 0.25;   // + a year of the monthly fade (0.02)
+    if ($rd.$extraHappiness[$ri] < $need) $rd.$extraHappiness[$ri] = $need;
+  }
+  MAIN.$playerData.updateReputation();
+  setStatus($texts.$cheats_reputation_done);
+}
+
+function payOffLoans() {
+  $ld = MAIN.$gameData : null;
+  if (!$ld) return;
+  $ln = #$ld.$loanPayments;
+  $ld.$loanPayments = [];
+  MAIN.$playerData.updateCompanyValue();
+  if (MAIN.$hqpanel : false) MAIN.$hqpanel.updatePanel();
+  setStatus(expandPattern($texts.$cheats_loans_done, $ln));
+}
+
+function unlockVehicles() {
+  $vd = MAIN.$gameData : null;
+  if (!$vd) return;
+  // from the first of this month, so a rewind within the month keeps them; the vehicle shop shows models with
+  // startDate <= date < endDate and not "disabled" (a scenario's lock)
+  $vfirst = firstOfMonth();
+  $vtoday = MAIN.$mainClock.date;
+  $vn = 0;
+  foreach (values $vd.$availableVehicles) {
+    $vchanged = false;
+    if (current["startDate"] > $vfirst) {
+      current["startDate"] = $vfirst;
+      $vchanged = true;
+    }
+    if (current["endDate"] <= $vtoday) {
+      current["endDate"] = 3652424;
+      $vchanged = true;
+    }
+    if ($vchanged) ++$vn;
+  }
+  setStatus(expandPattern($texts.$cheats_vehicles_done, $vn));
+}
+
+// ---- the window (a left panel like the HQ panel: same place, frame, heading and close button) ----
+
+$box = MAIN.$ui.createHudElement(67, 63, 345, 492, 1 | 2 | 4 | 8);
+$box.visible = false;
+MAIN.$ui.createHeadingBar($box, $texts.$cheats_title);
+$content = $box.$content;
+
+$closeButton = MAIN.$ui.createButton(MAIN.$hud, $box.left + $box.width - 23, $box.top - 9, 31, 31, "", hide, "/metro/ui/close.dds", "/metro/ui/close_se.dds", "/metro/ui/close_ho.dds");
+$closeButton.setCropRect(0, 0, 31.0 / 32.0, 31.0 / 32.0);
+$closeButton.visible = false;
+MAIN.$ui.setTooltip($closeButton, $strings.$panel_close_hint, 1, 0);
+
+function label($x, $y, $w, $h, $text, $title) {
+  with ($lc = new_control($content)) {
+    .setRect($x, $y, $w, $h);
+    if ($title) MAIN.$ui.setTitleFont(current);
+    else MAIN.$ui.setTextFont(current);
+    .textAlign = ALIGN_MIDDLE | ALIGN_LEFT;
+    .text = $text;
+    if ($title) .text = uppercase($text);   // as setTitleFont does to a text already set
+    .visible = true;
+    .canActivate = false;
+  }
+  return $lc;
+}
+
+// a text button of the game's own (the size and crop of the menus' buttons), with an explaining tooltip
+function button($x, $y, $text, $action, $hint) {
+  $bc = MAIN.$ui.createButton($content, $x, $y, 96, 25, $text, $action, "/metro/ui/button.dds", "/metro/ui/button.dds", "/metro/ui/button.dds");
+  $bc.setCropRect(16.0 / 128.0, 3.0 / 32.0, 96.0 / 128.0, 25.0 / 32.0);
+  MAIN.$ui.setTooltip($bc, $hint, 0, 1);
+  return $bc;
+}
+
+function enable($control, $on) {
+  $control.enabled = $on;
+  $control.visibility = $on ? 1.0 : 0.3;
+}
+
+// columns: three buttons of 96 in 305 pixels
+$x0 = 16;
+$x1 = 120;
+$x2 = 225;
+
+// money
+label($x0, 56, 305, 18, $texts.$cheats_money_heading, true);
+button($x0, 80, $texts.$cheats_add10k, macro :: addMoney(10000), $texts.$cheats_add_hint);
+button($x1, 80, $texts.$cheats_add100k, macro :: addMoney(100000), $texts.$cheats_add_hint);
+button($x2, 80, $texts.$cheats_add1m, macro :: addMoney(1000000), $texts.$cheats_add_hint);
+with ($amountPlaceholder = new_control($content)) {
+  .setRect($x0, 113, 200, 23);
+  .setMargins(6, 0, 2, 0);
+  MAIN.$ui.setTextFont(current, 0x80FFFFFF);
+  .textAlign = ALIGN_LEFT | ALIGN_MIDDLE;
+  .text = $texts.$cheats_amount_placeholder;
+  .visible = true;
+  .canActivate = false;
+  .clickThrough = true;
+}
+with ($amountInput = new_editControl($content)) {
+  .setBorder(0xFF777777, 1);
+  .setRect($x0, 113, 200, 23);
+  .background = 0x60000000;
+  .setMargins(6, 1, 2, 1);
+  MAIN.$ui.setTextFont(current);
+  .caretColor = 0xFFFFFFFF;
+  .maxLength = 8;
+  .text = "";
+  .visible = true;
+  event .onCheckInput::($key) {
+    .rejectInput = $key < 48 || $key > 57;   // digits only
+  }
+  event .onChange::() {
+    $amountPlaceholder.visible = .text == "";
+  }
+  event .keyDown::["Enter"]() {
+    addTyped();
+  }
+}
+MAIN.$ui.setTooltip($amountInput, $texts.$cheats_amount_hint, 0, 1);
+button($x2, 112, $texts.$cheats_add_button, macro :: addTyped(), $texts.$cheats_amount_hint);
+$unlimitedBox = MAIN.$ui.createChoiceButton($content, "self", $x0, 147, 16, 16, "", macro :: toggleUnlimited(), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+$unlimitedLabel = label($x0 + 24, 146, 260, 18, $texts.$cheats_unlimited, false);
+MAIN.$ui.setTooltip($unlimitedBox, $texts.$cheats_unlimited_hint, 0, 1);
+MAIN.$ui.setTooltip($unlimitedLabel, $texts.$cheats_unlimited_hint, 0, 1);
+$unlimitedLabel.canActivate = false;
+$unlimitedState = hasKey($unlimitedKey);
+if (!$unlimitedState) MAIN.$ui.unselectChoiceButton($unlimitedBox, $unlimitedBox);
+
+// time
+label($x0, 180, 100, 18, $texts.$cheats_time_heading, true);
+$dateLabel = label($x1 - 40, 180, 245, 18, "", false);
+$dateLabel.textAlign = ALIGN_MIDDLE | ALIGN_RIGHT;
+$skipButtons = [
+  button($x0, 204, $texts.$cheats_plus_day, macro :: skipDays(1), $texts.$cheats_skip_hint),
+  button($x1, 204, $texts.$cheats_plus_week, macro :: skipDays(7), $texts.$cheats_skip_hint),
+  button($x2, 204, $texts.$cheats_plus_month, macro :: skipDays(daysToNextMonth()), $texts.$cheats_skip_hint)
+];
+$rewindButtons = [
+  button($x0, 236, $texts.$cheats_minus_day, macro :: rewindDays(1), $texts.$cheats_rewind_hint),
+  button($x1, 236, $texts.$cheats_minus_week, macro :: rewindDays(7), $texts.$cheats_rewind_hint),
+  button($x2, 236, $texts.$cheats_month_start, macro :: rewindDays(31), $texts.$cheats_rewind_hint)
+];
+with ($timeNote = label($x0, 266, 305, 50, $texts.$cheats_time_note, false)) {
+  .textAlign = ALIGN_TOP | ALIGN_LEFT;
+  MAIN.$ui.setTextFont(current, 0xFF9A9A9A);
+}
+
+// company
+label($x0, 324, 305, 18, $texts.$cheats_company_heading, true);
+$taskLabel = label($x0, 349, 200, 18, "", false);
+$completeButton = button($x2, 346, $texts.$cheats_complete, macro :: completeTask(), $texts.$cheats_complete_hint);
+button($x0, 380, $texts.$cheats_reputation, macro :: maxReputation(), $texts.$cheats_reputation_hint);
+button($x1, 380, $texts.$cheats_loans, macro :: payOffLoans(), $texts.$cheats_loans_hint);
+button($x2, 380, $texts.$cheats_vehicles, macro :: unlockVehicles(), $texts.$cheats_vehicles_hint);
+
+// the last action
+$statusLabel = label($x0, 420, 305, 36, "", false);
+$statusLabel.textAlign = ALIGN_TOP | ALIGN_LEFT;
+MAIN.$ui.setTextFont($statusLabel, 0xFFE8C060);
+
+function updateWindow() {
+  $dateLabel.text = escapePattern(expandPattern($texts.$cheats_today, dateText(MAIN.$mainClock.date)));
+  $busy = $skipThread != null;
+  $canBack = !$busy && MAIN.$mainClock.date > firstOfMonth() && scen() != null;
+  foreach ($skipButtons) enable(current, !$busy);
+  foreach ($rewindButtons) enable(current, $canBack);
+  $wt = nextTask();
+  if ($wt) {
+    $taskLabel.text = escapePattern(expandPattern($texts.$cheats_task_open, $wt[1]["title"]));
+  } else {
+    $taskLabel.text = escapePattern($texts.$cheats_task_none);
+  }
+  enable($completeButton, $wt != null);
+}
+
+function show() {
+  MAIN.$levelbar.hideOtherLeftPanels(this);
+  if ($levelButton) MAIN.$ui.selectChoiceButton($levelButton, $levelButton);
+  updateWindow();
+  $box.bringToFront();
+  $closeButton.bringToFront();
+  $box.blend(1.0, 0.1);
+  $closeButton.blend(1.0, 0.1);
+  $hidden = false;
+}
+
+function hide() {
+  MAIN.$levelbar.unsetLevel(this);
+  $box.blend(0.0, 0.1);
+  $closeButton.blend(0.0, 0.1);
+  $hidden = true;
+}
+
+if ($levelButton) MAIN.$ui.setTooltip($levelButton, $texts.$cheats_button_hint, 1, 0);
+
+// the window's lines while it is open, and unlimited money (the monthly accounts take from the capped account)
+$loopThread = thread "gameUI" :: loop {
+  wait 0.25;
+  if ($unlimitedState) {
+    $ls = scen();
+    if ($ls) {
+      if ($ls.$money < $moneyCap) $ls.$money = $moneyCap;
+    }
+  }
+  if (!$hidden) updateWindow();
+};
+
+if ($testMode != "") {
+  echo "cheats: on (" + stateText() + ")";
+  if ($levelButton) echo "cheats: bar button at " + string($levelButton.desktopLeft) + "," + string($levelButton.desktopTop) + " size " + string($levelButton.width) + "x" + string($levelButton.height);
+  echo "cheats: window content at " + string($content.desktopLeft) + "," + string($content.desktopTop);
+  if ($testMode == "open") show();
+  // REGS_TEST_CHEATS=accept: the offered tasks are accepted by themselves (so there are objectives to complete), and
+  // a loan as banks.script's takeLoan books one (something to pay off)
+  if ($testMode == "accept") {
+    $testBank = keys MAIN.$gameData.$availableBanks;
+    MAIN.$playerData.earnMoney(2500000);
+    MAIN.$gameData.$loanPayments[] = map ["bank", $testBank[0], "amount", 2500000, "interest", 6.0, "months", 24, "id", $testBank[0] + ":test", "origAmount", 2500000];
+    echo "cheats: test: a loan of 25 000 taken (" + stateText() + ")";
+  }
+  if ($testMode == "accept") $testThread = thread "gameUI" :: loop {
+    wait 2.0;
+    $accept = [];
+    foreach (keys MAIN.$gameData.$activeIcons) {
+      if (defined MAIN.$gameData.$activeIcons[current]["task"]) $accept[] = current;
+    }
+    $wasOpen = !$hidden;
+    foreach ($accept) {
+      echo "cheats: test: accepting task " + MAIN.$gameData.$activeIcons[current]["task"];
+      MAIN.$scenario.petitionAccepted(current);
+    }
+    if ($wasOpen && #$accept > 0) show();   // the objectives panel opened with the task: a left panel, it closed this one
+  };
+}
+
+event this.onDestroy::() {
+  if ($loopThread) { delete $loopThread; $loopThread = null; }
+  if ($testThread) { delete $testThread; $testThread = null; }
+  if ($skipThread) { delete $skipThread; $skipThread = null; }
+  if ($levelButton) {
+    if (!$levelButton.destroyed) MAIN.$ui.selectChoiceButton(null, $levelButton);
+  }
+  delete $closeButton;
+  delete $box;
+  if ($texts) { delete $texts; $texts = null; }
+  MAIN.$cheats = null;
+}

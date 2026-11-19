@@ -1,0 +1,47 @@
+﻿// Cheats in Motion (opencim.cheats): texts. Button and line texts are patterns: a percent sign is written %%.
+$cheats_title = "Cheats in Motion";
+$cheats_button_hint = "Cheats in Motion";
+
+$cheats_money_heading = "Money";
+$cheats_add10k = "+10,000";
+$cheats_add100k = "+100,000";
+$cheats_add1m = "+1 million";
+$cheats_add_hint = "Adds the amount to the account (not counted as sales income).";
+$cheats_amount_placeholder = "Enter an amount";
+$cheats_add_button = "Add";
+$cheats_amount_hint = "An amount up to 20 million, with Enter or the button beside it.";
+$cheats_unlimited = "Unlimited money";
+$cheats_unlimited_hint = "Keeps the account at the maximum of 20 million, also after the monthly accounts. Switched off, the balance from before is back. Saved with the game.";
+$cheats_added = "Added: %0";
+$cheats_unlimited_on = "Unlimited money: on";
+$cheats_unlimited_off = "Unlimited money: off";
+
+$cheats_time_heading = "Time";
+$cheats_today = "Today: %0";
+$cheats_plus_day = "+1 day";
+$cheats_plus_week = "+1 week";
+$cheats_plus_month = "+1 month";
+$cheats_skip_hint = "Skips ahead day by day: dated events, tasks, the monthly accounts and the annual report come as usual. Nobody travels on the skipped days, so there are costs but no fare income.";
+$cheats_minus_day = "-1 day";
+$cheats_minus_week = "-1 week";
+$cheats_month_start = "1st of month";
+$cheats_rewind_hint = "Turns the clock back, at most to the first of the current month. What already happened up to today (tasks, events, the city's growth) does not happen again.";
+$cheats_time_note = "Back only as far as the first of the month, or the monthly accounts, loan payments and statistics would run twice. What already happened does not repeat.";
+$cheats_skipped = "Skipped ahead to %0";
+$cheats_rewound = "Turned back to %0";
+
+$cheats_company_heading = "Company";
+$cheats_complete = "Complete";
+$cheats_complete_hint = "Completes the first open task or scenario objective with its reward (like the original's debug key F2).";
+$cheats_task_open = "Open: %0";
+$cheats_task_none = "No open task";
+$cheats_completed = "Completed: %0";
+$cheats_reputation = "Max reputation";
+$cheats_reputation_hint = "Every passenger group fully satisfied. The bonus fades like a task reward; after about a year your own reputation counts again.";
+$cheats_reputation_done = "Reputation at maximum";
+$cheats_loans = "Pay off loans";
+$cheats_loans_hint = "Removes all running loans without paying them back.";
+$cheats_loans_done = "Loans paid off: %0";
+$cheats_vehicles = "All vehicles";
+$cheats_vehicles_hint = "Every vehicle model can be bought at once, also future and retired ones (models a scenario locks stay locked).";
+$cheats_vehicles_done = "Models unlocked: %0";
