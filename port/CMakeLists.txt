@@ -20,6 +20,7 @@ add_library(regs_engine STATIC
   src/core/text.cpp
   src/core/inflate.cpp
   src/core/deflate.cpp
+  src/core/game_find.cpp
   src/vfs/archive.cpp
   src/vfs/vfs.cpp
   src/script/lexer.cpp
@@ -299,3 +300,13 @@ if(WIN32)
   target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid setupapi)
 endif()
 
+
+# the setup program (docs/installer.md): its own small exe, without the engine; the release script appends the
+# release files to it (opencim-setup --make), which makes the offline installer
+if(WIN32)
+  add_executable(opencim-setup WIN32 src/setup/setup_main.cpp src/setup/install.cpp src/setup/payload.cpp
+    src/core/game_find.cpp src/core/inflate.cpp src/core/deflate.cpp src/setup/setup.rc)
+  target_include_directories(opencim-setup PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+  add_dependencies(opencim-setup regs_build_info)
+  target_link_libraries(opencim-setup PRIVATE gdiplus shlwapi ole32 shell32 bcrypt user32 gdi32 advapi32 uuid)
+endif()

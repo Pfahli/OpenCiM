@@ -1,6 +1,9 @@
 // regs: runs Cities in Motion from an installed copy with the ReGS engine.
 //
-//   regs <gameDir> [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]
+//   regs [<gameDir>] [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]
+//
+// Without <gameDir> the game folder comes from install.cfg next to regs.exe (written by the setup program), else from
+// the search for the player's Cities in Motion (core/game_find.h: Steam libraries, GOG and retail entries).
 //
 // The main loop follows gsMainLoop (FUN_10082da0): frame time clamped to [0.0001, 0.05] s, pump window messages,
 // then one gsMain tick (script threads, then the module tree, whose window renders and presents).
@@ -14,6 +17,7 @@
 #include <thread>
 #include <vector>
 
+#include "core/game_find.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/display.h"
@@ -53,7 +57,7 @@ fs::path widen(const char* s) {
 
 int usage() {
   std::fprintf(stderr,
-               "usage: regs <gameDir> [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]\n"
+               "usage: regs [<gameDir>] [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]\n"
                "  --documents   stand-in for the Documents folder (tests): settings, saves and maps go to\n"
                "                <dir>\\OpenCiM, the original's saves and maps are read from <dir>\\Cities In Motion\n"
                "                (default: the real Documents folder, so Documents\\OpenCiM)\n"
@@ -92,14 +96,31 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);  // real pixels, no OS scaling
 #endif
-  if (argc < 2) return usage();
-  fs::path game = widen(argv[1]), documents, screenshot;
+  // the game folder: the first argument, else install.cfg next to regs.exe, else the search (core/game_find.h)
+  const bool gameGiven = argc >= 2 && argv[1][0] != '-';
+  if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) return usage();
+  fs::path game = gameGiven ? widen(argv[1]) : fs::path(), documents, screenshot;
+  if (!gameGiven) {
+    fs::path exeDir = fs::absolute(fs::path(widen(argv[0]))).parent_path();
+    fs::path cfg = readInstallCfgGame(exeDir / "install.cfg");
+    if (!cfg.empty() && checkGameFolder(cfg).ok) game = cfg;
+    else game = findGame();
+    if (game.empty()) {
+#if defined(_WIN32)
+      MessageBoxW(nullptr,
+                  L"OpenCiM needs Cities in Motion, but it was not found on this PC.\n\nRun the OpenCiM setup "
+                  L"again to choose the game folder, or start regs.exe with the folder as its first argument.",
+                  L"OpenCiM", MB_OK | MB_ICONINFORMATION);
+#endif
+      return usage();
+    }
+  }
   bool printPaths = false;
   // the port's own data (menu pages, strings) next to the executable; --data overrides
   fs::path data = fs::absolute(fs::path(widen(argv[0]))).parent_path() / "data";
   long long maxFrames = -1;
   std::vector<Scripted> scripted;
-  for (int i = 2; i < argc; ++i) {
+  for (int i = gameGiven ? 2 : 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--documents" && i + 1 < argc) documents = widen(argv[++i]);
     else if (a == "--data" && i + 1 < argc) data = widen(argv[++i]);
@@ -144,6 +165,7 @@ int main(int argc, char** argv) {
       std::printf("%-28s %s%s\n", what, utf16ToUtf8(std::u16string(p.u16string())).c_str(),
                   fs::exists(p, ec) ? "" : "  (does not exist yet)");
     };
+    line("game folder:", game);
     std::printf("documents root (%s)\n", standIn ? "--documents stand-in" : "real Documents folder");
     line("  documents:", documents);
     line("  OpenCiM user folder:", documents / engine::kPortFolderName);

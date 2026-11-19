@@ -25,6 +25,12 @@ $game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
 .\build\x64-Release\regs.exe $game --windowed
 ```
 
+Without the game folder `regs.exe` uses `install.cfg` next to it (written by the setup program), else it looks for
+Cities in Motion itself (Steam libraries, GOG and retail installs; `src/core/game_find.cpp`).
+
+A release (`.\make-release.ps1`, output in `build\release`): the install folder as a zip with its `.sha256`, and
+`OpenCiM-<version>-setup.exe`, the setup program with the same files appended (`docs/installer.md`).
+
 Start flags for tests (environment variables; the intro is skipped, the load dialogs answer themselves and the
 loading screen's Spielen button presses itself; `data/regs/extend/metro/scripts/main.script`):
 
@@ -305,6 +311,7 @@ node ..\tools\gen-port-operators.mjs ..\docs\script-runtime\operators.json src\s
 | `src/platform/` | OS window and OpenGL context behind an interface (Win32/WGL now; SDL or others later) |
 | `src/render/` | OpenGL 3.3 core loader, DDS decoding, the batched 2D renderer |
 | `src/app/` | `regs`, the game executable |
+| `src/setup/` | `opencim-setup`, the setup program (install, update, repair, uninstall; `docs/installer.md`), and its pictures |
 | `data/` | the port's own game-side files: script extensions, strings, post-effect shaders (mounted over the install) |
 | `tests/` | script self-tests |
 | `src/tools/` | `regs-tool` developer commands |

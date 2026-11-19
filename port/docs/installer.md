@@ -2,7 +2,7 @@
 
 OpenCiM ships like OpenRCT2: a download that holds only the port's own files and needs the original Cities in Motion
 installed. The installer should look like part of Cities in Motion, and while the files go in it shows the biggest
-things the port adds. This page is the design; nothing is built yet (`playable-todo.md` §9 has the release items).
+things the port adds. This page is the design; §7 says what is built (`playable-todo.md` §9 has the release items).
 
 ## 1. What it has to do
 
@@ -160,6 +160,58 @@ game art (buildings, vehicles, terrain); the owner chose them over own illustrat
    first; then the GitHub download, update, repair and the in-game update check (needs the GitHub repository).
 3. The game's menu look (panel, bars, fonts, background from the install) and the background screenshots.
 4. The showcase: slides, cross-fade, progress bar and the screenshots.
-5. The release script (`tools/make-release.ps1`): build, collect the files, licences (the port's own, miniaudio, miniz,
+5. The release script (`make-release.ps1` in `port/`): build, collect the files, licences (the port's own, miniaudio, miniz,
    later Vulkan-Headers and glslang), zip, `.sha256`, `release.json`, the offline installer, sign; later a GitHub
    Actions workflow that does the same and publishes the release (and the nightly pre-release from `main`).
+
+## 7. State (2026-11-19)
+
+Built: `opencim-setup.exe` (`src/setup/`, its own small exe of about 0.35 MB without the engine), the shared game
+search (`core/game_find.*`) and the release script (`make-release.ps1`). Steps 1, 2 (without the GitHub parts), 4 and
+5 (without signing and the GitHub release) are done; step 3 is done in an own way, see below.
+
+* **Game search** (`core/game_find.cpp`): Steam (`SteamPath`, every library in `libraryfolders.vdf`, the app
+  manifest's `installdir`), then every uninstall entry named Cities in Motion (GOG, retail). A folder counts when the
+  base archives (`data.gs`, `metro.gs`, `objects.gs`, `maps.gs`, `sounds.gs`, `location-data.gs`) are there; the
+  DLC archives are listed by name. `regs.exe` now starts without a game path: `install.cfg` next to it, else the
+  search, else a message (`--print-paths` shows the folder it uses).
+* **Payload:** `make-release.ps1` collects the install folder (`regs.exe`, `regs-tool.exe`, `data\`, README,
+  licences of glslang, Vulkan-Headers, FidelityFX and miniaudio, VERSION.txt), zips it with a `.sha256` and appends it
+  and the pictures (`src/setup/show/`: eight slides at 1600 × 900, four backgrounds at 1086 × 960) to the setup program
+  (`opencim-setup --make`): `OpenCiM-<version>-setup.exe`, about 33 MB, the offline installer. The format is our own
+  (zlib per file with `core/deflate`, `setup/payload.h`), not a zip, so no miniz is needed.
+* **Install:** per user into `%LOCALAPPDATA%\Programs\OpenCiM` (or a chosen folder), `install.json` (every file
+  with its SHA-256, version, build, channel, game folder, shortcut choices), `install.cfg`, the setup program itself
+  (without payload) as `opencim-setup.exe`, the update page's picture as `setup\maintenance.jpg`, Start menu
+  folder (OpenCiM, OpenCiM Setup), optional desktop shortcut, the Apps & features entry under
+  `HKCU\...\Uninstall\OpenCiM` (Modify opens the setup, Uninstall `--uninstall`). Installing over an install
+  rewrites only changed files and removes the old version's files the new one no longer has.
+* **Maintenance page** (the setup started when OpenCiM is installed): UPDATE when the setup carries a newer build,
+  REPAIR (checks every file against the manifest; puts them back when the setup has the same build), CHANGE GAME
+  FOLDER, UNINSTALL (exactly the manifest's files, shortcuts, the entry; `Documents\OpenCiM` only when "keep my
+  saves" is unticked, after a warning). Files the player added to the folder stay. The running setup program deletes
+  itself through a short hidden `cmd` after it exits.
+* **Look:** the pages are drawn with GDI+ after the design canvas (Tahoma, Copperplate Gothic Bold when installed, the
+  menu's colours, bevelled bars, round icons, the caption box), with the OpenCiM title (the port's own art, a resource)
+  and the screenshots on the right; no Windows title bar (owner's request 2026-11-19): a round X at the top right,
+  the window moves by any free spot of the panel, Alt+F4 and the taskbar still close it; the showcase cross-fades every 7 s, a click on the picture moves on, and it keeps
+  going after the copy until CONTINUE. Not done: drawing with the game's own panel art and fonts read from the install
+  (§2.1); the own drawing looks close enough that this can wait.
+* **Not done:** the GitHub download, update check and self-update (§3a; there is no repository yet: UPDATE says new
+  versions come as a new setup program), the language option (the game's own language setting is used), code
+  signing, the in-game update notice.
+
+Command line (all for tests and scripts; the window is the normal way): `--silent-install [--target <dir>] [--game
+<dir>] [--desktop] [--no-start-menu]`, `--silent-uninstall [--target <dir>] [--remove-documents]`, `--verify` (lists
+missing or changed files), `--uninstall` (the window on UNINSTALL), `--render <page> <out.png> [--scale s] [--slide n]
+[--progress p] [--action n]` (a page without a window), `--make <stub> <appDir> <showDir> <out>`. Test switches:
+`OPENCIM_SETUP_SANDBOX=<dir>` puts the default install folder, Start menu, desktop, Documents\OpenCiM and the Apps &
+features entry (as `uninstall-entry.txt`, no registry writes) under that folder; `OPENCIM_SETUP_GAME=<dir>|none`
+replaces the search.
+
+Checked 2026-11-19 in the sandbox: silent install (205 files, `install.cfg`, shortcuts, entry), `regs.exe` finding
+the game from `install.cfg` and by the search, an install over it (only changed files rewritten, the desktop shortcut
+removed when unticked), a deleted and a changed file found by `--verify` and put back, the update page from the
+installed setup (no payload), uninstall from the installed setup (everything gone but a file the player added and the
+saves), and the window clicked through (Welcome, INSTALL, showcase, CONTINUE, Done, CLOSE). Not checked on a PC
+without the game or with Steam libraries on other drives, and not on the real Start menu and registry.

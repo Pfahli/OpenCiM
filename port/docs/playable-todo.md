@@ -563,7 +563,9 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   with `$debug`) keep their proportions only approximately; Alt-Tab behaviour of fullscreen.
 - [ ] Crash reports, a release build and package without any game files, licence and readme. Installer design (owner's
   request 2026-11-17): `docs/installer.md` (own setup program in the game's menu style, art read from the install, a
-  feature showcase while installing); mockup on the canvas "OpenCiM Installer".
+  feature showcase while installing); mockup on the canvas "OpenCiM Installer". Built 2026-11-19: `opencim-setup.exe`
+  and `make-release.ps1` (offline installer, zip, sha256; state and what is left in `docs/installer.md` §7). Left:
+  crash reports, the port's own licence, signing, the GitHub releases and download.
 - [ ] Performance on the largest maps at speed 10 with all systems running; loading time.
 
 ## 10. Parity pass (milestone 8)
