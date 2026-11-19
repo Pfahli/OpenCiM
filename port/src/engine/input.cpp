@@ -414,9 +414,11 @@ void DesktopObj::inputKeyDown(VM& vm, int k) {
       c->mouseDown(vm, mouseX - c->desktopLeft(), mouseY - c->desktopTop(), k, mask);
     }
   } else if (ControlObj* e = asControl(loneEdit); e && !e->destroyed && e->active && e->visible()) {
-    if (k == kKeyEscape || k == kKeyEnter) {  // done typing: the edit lets go, the key is swallowed
+    if (k == kKeyEscape || k == kKeyEnter) {  // done typing: the edit gets the key, then lets go; the key goes no further
+      Ref<Object> keepE(e);
       loneEdit = nullptr;
-      e->setActive(vm, false);
+      e->keyDown(vm, k, mask);  // its own Enter / Escape handlers (a number field: take or keep the value)
+      if (!e->destroyed) e->setActive(vm, false);
     } else {
       e->keyDown(vm, k, mask);  // Backspace, arrows; not the game's hotkeys (the camera stays put while typing)
     }
@@ -662,7 +664,21 @@ void registerInputNatives(VM& vm) {
     act.name = u"active";
     act.type = 2;
     act.get = [](VM&, Object* o) { return Value::boolean(static_cast<ControlObj*>(o)->active); };
-    act.set = [](VM& v, Object* o, const Value& val) { static_cast<ControlObj*>(o)->setActive(v, v.truthy(val)); };
+    act.set = [](VM& v, Object* o, const Value& val) {
+      auto* c = static_cast<ControlObj*>(o);
+      c->setActive(v, v.truthy(val));
+      // port: an edit a script focuses behind a control that cannot be activated becomes the desktop's lone edit, as
+      // one clicked there does (the number fields' typing, ui.script extension)
+      if (c->isEdit() && c->active) {
+        bool broken = false;
+        for (ControlObj* p = c->parentControl(); p && p->parentControl(); p = p->parentControl())
+          if (!p->canActivate) broken = true;
+        Display* d = display();
+        auto* w = d ? dynamic_cast<WindowObj*>(d->windowObject()) : nullptr;
+        if (auto* desk = w ? dynamic_cast<DesktopObj*>(w->inputTarget.get()) : nullptr; desk && broken)
+          desk->loneEdit = Ref<Object>(c);  // the desktop the keys go to (the click path's "this")
+      }
+    };
     FieldInfo& dt = c->fields[u"dragTarget"];
     dt.name = u"dragTarget";
     dt.get = [](VM&, Object* o) { auto* k = static_cast<ControlObj*>(o); return k->dragTarget ? obj(k->dragTarget.get()) : Value(); };

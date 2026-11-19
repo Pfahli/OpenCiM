@@ -1617,6 +1617,15 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
                  : type == 0x12                        ? 4
                                                        : -1;
   if (stopType < 0) return false;
+  // a train station's template is no stop template and has no $attractiveness, which ui.script's
+  // transportStopCreated multiplies (metro/scripts/ui.script:357, "Operator 3 not defined"): the plain tram stop's 0.70
+  if (station) try {
+      Value cur = vm.resolve(vm.getMember(Value::heap(VT::Object, t->second.get()), u"$attractiveness"));
+      if (cur.type() != VT::Float && cur.type() != VT::Int)
+        vm.setMember(Value::heap(VT::Object, t->second.get()), u"$attractiveness", Value::real(0.70f));
+    } catch (const ScriptError&) {
+      vm.setMember(Value::heap(VT::Object, t->second.get()), u"$attractiveness", Value::real(0.70f));
+    }
   // an item controller under the grid like the picking ones (<item>, <model>: gsGridController.getModel, getFlags)
   Ref<Object> o = vm.newObject(stopClass, grid);
   if (auto* to = transport(o.get())) to->index = int(s.stops.size());
