@@ -784,3 +784,133 @@ event this.enter::["Game"]() {
   $regsStartRun = false;
   if (MAIN.$minimap : false) MAIN.$minimap.selectSpeed(1);
 }
+
+// ---- campaign test driver (port, test runs only): REGS_TEST_CAMPAIGN=1 plays a campaign or scenario by itself with
+// the original's own debug means: the briefing is closed, the date runs on as F1 does (REGS_TEST_CAMPAIGN_DAYS days
+// every 0.1 s, default 2), every task offered is accepted and, after REGS_TEST_CAMPAIGN_WAIT s (default 3), forced
+// complete as F2 does, money is topped up as F3 does, and the scenario's end is confirmed, which loads the next
+// scenario of the campaign. It logs "campaign test:" lines; at the end of the campaign the game quits.
+$regsTestCampaign = getenv("REGS_TEST_CAMPAIGN") == "1";
+$regsTestInGame = false;
+$regsTestGameNo = 0;
+$regsTestFrom = getenv("REGS_TEST_CAMPAIGN_FROM");
+function regsTestLog($text) {
+  echo "campaign test: "+$text;
+}
+if ($regsTestCampaign) {
+  event this.enter::["ScenarioBriefing"]() {
+    regsTestLog("briefing of "+(MAIN.$campaign.$campaign.$current : "?"));
+    thread :: {
+      wait 1.5;
+      MAIN.$main.perform("cancel");
+    };
+  }
+  event this.enter::["ScenarioMenu"]() {  // the scenario's start page before each scenario: Start
+    // REGS_TEST_CAMPAIGN_FROM=<n>: a new campaign starts at scenario n (the campaign file's own fields, as its
+    // completed_scenarioNN functions set them)
+    if ($regsTestFrom != "" && (MAIN.$campaign.$campaign.$current : "") == "scenario01") {
+      $n = int($regsTestFrom);
+      $nn = ""+$n;
+      if ($n < 10) $nn = "0"+$n;
+      MAIN.$campaign.$campaign.$current = "scenario"+$nn;
+      MAIN.$campaign.$campaign.$filename = "metro/scenarios/scenario"+$nn+".scenario";
+      MAIN.$campaign.$campaign.$scenarioTitle = expandPattern(MAIN.$strings.$scenario_title_scenario_pattern, $n);
+      $regsTestFrom = "";
+    }
+    regsTestLog("start page of "+(MAIN.$campaign.$campaign.$current : "?"));
+    $regsStartPlay = true;
+    thread :: {
+      wait 1.5;
+      MAIN.$main.perform("ok");
+    };
+  }
+  event this.enter::["CampaignFinished"]() {
+    regsTestLog("CAMPAIGN FINISHED");
+    thread :: {
+      wait 20.0;  // (time for screenshots of the ending)
+      quit();
+    };
+  }
+  event this.enter::["Newspaper"]() {
+    regsTestLog("newspaper shown");
+  }
+  event this.exit::["Game"]() {
+    $regsTestInGame = false;
+  }
+  event this.enter::["Game"]() {
+    $regsTestInGame = true;
+    ++$regsTestGameNo;
+    $regsTestThisGame = $regsTestGameNo;
+    regsTestLog("game started: "+(MAIN.$campaign.$campaign.$current : "?")+" ("+(MAIN.$campaign.$campaign.$filename : "?")+")");
+    thread :: regsTestCampaignLoop($regsTestThisGame);
+  }
+}
+function regsTestCampaignLoop($gameNo) {
+  $days = int(getenv("REGS_TEST_CAMPAIGN_DAYS") != "" ? getenv("REGS_TEST_CAMPAIGN_DAYS") : "2");
+  $waitObjective = float(getenv("REGS_TEST_CAMPAIGN_WAIT") != "" ? getenv("REGS_TEST_CAMPAIGN_WAIT") : "3");
+  $seen = map [];   // objective id -> seconds it has been open
+  $handled = map [];
+  $lastMonth = -1;
+  $done = false;
+  wait 3.0;
+  while ($regsTestInGame && $gameNo == $regsTestGameNo && !$done) {
+    wait 0.1;
+    if (!$regsTestInGame || $gameNo != $regsTestGameNo) break;
+    if (!(MAIN.$scenario : false) || !(MAIN.$scenario.$scenario : false)) continue;
+    $s = MAIN.$scenario.$scenario;
+    for ($k = 0; $k < $days; ++$k) ++MAIN.$mainClock.date;
+    if ($s.$money < 5000000) MAIN.$playerData.earnMoney(10000000, false);
+    $month = MAIN.$mainClock.months : -1;
+    if ($month != $lastMonth) {
+      $lastMonth = $month;
+      $open = 0;
+      foreach (values $s.$objectives) if (current["status"] == 0) ++$open;
+      regsTestLog("date "+(MAIN.$mainClock.days : 0)+"."+$month+"."+(MAIN.$mainClock.years : 0)+", money "+int($s.$money / 100)+", objectives "+#$s.$objectives+" ("+$open+" open)");
+    }
+    // the offered tasks and messages: accept what can be accepted
+    $ids = [];
+    foreach (keys MAIN.$gameData.$activeIcons) $ids[] = current;
+    foreach ($ids) {
+      $id = current;
+      if (defined $handled[$id]) continue;
+      if (!(defined MAIN.$gameData.$activeIcons[$id])) continue;
+      $p = MAIN.$gameData.$activeIcons[$id];
+      if ($p["type"] != "petition") continue;
+      $cb = "";
+      if (defined $p["callback"]) $cb = $p["callback"];  // (?: runs both branches)
+      if ($cb == "scenarioFailed") {
+        $handled[$id] = true;
+        regsTestLog("SCENARIO FAILED: "+$p["text"]);
+        continue;
+      }
+      if (!(defined $p["positive"])) continue;
+      $handled[$id] = true;
+      if ($cb == "scenarioCompleted") {
+        regsTestLog("SCENARIO COMPLETED: "+(MAIN.$campaign.$campaign.$current : "?"));
+        $regsStartPlay = true;  // the next scenario's loading screen presses Spielen itself
+        $done = true;
+        MAIN.$scenario.petitionAccepted($id);
+        break;
+      }
+      regsTestLog("accepted "+$p["positive"]+": "+($cb != "" ? $cb : "(no callback)")+" \""+$p["title"]+"\"");
+      MAIN.$scenario.petitionAccepted($id);
+    }
+    if ($done) break;
+    // open objectives: forced complete after a while, as F2 does
+    foreach (keys $s.$objectives) {
+      $id = current;
+      $o = $s.$objectives[$id];
+      if ($o["status"] != 0) continue;
+      if (!(defined $seen[$id])) $seen[$id] = 0.0;
+      $seen[$id] += 0.1;
+      if ($seen[$id] < $waitObjective) continue;
+      $taskName = "(no task)";
+      if (defined $o["task"]) $taskName = $o["task"];
+      regsTestLog("forced objective "+$taskName+" \""+$o["title"]+"\"");
+      if (defined $o["task"]) MAIN.$scenario.callFunction("completed_"+$o["task"], $o);
+      MAIN.$scenario.objectiveCompleted($id);
+      break;
+    }
+  }
+  regsTestLog("driver of game "+$gameNo+" stopped");
+}

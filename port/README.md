@@ -118,6 +118,12 @@ the annual report's inputs and the objectives, and whether the money moved exact
 `docs/simulation/economy.md`), `REGS_TEST_SCENARIO_CALL=<ticks>:<function>[,…]` (calls those scenario functions,
 e.g. `start_sandbox_task90`, through `MAIN.$scenario.callFunction` after that many simulation ticks; `name=n` passes
 the integer n instead of 0, e.g. `start_demonstration=30` for a 30-day demonstration),
+`REGS_TEST_CAMPAIGN=1` (with `REGS_START=campaign`, `tutorial` or `scenario:<n>`: the game plays itself with the
+original's debug means, closing the start page and briefing, running the date on as F1 does, accepting every task and
+forcing it complete as F2 does, topping up money as F3 does and confirming each scenario's end, so the campaign loads
+the next one; "campaign test:" lines in the log; `REGS_TEST_CAMPAIGN_DAYS` days per 0.1 s, default 2,
+`REGS_TEST_CAMPAIGN_WAIT` seconds before a task is forced, default 3, `REGS_TEST_CAMPAIGN_FROM=<n>` starts the
+campaign at scenario n; the game quits 20 s after the campaign's end screen),
 `REGS_DEBUG_FOLLOW=<line type>[:n]` (the main camera follows the n-th line vehicle of that transport type, given as
 a number: 0 bus, 1 tram, 2 metro, 3 boat, 4 helicopter; a screenshot burst `follow-turn-<n>.png` when it turns round,
 `follow-bustram-<n>.png` when a followed bus halts at a tram stop), `REGS_DEBUG_CAMERA=<item>` (puts the camera on that

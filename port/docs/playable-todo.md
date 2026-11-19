@@ -182,8 +182,15 @@ modes (the editor's roads, terrain and paint tools come later):
   script errors or missing natives. Fixed on the way: the older grid names section 0x07020300 (scenario maps lost all
   item names), the train station stops' attractiveness and maintenance cost, achievements as no-ops. Scenario 4
   loads `clusters.bmp` (1280×1280).
-- [ ] Still to run: the scenarios past their first tasks (F2 forces an objective), the tutorial past its first
-  tasks, a whole campaign; the `campaign` and `tutorial` start flags are untested.
+- [x] The whole campaign and the tutorial played through (2026-11-19, Vulkan, `REGS_TEST_CAMPAIGN=1`, README): from
+  the main menu's new campaign, all 12 scenarios one after another in the campaign file's order, 152 tasks offered, accepted and completed (each task's condition ran at least twice before
+  F2's forced completion, its `completed_` callback and the rewards ran), each scenario's end petition confirmed, the
+  next scenario's start page, briefing and loading, then the campaign's end screen ("Kampagne abgeschlossen", the
+  ending illustration); the tutorial's 19 tasks to its end and back to the main menu. No script errors or missing
+  natives. One error seen only with the test driver: the petition panel's `onMouseOut` reads the petition after it
+  was cleared (petitionpanel.script:58) when the panel closes under a cursor resting on its text, as the original
+  script would. Not covered: whether a player's own actions satisfy each condition (the forced completion skips
+  that), scenario failure, and saving and loading in the middle of a campaign.
 - [x] Statistics and graphs: `gsGraphCtrl` (`setArg`, `update`, `reset`, `setColor`, `getColor`, its fields and the
   automatic update) draws series strips, the grid and the value labels as the original computes them
   (`engine/ui_graphs.cpp`, spec `docs/ui/graphs.md`). The graphs panel (12 company and economy graphs, the 12–60 month
