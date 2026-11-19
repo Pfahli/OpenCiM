@@ -250,6 +250,26 @@ std::u16string portShaderPatch(const std::u16string& path, std::u16string text) 
     else
       LOG_WARN("shader component %s: no anchor for the sand", utf16ToUtf8(path).c_str());
   }
+  // port (owner 2026-11-19: "the water at night looks very bright"): the water mixes in a reflection of a fixed
+  // daylight cube map (textures/envmap.dds) and a fixed light grey where it breaks at the shore; neither follows the
+  // light, so with the day/night cycle the river glowed in the dark. Both now scale with the sky's brightness, read
+  // from the fog colour (the location's daylight fog ~0.78 luminance = 1; darker at dusk, under rain, at night)
+  if (path.ends_with(u"shaders/water/water.fragment")) {
+    std::u16string t = text;
+    static const std::u16string kGrey = u"color = mix(vec4(0.55, 0.55, 0.60, ";
+    size_t at = t.find(kGrey);
+    bool ok = at != std::u16string::npos &&
+              insertAfterLine(t, u"vec4 ref = textureCube(texture2, reflect(view, normal) * vieworient) * r;",
+                              u"  float regsSkyLight = clamp(dot(gl_Fog.color.rgb, vec3(0.3, 0.59, 0.11)) / 0.78, 0.04, 1.0);\n"
+                              u"  ref.rgb *= regsSkyLight;\n");
+    if (ok) {
+      at = t.find(kGrey);
+      t.replace(at, kGrey.size(), u"color = mix(vec4(vec3(0.55, 0.55, 0.60) * regsSkyLight, ");
+      text = t;
+    } else {
+      LOG_WARN("shader component %s: no anchor for the night reflection", utf16ToUtf8(path).c_str());
+    }
+  }
   if (path.ends_with(u"shaders/default/maps.fragment")) {
     std::u16string t = text;
     if (insertBefore(t, u"void maps_input() {", kNightMapsDecl) && insertBefore(t, u"  geometry_input();", kNightMapsCall))
