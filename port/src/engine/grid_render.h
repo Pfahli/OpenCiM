@@ -40,7 +40,7 @@ struct GridTemplate {
   uint32_t flags = 0;
   uint32_t diagonals = 0;  // gsGridObject.diagonals (4 nibbles per half), before the item's rotation
   bool storeMesh = false, vertexGeneration = false, bake = false;
-  bool skinned = false;  // skeleton + skinned mesh: drawn per item and animated (collectSkinnedItems), not merged
+  bool skinned = false;  // skeleton + skinned mesh, or a model-space shader (rotation): drawn per item (collectSkinnedItems), not merged
   float animStart = 0, animLength = 0;  // doorOpenStart / doorOpenLen: the loop of gsGridItem::move
   float bakeScaleX = 1, bakeScaleZ = 1;
   int materialBase = -1;          // first of its materials in TerrainCache::materials

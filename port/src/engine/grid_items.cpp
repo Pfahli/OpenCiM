@@ -206,6 +206,12 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
       gMatSeconds += std::chrono::duration<double>(tm1 - tm0).count();
       tc.materials.back().surfaceClass =
           road && carriageway && !(m.flags & kMatKeepOnVariation) ? kSurfacePavement : surface;
+      // port (owner 2026-11-19: "the casino sign is flying around rotating ... same for the Litfasssaeule"): the
+      // rotation shader (effects/rotation.shader: ad poles, the casino sign, windmills, the airport radar, the fast-food
+      // sign, tower cranes) turns the marked vertices about a point and axis in model space (custom0, custom1). Merged
+      // into the division mesh those are division space, so the part swung round the division's corner. Such
+      // templates are drawn per item, in their own model space, as the engine draws its non-storeMesh templates
+      if (tc.materials.back().shader.find("effects/rotation.shader") != std::string::npos) tp.skinned = true;
       // foliage: the materials the trees' wind shader draws (set in the templates' onLoaded)
       if (tc.materials.back().shader.find("shaders/trees/trees.shader") != std::string::npos)
         tc.materials.back().surfaceClass = kSurfaceFoliage;
