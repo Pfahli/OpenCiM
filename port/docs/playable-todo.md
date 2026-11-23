@@ -555,8 +555,16 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
 
 ## 9. Release (OpenRCT2 style: requires the original game)
 
-- [ ] Find the Steam install by itself (registry, `libraryfolders.vdf`) and check for the needed archives; a clear
-  message if the game is missing.
+- [x] Find the Steam install by itself (registry, `libraryfolders.vdf`) and check for the needed archives; a clear
+  message if the game is missing. `core/game_find.cpp` (with the setup program, 2026-11-19; completed 2026-11-23):
+  without a folder argument regs.exe takes install.cfg, else searches Steam (HKCU `SteamPath`, HKLM `InstallPath` in
+  both registry views, Steam's usual Program Files folders; on Linux `~/.steam`, `~/.local/share/Steam`, the Flatpak
+  and the Snap; every library in `libraryfolders.vdf`, the folder from `appmanifest_73010.acf`), then GOG and disc
+  uninstall entries, and logs the folder used and where it came from. No game: a message box (and stderr) saying it
+  is not installed, or where it was found and which archives are missing, with Steam's "verify integrity" hint; a
+  folder given as the argument is checked the same way (`REGS_NO_DIALOGS=1` leaves the box out in test runs).
+  Checked: the search finds the Steam install here; a missing and an incomplete folder give their messages. Not
+  tried: a PC without the game, the Linux search.
 - [x] Where saves and settings live (user decision 2026-11-06): in OpenCiM's own folder `Documents\OpenCiM`
   (settings, controls, `state.gs`, saves, maps, log); the first start uses the game's defaults. The original's
   `Documents\Cities In Motion` is only read: its saves and maps are listed with "(aus Cities in Motion)" and copied

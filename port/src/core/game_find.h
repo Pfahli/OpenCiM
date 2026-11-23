@@ -21,13 +21,21 @@ struct GameCandidate {
   std::string source;  // "Steam", "GOG", "installed" (an uninstall entry), "install.cfg"
 };
 
-// Every place Cities in Motion may be: Steam (HKCU\Software\Valve\Steam SteamPath, every library in
-// steamapps\libraryfolders.vdf, app 73010), then GOG and retail uninstall entries whose name is Cities in Motion.
+// Every place Cities in Motion may be: Steam (HKCU\Software\Valve\Steam SteamPath, HKLM InstallPath in both registry
+// views, Steam's usual Program Files folders; on Linux ~/.steam, ~/.local/share/Steam, the Flatpak and the Snap; every
+// library in steamapps\libraryfolders.vdf, app 73010), then (Windows) GOG and retail uninstall entries whose name is
+// Cities in Motion.
 // Folders that do not exist are left out; the first one that checkGameFolder accepts is the one to use.
 std::vector<GameCandidate> findGameCandidates();
 
 // The first candidate that passes checkGameFolder, or an empty path.
 std::filesystem::path findGame(std::string* source = nullptr);
+
+// What to tell the player when findGame found nothing: not installed, or found with files missing (each place found
+// and what it lacks, with Steam's "verify integrity" hint). UTF-8.
+std::string gameNotFoundMessage();
+// The same for a folder the player gave (it does not exist, or which archives it lacks).
+std::string gameFolderMessage(const std::filesystem::path& dir, const GameCheck& check);
 
 // install.cfg next to regs.exe (written by the setup program): `game=<folder>`, one setting per line, UTF-8.
 std::filesystem::path readInstallCfgGame(const std::filesystem::path& cfgFile);

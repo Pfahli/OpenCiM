@@ -3,7 +3,8 @@
 //   regs [<gameDir>] [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]
 //
 // Without <gameDir> the game folder comes from install.cfg next to regs.exe (written by the setup program), else from
-// the search for the player's Cities in Motion (core/game_find.h: Steam libraries, GOG and retail entries).
+// the search for the player's Cities in Motion (core/game_find.h: Steam libraries, GOG and retail entries). A folder
+// without the game's archives, given or found, ends the start with a message naming what is missing.
 //
 // The main loop follows gsMainLoop (FUN_10082da0): frame time clamped to [0.0001, 0.05] s, pump window messages,
 // then one gsMain tick (script threads, then the module tree, whose window renders and presents).
@@ -17,6 +18,7 @@
 #include <thread>
 #include <vector>
 
+#include "core/env.h"
 #include "core/game_find.h"
 #include "core/log.h"
 #include "core/text.h"
@@ -103,21 +105,29 @@ int main(int argc, char** argv) {
   const bool gameGiven = argc >= 2 && argv[1][0] != '-';
   if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) return usage();
   fs::path game = gameGiven ? widen(argv[1]) : fs::path(), documents, screenshot;
+  // no game: the reason on stderr and (Windows) in a message box; REGS_NO_DIALOGS=1 (test runs) leaves the box out
+  auto noGame = [](const std::string& why) {
+    std::fprintf(stderr, "%s\n", why.c_str());
+#if defined(_WIN32)
+    if (!regs::envVar("REGS_NO_DIALOGS")) {
+      const std::u16string w = utf8ToUtf16(why);
+      MessageBoxW(nullptr, reinterpret_cast<const wchar_t*>(w.c_str()), L"OpenCiM", MB_OK | MB_ICONINFORMATION);
+    }
+#endif
+    return 1;
+  };
+  std::string gameSource = "argument";
   if (!gameGiven) {
     fs::path exeDir = fs::absolute(fs::path(widen(argv[0]))).parent_path();
     fs::path cfg = readInstallCfgGame(exeDir / "install.cfg");
-    if (!cfg.empty() && checkGameFolder(cfg).ok) game = cfg;
-    else game = findGame();
-    if (game.empty()) {
-#if defined(_WIN32)
-      MessageBoxW(nullptr,
-                  L"OpenCiM needs Cities in Motion, but it was not found on this PC.\n\nRun the OpenCiM setup "
-                  L"again to choose the game folder, or start regs.exe with the folder as its first argument.",
-                  L"OpenCiM", MB_OK | MB_ICONINFORMATION);
-#endif
-      return usage();
-    }
+    if (!cfg.empty() && checkGameFolder(cfg).ok) game = cfg, gameSource = "install.cfg";
+    else game = findGame(&gameSource);
+    if (game.empty()) return noGame(gameNotFoundMessage());
+  } else if (GameCheck check = checkGameFolder(game); !check.ok) {
+    return noGame(gameFolderMessage(game, check));
   }
+  std::printf("%s[info] game folder: %s (%s)\n", logStamp().c_str(), utf16ToUtf8(std::u16string(game.u16string())).c_str(),
+              gameSource.c_str());
   bool printPaths = false;
   // the port's own data (menu pages, strings) next to the executable; --data overrides
   fs::path data = fs::absolute(fs::path(widen(argv[0]))).parent_path() / "data";

@@ -1,6 +1,7 @@
 #include "core/game_find.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cwctype>
 #include <fstream>
 #include <sstream>
@@ -177,12 +178,31 @@ GameCheck checkGameFolder(const fs::path& dir) {
 
 std::vector<GameCandidate> findGameCandidates() {
   std::vector<GameCandidate> out;
-#if defined(_WIN32)
   std::vector<fs::path> steamRoots;
+#if defined(_WIN32)
   std::wstring steam = regString(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath");
   if (!steam.empty()) steamRoots.push_back(fs::path(steam));
-  std::wstring steamMachine = regString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Valve\\Steam", L"InstallPath", KEY_WOW64_32KEY);
-  if (!steamMachine.empty()) steamRoots.push_back(fs::path(steamMachine));
+  for (REGSAM view : {KEY_WOW64_32KEY, KEY_WOW64_64KEY}) {
+    std::wstring machine = regString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Valve\\Steam", L"InstallPath", view);
+    if (!machine.empty()) steamRoots.push_back(fs::path(machine));
+  }
+  // Steam's usual folders, for an install whose registry entries are gone (a reinstalled Windows, a copied library)
+  for (const wchar_t* var : {L"ProgramFiles(x86)", L"ProgramFiles"}) {
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(var, buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) steamRoots.push_back(fs::path(buf) / "Steam");
+  }
+#else
+  // Linux: the native client (~/.steam/steam, ~/.steam/root and ~/.local/share/Steam, or $XDG_DATA_HOME/Steam), the
+  // Flatpak and the Snap; the game itself runs there under Proton but its files sit in the same steamapps/common
+  if (const char* home = std::getenv("HOME"); home && *home) {
+    const fs::path h(home);
+    if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg) steamRoots.push_back(fs::path(xdg) / "Steam");
+    for (const char* rel : {".steam/steam", ".steam/root", ".local/share/Steam",
+                            ".var/app/com.valvesoftware.Steam/.local/share/Steam", "snap/steam/common/.local/share/Steam"})
+      steamRoots.push_back(h / rel);
+  }
+#endif
   std::vector<fs::path> libraries;
   for (const fs::path& root : steamRoots) {
     libraries.push_back(root);
@@ -205,11 +225,40 @@ std::vector<GameCandidate> findGameCandidates() {
     }
     addUnique(out, {dir, "Steam"});
   }
+#if defined(_WIN32)
   std::vector<GameCandidate> entries;
   uninstallEntries(entries);
   for (GameCandidate& c : entries) addUnique(out, std::move(c));
 #endif
   return out;
+}
+
+std::string gameNotFoundMessage() {
+  const std::vector<GameCandidate> found = findGameCandidates();
+  const char* verify =
+      "In Steam: right-click Cities in Motion in the library > Properties > Installed Files > Verify integrity of game "
+      "files.";
+  if (found.empty())
+    return "OpenCiM needs Cities in Motion (Steam, GOG or the disc version), but it was not found on this PC.\n\n"
+           "Install it, or start OpenCiM with the game's folder (the one with Cities In Motion.exe) as its first "
+           "argument, or run the OpenCiM setup again to choose the folder.";
+  std::string s = "Cities in Motion was found, but files the game needs are missing:\n";
+  for (const GameCandidate& c : found) {
+    const GameCheck check = checkGameFolder(c.dir);
+    s += "\n" + toUtf8(c.dir) + " (" + c.source + "): ";
+    for (size_t i = 0; i < check.missing.size(); ++i) s += (i ? ", " : "") + check.missing[i];
+  }
+  s += "\n\n";
+  s += verify;
+  return s;
+}
+
+std::string gameFolderMessage(const fs::path& dir, const GameCheck& check) {
+  if (!isDir(dir)) return "The game folder given to OpenCiM does not exist:\n" + toUtf8(dir);
+  std::string s = "The folder given to OpenCiM is not a complete Cities in Motion folder:\n" + toUtf8(dir) +
+                  "\n\nMissing: ";
+  for (size_t i = 0; i < check.missing.size(); ++i) s += (i ? ", " : "") + check.missing[i];
+  return s + "\n\nIt is the folder with Cities In Motion.exe and data.gs.";
 }
 
 fs::path findGame(std::string* source) {
