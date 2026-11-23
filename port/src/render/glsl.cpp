@@ -133,7 +133,7 @@ uniform sampler2D regs_HookTexture0;  // texture unit 0: the material's first te
 // data attachment (RGBA8, 0..1) with the colour; post hooks read it with regs_postData
 vec4 regs_HookOut = vec4(0.0);
 struct RegsSurface { vec3 pos; vec3 normal; vec3 view; float dist; float fog; int surfaceClass; float time; float item;
-                     vec2 uv; vec2 uv1; float shadow; };
+                     vec2 uv; vec2 uv1; float shadow; vec3 faceNormal; };
 // the material's first texture (unit 0, the diffuse map of the game's materials) at a texture coordinate, as stored
 // (before the shader's colorize and lighting)
 vec4 regs_texel0(vec2 uv) { return texture(regs_HookTexture0, uv); }
@@ -384,7 +384,10 @@ float regs_troddenAt(vec2 xz) {
 // transform: terrain, merged items, skinning), the texture coordinates, the surface record, then each hook in
 // registration order; in shadow-map passes only the hooks that asked for them ("shadowPass"), for their alpha
 std::string hookFragmentCode() {
-  std::string s = "\nin vec4 regs_HookClip;\nin vec4 regs_HookUV;\n" + hookLibraryCode(false);
+  // REGS_DEBUG_FACE_NORMAL=1 (comparisons): the hooks get the face normal only, as before 2026-11-24
+  static const bool faceOnly = regs::envVar("REGS_DEBUG_FACE_NORMAL") != nullptr;
+  std::string s = std::string("\nin vec4 regs_HookClip;\nin vec4 regs_HookUV;\nin vec3 regs_HookNormal;\n#define REGS_HOOK_SMOOTH_NORMAL ") +
+                  (faceOnly ? "false" : "true") + "\n" + hookLibraryCode(false);
   s += R"(void regs_hooks(inout vec4 c) {
   if (regs_SurfaceClass == 8) return;  // kSurfaceOverlay: route strips, highlights, previews, markers, sky, people
   vec4 w = regs_HookInvViewProj * regs_HookClip;
@@ -394,7 +397,17 @@ std::string hookFragmentCode() {
   s.dist = length(e);
   s.view = e / max(s.dist, 1e-4);
   vec3 n = normalize(cross(dFdx(s.pos), dFdy(s.pos)));
-  s.normal = dot(n, s.view) > 0.0 ? -n : n;
+  s.faceNormal = dot(n, s.view) > 0.0 ? -n : n;
+  // the normal: the mesh's interpolated vertex normal, turned to the face's side, so slopes and rounded edges (terrain,
+  // embankments, roof ridges with shared normals) change smoothly instead of per triangle; where the mesh gives none
+  // or one that disagrees with the face by more than ~70 degrees (skinned meshes, odd normals), the face's own
+  s.normal = s.faceNormal;
+  float ln = REGS_HOOK_SMOOTH_NORMAL ? length(regs_HookNormal) : 0.0;
+  if (ln > 1e-3) {
+    vec3 m = regs_HookNormal / ln;
+    if (dot(m, s.faceNormal) < 0.0) m = -m;
+    s.normal = normalize(mix(s.faceNormal, m, smoothstep(0.2, 0.45, dot(m, s.faceNormal))));
+  }
   s.fog = clamp((s.dist - regs_Fog.start) * regs_Fog.scale, 0.0, 1.0);
   s.surfaceClass = regs_SurfaceClass;
   s.time = regs_HookTime;
@@ -566,10 +579,13 @@ std::string translateGlsl110(const std::string& src, bool fragment, std::string*
     // space, so skinned and altered vertices are right too) and the vertex colour alpha (merged buildings: a seed);
     // with the shader hooks also the clip position for the hooks' world position and the mesh's two texture coordinates
     head += "uniform mat4 regs_ViewInverse;\nuniform vec4 regs_ProjInverse;\nout vec3 regs_WorldPos;\nout float regs_Seed;\nout vec3 regs_ModelPos;\n";
-    if (withHooks) head += "out vec4 regs_HookClip;\nout vec4 regs_HookUV;\n";
+    if (withHooks) head += "out vec4 regs_HookClip;\nout vec4 regs_HookUV;\nout vec3 regs_HookNormal;\n";
     s += "\nvoid main() {\n  regs_vmain();\n";
+    // the hooks' smooth normal: the mesh's vertex normal in world space (0 for meshes without normals; skinned
+    // meshes give their rest pose, which the fragment side catches by comparing it with the face)
     if (withHooks)
-      s += "  regs_HookClip = gl_Position;\n  regs_HookUV = vec4(regs_MultiTexCoord0.xy, regs_MultiTexCoord1.xy);\n";
+      s += "  regs_HookClip = gl_Position;\n  regs_HookUV = vec4(regs_MultiTexCoord0.xy, regs_MultiTexCoord1.xy);\n"
+           "  regs_HookNormal = mat3(regs_ViewInverse) * (regs_NormalMatrix * regs_Normal);\n";
     s += "  float ze = -gl_Position.w;\n"
          "  vec3 e = vec3((gl_Position.x - regs_ProjInverse.z * ze) * regs_ProjInverse.x,\n"
          "                (gl_Position.y - regs_ProjInverse.w * ze) * regs_ProjInverse.y, ze);\n"

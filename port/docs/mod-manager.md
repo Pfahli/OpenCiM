@@ -163,7 +163,11 @@ translation. Hooks are fixed at start-up, before any program is built.
   mod's wet ground uses it (film, puddle, ripple tilt). Allocated only while a post hook is registered.
 
 * `RegsSurface`: `pos` (world, from the interpolated clip position: correct for terrain, merged items and skinned
-  meshes alike), `normal` (world, from screen derivatives, facing the eye), `view` (unit, eye → point), `dist`,
+  meshes alike), `normal` (world, unit, facing the eye: the mesh's interpolated vertex normal, so slopes and
+  rounded shapes change smoothly across triangles; the face's normal where the mesh has none or one more than ~70°
+  off the face, as skinned meshes give their rest pose), `faceNormal` (the triangle's own, from screen derivatives,
+  facing the eye; `normal` was this before 2026-11-24, `REGS_DEBUG_FACE_NORMAL=1` brings that back for
+  comparisons), `view` (unit, eye → point), `dist`,
   `fog` (0..1 at this distance: a hook fades its change by `1 - fog`, since the colour is already fogged),
   `surfaceClass`, `time` (the effect timer, s), `item` (below), `uv` and `uv1` (the mesh's texture coordinates 0
   and 1 as the vertex shader received them; merged trees carry (base height, a per-tree number 0..1 from the tree's
