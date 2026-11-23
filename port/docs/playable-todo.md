@@ -583,7 +583,7 @@ Status 2026-11-07 (branch claude/map-editor-4d5476), checked in screenshots (`po
   feature showcase while installing); mockup on the canvas "OpenCiM Installer". Built 2026-11-19: `opencim-setup.exe`
   and `make-release.ps1` (offline installer, zip, sha256; state and what is left in `docs/installer.md` §7). Left:
   the port's own licence, signing, the GitHub releases and download (and with them an optional report upload).
-- [ ] Performance on the largest maps at speed 10 with all systems running; loading time.
+- [x] Performance on the largest maps at speed 10 with all systems running; loading time (2026-11-24, docs/performance-audit.md: Berlin 74 fps at speed 10 after the pedestrian search's 2 GB crash was fixed, the DLC maps 104-156 fps, first view 4-7 s warm; cold shader caches add up to 5 s once). Left: CIMcity opens empty; the sounds are read on the main thread.
 
 ## 10. Parity pass (milestone 8)
 

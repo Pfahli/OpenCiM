@@ -411,3 +411,41 @@ Left: `restampWalk` after big edits, the script compile cache (B8), the ground h
 search, the few pipelines particles, post quads and the GUI still make at first draw, the editor ground overlay and
 tunnel count rebuilt in full while shown. A real optional item a preview hid stayed hidden afterwards (in the old build too): fixed, removing a required item now
 clears the hidden flag of the optional items around it and checks them again, as gsGrid::removeObject does.
+
+## The largest maps at speed 10, and loading (2026-11-24)
+
+Release build, Vulkan, RTX 3080, 1920x1080, no vsync, the weather mod on; speed 10 from frame 1800 (the speed key four
+times), `REGS_BENCH=4000:3000` (Berlin `4000:4000`). "First view" is the log stamp of the grid cache line: seconds
+from the program's start, about 1 s of it the menu before the start flag.
+
+| Start | Size | First view (s) | fps at speed 10 | p99 (ms) |
+|---|---|---|---|---|
+| Berlin save (30255 citizens, lines running) | 1280x1280 | 3.8 | 74.0 | 31.0 |
+| New York (sandbox) | 1024x1024, 68994 items | 11.6 cold, 6.4 warm | 115.6 | 17.2 |
+| Tokyo | | 10.0 cold | 110.8 | 21.0 |
+| London | | 8.8 | 103.7 | 23.7 |
+| Paris | | 7.7 | 118.0 | 16.4 |
+| St. Petersburg | | 7.0 | 115.7 | 19.5 |
+| Munich | | 5.7 | 155.7 | 12.7 |
+| Cologne | | 5.1 | 119.9 | 13.2 |
+
+Berlin is the only built-up city available (the DLC maps start with no citizens and no lines), so it is the
+"all systems running" case.
+
+* **Fixed: Berlin at speed 10 crashed** (`bad_alloc` in the pedestrian search, found by the new crash report): a walk
+  across the map made the search box the whole map, one 16-byte record per cell, about 2 GB. Boxes over 4 M records
+  now keep only the cells the search touches in an open-addressing table (`WalkSparse` in `sim_citizens.cpp`), same
+  order and results: `REGS_DEBUG_WALK_COMPARE=1` found 0 differences in 2000 searches with `REGS_DEBUG_WALK_SPARSE=1`
+  (every search sparse) and in 1000 with the normal mix; 10000 frames at speed 10 ran through.
+* **Cold caches:** the first load of a map whose shaders are not cached yet compiles them (New York 28 programs
+  and 91 pipelines, 5.0 s; Tokyo 2.1 s). With the caches warm every map made its pipelines in 10-60 ms. A port
+  update that changes the shader hooks makes every map cold once.
+* **New York, warm, profiled** (`REGS_PROFILE=1:240`, 7.3 s): the loading screen's first view 15 % (surface map
+  upload 0.3 s, particle pipelines, grid items 0.35 s), the citizens' first trips in the opening frames 16 %
+  (`LaneGraph::search` from `startTrip`, its heap), archive inflate 13 % of which the sounds (`getSound`, read on
+  the main thread when first played) 8 %, the lane graph 7 % (250133 nodes, 138720 of them generated water lanes).
+  No single piece is worth more than about a second.
+* `REGS_PROFILE` named nothing in the port since the release build's PDB moved behind `/PDBALTPATH`: the profiler
+  now looks next to the exe, as the crash report does.
+* **Found on the way:** CIMcity (`addons/cimcity/maps/CIMcity.grid`, a loose 4.8 MB file of a mod, not in an
+  archive) opens as an empty 768x768 map.

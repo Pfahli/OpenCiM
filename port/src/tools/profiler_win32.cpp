@@ -96,7 +96,11 @@ void writeReport() {
   if (!f) return;
   HANDLE proc = GetCurrentProcess();
   SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-  SymInitialize(proc, nullptr, TRUE);
+  // the PDB next to the exe: the exe names only "regs.pdb" (/PDBALTPATH), so the search path must hold its folder
+  char exeDir[MAX_PATH] = {};
+  GetModuleFileNameA(nullptr, exeDir, MAX_PATH);
+  if (char* slash = std::strrchr(exeDir, '\\')) *slash = 0;
+  SymInitialize(proc, exeDir, TRUE);
   std::unordered_map<DWORD64, std::string> names;  // by address
   auto nameOf = [&](DWORD64 pc) -> const std::string& {
     auto it = names.find(pc);
