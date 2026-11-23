@@ -27,6 +27,7 @@
 #include "engine/input.h"
 #include "engine/interaction.h"
 #include "engine/popout.h"
+#include "engine/stereo.h"
 #include "engine/scene3d.h"
 #include "engine/minimap.h"
 #include "engine/scene3d.h"
@@ -707,31 +708,43 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
   r2d_.timer = effectTimer;
   r2d_.sharpScale = uiFilterSharp_ && uiScale > 1.0f ? uiScale : 0.0f;
   r2d_.lineWidth = uiScale;
-  r2d_.beginFrame(w, h, background);
-  if (video) {
-    for (auto& k : video->children) {
-      auto* vp = dynamic_cast<ControlObj*>(k.get());
-      if (!vp || !vp->visible()) continue;
-      // pixel mode: script pixels, uiScale window pixels each (the scripts' window is the real one / uiScale);
-      // otherwise one unit = the window height
-      bool pixels = vm.truthy(field(vm, vp, u"pixelCoordinates"));
-      float scale = pixels ? uiScale : float(h);
-      float px = vp->left * scale, py = vp->top * scale, pw = vp->width * scale, ph = vp->height * scale;
-      if (pw <= 0 || ph <= 0) continue;
-      float uw = pixels ? vp->width : pw / ph, uh = pixels ? vp->height : 1.0f;
-      r2d_.setProjection(px, py, pw, ph, uw, uh);
-      renderViewportScene(*this, vm, vp);  // a root viewport with a scene draws it first, its GUI children on top
-      r2d_.setProjection(px, py, pw, ph, uw, uh);
-      GuiPass pass{vm, *this, px, py, pixels ? uiScale : ph};
-      pass.scissor(int(px), int(py), int(pw), int(ph));
-      // the viewport is its own client area: its children are drawn in it (not with --at ui:off)
-      if (!host().hideGui)
-        for (auto& c : vp->children)
-          if (auto* cc = dynamic_cast<ControlObj*>(c.get())) pass.control(cc);
+  // stereo 3D (engine/stereo.h): the frame, views and GUI, drawn once per eye (left, then right), each copied aside,
+  // then both put into the back buffer as the mode wants them
+  const int stereo = stereoFrameMode(vm);
+  for (int eyePass = 0; eyePass < (stereo ? 2 : 1); ++eyePass) {
+    if (stereo) stereoSetEye(eyePass == 0 ? -1 : 1);
+    r2d_.beginFrame(w, h, background, eyePass == 0);
+    if (video) {
+      for (auto& k : video->children) {
+        auto* vp = dynamic_cast<ControlObj*>(k.get());
+        if (!vp || !vp->visible()) continue;
+        // pixel mode: script pixels, uiScale window pixels each (the scripts' window is the real one / uiScale);
+        // otherwise one unit = the window height
+        bool pixels = vm.truthy(field(vm, vp, u"pixelCoordinates"));
+        float scale = pixels ? uiScale : float(h);
+        float px = vp->left * scale, py = vp->top * scale, pw = vp->width * scale, ph = vp->height * scale;
+        if (pw <= 0 || ph <= 0) continue;
+        float uw = pixels ? vp->width : pw / ph, uh = pixels ? vp->height : 1.0f;
+        r2d_.setProjection(px, py, pw, ph, uw, uh);
+        renderViewportScene(*this, vm, vp);  // a root viewport with a scene draws it first, its GUI children on top
+        r2d_.setProjection(px, py, pw, ph, uw, uh);
+        GuiPass pass{vm, *this, px, py, pixels ? uiScale : ph};
+        pass.scissor(int(px), int(py), int(pw), int(ph));
+        // the viewport is its own client area: its children are drawn in it (not with --at ui:off)
+        if (!host().hideGui)
+          for (auto& c : vp->children)
+            if (auto* cc = dynamic_cast<ControlObj*>(c.get())) pass.control(cc);
+      }
     }
+    if (!host().hideGui) drawFpsReadout(vm);
+    r2d_.endFrame();
+    if (stereo) stereoKeepEye(*this, eyePass == 0 ? -1 : 1, w, h);
   }
-  if (!host().hideGui) drawFpsReadout(vm);
-  r2d_.endFrame();
+  if (stereo) {
+    stereoSetEye(0);
+    stereoCompose(*this, vm, stereo, w, h);
+    r2d_.resume();
+  }
   if (captureNext) {
     auto fn = std::move(captureNext);
     captureNext = nullptr;
@@ -831,7 +844,9 @@ void Display::drawFpsReadout(VM& vm) {
     return;
   }
   auto now = std::chrono::steady_clock::now();
-  if (!fps_.on) {
+  if (!stereoFirstPass()) {
+    // stereo 3D: the right eye shows the left eye's values (one measurement a frame)
+  } else if (!fps_.on) {
     fps_.on = true;
     fps_.last = now;
     fps_.text = u"-- FPS\n";

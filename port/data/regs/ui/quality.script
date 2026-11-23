@@ -15,8 +15,14 @@
 //   $settings.$regsRtShadows     0 off, 1 raytraced sun shadows (Vulkan on a GPU with ray queries, shadows on)
 //   $settings.$regsRtAo          0 off, 1 raytraced ambient occlusion (Vulkan on a GPU with ray queries)
 //   $settings.$regsRtReflections 0 off, 1 raytraced reflections on water and glass (Vulkan, ray queries, bindless)
+//   $settings.$regsStereo        0 off, 1 .. 9 stereoscopic 3D (drop-down list; engine/stereo.h StereoMode: side by
+//                                side, top and bottom, rows, columns, checkerboard, four anaglyphs)
+//   $settings.$regsStereoDepth   0 .. 100 (%, slider): 100 = the eyes' pictures of the horizon 5 % of the width apart
+//   $settings.$regsStereoConvergence 50 .. 200 (%, slider): the screen plane at this share of the camera's distance
+//                                to the point it looks at
+//   $settings.$regsStereoSwap    0 off, 1 the eyes swapped
 // Rows that do not apply (the engine or GPU lacks it, or another option takes its place) are greyed out: TAA under
-// FSR 3.1, frame generation without FSR, paper white and peak with HDR off.
+// FSR 3.1, frame generation without FSR, paper white and peak with HDR off, the stereo rows with stereo off.
 // OK stores and exports the settings, Cancel drops the changes; both close the page.
 $desktop = MAIN.$desktop;
 $settings = MAIN.$settings;
@@ -25,7 +31,7 @@ $file = "regs/strings/" + MAIN.$language + ".strings";
 if (!file_exists($file)) $file = "regs/strings/en_US.strings";
 $regs = load "/" + $file;
 
-$boxH = $desktop.height - 20 < 600 ? $desktop.height - 20 : 600;
+$boxH = $desktop.height - 20 < 740 ? $desktop.height - 20 : 740;
 $box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - $boxH) * 0.5), 1000, $boxH, 1 | 2 | 4 | 8, $desktop);
 $title = MAIN.$ui.createHeadingBar($box, $regs.$regs_quality_title);
 $c = $box.$content;
@@ -41,6 +47,10 @@ $rtShadows = int($settings.$regsRtShadows : 0);
 $rtAo = int($settings.$regsRtAo : 0);
 $rtReflections = int($settings.$regsRtReflections : 0);
 $renderer = int($settings.$regsRenderer : 1);
+$stereo = int($settings.$regsStereo : 0);
+$stereoDepth = int($settings.$regsStereoDepth : 50);
+$stereoConv = int($settings.$regsStereoConvergence : 100);
+$stereoSwap = int($settings.$regsStereoSwap : 0);
 
 // (script variables are shared with the callers: the names here are its own)
 function label($x, $y, $w, $text, $title) {
@@ -135,6 +145,8 @@ function pick($group, $v) {
   else if ($group == "regsRtAo") $rtAo = $v;
   else if ($group == "regsRtReflections") $rtReflections = $v;
   else if ($group == "regsRenderer") $renderer = $v;
+  else if ($group == "regsStereo") $stereo = $v;
+  else if ($group == "regsStereoSwap") $stereoSwap = $v;
   refresh();
 }
 
@@ -189,6 +201,9 @@ function refresh() {
   setRow("hdr", ($caps & 32) != 0);
   setRow("hdrPaper", ($caps & 32) != 0 && $hdr == 1);
   setRow("hdrPeak", ($caps & 32) != 0 && $hdr == 1);
+  setRow("stereoSwap", $stereo != 0);
+  setRow("stereoDepth", $stereo != 0);
+  setRow("stereoConv", $stereo != 0);
 }
 
 rule(500, 58, 1, 390);  // between the columns
@@ -284,6 +299,41 @@ hint($x, $y, $regs.$regs_q_hdr_hint1);
 $y += 20;
 hint($x, $y, $regs.$regs_q_hdr_hint2);
 
+// ---- below both columns: stereoscopic 3D ----
+$x = $colL;
+$y = 452;
+label($x, $y, $colR + $colW - $colL, $regs.$regs_stereo_heading, true);
+rule($x, $y + 22, $colR + $colW - $colL, 1);
+$y += 38;
+rowLabel($x, $y, $regs.$regs_stereo_label, false);
+$stereoList = dropDown("regsStereo", $x + $ctlOff, $y, 230, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], $regs.$regs_stereo_values, $stereo);
+$rowL = rowLabel($colR, $y, $regs.$regs_stereoSwap_label, false);
+radioRow("regsStereoSwap", $colR + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $stereoSwap);
+shade("stereoSwap", $colR, $y, $rowL);
+$y += 34;
+$rowL = rowLabel($x, $y, $regs.$regs_stereoDepth_label, false);
+$stereoDepth = $stereoDepth < 0 ? 0 : ($stereoDepth > 100 ? 100 : $stereoDepth);
+$depthSlider = slider($x + $ctlOff, $y, 0.0, 100.0, $stereoDepth, $regs.$regs_percent_value, macro :: $stereoDepth);
+$depthSlider.$action = macro :: setStereoDepth();
+function setStereoDepth() {
+  $stereoDepth = int($depthSlider.$value + 0.5);
+}
+shade("stereoDepth", $x, $y, $rowL);
+$rowL = rowLabel($colR, $y, $regs.$regs_stereoConv_label, false);
+$stereoConv = $stereoConv < 50 ? 50 : ($stereoConv > 200 ? 200 : $stereoConv);
+$convSlider = slider($colR + $ctlOff, $y, 50.0, 200.0, $stereoConv, $regs.$regs_percent_value, macro :: $stereoConv);
+$convSlider.$action = macro :: setStereoConv();
+function setStereoConv() {
+  $stereoConv = int($convSlider.$value / 5.0 + 0.5) * 5;
+}
+shade("stereoConv", $colR, $y, $rowL);
+$y += 32;
+hint($x, $y, $regs.$regs_q_stereo_hint1);
+hint($colR, $y, $regs.$regs_q_stereo_hint3);
+$y += 20;
+hint($x, $y, $regs.$regs_q_stereo_hint2);
+hint($colR, $y, $regs.$regs_q_stereo_hint4);
+
 refresh();
 
 function pageButton($text, $action) {
@@ -324,6 +374,14 @@ function save() {
   $settings.exportVariables("regsHdrPaperWhite");
   $settings.setVariable("regsHdrPeak", $hdrPeak);
   $settings.exportVariables("regsHdrPeak");
+  $settings.setVariable("regsStereo", $stereo);
+  $settings.exportVariables("regsStereo");
+  $settings.setVariable("regsStereoDepth", $stereoDepth);
+  $settings.exportVariables("regsStereoDepth");
+  $settings.setVariable("regsStereoConvergence", $stereoConv);
+  $settings.exportVariables("regsStereoConvergence");
+  $settings.setVariable("regsStereoSwap", $stereoSwap);
+  $settings.exportVariables("regsStereoSwap");
   MAIN.$main.regsCloseQualityPage();
 }
 

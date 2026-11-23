@@ -53,7 +53,8 @@ class Renderer2D {
   void destroyTexture(uint32_t tex);
 
   // Frame: the back buffer size in pixels; clears to 'argb' every frame (the engine cleared only on demand).
-  void beginFrame(int width, int height, uint32_t clearArgb);
+  // deviceFrame false: the device's frame has begun already (stereo 3D's second eye): only cleared and reset
+  void beginFrame(int width, int height, uint32_t clearArgb, bool deviceFrame = true);
   void endFrame();
 
   // Coordinate system for following draws: x in [0, unitsW), y in [0, unitsH) top-down, mapped onto the pixel

@@ -15,6 +15,7 @@
 #include "engine/display.h"
 #include "engine/effects.h"
 #include "engine/hdr.h"
+#include "engine/stereo.h"
 #include "engine/temporal.h"
 #include "render/gpu.h"
 #include "engine/grid.h"
@@ -559,7 +560,9 @@ Object* lastMapCamera() {
 void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride* ov) {
   Object* scene = fieldOf(vm, vp, u"scene").object();
   Object* cam = fieldOf(vm, vp, u"camera").object();
-  if (!ov && cam && !cam->destroyed && isFloatingCamera(vm, cam)) updateFloatingCamera(vm, cam, vm.frameDt(), false);
+  // (stereo 3D: the camera eases once a frame, in the first eye's pass)
+  if (!ov && stereoFirstPass() && cam && !cam->destroyed && isFloatingCamera(vm, cam))
+    updateFloatingCamera(vm, cam, vm.frameDt(), false);
 
   if (regs::envVar("REGS_DEBUG_VIEWPORT")) {
     static std::map<std::pair<Object*, Object*>, int> seen;
@@ -658,6 +661,16 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
     detailScale = std::clamp(settingNumber(vm, u"regsDetailDistance", 1.0f), 0.5f, 4.0f);
   }
   v.proj = perspective(camFov, float(w) / float(h), nearZ, farZ * viewScale);
+  // stereo 3D (engine/stereo.h): an on-screen view drawn for one eye sees from beside the camera with its frustum
+  // shifted; culling uses the eye's matrices, but level of detail, billboards, the sky and the shadow fit keep the
+  // camera's own eye, so both pictures hold the same things
+  const bool stereoView = !ov && !rt && stereoEye() != 0;
+  if (stereoView) {
+    Vec3 se = eye, sl = look;
+    stereoCamera(vm, se, sl, up, v.proj);
+    v.eye = se;
+    v.view = lookAt(se, sl, up);
+  }
   { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items); gPhaseSeconds[2] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items); gPhaseSeconds[3] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   addSkyItems(d, vm, sky, suns, eye, farZ * viewScale, items);  // sky dome and sun disc (engine/sky.cpp)
@@ -826,14 +839,14 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
   // port TAA and render scale (game view, engine/temporal.h): the scene is drawn jittered and/or smaller into the
   // temporal input, then resolved or upscaled to the view's size (before the colour styles)
   TemporalPass temporal;
-  if (!rt && !grids.empty()) temporal = temporalBegin(d, vm, w, h, v);
+  if (!rt && !grids.empty() && !stereoView) temporal = temporalBegin(d, vm, w, h, v);  // (no history across eyes)
   if (temporal.ao && !ensureRayScene()) temporal.ao = false;
   const int sw = temporal.active ? temporal.rw : w, sh = temporal.active ? temporal.rh : h;
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites
   // it into this rect (docs/renderer/bloom.md §3.3)
   const RenderTarget* hdr = nullptr;
   if (bloom && !rt) {
-    bloomTick(vm, bloom, vm.frameDt());
+    if (stereoFirstPass()) bloomTick(vm, bloom, vm.frameDt());
     hdr = bloomSceneTarget(d, vm, bloom, sw, sh);
   }
   // port style effects (game view): the scene, or the bloom composite, goes into the style input first

@@ -93,6 +93,10 @@ it is, what already exists, and the open decisions. Order is not priority.
     whether the minimap view and the far zoom meet.
 * **Stereoscopic 3D mode.** Play in 3D on 3D TVs, monitors, projectors and headsets; a "3D mode" option on the
   graphics page with the output format, a depth strength slider and "swap eyes".
+  * **Built 2026-11-23** (`docs/stereo-3d.md`): side by side (half width), top and bottom, rows, columns,
+    checkerboard and four anaglyphs (Dubois), depth, screen plane and swap eyes on the advanced settings page. Still
+    open from this entry: full-width side by side, frame packing / OpenXR, tooltips and pins at their object's depth,
+    TAA and FSR per eye, Vulkan multiview.
   * Formats: side-by-side (half and full width), top-and-bottom, row-interlaced (passive 3D monitors), anaglyph
     (red/cyan, with an optimised colour matrix such as Dubois), and later frame packing or a VR headset through OpenXR.
   * How: the 3D viewport is rendered twice from two cameras offset sideways (eye separation scaled with the zoom, the

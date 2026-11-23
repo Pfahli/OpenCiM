@@ -190,12 +190,13 @@ void Renderer2D::destroyTexture(uint32_t tex) {
   gpu::dev().destroyTexture(tex);
 }
 
-void Renderer2D::beginFrame(int width, int height, uint32_t clearArgb) {
+void Renderer2D::beginFrame(int width, int height, uint32_t clearArgb, bool deviceFrame) {
   gpu::Device& d = gpu::dev();
   fw_ = width;
   fh_ = height;
   batch_.clear();
-  d.beginFrame(width, height);
+  if (deviceFrame) d.beginFrame(width, height);
+  else d.bindFramebuffer(0);
   d.viewport(0, 0, width, height);
   d.scissorTest(false);
   d.clear(true, true, float(clearArgb >> 16 & 0xFF) / 255, float(clearArgb >> 8 & 0xFF) / 255, float(clearArgb & 0xFF) / 255, 1);

@@ -696,12 +696,16 @@ event this.enter::["MainMenu"]() {
       wait 0.3;
       if ($submenu) MAIN.$main.perform("ok");
     };
+  } else if ($regsWhat == "quality") {
+    // quality: the image quality page over the main menu (screenshots of the page)
+    echo "start flag: image quality page";
+    thread :: { wait 0.1; regsOpenQualityPage(); };
   } else if (findstr($regsWhat, "osm:") == 0) {
     $regsStartOsm = substr($regsWhat, 4, 1000);
     echo "start flag: OpenStreetMap import of \""+$regsStartOsm+"\"";
     thread :: regsStartOsmImport();
   } else {
-    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file>, editor:<map file>, scenario:<n>, campaign, tutorial or osm:<place>)";
+    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file>, editor:<map file>, scenario:<n>, campaign, tutorial, quality or osm:<place>)";
   }
 }
 

@@ -1,0 +1,55 @@
+// ReGS stereoscopic 3D (engine/stereo.cpp, docs/renderer/stereo.md): both eyes' frames into the back buffer.
+// texture0 = the left eye's frame, texture1 = the right eye's (the whole window each, bottom-left origin)
+// custom0  = (mode, width, height, 0); modes as engine/stereo.h StereoMode:
+//   1 side by side, 2 top and bottom (each eye squeezed to half; the TV or projector stretches it back),
+//   3 rows, 4 columns, 5 checkerboard (the top-left pixel is the left eye's),
+//   6 red/cyan, 7 green/magenta, 8 amber/blue (Dubois' least-squares anaglyph colours), 9 red/cyan in grey
+// The squeezed modes sample between two texels of the eye's frame, so linear filtering averages both (a 2:1 box).
+uniform sampler2D texture0;
+uniform sampler2D texture1;
+uniform vec4 custom0;
+varying vec4 texCoord;
+
+vec3 anaglyph(vec3 l, vec3 r, vec3 lr, vec3 lg, vec3 lb, vec3 rr, vec3 rg, vec3 rb) {
+  return clamp(vec3(dot(lr, l) + dot(rr, r), dot(lg, l) + dot(rg, r), dot(lb, l) + dot(rb, r)), 0.0, 1.0);
+}
+
+void main(void) {
+  vec2 uv = texCoord.xy;
+  float mode = custom0.x;
+  vec3 c;
+  if (mode < 1.5) {
+    float right = step(0.5, uv.x);
+    vec2 e = vec2(uv.x * 2.0 - right, uv.y);
+    c = mix(texture2D(texture0, e).rgb, texture2D(texture1, e).rgb, right);
+  } else if (mode < 2.5) {
+    float bottom = 1.0 - step(0.5, uv.y);  // the top half (uv.y above 0.5) is the left eye
+    vec2 e = vec2(uv.x, uv.y * 2.0 - (1.0 - bottom));
+    c = mix(texture2D(texture0, e).rgb, texture2D(texture1, e).rgb, bottom);
+  } else {
+    vec3 l = texture2D(texture0, uv).rgb;
+    vec3 r = texture2D(texture1, uv).rgb;
+    // the pixel counted from the top left
+    vec2 px = floor(vec2(uv.x * custom0.y, (1.0 - uv.y) * custom0.z));
+    if (mode < 3.5) {
+      c = mix(l, r, mod(px.y, 2.0));
+    } else if (mode < 4.5) {
+      c = mix(l, r, mod(px.x, 2.0));
+    } else if (mode < 5.5) {
+      c = mix(l, r, mod(px.x + px.y, 2.0));
+    } else if (mode < 6.5) {
+      c = anaglyph(l, r, vec3(0.437, 0.449, 0.164), vec3(-0.062, -0.062, -0.024), vec3(-0.048, -0.050, -0.017),
+                   vec3(-0.011, -0.032, -0.007), vec3(0.377, 0.761, 0.009), vec3(-0.026, -0.093, 1.234));
+    } else if (mode < 7.5) {
+      c = anaglyph(l, r, vec3(-0.062, -0.158, -0.039), vec3(0.284, 0.668, 0.143), vec3(-0.015, -0.027, 0.021),
+                   vec3(0.529, 0.705, 0.024), vec3(-0.016, -0.015, -0.065), vec3(0.009, 0.075, 0.937));
+    } else if (mode < 8.5) {
+      c = anaglyph(l, r, vec3(1.062, -0.205, 0.299), vec3(-0.026, 0.908, 0.068), vec3(-0.038, -0.173, 0.022),
+                   vec3(-0.016, -0.123, -0.017), vec3(0.006, 0.062, -0.017), vec3(0.094, 0.185, 0.911));
+    } else {
+      vec3 luma = vec3(0.299, 0.587, 0.114);
+      c = vec3(dot(luma, l), dot(luma, r), dot(luma, r));
+    }
+  }
+  gl_FragColor = vec4(c, 1.0);
+}
