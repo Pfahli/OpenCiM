@@ -1081,35 +1081,84 @@ struct WalkOpen {
 //   which the stale test lets through; about 1.5 % of the expansions in Berlin) counts as an expansion but skips the
 //   neighbours: they were all reached from this cost already and their costs only fell since, so the old search's
 //   second pass over them changed nothing
-bool walkSearch(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& expanded) {
+// a q-cell's record on one layer, the layers one after another (the ground's records dense); the stamp is the
+// search's serial << 2 | reached (cost and parent valid; else as cost −1, parent −1) << 1 | expanded at this cost.
+// On the ground the serial alone says y holds the q-cell's ground height (= layerHeight(s, x, z), made on first use:
+// up to eight neighbours ask for it), which is also the height of the q-cell reached there; on a deck y is that
+// reached q-cell's height
+struct WalkNode {
+  float cost;
+  int32_t parent;
+  uint32_t stamp;
+  float y;
+};
+
+// walkSearch's records for a box of up to kWalkDenseMax q-cells × layers: one per q-cell, kept between searches
+struct WalkDense {
+  std::vector<WalkNode>& v;
+  WalkNode& operator[](size_t i) { return v[i]; }
+};
+
+// ... and for a larger box (a walk across the whole map: Berlin's 5120² q-cells × 5 layers would be 2 GB of records,
+// of which a search touches at most a few million): only the q-cells it touches, in an open-addressing table. A
+// record not in the table reads as a fresh one ({0, 0, stamp 0}: not this search's), as a dense record from an older
+// search does. Inserting may move records: walkSearchIn holds no record across another lookup
+struct WalkSparse {
+  struct Slot {
+    uint64_t key;
+    uint32_t gen;
+    WalkNode n;
+  };
+  std::vector<Slot> slots;
+  size_t used = 0, mask = 0;
+  uint32_t gen = 0;
+  void begin() {
+    if (slots.empty()) slots.assign(size_t(1) << 16, Slot{0, 0, {0, 0, 0, 0}}), mask = slots.size() - 1;
+    if (++gen == 0) {
+      for (Slot& sl : slots) sl.gen = 0;
+      gen = 1;
+    }
+    used = 0;
+  }
+  static size_t hash(uint64_t k) { return size_t((k * 0x9E3779B97F4A7C15ull) >> 20); }
+  void grow() {
+    std::vector<Slot> old(slots.size() * 2, Slot{0, 0, {0, 0, 0, 0}});
+    old.swap(slots);
+    mask = slots.size() - 1;
+    for (const Slot& sl : old)
+      if (sl.gen == gen) {
+        size_t i = hash(sl.key) & mask;
+        while (slots[i].gen == gen) i = (i + 1) & mask;
+        slots[i] = sl;
+      }
+  }
+  WalkNode& operator[](size_t k) {
+    if ((used + 1) * 2 > slots.size()) grow();
+    for (size_t i = hash(k) & mask;; i = (i + 1) & mask) {
+      Slot& sl = slots[i];
+      if (sl.gen != gen) {
+        sl.key = k, sl.gen = gen, sl.n = WalkNode{0, 0, 0, 0};
+        ++used;
+        return sl.n;
+      }
+      if (sl.key == k) return sl.n;
+    }
+  }
+};
+constexpr size_t kWalkDenseMax = size_t(4) << 20;  // records (64 MB per thread)
+
+template <class Store>
+bool walkSearchIn(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& expanded, Store& node, uint32_t serial) {
   out.clear();
   const int x0 = b.x0, x1 = b.x1, z0 = b.z0, z1 = b.z1, W = b.W, L = b.L, K = b.K;
   const int qx0 = b.qx0, qz0 = b.qz0, l0 = b.l0, qx1 = b.qx1, qz1 = b.qz1, cap = b.cap;
-  if (W > 0x2000 || L > 0x10000 || K > 8) return walkSearchReference(s, b, out, expanded);  // keys hold 13/16/3 bits
-  // a q-cell's record on one layer, the layers one after another (the ground's records dense); the stamp is the
-  // search's serial << 2 | reached (cost and parent valid; else as cost −1, parent −1) << 1 | expanded at this cost.
-  // On the ground the serial alone says y holds the q-cell's ground height (= layerHeight(s, x, z), made on first use:
-  // up to eight neighbours ask for it), which is also the height of the q-cell reached there; on a deck y is that
-  // reached q-cell's height
-  struct Node {
-    float cost;
-    int32_t parent;
-    uint32_t stamp;
-    float y;
-  };
-  static thread_local std::vector<Node> node;
+  (void)L;
   static thread_local WalkOpen open;
-  static thread_local uint32_t serial = 0;
-  const size_t plane = size_t(W) * size_t(L), cells = plane * size_t(K);
-  if (node.size() < cells) node.resize(cells, Node{0, 0, 0, 0});
-  if (++serial == 1u << 30) {
-    for (Node& n : node) n.stamp = 0;
-    serial = 1;
-  }
+  const size_t plane = size_t(W) * size_t(L);
   const uint32_t touched = serial << 2, reached = touched | 2;
   auto at = [&](int x, int z) { return size_t(z - z0) * size_t(W) + size_t(x - x0); };
   auto groundHeight = [&](int x, int z) {  // = layerHeight(s, x, z)
-    Node& g = node[at(x, z)];
+    WalkNode& g = node[at(x, z)];
     if ((g.stamp >> 2) != serial) g.stamp = touched, g.y = layerHeight(s, x, z);
     return g.y;
   };
@@ -1142,7 +1191,7 @@ bool walkSearch(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& 
     std::memcpy(&f, &bits, sizeof f);
     int pl = int(pos & 7), px = int((pos >> 3) & 0x1fff) + x0, pz = int(pos >> 16) + z0;
     int p = int(size_t(pl) * plane + at(px, pz));
-    Node& np = node[size_t(p)];
+    WalkNode& np = node[size_t(p)];
     if (f - h(px, pz) > np.cost + 1e-3f) continue;
     if (px == qx1 && pz == qz1) {
       goal = p;
@@ -1188,7 +1237,7 @@ bool walkSearch(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& 
       if (v == 1) c *= 3;
       else if (v == 3) c *= 4;
       const size_t q = size_t(nl) * plane + at(nx, nz);
-      Node& nq = node[q];
+      WalkNode& nq = node[q];
       float ng = pc + c;
       if ((nq.stamp >> 1) == (reached >> 1) && nq.cost <= ng) continue;
       nq.cost = ng, nq.parent = p, nq.stamp = reached;
@@ -1204,6 +1253,27 @@ bool walkSearch(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& 
   }
   std::reverse(out.begin(), out.end());
   return true;
+}
+
+bool walkSearch(SimState& s, const WalkBox& b, std::vector<uint32_t>& out, int& expanded) {
+  if (b.W > 0x2000 || b.L > 0x10000 || b.K > 8) return walkSearchReference(s, b, out, expanded);  // keys hold 13/16/3 bits
+  static thread_local std::vector<WalkNode> dense;
+  static thread_local WalkSparse sparse;
+  static thread_local uint32_t serial = 0;
+  const size_t cells = size_t(b.W) * size_t(b.L) * size_t(b.K);
+  if (++serial == 1u << 30) {
+    for (WalkNode& n : dense) n.stamp = 0;
+    serial = 1;  // the sparse table's records count only in their own search (begin)
+  }
+  // REGS_DEBUG_WALK_SPARSE=1 (tests): every search uses the sparse store, so REGS_DEBUG_WALK_COMPARE checks it on all
+  static const bool forceSparse = regs::envVar("REGS_DEBUG_WALK_SPARSE") != nullptr;
+  if (cells <= kWalkDenseMax && !forceSparse) {
+    if (dense.size() < cells) dense.resize(cells, WalkNode{0, 0, 0, 0});
+    WalkDense store{dense};
+    return walkSearchIn(s, b, out, expanded, store, serial);
+  }
+  sparse.begin();
+  return walkSearchIn(s, b, out, expanded, sparse, serial);
 }
 
 // REGS_DEBUG_WALK_COMPARE=1 (tests): every pedestrian search runs walkSearch and walkSearchReference (in turns first,
