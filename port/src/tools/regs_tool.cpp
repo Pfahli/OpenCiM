@@ -43,6 +43,9 @@ int cmdCut(int argc, char** argv);      // mod_assets.cpp
 int cmdSoftDot(int argc, char** argv);  // mod_assets.cpp
 int cmdLeaf(int argc, char** argv);     // mod_assets.cpp
 int cmdPadGlyphs(int argc, char** argv);  // pad_glyphs.cpp
+namespace regs {
+int crashSymbolize(int argc, char** argv);  // crash_win32.cpp: names for a crash report's stack
+}
 int cmdUpscaleTextures(int argc, char** argv);  // texture_tools.cpp
 int cmdUpscaleCompare(int argc, char** argv);   // texture_tools.cpp
 int cmdPngRoundtrip(int argc, char** argv);     // texture_tools.cpp
@@ -929,6 +932,7 @@ int main(int argc, char** argv) {
     else if (cmd == "png-diff") rc = cmdPngDiff(argc, argv);
     else if (cmd == "upscale-check") rc = cmdUpscaleCheck(argc, argv);
     else if (cmd == "ddspng") rc = cmdDdsPng(argc, argv);
+    else if (cmd == "symbolize") rc = regs::crashSymbolize(argc, argv);
     Vfs::waitForWrites();  // packages of writePackage still being written (a scripted save in "run")
     if (rc != 2) return rc;
   }

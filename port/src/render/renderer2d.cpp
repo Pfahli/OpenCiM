@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "core/crash.h"
 #include "render/gpu.h"
 
 namespace regs::render {
@@ -72,6 +73,7 @@ bool Renderer2D::init(std::string* error) {
       {2, 4, gpu::AttribType::UByteNorm, vbo_, int(sizeof(GuiVertex)), offsetof(GuiVertex, rgba)}};
   vao_ = d.createVertexInput(attrs, 3, 0);
   info = d.info();
+  crashContext("renderer", info);  // for a crash report (core/crash.h)
   return true;
 }
 

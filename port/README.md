@@ -33,7 +33,12 @@ what is missing (`REGS_NO_DIALOGS=1`: only on stderr, for test runs). Without th
 account must own the game, and the login happens in SteamCMD's console (`docs/installer.md` §1a).
 
 A release (`.\make-release.ps1`, output in `build\release`): the install folder as a zip with its `.sha256`, and
-`OpenCiM-<version>-setup.exe`, the setup program with the same files appended (`docs/installer.md`).
+`OpenCiM-<version>-setup.exe`, the setup program with the same files appended (`docs/installer.md`), plus
+`OpenCiM-<version>-symbols.zip` with the build's PDBs (kept by us, not part of the download).
+
+When OpenCiM crashes it writes a report and a minidump to `Documents\OpenCiM\crashes\` and says so in a message box;
+nothing is sent. `regs-tool symbolize <report.txt> <symbols folder>` names the stack; `REGS_CRASH_TEST=<kind>[:<frame>]`
+crashes on purpose (`docs/crash-reports.md`).
 
 Start flags for tests (environment variables; the intro is skipped, the load dialogs answer themselves and the
 loading screen's Spielen button presses itself; `data/regs/extend/metro/scripts/main.script`):

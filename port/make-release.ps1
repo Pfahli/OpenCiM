@@ -41,10 +41,19 @@ Compress-Archive -Path "$stage\*" -DestinationPath $zip -CompressionLevel Optima
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
 [IO.File]::WriteAllText("$zip.sha256", "$hash  $(Split-Path $zip -Leaf)`n")
 
+# the symbols (not for players): the exes and PDBs of this build, so that regs-tool symbolize and Visual Studio can
+# read crash reports and minidumps sent in later (docs/crash-reports.md)
+$sym = Join-Path $Out "$name-symbols.zip"
+if (Test-Path $sym) { Remove-Item $sym -Force }
+$symFiles = foreach ($f in 'regs', 'regs-tool', 'opencim-setup') {
+  foreach ($e in 'exe', 'pdb') { if (Test-Path "$bin\$f.$e") { "$bin\$f.$e" } }
+}
+Compress-Archive -Path $symFiles -DestinationPath $sym -CompressionLevel Optimal
+
 # the offline installer: the setup program with the install folder and its pictures appended
 $setup = Join-Path $Out "$name-setup.exe"
 & "$bin\opencim-setup.exe" --make "$bin\opencim-setup.exe" $stage "$root\src\setup\show" $setup | Out-Host
 $deadline = (Get-Date).AddSeconds(120)
 while (-not (Test-Path $setup) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
 if (-not (Test-Path $setup)) { throw "the offline installer was not written" }
-Get-Item $zip, "$zip.sha256", $setup | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }
+Get-Item $zip, "$zip.sha256", $setup, $sym | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }

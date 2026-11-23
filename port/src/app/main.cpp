@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "core/crash.h"
 #include "core/env.h"
 #include "core/game_find.h"
 #include "core/steam_download.h"
@@ -42,8 +43,16 @@
 
 #if defined(_WIN32)
 void profilerFrame(long long frame);  // tools/profiler_win32.cpp: REGS_PROFILE=<first frame>:<frames>:<report file>
+namespace regs {
+void crashTest(const char* kind);  // tools/crash_win32.cpp: REGS_CRASH_TEST=<kind>[:<frame>]
+void crashThreadHandlers();        // tools/crash_win32.cpp: std::terminate's handler for this thread
+}
 #else
 inline void profilerFrame(long long) {}
+namespace regs {
+inline void crashTest(const char*) {}
+inline void crashThreadHandlers() {}
+}
 #endif
 
 using namespace regs;
@@ -101,6 +110,7 @@ void setStartEnv(const char* name, const std::string& value) {
 
 int main(int argc, char** argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);
+  crashThreadHandlers();
 #if defined(_WIN32)
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);  // real pixels, no OS scaling
 #endif
@@ -144,6 +154,8 @@ int main(int argc, char** argv) {
   }
   std::printf("%s[info] game folder: %s (%s)\n", logStamp().c_str(), utf16ToUtf8(std::u16string(game.u16string())).c_str(),
               gameSource.c_str());
+  crashContext("game folder", utf16ToUtf8(std::u16string(game.u16string())) + " (" + gameSource + ")");
+  crashSetDialog(true);  // the game shows where its crash report went (tools/crash_win32.cpp)
   bool printPaths = false;
   // the port's own data (menu pages, strings) next to the executable; --data overrides
   fs::path data = fs::absolute(fs::path(widen(argv[0]))).parent_path() / "data";
@@ -205,12 +217,20 @@ int main(int argc, char** argv) {
     return 0;
   }
   fs::create_directories(documents);
+  // crash reports next to the player's saves: Documents\OpenCiM\crashes (core/crash.h, docs/crash-reports.md)
+  crashSetReportDir(documents / engine::kPortFolderName / "crashes");
   engine::host().headless = false;
   std::error_code ec;
   if (fs::is_directory(data, ec)) engine::host().dataDir = data;
   engine::Engine eng(game, documents);
-  eng.echo = [](const std::string& s) { std::printf("%s[script] %s\n", logStamp().c_str(), s.c_str()); };
-  eng.errors = [](const std::string& s) { std::printf("[error] %s\n", s.c_str()); };
+  eng.echo = [](const std::string& s) {
+    std::printf("%s[script] %s\n", logStamp().c_str(), s.c_str());
+    crashLogLine("[script] " + s);
+  };
+  eng.errors = [](const std::string& s) {
+    std::printf("[error] %s\n", s.c_str());
+    crashLogLine("[error] " + s);
+  };
   if (!eng.init(u"metro/scripts/init.script")) {
     std::fprintf(stderr, "init.script failed\n");
     return 1;
@@ -234,6 +254,16 @@ int main(int argc, char** argv) {
     if (std::sscanf(sw, "%lld,%d,%d,%d,%d,%d", &sweep.first, &sweep.x0, &sweep.y0, &sweep.x1, &sweep.y1, &sweep.frames) != 6)
       sweep.first = -1;
   sweep.frames = std::max(1, sweep.frames);
+  // REGS_CRASH_TEST=<kind>[:<frame>] (tests): crashes on purpose at that frame (default 60) to check the report
+  std::string crashKind;
+  long long crashFrame = 60;
+  if (const char* ct = std::getenv("REGS_CRASH_TEST")) {
+    crashKind = ct;
+    if (size_t c = crashKind.find(':'); c != std::string::npos) {
+      crashFrame = std::atoll(crashKind.c_str() + c + 1);
+      crashKind.resize(c);
+    }
+  }
   while (!engine::host().quit && (maxFrames < 0 || frame < maxFrames)) {
     profilerFrame(frame);
     auto now = clock::now();
@@ -417,6 +447,7 @@ int main(int argc, char** argv) {
     engine::dispatchInput(eng);
     eng.frame(dt);
     ++frame;
+    if (!crashKind.empty() && frame == crashFrame) crashTest(crashKind.c_str());
     // MAIN.fpsLimit (init.script: $settings.$fpsLimit): frames per second, 0 = unlimited
     float limit = 0;
     try {

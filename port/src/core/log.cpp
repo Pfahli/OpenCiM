@@ -1,5 +1,7 @@
 #include "core/log.h"
 
+#include "core/crash.h"
+
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
@@ -32,6 +34,7 @@ void logWrite(LogLevel level, const std::string& msg) {
     std::snprintf(stamp, sizeof stamp, "%8.2f ",
                   std::chrono::duration<double>(std::chrono::steady_clock::now() - g_start).count());
   std::fprintf(stderr, "%s[%s] %s\n", stamp, kNames[int(level)], msg.c_str());
+  crashLogLine(std::string(stamp) + "[" + kNames[int(level)] + "] " + msg);  // the crash report's last lines
   if (g_file) {
     std::fprintf(g_file, "%s[%s] %s\n", stamp, kNames[int(level)], msg.c_str());
     std::fflush(g_file);

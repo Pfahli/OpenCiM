@@ -11,12 +11,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(MSVC)
   add_compile_options(/utf-8 /W4 /permissive- /EHsc /Zc:__cplusplus /wd4100 /wd4505)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+  # PDBs for the release build too (crash reports, docs/crash-reports.md): /Z7 keeps the debug info in the objects (no
+  # PDB server between Ninja's parallel compiles), the linker writes <exe>.pdb; /OPT:REF,ICF as without /DEBUG;
+  # /PDBALTPATH puts only the PDB's file name into the exe, not this machine's build path. The PDBs do not go into the
+  # release; make-release.ps1 keeps them in OpenCiM-<version>-symbols.zip for regs-tool symbolize.
+  add_compile_options($<$<CONFIG:Release>:/Z7>)
+  add_link_options($<$<CONFIG:Release>:/DEBUG:FULL> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>
+                   $<$<CONFIG:Release>:/PDBALTPATH:%_PDB%>)
 else()
   add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
 
 add_library(regs_engine STATIC
   src/core/log.cpp
+  src/core/crash.cpp
   src/core/text.cpp
   src/core/inflate.cpp
   src/core/deflate.cpp
