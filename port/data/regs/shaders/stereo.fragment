@@ -1,9 +1,10 @@
-// ReGS stereoscopic 3D (engine/stereo.cpp, docs/renderer/stereo.md): both eyes' frames into the back buffer.
+// ReGS stereoscopic 3D (engine/stereo.cpp, docs/stereo-3d.md): both eyes' frames into the back buffer.
 // texture0 = the left eye's frame, texture1 = the right eye's (the whole window each, bottom-left origin)
 // custom0  = (mode, width, height, 0); modes as engine/stereo.h StereoMode:
 //   1 side by side, 2 top and bottom (each eye squeezed to half; the TV or projector stretches it back),
 //   3 rows, 4 columns, 5 checkerboard (the top-left pixel is the left eye's),
-//   6 red/cyan, 7 green/magenta, 8 amber/blue (Dubois' least-squares anaglyph colours), 9 red/cyan in grey
+//   6 red/cyan, 7 green/magenta, 8 amber/blue (Dubois' least-squares anaglyph colours), 9 red/cyan in grey,
+//   10 red/green and 11 red/blue in grey (the old glasses: their filters pass no third colour)
 // The squeezed modes sample between two texels of the eye's frame, so linear filtering averages both (a 2:1 box).
 uniform sampler2D texture0;
 uniform sampler2D texture1;
@@ -48,7 +49,10 @@ void main(void) {
                    vec3(-0.016, -0.123, -0.017), vec3(0.006, 0.062, -0.017), vec3(0.094, 0.185, 0.911));
     } else {
       vec3 luma = vec3(0.299, 0.587, 0.114);
-      c = vec3(dot(luma, l), dot(luma, r), dot(luma, r));
+      float gl = dot(luma, l), gr = dot(luma, r);
+      if (mode < 9.5) c = vec3(gl, gr, gr);
+      else if (mode < 10.5) c = vec3(gl, gr, 0.0);
+      else c = vec3(gl, 0.0, gr);
     }
   }
   gl_FragColor = vec4(c, 1.0);

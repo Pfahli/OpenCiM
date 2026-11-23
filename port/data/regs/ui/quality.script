@@ -21,6 +21,8 @@
 //   $settings.$regsStereoConvergence 50 .. 200 (%, slider): the screen plane at this share of the camera's distance
 //                                to the point it looks at
 //   $settings.$regsStereoSwap    0 off, 1 the eyes swapped
+//   $settings.$regsStereoMiniature 0 .. 200 (%, slider; default 100): the depth spent on what is in view, the eyes at
+//                                most as far apart as a person's over a model on a table (100 %); 0 = the plain depth
 // Rows that do not apply (the engine or GPU lacks it, or another option takes its place) are greyed out: TAA under
 // FSR 3.1, frame generation without FSR, paper white and peak with HDR off, the stereo rows with stereo off.
 // OK stores and exports the settings, Cancel drops the changes; both close the page.
@@ -31,7 +33,7 @@ $file = "regs/strings/" + MAIN.$language + ".strings";
 if (!file_exists($file)) $file = "regs/strings/en_US.strings";
 $regs = load "/" + $file;
 
-$boxH = $desktop.height - 20 < 740 ? $desktop.height - 20 : 740;
+$boxH = $desktop.height - 20 < 770 ? $desktop.height - 20 : 770;
 $box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - $boxH) * 0.5), 1000, $boxH, 1 | 2 | 4 | 8, $desktop);
 $title = MAIN.$ui.createHeadingBar($box, $regs.$regs_quality_title);
 $c = $box.$content;
@@ -51,6 +53,7 @@ $stereo = int($settings.$regsStereo : 0);
 $stereoDepth = int($settings.$regsStereoDepth : 50);
 $stereoConv = int($settings.$regsStereoConvergence : 100);
 $stereoSwap = int($settings.$regsStereoSwap : 0);
+$stereoMini = int($settings.$regsStereoMiniature : 100);
 
 // (script variables are shared with the callers: the names here are its own)
 function label($x, $y, $w, $text, $title) {
@@ -204,6 +207,7 @@ function refresh() {
   setRow("stereoSwap", $stereo != 0);
   setRow("stereoDepth", $stereo != 0);
   setRow("stereoConv", $stereo != 0);
+  setRow("stereoMini", $stereo != 0);
 }
 
 rule(500, 58, 1, 390);  // between the columns
@@ -306,7 +310,7 @@ label($x, $y, $colR + $colW - $colL, $regs.$regs_stereo_heading, true);
 rule($x, $y + 22, $colR + $colW - $colL, 1);
 $y += 38;
 rowLabel($x, $y, $regs.$regs_stereo_label, false);
-$stereoList = dropDown("regsStereo", $x + $ctlOff, $y, 230, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], $regs.$regs_stereo_values, $stereo);
+$stereoList = dropDown("regsStereo", $x + $ctlOff, $y, 230, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], $regs.$regs_stereo_values, $stereo);
 $rowL = rowLabel($colR, $y, $regs.$regs_stereoSwap_label, false);
 radioRow("regsStereoSwap", $colR + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $stereoSwap);
 shade("stereoSwap", $colR, $y, $rowL);
@@ -327,6 +331,16 @@ function setStereoConv() {
   $stereoConv = int($convSlider.$value / 5.0 + 0.5) * 5;
 }
 shade("stereoConv", $colR, $y, $rowL);
+$y += 34;
+$rowL = rowLabel($x, $y, $regs.$regs_stereoMini_label, false);
+$stereoMini = $stereoMini < 0 ? 0 : ($stereoMini > 200 ? 200 : $stereoMini);
+$miniSlider = slider($x + $ctlOff, $y, 0.0, 200.0, $stereoMini, $regs.$regs_percent_value, macro :: $stereoMini);
+$miniSlider.$action = macro :: setStereoMini();
+function setStereoMini() {
+  $stereoMini = int($miniSlider.$value / 5.0 + 0.5) * 5;
+}
+shade("stereoMini", $x, $y, $rowL);
+hint($colR, $y, $regs.$regs_q_stereo_hint5);
 $y += 32;
 hint($x, $y, $regs.$regs_q_stereo_hint1);
 hint($colR, $y, $regs.$regs_q_stereo_hint3);
@@ -382,6 +396,8 @@ function save() {
   $settings.exportVariables("regsStereoConvergence");
   $settings.setVariable("regsStereoSwap", $stereoSwap);
   $settings.exportVariables("regsStereoSwap");
+  $settings.setVariable("regsStereoMiniature", $stereoMini);
+  $settings.exportVariables("regsStereoMiniature");
   MAIN.$main.regsCloseQualityPage();
 }
 

@@ -6,7 +6,7 @@ namespace regs::engine {
 
 class Display;
 
-// Stereoscopic 3D (owner's request 2026-11-23, docs/renderer/stereo.md; settings regsStereo, regsStereoDepth,
+// Stereoscopic 3D (owner's request 2026-11-23, docs/stereo-3d.md; settings regsStereo, regsStereoDepth,
 // regsStereoConvergence, regsStereoSwap on the image quality page). The whole frame, scene and interface, is drawn once
 // per eye into the back buffer and copied aside; stereoCompose then puts both into the back buffer the way the mode
 // wants it (side by side, top and bottom, interleaved rows / columns, checkerboard, anaglyph). Each eye's camera sits
@@ -23,7 +23,9 @@ enum StereoMode {
   kStereoGreenMagenta = 7,  // green left, magenta right (Dubois)
   kStereoAmberBlue = 8,     // amber left, blue right (ColorCode 3-D; Dubois)
   kStereoRedCyanGray = 9,   // red/cyan in grey (least ghosting, no colour)
-  kStereoModeCount = 10
+  kStereoRedGreen = 10,     // red left, green right, in grey (old red/green glasses)
+  kStereoRedBlue = 11,      // red left, blue right, in grey (old red/blue glasses)
+  kStereoModeCount = 12
 };
 
 // Display::renderFrame: the mode for this frame (settings, REGS_STEREO=<mode> overrides); 0 = draw once as before.

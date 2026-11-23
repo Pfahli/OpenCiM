@@ -1,4 +1,4 @@
-// Stereoscopic 3D (engine/stereo.h, docs/renderer/stereo.md).
+// Stereoscopic 3D (engine/stereo.h, docs/stereo-3d.md).
 #include "engine/stereo.h"
 
 #include <algorithm>
@@ -31,6 +31,7 @@ struct StereoState {
   // this frame's settings (stereoFrameMode)
   float parallax = 0.025f;    // on-screen distance between the eyes' pictures of a far point, in image widths
   float convergence = 1.0f;   // the screen plane at this many times the camera's distance to its look point
+  float miniature = 1.0f;     // the eyes at most this × 13 % of the camera's distance apart (1 = a model on a table)
   bool swap = false;
 };
 
@@ -47,7 +48,10 @@ int stereoFrameMode(script::VM& vm) {
   float depth = settingNumber(vm, u"regsStereoDepth", 50);
   float conv = settingNumber(vm, u"regsStereoConvergence", 100);
   bool swap = settingNumber(vm, u"regsStereoSwap", 0) > 0;
-  // REGS_STEREO=<mode>, REGS_STEREO_DEPTH=<0..100>, REGS_STEREO_CONVERGENCE=<percent>, REGS_STEREO_SWAP=0|1 (tests)
+  float mini = settingNumber(vm, u"regsStereoMiniature", 100);
+  // REGS_STEREO=<mode>, REGS_STEREO_DEPTH=<0..100>, REGS_STEREO_CONVERGENCE=<percent>, REGS_STEREO_SWAP=0|1,
+  // REGS_STEREO_MINIATURE=<0..200> (tests)
+  if (const char* e = regs::envVar("REGS_STEREO_MINIATURE")) mini = float(std::atof(e));
   if (const char* e = regs::envVar("REGS_STEREO")) mode = std::atoi(e);
   if (const char* e = regs::envVar("REGS_STEREO_DEPTH")) depth = float(std::atof(e));
   if (const char* e = regs::envVar("REGS_STEREO_CONVERGENCE")) conv = float(std::atof(e));
@@ -58,6 +62,7 @@ int stereoFrameMode(script::VM& vm) {
   s.parallax = std::clamp(depth, 0.0f, 100.0f) / 100.0f * 0.05f;
   s.convergence = std::clamp(conv, 25.0f, 400.0f) / 100.0f;
   s.swap = swap;
+  s.miniature = std::clamp(mini, 0.0f, 200.0f) / 100.0f;
   if (mode != s.lastMode) {
     LOG_INFO("stereo 3D: mode %d -> %d", s.lastMode, mode);
     // frame generation would make in-between frames from one eye's motion: off while stereo is on (temporalBegin,
@@ -86,12 +91,40 @@ void stereoCamera(script::VM& vm, Vec3& eye, Vec3& look, const Vec3& up, Mat4& p
   const float rl = std::sqrt(dot(right, right));
   if (rl < 1e-6f) return;
   right = right * (1.0f / rl);
-  // a far point lands c NDC units (= c image widths apart between the eyes) to the side; the point at the screen plane
-  // distance D does not move: the camera goes sideways by c·D / P00 and the frustum is shifted back by c
+  // Each eye goes sideways by b (half the eyes' distance) and its frustum is shifted back by c = b·P00 / D, so the
+  // point at the screen plane distance D does not move. A point at view depth z then lies b·P00·(1/D − 1/z) image
+  // widths apart between the eyes' pictures (far: behind the screen, near: in front of it).
+  // Plain: b such that the horizon gets the depth setting's distance B (b = B·D / P00), whatever is in view.
+  // Miniature (owner 2026-11-23, "treated like a miniature to really have a 3D effect"): the eyes as far apart as a
+  // person's looking at a model on a table (6.5 cm eyes 50 cm away: 13 % of the distance, × the miniature setting),
+  // so the town looks like a model. What is in view, the ground from the bottom to the top edge of the picture (the
+  // camera has no roll, so the top edge is the farthest ground), decides the rest: the screen plane goes to its middle
+  // (equal depth in front and behind, × the screen plane setting) and the eyes come no farther apart than keeps either
+  // end within 1.5 × B. Looking down on the town that is far apart; toward the horizon (infinitely far) it closes in.
+  float screenD = dist * s.convergence;
+  float b = s.parallax * screenD / p00;
+  if (s.miniature > 0 && s.parallax > 0) {
+    const float h = eye.y - look.y;  // above the ground at the look point
+    const float p11 = proj.at(1, 1);
+    if (h > 0.01f && std::fabs(p11) > 1e-6f) {
+      const float half = std::atan(1.0f / std::fabs(p11));
+      const float pitch = std::asin(std::clamp(-fwd.y, -1.0f, 1.0f));
+      const float top = pitch - half, bottom = std::min(pitch + half, 1.5707f);
+      const float farZ = top > 0.01f ? h / std::sin(top) * std::cos(half) : 1e9f;
+      if (bottom > 0.01f) {
+        // the ground at the bottom edge; things standing on it come nearer: 15 % as a margin
+        const float nearZ = h / std::sin(bottom) * std::cos(half) * 0.85f;
+        screenD = s.convergence * 2.0f / (1.0f / nearZ + 1.0f / farZ);
+        const float behind = 1.0f / screenD - 1.0f / farZ, front = 1.0f / nearZ - 1.0f / screenD;
+        b = s.miniature * 0.065f * dist;
+        const float most = std::max(behind, front);
+        if (most > 1e-7f) b = std::min(b, 1.5f * s.parallax / (p00 * most));
+      }
+    }
+  }
   const float sign = float(s.eye);
-  const float c = sign * s.parallax;
-  const float screenD = dist * s.convergence;
-  const Vec3 shift = right * (c * screenD / p00);
+  const float c = sign * b * p00 / screenD;
+  const Vec3 shift = right * (sign * b);
   eye = eye + shift;
   look = look + shift;
   for (int col = 0; col < 4; ++col) proj.at(0, col) += c * proj.at(3, col);  // x_clip += c · w_clip
