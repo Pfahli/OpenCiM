@@ -144,7 +144,9 @@ page the dialog's weather does nothing (the state line says so). `REGS_TEST_WEAT
 * **Pedestrians:** trodden grey paths where people walk (the engine's trodden map), single walkers faint, filled in by
   new snow.
 * **Shelter:** no snow, wetness or puddles under roofs, tents and passages (the engine's top map); snow reaches about a
-  metre in under an edge, rain about half a metre. Tree crowns are no shelter: snow lies under the trees.
+  metre in under an edge, rain about half a metre. Tree crowns are no shelter: snow lies under the trees. Decals
+  (patches of dirt or grass on building sites, junction corners) are no shelter either (until 2026-11-24 they left
+  bare triangles in the snow).
 * **Overlays** (route strips, highlights, previews, markers, the catchment layer, people, the sky) are never touched.
 
 ## Seasons

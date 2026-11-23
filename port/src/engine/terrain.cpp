@@ -84,6 +84,48 @@ struct Builder {
   int h(int x, int z) const { return g.height[size_t(cell(x, z))]; }
   uint16_t f(int x, int z) const { return g.flags[size_t(cell(x, z))]; }
 
+  // the height gradient at a corner (the original's createVertex: central differences, a neighbour outside the map
+  // is the cell itself), and between corners (bilinear)
+  struct Grad {
+    float x = 0, z = 0;
+  };
+  Grad grad(int x, int z) const { return {float(h(x - 1, z) - h(x + 1, z)), float(h(x, z - 1) - h(x, z + 1))}; }
+  Grad gradAt(float px, float pz) const {
+    int x0 = int(std::floor(px)), z0 = int(std::floor(pz));
+    float fx = px - float(x0), fz = pz - float(z0);
+    Grad a = grad(x0, z0), b = grad(x0 + 1, z0), c = grad(x0, z0 + 1), d = grad(x0 + 1, z0 + 1);
+    return {(a.x * (1 - fx) + b.x * fx) * (1 - fz) + (c.x * (1 - fx) + d.x * fx) * fz,
+            (a.z * (1 - fx) + b.z * fx) * (1 - fz) + (c.z * (1 - fx) + d.z * fx) * fz};
+  }
+  // port (2026-11-24): the gradient smoothed along the slope's contour. A bank or cliff that runs across the grid
+  // (diagonal, curved) is a staircase of single cells, and each step's corners point their own way: the lighting, the
+  // cliff texture and the snow showed every step as hard triangles. Averaging the gradients along the contour (2 cells
+  // each way) makes such a bank one even slope; across the slope nothing is averaged, so a straight edge keeps its
+  // sharp top and foot (along it the gradients are all the same). The heights stay as they are.
+  // REGS_DEBUG_TERRAIN_SHARP=1: the original's normals (comparisons)
+  Grad smoothGrad(int x, int z) const {
+    Grad g0 = grad(x, z);
+    static const bool sharp = envVar("REGS_DEBUG_TERRAIN_SHARP") != nullptr;
+    if (sharp) return g0;
+    float mx = 0, mz = 0;  // the slope's direction around the corner (3x3, tent weights)
+    for (int dz = -1; dz <= 1; ++dz)
+      for (int dx = -1; dx <= 1; ++dx) {
+        float w = float((2 - std::abs(dx)) * (2 - std::abs(dz)));
+        Grad q = grad(x + dx, z + dz);
+        mx += w * q.x, mz += w * q.z;
+      }
+    float len = std::sqrt(mx * mx + mz * mz);
+    if (len < 1e-3f) return g0;  // flat
+    float tx = -mz / len, tz = mx / len;  // along the contour
+    float sx = 2 * g0.x, sz = 2 * g0.z, sw = 2;
+    for (float s : {-2.0f, -1.0f, 1.0f, 2.0f}) {
+      float w = std::fabs(s) < 1.5f ? 1.5f : 0.75f;
+      Grad q = gradAt(float(x) + tx * s, float(z) + tz * s);
+      sx += w * q.x, sz += w * q.z, sw += w;
+    }
+    return {sx / sw, sz / sw};
+  }
+
   uint32_t override(int x, int z) const { return g.normals.empty() ? 0 : g.normals[size_t(cell(x, z))]; }
   static Vec3 decode(uint32_t o) {  // packed 0x00XXYYZZ, component = byte/127 âˆ’ 1
     return {float(o >> 16 & 0xFF) / 127.0f - 1.0f, float(o >> 8 & 0xFF) / 127.0f - 1.0f, float(o & 0xFF) / 127.0f - 1.0f};
@@ -107,10 +149,9 @@ struct Builder {
         }
     if (covered) {
       c.normal = normalize(sum);
-    } else {  // height gradient; a neighbour outside the map is the cell itself
-      int hx0 = x > 0 ? h(x - 1, z) : h(x, z), hx1 = x + 1 < W() ? h(x + 1, z) : h(x, z);
-      int hz0 = z > 0 ? h(x, z - 1) : h(x, z), hz1 = z + 1 < L() ? h(x, z + 1) : h(x, z);
-      c.normal = normalize(Vec3{float(hx0 - hx1) / 512.0f, 1.0f, float(hz0 - hz1) / 512.0f});
+    } else {  // height gradient, smoothed along the contour (smoothGrad)
+      Grad gr = smoothGrad(x, z);
+      c.normal = normalize(Vec3{gr.x / 512.0f, 1.0f, gr.z / 512.0f});
     }
     c.u = gx * 0.125f;
     c.v = gz * 0.125f;

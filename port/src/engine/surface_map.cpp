@@ -42,10 +42,12 @@ void surfaceMarkTop(SurfaceMap& m, int x0, int z0, int x1, int z1) {
 void paintTop(SurfaceMap& m, const MeshData& mesh, const Mat4& world, const std::vector<GpuMaterial>& materials) {
   const float inv = 1.0f / m.topTexel;
   for (const Submesh& sm : mesh.submeshes) {
-    // overlays are not there; tree crowns are no roof (snow and rain fall through them onto the ground)
+    // overlays are not there; tree crowns are no roof (snow and rain fall through them onto the ground); decals lie
+    // a few cm above the surface they mark (patches of dirt and grass on building sites, corners of junctions): as a
+    // roof they kept the snow off the ground under them in sharp triangles
     if (sm.material >= 0 && size_t(sm.material) < materials.size() &&
         (materials[size_t(sm.material)].surfaceClass == kSurfaceOverlay ||
-         materials[size_t(sm.material)].surfaceClass == kSurfaceFoliage))
+         materials[size_t(sm.material)].surfaceClass == kSurfaceFoliage || (materials[size_t(sm.material)].flags & kMatDecal)))
       continue;
     for (uint32_t k = 0; k + 2 < sm.indexCount; k += 3) {
       Vec3 p[3];

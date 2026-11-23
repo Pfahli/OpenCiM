@@ -447,5 +447,6 @@ Berlin is the only built-up city available (the DLC maps start with no citizens 
   No single piece is worth more than about a second.
 * `REGS_PROFILE` named nothing in the port since the release build's PDB moved behind `/PDBALTPATH`: the profiler
   now looks next to the exe, as the crash report does.
-* **Found on the way:** CIMcity (`addons/cimcity/maps/CIMcity.grid`, a loose 4.8 MB file of a mod, not in an
-  archive) opens as an empty 768x768 map.
+* CIMcity (`addons/cimcity/maps/CIMcity.grid`, a loose community map) opened as an empty 768x768 map: not a bug,
+  loose community content loads only with `--community-addons` (decision 2026-11-03), so the level script found no
+  file and made an empty map. In the game the map is not offered at all.
