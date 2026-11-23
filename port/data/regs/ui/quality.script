@@ -21,6 +21,9 @@
 //   $settings.$regsStereoConvergence 50 .. 200 (%, slider): the screen plane at this share of the camera's distance
 //                                to the point it looks at
 //   $settings.$regsStereoSwap    0 off, 1 the eyes swapped
+//   $settings.$regsHeadTracking  0 off, 1 head tracking: the map camera turns as the head moves (OpenTrack UDP on
+//                                127.0.0.1:4242: StereoLoom from a Leia SR display's eye tracker, or opentrack)
+//   $settings.$regsHeadTrackingStrength 0 .. 200 (%, slider; default 100)
 //   $settings.$regsStereoMiniature 0 .. 200 (%, slider; default 100): the depth spent on what is in view, the eyes at
 //                                most as far apart as a person's over a model on a table (100 %); 0 = the plain depth
 // Rows that do not apply (the engine or GPU lacks it, or another option takes its place) are greyed out: TAA under
@@ -33,7 +36,7 @@ $file = "regs/strings/" + MAIN.$language + ".strings";
 if (!file_exists($file)) $file = "regs/strings/en_US.strings";
 $regs = load "/" + $file;
 
-$boxH = $desktop.height - 20 < 770 ? $desktop.height - 20 : 770;
+$boxH = $desktop.height - 20 < 800 ? $desktop.height - 20 : 800;
 $box = MAIN.$ui.createHudElement(int(($desktop.width - 1000) * 0.5), int(($desktop.height - $boxH) * 0.5), 1000, $boxH, 1 | 2 | 4 | 8, $desktop);
 $title = MAIN.$ui.createHeadingBar($box, $regs.$regs_quality_title);
 $c = $box.$content;
@@ -54,6 +57,8 @@ $stereoDepth = int($settings.$regsStereoDepth : 50);
 $stereoConv = int($settings.$regsStereoConvergence : 100);
 $stereoSwap = int($settings.$regsStereoSwap : 0);
 $stereoMini = int($settings.$regsStereoMiniature : 100);
+$headTrack = int($settings.$regsHeadTracking : 0);
+$headStrength = int($settings.$regsHeadTrackingStrength : 100);
 
 // (script variables are shared with the callers: the names here are its own)
 function label($x, $y, $w, $text, $title) {
@@ -150,6 +155,7 @@ function pick($group, $v) {
   else if ($group == "regsRenderer") $renderer = $v;
   else if ($group == "regsStereo") $stereo = $v;
   else if ($group == "regsStereoSwap") $stereoSwap = $v;
+  else if ($group == "regsHeadTracking") $headTrack = $v;
   refresh();
 }
 
@@ -208,6 +214,7 @@ function refresh() {
   setRow("stereoDepth", $stereo != 0);
   setRow("stereoConv", $stereo != 0);
   setRow("stereoMini", $stereo != 0);
+  setRow("headStrength", $headTrack != 0);
 }
 
 rule(500, 58, 1, 390);  // between the columns
@@ -341,12 +348,27 @@ function setStereoMini() {
 }
 shade("stereoMini", $x, $y, $rowL);
 hint($colR, $y, $regs.$regs_q_stereo_hint5);
+$y += 34;
+// head tracking (also without stereo): on / off left, its strength right
+rowLabel($x, $y, $regs.$regs_headTrack_label, false);
+radioRow("regsHeadTracking", $x + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $headTrack);
+$rowL = rowLabel($colR, $y, $regs.$regs_headStrength_label, false);
+$headStrength = $headStrength < 0 ? 0 : ($headStrength > 200 ? 200 : $headStrength);
+$headSlider = slider($colR + $ctlOff, $y, 0.0, 200.0, $headStrength, $regs.$regs_percent_value, macro :: $headStrength);
+$headSlider.$action = macro :: setHeadStrength();
+function setHeadStrength() {
+  $headStrength = int($headSlider.$value / 5.0 + 0.5) * 5;
+}
+shade("headStrength", $colR, $y, $rowL);
 $y += 32;
 hint($x, $y, $regs.$regs_q_stereo_hint1);
 hint($colR, $y, $regs.$regs_q_stereo_hint3);
 $y += 20;
 hint($x, $y, $regs.$regs_q_stereo_hint2);
 hint($colR, $y, $regs.$regs_q_stereo_hint4);
+$y += 20;
+hint($x, $y, $regs.$regs_q_head_hint1);
+hint($colR, $y, $regs.$regs_q_head_hint2);
 
 refresh();
 
@@ -398,6 +420,10 @@ function save() {
   $settings.exportVariables("regsStereoSwap");
   $settings.setVariable("regsStereoMiniature", $stereoMini);
   $settings.exportVariables("regsStereoMiniature");
+  $settings.setVariable("regsHeadTracking", $headTrack);
+  $settings.exportVariables("regsHeadTracking");
+  $settings.setVariable("regsHeadTrackingStrength", $headStrength);
+  $settings.exportVariables("regsHeadTrackingStrength");
   MAIN.$main.regsCloseQualityPage();
 }
 

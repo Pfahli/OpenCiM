@@ -39,6 +39,30 @@ Settings > Graphics > Advanced settings, section **Stereoscopic 3D** (applies on
 * Not offered: frame-sequential output for active shutter glasses (needs quad-buffered stereo, which consumer drivers
   no longer offer for Vulkan or OpenGL) and full-width side by side (each eye at half width with its own layout).
 
+## Glasses-free 3D monitors (Samsung Odyssey 3D, Acer SpatialLabs) and head tracking
+
+Owner's question (2026-11-23): support for Acer SpatialLabs and Samsung Odyssey 3D. Both are **Leia SR** panels (as are
+Sony's Spatial Reality and Lenovo's ThinkVision 3D displays): the SR Platform runtime installed with the monitor holds
+a "weaver" that turns a side-by-side picture into the lenticular, eye-tracked picture. Samsung offers no developer
+interface (its Odyssey 3D Hub enables 3D only for the games on its list); Leia's native SDK is given out on request
+(developer@leiainc.com) under a licence that forbids passing it on, and its weaver works with Direct3D 11 / 12.
+
+* **What works without the SDK:** the port's side-by-side mode (1) and [StereoLoom](https://github.com/effcol/SR-Loom)
+  (MIT, tray app; formerly SR Loom): it captures the game's window, reads it as half side by side and weaves it, with
+  the eye tracking. The game windowed or borderless (not exclusive fullscreen). On the Odyssey 3D, Samsung's Hub is
+  also said to switch 3D on for a maximised side-by-side window (MPC-3D, an Unreal nDisplay setup). Not tried here:
+  there is no such monitor at this PC.
+* **Head tracking** (settings `$regsHeadTracking` on / off, `$regsHeadTrackingStrength` 0 .. 200 %, image quality page
+  under the stereo rows; `REGS_HEADTRACK=0|1`): `engine/headtrack.cpp` listens for OpenTrack's "UDP over network"
+  packets on 127.0.0.1:4242 (48 bytes: six little-endian doubles, x, y, z cm, yaw, pitch, roll degrees) as StereoLoom
+  sends the SR display's head pose, and opentrack does from any tracker (webcam, TrackIR clip, phone). The map view's
+  camera turns about the point it looks at: sideways by atan(x / 60 cm) × strength about the world's up axis, up and
+  down by atan(y / 60 cm) × strength (at most 15°, never below 3° above the horizon or past straight down), so moving
+  the head looks around the town, in 2D and in stereo. Lightly smoothed; without packets for half a second it eases
+  back to the middle. Only the drawn view turns: the game's camera, and so clicking, stays as it is (a head held far
+  to the side points a little beside what it shows). Loopback only, so nothing comes from the network and Windows
+  asks no firewall question.
+
 ## How it works
 
 * `engine/stereo.cpp`; settings read every frame by `stereoFrameMode` (`REGS_STEREO=<mode>`,
@@ -72,6 +96,8 @@ Settings > Graphics > Advanced settings, section **Stereoscopic 3D** (applies on
 ## Tests
 
 `--at N:stereo:<mode>` switches the mode during a run (then the settings are not read for it any more);
+`--at N:head:x,y` sets a head offset (cm) as if OpenTrack had sent it; `opencim-tests\stereo\opentrack_send.py x y s`
+sends real packets;
 `REGS_START=quality` opens the advanced settings page over the main menu (screenshots of the page).
 
 Checked 2026-11-23 (`opencim-tests\stereo\stereo.ps1`: campaign, every mode in turn, Vulkan and OpenGL): all nine modes

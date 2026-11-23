@@ -27,6 +27,7 @@
 #include "engine/input.h"
 #include "engine/interaction.h"
 #include "engine/popout.h"
+#include "engine/headtrack.h"
 #include "engine/stereo.h"
 #include "engine/scene3d.h"
 #include "engine/minimap.h"
@@ -701,6 +702,7 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
               render::gpu::dev().pipelineMs()};
   sceneFrameBegin();
   syncRenderSettings(vm);
+  headTrackFrame(vm, vm.frameDt());  // head tracking: this frame's head pose (engine/headtrack.h)
   sweepEffects(*this);
   stylePreviewFrame(*this, vm);
   int w = window_->width(), h = window_->height();

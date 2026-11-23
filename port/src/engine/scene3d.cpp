@@ -15,6 +15,7 @@
 #include "engine/display.h"
 #include "engine/effects.h"
 #include "engine/hdr.h"
+#include "engine/headtrack.h"
 #include "engine/stereo.h"
 #include "engine/temporal.h"
 #include "render/gpu.h"
@@ -628,6 +629,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
   Vec3 eye, look, up;
   if (ov) eye = ov->eye, look = ov->look, up = ov->up;
   else cameraView(vm, cam, eye, look, up);
+  // head tracking (engine/headtrack.h): the on-screen map view turns about its look point as the head moves
+  if (!ov && !rt && !grids.empty()) headTrackCamera(eye, look);
   v.eye = eye;
   v.view = lookAt(eye, look, up);
   float nearZ, farZ;

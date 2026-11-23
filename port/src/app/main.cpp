@@ -27,6 +27,7 @@
 #include "engine/input.h"
 #include "engine/platform.h"
 #include "engine/popout.h"
+#include "engine/headtrack.h"
 #include "engine/stereo.h"
 #include "engine/tools.h"
 #include "engine/user_folders.h"
@@ -357,6 +358,11 @@ int main(int argc, char** argv) {
           continue;
         } else if (sc.action == "ui") {  // ui:off draws the scene only (screenshots without the interface), ui:on back
           engine::host().hideGui = sc.arg == "off";
+          continue;
+        } else if (sc.action == "head") {  // head:x,y: a head offset in cm as if OpenTrack had sent it (headtrack.h)
+          float hx = 0, hy = 0;
+          std::sscanf(sc.arg.c_str(), "%f,%f", &hx, &hy);
+          engine::headTrackTest(hx, hy);
           continue;
         } else if (sc.action == "stereo") {  // stereo:<mode>: stereo 3D in that mode from now on (engine/stereo.h)
           engine::stereoTestMode(std::atoi(sc.arg.c_str()));
