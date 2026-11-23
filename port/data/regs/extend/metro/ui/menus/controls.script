@@ -5,7 +5,11 @@
 // * $regsControllerCursor, $regsControllerCamera (1.0 = 100 %, 25 .. 250 %): the cursor's and the camera's speed;
 // * $regsControllerInvertTilt (off): stick up looks down.
 // The legend shows the connected pad's buttons as glyphs (data/regs/ui/pad, drawn at build time by regs-tool
-// padglyphs): Xbox, PlayStation, Steam Deck or Steam Controller; switches in its heading show the others.
+// padglyphs): Xbox, PlayStation, Steam Deck or Steam Controller; switches in its heading show the others. Above its
+// rows a picture of that controller with a label and a line to each button (owner 2026-11-23: "look like an
+// Xbox/PS5/Steam Controller, silhouette-wise with lines going to the buttons"): body_<layout>.dds (Kenney's CC0
+// outlines with the buttons and the leader lines) and the label places in <layout>.layout, both written by regs-tool
+// padglyphs.
 // They apply on OK like the game's keys (the engine reads them every frame); Cancel keeps the old ones.
 //@rename categorySelected regsBaseCategorySelected
 //@rename save regsBaseSave
@@ -30,6 +34,9 @@ $regsPadInvertButton = null;
 $regsPadCursorSlider = null;
 $regsPadCameraSlider = null;
 $regsPadLegend = null;          // the legend's rows (rebuilt for another layout)
+$regsPadBodies = ["xbox", "playstation", "deck", "steamcontroller"];  // the pictures, in the legends' order
+$regsPadDiagramBox = null;      // the picture with its labels (rebuilt for another layout)
+$regsPadDiagramH = 274;         // its height (the pictures are 880 x 272)
 $regsPadLegendButtons = [];
 // the legends: per layout [glyphs, what it does (strings regs_pad_do_<key>)] rows; layouts as regsPadLayout()
 // orders them: Xbox, PlayStation, Steam Deck, Steam Controller
@@ -121,11 +128,41 @@ function regsPadLayoutIndex() {
   return 0;
 }
 
+// the controller's picture with its leader lines (body_<layout>.dds, the whole diagram) and the labels' texts over it,
+// in the columns left and right of the controller (<layout>.layout: each label's side and height)
+function regsPadDiagram($layout) {
+  $regsPadDiagramBox.clear();
+  $w = $regsPadDiagramBox.width;
+  $name = $regsPadBodies[$layout];
+  $lay = load "/regs/ui/pad/" + $name + ".layout";
+  $ix = int(($w - $lay.$width) * 0.5);
+  with ($dia = new_control($regsPadDiagramBox)) {
+    .setRect($ix, int(($regsPadDiagramH - $lay.$height) * 0.5), $lay.$width, $lay.$height);
+    .setImage("/regs/ui/pad/body_" + $name + ".dds");
+    .visible = true;
+    .canActivate = false;
+  }
+  foreach ($lay.$callouts) {
+    $c = current;
+    $left = $c[0] == 0;
+    with (new_control($dia)) {
+      if ($left) .setRect(0, $c[1] - 11, $lay.$leftEdge - 5, 22);
+      else .setRect($lay.$rightEdge + 5, $c[1] - 11, $lay.$width - $lay.$rightEdge - 5, 22);
+      MAIN.$ui.setTextFont(current, 0xFFE6E0D2);
+      .textAlign = ALIGN_MIDDLE | ($left ? ALIGN_RIGHT : ALIGN_LEFT);
+      .text = $regs.getVariable("regs_pad_tag_" + $c[2]);
+      .visible = true;
+      .canActivate = false;
+    }
+  }
+  delete $lay;
+}
+
 // the legend's rows for a layout: the buttons' glyphs (24 pixels high; "+" between buttons pressed together, "/"
-// between alternatives), then
-// what they do
+// between alternatives), then what they do
 function regsPadShowLegend($layout) {
   MAIN.$ui.selectChoiceButton($regsPadLegendButtons[$layout], $regsPadLegendButtons[0].$group);
+  regsPadDiagram($layout);
   $regsPadLegend.clear();
   $w = $regsPadLegend.width;
   $y = 0;
@@ -185,40 +222,54 @@ function regsPadCheckbox($row, $action) {
 
 function regsPadItems() {
   $h = 38;
-  $half = int($itemsArea.$content.width * 0.5);
+  $w = $itemsArea.$content.width;
+  $half = int($w * 0.5);
   with (regsPadRow(0, $h, $regs.$regs_controller_status, true).$label) {
     .setArg(0, macro :: regsPadStatusText());
   }
-  $row = regsPadRow($h, $h, $regs.$regs_controller_enable);
-  $regsPadOnButton = regsPadCheckbox($row, macro :: regsPadSetOn(!$regsPadOn));
-  regsPadSetOn($regsPadOn);
-
-  with (regsPadRow($h * 2, $h, $regs.$regs_controller_cursor).$label) {
-    .setArg(0, macro :: int($regsPadCursor * 100.0 + 0.5));
-  }
-  $regsPadCursorSlider = MAIN.$ui.createSlider($itemsArea.$content, $regsPadCursor, 0.25, 2.5, $half, $h * 2 + 6, 215, 27);
-  $regsPadCursorSlider.$action = macro :: regsPadSetCursor();
-
-  with (regsPadRow($h * 3, $h, $regs.$regs_controller_camera).$label) {
-    .setArg(0, macro :: int($regsPadCamera * 100.0 + 0.5));
-  }
-  $regsPadCameraSlider = MAIN.$ui.createSlider($itemsArea.$content, $regsPadCamera, 0.25, 2.5, $half, $h * 3 + 6, 215, 27);
-  $regsPadCameraSlider.$action = macro :: regsPadSetCamera();
-
-  $row = regsPadRow($h * 4, $h, $regs.$regs_controller_invert);
-  $regsPadInvertButton = regsPadCheckbox($row, macro :: regsPadSetInvert(!$regsPadInvert));
-  regsPadSetInvert($regsPadInvert);
-
-  // the button legend: a heading with the four layouts to choose from, then the chosen layout's rows
-  $y = $h * 5 + 12;
+  // the controller's picture first (what is seen without scrolling): a heading with the four layouts to choose from,
+  // then the picture with its labels
+  $y = $h;
   $head = regsPadRow($y, 30, $regs.$regs_controller_legend, true, 0xFFFFFFFF);
   $regsPadLegendButtons = [];
   $bx = $head.width - 4 * 132 - 8;
   for ($i = 0; $i < 4; ++$i) {
     $regsPadLegendButtons[] = MAIN.$ui.createChoiceButton($head, $head, $bx + $i * 132, 4, 128, 22, $regs.$regs_pad_layouts[$i], macro($i) :: regsPadShowLegend($0));
   }
+  $y += 30;
+  with ($regsPadDiagramBox = new_control($itemsArea.$content)) {
+    .setRect(0, $y, $w, $regsPadDiagramH);
+    .background = 0x30000000;
+    .visible = true;
+    .canActivate = false;
+  }
+  $y += $regsPadDiagramH + 8;
+
+  // the settings
+  $row = regsPadRow($y, $h, $regs.$regs_controller_enable);
+  $regsPadOnButton = regsPadCheckbox($row, macro :: regsPadSetOn(!$regsPadOn));
+  regsPadSetOn($regsPadOn);
+  $y += $h;
+  with (regsPadRow($y, $h, $regs.$regs_controller_cursor).$label) {
+    .setArg(0, macro :: int($regsPadCursor * 100.0 + 0.5));
+  }
+  $regsPadCursorSlider = MAIN.$ui.createSlider($itemsArea.$content, $regsPadCursor, 0.25, 2.5, $half, $y + 6, 215, 27);
+  $regsPadCursorSlider.$action = macro :: regsPadSetCursor();
+  $y += $h;
+  with (regsPadRow($y, $h, $regs.$regs_controller_camera).$label) {
+    .setArg(0, macro :: int($regsPadCamera * 100.0 + 0.5));
+  }
+  $regsPadCameraSlider = MAIN.$ui.createSlider($itemsArea.$content, $regsPadCamera, 0.25, 2.5, $half, $y + 6, 215, 27);
+  $regsPadCameraSlider.$action = macro :: regsPadSetCamera();
+  $y += $h;
+  $row = regsPadRow($y, $h, $regs.$regs_controller_invert);
+  $regsPadInvertButton = regsPadCheckbox($row, macro :: regsPadSetInvert(!$regsPadInvert));
+  regsPadSetInvert($regsPadInvert);
+  $y += $h + 12;
+
+  // every button of the chosen layout, with what it does in full
   with ($regsPadLegend = new_control($itemsArea.$content)) {
-    .setRect(0, $y + 30, $itemsArea.$content.width, 30);
+    .setRect(0, $y, $w, 30);
     .visible = true;
     .canActivate = false;
   }

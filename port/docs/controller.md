@@ -109,8 +109,34 @@ which Steam does not give while Steam Input owns the pad.
 ## Settings
 
 Settings > Controls has a fourth category **Controller** next to Camera / Shortcuts / Map editor
-(`data/regs/extend/metro/ui/menus/controls.script`). It shows whether a controller is connected and which kind, the
-options below and the button legend. They apply on OK like the keys.
+(`data/regs/extend/metro/ui/menus/controls.script`). It shows whether a controller is connected and which kind, a
+picture of the controller with its buttons labelled, the options below and the button legend. They apply on OK like
+the keys.
+
+**Controller picture** (owner 2026-11-23: "look like an Xbox/PS5/Steam Controller, silhouette-wise with lines going
+to the buttons"): right under the status line, the connected pad's layout (Xbox, PlayStation, Steam Deck or Steam
+Controller; the switches above it show the others) as its real outline with the sticks, pads and buttons in their
+places (the buttons' colours, no logos), a short label for each button in a column left and right of it, and a leader
+from each label: a short level stub, then straight to the button (to its edge for lettered buttons), with a dot. The
+bumpers are the bumps of the outline's top edge with the triggers peeking out behind them; back buttons (Steam Deck
+L4 / R4, Steam Controller grips) show as outlines on the handles. The full list with the glyphs follows below the
+options.
+
+* Outlines: Kenney's whole-controller icons (Input Prompts 1.5A, CC0, `third_party/kenney-input-prompts`, downloaded
+  2026-11-23 at the owner's request for accurate silhouettes): Xbox Series, PlayStation 5, Steam Deck and the original
+  Steam Controller. Each is one path with the buttons cut out; the tool reads it (M / L / Q, nonzero fill), draws it
+  as a distance field (rim, soft shadow) and puts the buttons into the cut-outs. Buttons the icons leave out are added
+  where the controllers have them (Xbox View / Menu, PlayStation Create / Options / PS button, the Steam Controller's
+  Steam, back and start buttons); the Deck's icon has no sticks, so only its outline is used and its inside is drawn.
+* Drawn at build time by `regs-tool padglyphs <out> <icon dir>` with the glyphs: `body_<layout>.dds`, the whole
+  diagram (880 × 272 shown, drawn at twice that so UI scale 2x stays sharp) with the controller and the leaders, and
+  `<layout>.layout`, a script the page loads with each label's side and height (the page lays only the texts over the
+  picture). The tool gives the labels their slots: each side's column has as many slots as labels, 26 pixels apart,
+  centred, handed out so that no two leaders cross and none runs over another button, then the shortest.
+* The labels are strings `regs_pad_tag_<tag>`; the buttons' tags are set where the pictures are drawn
+  (`src/tools/pad_glyphs.cpp`, `drawXbox` ...).
+* Test runs: `REGS_START=controller` opens Settings > Controls on the Controller category; `--at N:pad:layout,<x>`
+  picks the layout shown.
 
 | Option | Setting | Values |
 |--------|---------|--------|

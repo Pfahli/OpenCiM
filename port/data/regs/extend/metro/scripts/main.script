@@ -696,6 +696,17 @@ event this.enter::["MainMenu"]() {
       wait 0.3;
       if ($submenu) MAIN.$main.perform("ok");
     };
+  } else if ($regsWhat == "controller") {
+    // controller: settings > controls, the Controller category (screenshots of the page and its diagrams)
+    echo "start flag: controller settings";
+    thread :: {
+      wait 0.1;
+      MAIN.$main.perform("settings");
+      wait 0.1;
+      MAIN.$main.perform("controls");
+      wait 0.3;
+      if ($submenu) MAIN.$ui.selectCategory($submenu.$categoryBar, $submenu.$regsPadCategory);
+    };
   } else if ($regsWhat == "quality") {
     // quality: the image quality page over the main menu (screenshots of the page)
     echo "start flag: image quality page";
@@ -705,7 +716,7 @@ event this.enter::["MainMenu"]() {
     echo "start flag: OpenStreetMap import of \""+$regsStartOsm+"\"";
     thread :: regsStartOsmImport();
   } else {
-    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file>, editor:<map file>, scenario:<n>, campaign, tutorial, quality or osm:<place>)";
+    echo "start flag: unknown REGS_START \""+$regsWhat+"\" (save:<name>, map:<map file>, editor:<map file>, scenario:<n>, campaign, tutorial, quality, controller or osm:<place>)";
   }
 }
 

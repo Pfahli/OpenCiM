@@ -296,7 +296,7 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/thunder-clap.mp3 ${WEATHER_SOUNDS}/thunder-mid.wav 0 14 4
   COMMAND $<TARGET_FILE:regs-tool> softdot $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/softdot.dds 32
   COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32
-  COMMAND $<TARGET_FILE:regs-tool> padglyphs $<TARGET_FILE_DIR:regs>/data/regs/ui/pad)
+  COMMAND $<TARGET_FILE:regs-tool> padglyphs $<TARGET_FILE_DIR:regs>/data/regs/ui/pad ${CMAKE_SOURCE_DIR}/third_party/kenney-input-prompts)
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
   target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid setupapi dwmapi)
