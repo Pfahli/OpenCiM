@@ -1,4 +1,5 @@
 #include "core/game_find.h"
+#include "core/steam_download.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -230,6 +231,7 @@ std::vector<GameCandidate> findGameCandidates() {
   uninstallEntries(entries);
   for (GameCandidate& c : entries) addUnique(out, std::move(c));
 #endif
+  addUnique(out, {steamDownloadDefaultFolder(), "SteamCMD"});  // fetched with OpenCiM's SteamCMD helper
   return out;
 }
 
@@ -241,7 +243,9 @@ std::string gameNotFoundMessage() {
   if (found.empty())
     return "OpenCiM needs Cities in Motion (Steam, GOG or the disc version), but it was not found on this PC.\n\n"
            "Install it, or start OpenCiM with the game's folder (the one with Cities In Motion.exe) as its first "
-           "argument, or run the OpenCiM setup again to choose the folder.";
+           "argument, or run the OpenCiM setup again to choose the folder.\n\n"
+           "Without the Steam client (or where it cannot install the game): \"regs --download-game\" fetches your own "
+           "copy with Valve's SteamCMD (the setup program has the same as DOWNLOAD FROM STEAM).";
   std::string s = "Cities in Motion was found, but files the game needs are missing:\n";
   for (const GameCandidate& c : found) {
     const GameCheck check = checkGameFolder(c.dir);

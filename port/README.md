@@ -28,7 +28,9 @@ $game = "C:\Program Files (x86)\Steam\steamapps\common\Cities In Motion"
 Without the game folder `regs.exe` uses `install.cfg` next to it (written by the setup program), else it looks for
 Cities in Motion itself (Steam libraries, also on Linux, GOG and retail installs; `src/core/game_find.cpp`) and logs
 which folder it took. When the game is not found, or a folder lacks its archives, a message says where it looked and
-what is missing (`REGS_NO_DIALOGS=1`: only on stderr, for test runs).
+what is missing (`REGS_NO_DIALOGS=1`: only on stderr, for test runs). Without the Steam client, `regs --download-game
+[<folder>]` (or DOWNLOAD FROM STEAM in the setup program) fetches the player's own copy with Valve's SteamCMD; the
+account must own the game, and the login happens in SteamCMD's console (`docs/installer.md` §1a).
 
 A release (`.\make-release.ps1`, output in `build\release`): the install folder as a zip with its `.sha256`, and
 `OpenCiM-<version>-setup.exe`, the setup program with the same files appended (`docs/installer.md`).

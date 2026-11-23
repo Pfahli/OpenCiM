@@ -24,7 +24,7 @@ struct GameCandidate {
 // Every place Cities in Motion may be: Steam (HKCU\Software\Valve\Steam SteamPath, HKLM InstallPath in both registry
 // views, Steam's usual Program Files folders; on Linux ~/.steam, ~/.local/share/Steam, the Flatpak and the Snap; every
 // library in steamapps\libraryfolders.vdf, app 73010), then (Windows) GOG and retail uninstall entries whose name is
-// Cities in Motion.
+// Cities in Motion, then the folder OpenCiM's SteamCMD helper downloads to (core/steam_download.h).
 // Folders that do not exist are left out; the first one that checkGameFolder accepts is the one to use.
 std::vector<GameCandidate> findGameCandidates();
 

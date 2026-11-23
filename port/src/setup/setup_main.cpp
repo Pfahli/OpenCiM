@@ -42,6 +42,7 @@
 
 #include "build_info.h"
 #include "core/game_find.h"
+#include "core/steam_download.h"
 #include "setup/install.h"
 #include "setup/payload.h"
 
@@ -98,6 +99,7 @@ enum Hot {
   HotChangeGame,
   HotChooseFolder,
   HotSteam,
+  HotSteamCmd,
   HotBack,
   HotTarget,
   HotStartMenu,
@@ -137,6 +139,9 @@ struct App {
   GameCheck check;
   std::string gameSource;
   std::wstring gameMessage;  // after a folder was picked that has no game
+  // DOWNLOAD FROM STEAM: SteamCMD running in its console window (core/steam_download.h), its target folder
+  HANDLE steamCmd = nullptr;
+  fs::path steamCmdGame;
   // install options
   InstallOptions opts;
   // the install
@@ -569,10 +574,13 @@ void pageNotFound(Graphics& gr) {
            L"first.",
        12, kSoft, RectF(20, y + 32, 290, 60));
   if (!g.gameMessage.empty()) text(gr, g.gameMessage, 11, 0xf3b06a, RectF(20, y + 92, 290, 44));
-  bar(gr, RectF(4, 300, 320, 28), L"CHOOSE GAME FOLDER", HotChooseFolder, Icon::Folder, kGreen);
-  bar(gr, RectF(4, 337, 320, 28), L"GET IT ON STEAM", HotSteam, Icon::Store, kBlue);
-  bar(gr, RectF(4, 374, 320, 28), L"CANCEL", HotCancel, Icon::Cross, kRed);
-  noteAtBottom(gr, L"Searched: Steam libraries, GOG and retail installs.");
+  bar(gr, RectF(4, 282, 320, 28), L"CHOOSE GAME FOLDER", HotChooseFolder, Icon::Folder, kGreen);
+  // your own copy with Valve's SteamCMD, for a PC without the Steam client (owner's request 2026-11-23)
+  bar(gr, RectF(4, 314, 320, 28), g.steamCmd ? L"DOWNLOADING IN THE STEAMCMD WINDOW ..." : L"DOWNLOAD FROM STEAM",
+      HotSteamCmd, Icon::Down, kGreen, false, !g.steamCmd);
+  bar(gr, RectF(4, 346, 320, 28), L"GET IT ON STEAM", HotSteam, Icon::Store, kBlue);
+  bar(gr, RectF(4, 378, 320, 28), L"CANCEL", HotCancel, Icon::Cross, kRed);
+  noteAtBottom(gr, L"Searched: Steam libraries, GOG and retail installs. Download: needs a Steam account that owns it.");
   cover(gr, g.pics.notFound.get(), kRight);
   fill(gr, kRight, rgb(kBg, 90));
 }
@@ -902,6 +910,45 @@ bool acceptGameFolder(const fs::path& picked, fs::path& game) {
   return false;
 }
 
+// DOWNLOAD FROM STEAM: the script (curl and tar fetch SteamCMD from Valve, then it asks for the account name and runs
+// app_update 73010) in a console window of its own, where the player logs in; the setup only waits for it to close
+// (WM_TIMER) and then takes the folder if the game's archives are there
+void startSteamDownload() {
+  if (g.steamCmd) return;
+  g.steamCmdGame = steamDownloadDefaultFolder();
+  const fs::path script = writeSteamDownloadScript(g.steamCmdGame);
+  if (script.empty()) {
+    g.gameMessage = L"Could not write the download script in " + g.steamCmdGame.parent_path().wstring() + L".";
+    return;
+  }
+  std::wstring cmd = L"cmd.exe /c \"\"" + script.wstring() + L"\"\"";
+  STARTUPINFOW si{};
+  si.cb = sizeof si;
+  PROCESS_INFORMATION pi{};
+  if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &si, &pi)) {
+    g.gameMessage = L"Could not start the SteamCMD window.";
+    return;
+  }
+  CloseHandle(pi.hThread);
+  g.steamCmd = pi.hProcess;
+  g.gameMessage = L"Log in to Steam in the SteamCMD window. The game goes to " + g.steamCmdGame.wstring() + L".";
+}
+
+// WM_TIMER: the SteamCMD window closed
+void pollSteamDownload() {
+  if (!g.steamCmd || WaitForSingleObject(g.steamCmd, 0) == WAIT_TIMEOUT) return;
+  CloseHandle(g.steamCmd);
+  g.steamCmd = nullptr;
+  if (checkGameFolder(g.steamCmdGame).ok) {
+    setGame(g.steamCmdGame, "SteamCMD");
+    g.gameMessage.clear();
+    if (g.page == Page::NotFound) g.page = Page::Welcome;
+  } else {
+    g.gameMessage = L"The download did not finish (the SteamCMD window says why). Try again or choose the folder.";
+  }
+  redraw();
+}
+
 void startWorker(std::function<bool(std::string&)> job) {
   if (g.worker.joinable()) g.worker.join();
   g.working = true;
@@ -1062,6 +1109,7 @@ void click(int id) {
       break;
     }
     case HotSteam: ShellExecuteW(g.hwnd, L"open", L"https://store.steampowered.com/app/73010/", nullptr, nullptr, SW_SHOWNORMAL); break;
+    case HotSteamCmd: startSteamDownload(); break;
     case HotTarget: {
       fs::path picked = pickFolder(L"Install OpenCiM in", g.opts.target.parent_path());
       if (!picked.empty()) g.opts.target = picked.filename() == L"OpenCiM" ? picked : picked / L"OpenCiM";
@@ -1182,6 +1230,7 @@ LRESULT CALLBACK wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     }
     case WM_TIMER: {
+      pollSteamDownload();
       double now = nowSec();
       if (g.page == Page::Installing && now - g.slideStart > 7.0) showSlide(g.slide + 1);
       bool fading = false;

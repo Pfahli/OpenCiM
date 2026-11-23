@@ -21,6 +21,7 @@ add_library(regs_engine STATIC
   src/core/inflate.cpp
   src/core/deflate.cpp
   src/core/game_find.cpp
+  src/core/steam_download.cpp
   src/vfs/archive.cpp
   src/vfs/vfs.cpp
   src/script/lexer.cpp
@@ -308,7 +309,7 @@ endif()
 # release files to it (opencim-setup --make), which makes the offline installer
 if(WIN32)
   add_executable(opencim-setup WIN32 src/setup/setup_main.cpp src/setup/install.cpp src/setup/payload.cpp
-    src/core/game_find.cpp src/core/inflate.cpp src/core/deflate.cpp src/setup/setup.rc)
+    src/core/game_find.cpp src/core/steam_download.cpp src/core/inflate.cpp src/core/deflate.cpp src/setup/setup.rc)
   target_include_directories(opencim-setup PRIVATE src ${CMAKE_BINARY_DIR}/generated)
   add_dependencies(opencim-setup regs_build_info)
   target_link_libraries(opencim-setup PRIVATE gdiplus dwmapi shlwapi ole32 shell32 bcrypt user32 gdi32 advapi32 uuid)

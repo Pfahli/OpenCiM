@@ -27,6 +27,29 @@ things the port adds. This page is the design; §7 says what is built (`playable
   and later the optional mods it ships with (weather) and the high-res texture generation (texture-upscaling branch),
   which would run as the last step.
 
+## 1a. Getting the game with SteamCMD (owner's request 2026-11-23)
+
+For a PC where the Steam client cannot install Cities in Motion (Linux or macOS without Proton, no Steam client),
+OpenCiM fetches the player's own copy with Valve's SteamCMD (`core/steam_download.cpp`). It keeps to §1's rule: the
+files come from the player's own Steam account, never from us.
+
+* **Where:** the setup program's not-found page has DOWNLOAD FROM STEAM; everywhere `regs --download-game [<folder>]`
+  does the same in the console it runs in (the "not found" message names it).
+* **How:** a small script (`get-cities-in-motion.cmd` / `.sh` in `<per-user folder>/OpenCiM/steamcmd`) fetches SteamCMD
+  from Valve's CDN with the system's `curl` and `tar` (Windows 10 and later ship both), asks for the Steam account
+  name and runs `steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir <folder> +login <name> +app_update
+  73010 validate +quit`. The password and the Steam Guard code are typed into SteamCMD in its own console window;
+  OpenCiM never sees them. The account must own the game; the DLCs it owns come along.
+* **Where the game goes:** `%LOCALAPPDATA%\OpenCiM\Cities In Motion` (macOS `~/Library/Application Support/OpenCiM/...`,
+  Linux `$XDG_DATA_HOME` or `~/.local/share/OpenCiM/...`). The game search looks there after Steam, GOG and the disc
+  installs; `regs --download-game <folder>` with another folder writes it to `install.cfg`. The setup program takes the
+  folder once the SteamCMD window closes with the archives in place.
+* **ARM:** SteamCMD is x86 only; the Linux script says so on ARM and points to SteamCMD under box86/FEX or
+  DepotDownloader (GPL-2.0, not bundled) built for the system. SteamCMD on 64-bit Linux needs the 32-bit C libraries.
+* Checked 2026-11-23 with a stand-in `steamcmd.exe` (nothing fetched from Valve, no account): the script asks for the
+  name, a run without the archives ends with "did not finish", one with them with "ready", and the setup page shows the
+  button. Not tried: a real SteamCMD login and download, Linux and macOS.
+
 ## 2. How it gets the game's look without shipping game art
 
 The look of Cities in Motion is its menu art: the dark brown leather-and-metal panel on the left, the bevelled button

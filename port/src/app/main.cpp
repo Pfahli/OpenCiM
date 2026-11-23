@@ -1,6 +1,7 @@
 // regs: runs Cities in Motion from an installed copy with the ReGS engine.
 //
 //   regs [<gameDir>] [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]
+//   regs --download-game [<folder>]   (the player's own Cities in Motion with Valve's SteamCMD)
 //
 // Without <gameDir> the game folder comes from install.cfg next to regs.exe (written by the setup program), else from
 // the search for the player's Cities in Motion (core/game_find.h: Steam libraries, GOG and retail entries). A folder
@@ -20,6 +21,7 @@
 
 #include "core/env.h"
 #include "core/game_find.h"
+#include "core/steam_download.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/display.h"
@@ -63,6 +65,7 @@ fs::path widen(const char* s) {
 int usage() {
   std::fprintf(stderr,
                "usage: regs [<gameDir>] [--documents <dir>] [--windowed] [--frames <n>] [--screenshot <file.png>]\n"
+               "       regs --download-game [<folder>]   your own Cities in Motion with Valve's SteamCMD (log in there)\n"
                "  --documents   stand-in for the Documents folder (tests): settings, saves and maps go to\n"
                "                <dir>\\OpenCiM, the original's saves and maps are read from <dir>\\Cities In Motion\n"
                "                (default: the real Documents folder, so Documents\\OpenCiM)\n"
@@ -102,6 +105,19 @@ int main(int argc, char** argv) {
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);  // real pixels, no OS scaling
 #endif
   // the game folder: the first argument, else install.cfg next to regs.exe, else the search (core/game_find.h)
+  // --download-game [<folder>]: the player's own Cities in Motion with Valve's SteamCMD, in this console
+  // (core/steam_download.h); then started without a folder, OpenCiM finds it there
+  if (argc >= 2 && std::string(argv[1]) == "--download-game") {
+    const fs::path dir = argc >= 3 ? fs::absolute(widen(argv[2])) : steamDownloadDefaultFolder();
+    const bool ok = runSteamDownloadHere(dir);
+    std::printf("%s\n", ok ? "Cities in Motion is ready. Start OpenCiM without a folder: it finds the game there."
+                           : "Cities in Motion was not downloaded.");
+    if (ok && argc >= 3) {  // another folder than the default: remembered in install.cfg next to regs
+      const fs::path exeDir = fs::absolute(fs::path(widen(argv[0]))).parent_path();
+      if (!writeInstallCfg(exeDir / "install.cfg", dir)) std::printf("(install.cfg could not be written: start regs with the folder)\n");
+    }
+    return ok ? 0 : 1;
+  }
   const bool gameGiven = argc >= 2 && argv[1][0] != '-';
   if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) return usage();
   fs::path game = gameGiven ? widen(argv[1]) : fs::path(), documents, screenshot;
