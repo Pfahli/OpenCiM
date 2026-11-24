@@ -22,8 +22,13 @@ passengers as dark figures against the lit cabin.
   mods keep units 13-14.
 * Without the atlas (no citizen models found) the old plain figures (a disc and a box) stay.
 * `REGS_TEST_PASSENGERS=<0..1>` gives every line vehicle that load (screenshots).
-* Not yet: vehicles whose glass the search does not find (the old trams tram-01 to tram-04 and some buses) have no lit
-  cabin and so no passengers.
+* **More glass found** (2026-11-24): the search took only glass areas of 1.5-15 % of the texture, so windows split by
+  their bars into small panes (the old trams: 0.5 % each) were left out and those vehicles had no lit cabin. Now panes
+  from 0.3 % count too when they are solid rectangles (fill ≥ 85 %, aspect ≤ 8). `regs-tool vehiclelamps` (glass drawn
+  blue) over the 145 base-game vehicles: tram-01 to tram-04, bus-01 and bus-03 to bus-07, the double-decker, metro-01
+  to metro-04, the water buses and the el-train gained a lit cabin; the cars' masks changed too, but only line vehicles
+  use the cabin light. Seen on the player's save at night: seated passengers' heads and shoulders in a lit window
+  (`testing/shots/out/cim2b-window.png`).
 
 ## Lamps
 

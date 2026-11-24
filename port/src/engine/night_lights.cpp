@@ -1325,7 +1325,19 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
           if (sv[kk] > T && !keep[kk] && lab[kk] < 0) lab[kk] = 1, stack.push_back(kk);
         }
       }
-      if (comp.size() * 1000 < lamp.size() * 15 || comp.size() * 100 > lamp.size() * 15) continue;
+      if (comp.size() * 100 > lamp.size() * 15) continue;
+      if (comp.size() * 1000 < lamp.size() * 15) {
+        // a smaller area only as a solid pane: old trams' windows are split by their bars into panes of 0.3-1 % of
+        // the texture (tram-01: 0.5 %); chrome trims and lamp lenses are thin or small
+        int bx0 = w, bx1 = -1, by0 = h, by1 = -1;
+        for (size_t p : comp) {
+          int x = int(p % size_t(w)), y = int(p / size_t(w));
+          bx0 = std::min(bx0, x), bx1 = std::max(bx1, x), by0 = std::min(by0, y), by1 = std::max(by1, y);
+        }
+        int bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+        float fill = float(comp.size()) / float(bw * bh);
+        if (comp.size() * 1000 < lamp.size() * 3 || fill < 0.85f || std::max(bw, bh) > 8 * std::min(bw, bh)) continue;
+      }
       // the fade only on a cab car (head lamps at its front); middle sections are lit evenly
       for (size_t p : comp) win[p] = uint8_t(std::lround(255.0f * smooth(T, T + 0.1f, sv[p]) * (st.frontLamps ? fade[p] : 1.0f) *
                                                          (rail && st.rearLamps ? fadeRear[p] : 1.0f)));

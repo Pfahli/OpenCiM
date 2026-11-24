@@ -14,6 +14,9 @@
 # port build output and test runs (stand-in Documents folders with saves, settings, logs and screenshots)
 /port/build/
 /port/run/
+# the shared test setup of all sessions (scripts, stand-in Documents folders, screenshots, logs); not in Temp, where a
+# cleanup removed it on 2026-11-24
+/testing/
 
 # editors and OS
 .vs/

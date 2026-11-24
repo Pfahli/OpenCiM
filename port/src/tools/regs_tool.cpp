@@ -843,7 +843,9 @@ int cmdVehicleLamps(int argc, char** argv) {
       for (size_t i = 0; i < size_t(w) * size_t(h); ++i) {
         const uint8_t* mp = &mask.levels[0][i * 4];
         for (int c = 0; c < 3; ++c) {
-          float v = drgba[i * 4 + size_t(c)] / 255.0f * 0.45f + mp[2] / 255.0f * 0.9f + (c == 0 ? mp[1] / 255.0f * 0.9f : 0.0f);
+          // front lamps white, rear lamps red, window glass (the cabin light) blue
+          float v = drgba[i * 4 + size_t(c)] / 255.0f * 0.45f + mp[2] / 255.0f * 0.9f + (c == 0 ? mp[1] / 255.0f * 0.9f : 0.0f) +
+                    (c == 2 ? mp[0] / 255.0f * 0.6f : 0.0f);
           out[i * 4 + size_t(c)] = uint8_t(std::clamp(v, 0.0f, 1.0f) * 255.0f);
         }
         out[i * 4 + 3] = 255;
@@ -943,7 +945,7 @@ int main(int argc, char** argv) {
     else if (cmd == "shaders") rc = cmdShaders(argc, argv);
     else if (cmd == "shadowtest") rc = cmdShadowTest(argc, argv);
     else if (cmd == "skintest") rc = cmdSkinTest(argc, argv);
-    else if (cmd == "passengers") rc = cmdPassengers(argc, argv);
+    else if (cmd == "passengers") rc = cmdPassengers(argc, argv);
     else if (cmd == "sound") rc = cmdSound(argc, argv);
     else if (cmd == "cut") rc = cmdCut(argc, argv);
     else if (cmd == "softdot") rc = cmdSoftDot(argc, argv);
