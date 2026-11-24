@@ -969,7 +969,7 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
     dev().uniform1f(l.windowOn, code);
     if (m.windowKind == 1) {
       dev().uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, it.cabinLight);
-      dev().uniform4f(l.cabinUpper, m.cabinY[2], m.cabinY[3], 0, 0);
+      dev().uniform4f(l.cabinUpper, m.cabinY[2], m.cabinY[3], it.vehicleSeed, 0);
     }
     // the sampler points at the light map's unit when unused: never at a unit where the material has a cube
     dev().uniform1i(l.windowMask, code > 0 ? maskUnit : kNightMapUnit);

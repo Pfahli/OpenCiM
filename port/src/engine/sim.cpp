@@ -2907,7 +2907,9 @@ static void collectLineup(Display& d, VM& vm, GridObj* grid, const char* spec, s
       it.world = e.world;
       items.push_back(it);
     }
-    for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code, items[k].cabinLight = 1.0f, items[k].passengers = load;
+    float vseed = std::fmod(float(&e - lineup.data()) * 0.618034f, 1.0f);
+    for (size_t k = first; k < items.size(); ++k)
+      items[k].lampCode = code, items[k].cabinLight = 1.0f, items[k].passengers = load, items[k].vehicleSeed = vseed;
   }
 }
 
@@ -2972,7 +2974,8 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       if (on <= 0.01f) front = rear = 0;
       float code = vehicleLampCode(front, rear, cabin, std::max(on, cabin ? 0.02f : 0.0f));
       float cabinLight = cabin ? 0.5f + 0.5f * on : 0.0f;
-      for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code, items[k].cabinLight = cabinLight;
+      for (size_t k = first; k < items.size(); ++k)
+        items[k].lampCode = code, items[k].cabinLight = cabinLight, items[k].vehicleSeed = float(seed >> 16) / 65536.0f;
       // passengers in the windows: the line vehicle's load in steps the eye can count (empty, up to a quarter, half,
       // three quarters, full: 0, 0.25, 0.5, 0.75, 1), eased so the silhouettes fade in and out, and snapped to the
       // step at the end (an empty car shows nobody, not a last figure fading forever)

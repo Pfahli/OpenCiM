@@ -228,6 +228,7 @@ struct DrawItem {
   bool shadowOnly = false;
   float lampCode = 0;
   float cabinLight = 0;  // port night lights: the cabin light's strength (line vehicles: 0.5 by day, 1 at night)
+  float vehicleSeed = 0;  // 0..1 per vehicle: which citizens drive it and sit at its upper front (shaders.cpp)
   float passengers = 0;  // port night lights: the vehicle's shown occupancy 0..1 (silhouettes in the windows)  // port night lights: vehicle lamps (engine/night_lights.h vehicleLampCode), 0 = off  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
   // a per-instance custom4.xy over the material's (vehicles' animated parts: rotor angle and spin-up, which the engine
   // writes into each vehicle's own material copy, L:0x081adca0.c:604-690); z and w stay the material's

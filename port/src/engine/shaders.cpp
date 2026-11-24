@@ -132,7 +132,15 @@ const char16_t* kNightMapsDecl =
     // fill first: half of them at a quarter, all at half; the standing places fill from half to full. Nobody in an
     // empty car
     // a double-decker: regs_CabinUpper is its upper deck's band (0 0 for one deck); each deck has its own figures
-    u"uniform vec4 regs_CabinUpper;\n"
+    u"uniform vec4 regs_CabinUpper;\n"  // xy: a double-decker's upper deck band; z: the vehicle's seed 0..1
+    // figures seen from the front (the driver, a double-decker's upper front): the atlas rows of citizens whose head is
+    // round from the front (no tall or wide hat, which reads as a block: row 11 was the first drivers' box head); with
+    // the base game's 27 rows, else any row
+    u"float regs_bareHead(float s) {\n"
+    u"  const float rows[8] = float[8](1.0, 7.0, 15.0, 16.0, 17.0, 19.0, 21.0, 26.0);\n"
+    u"  if (regs_PassengerInfo.x < 26.5) return s;\n"
+    u"  return (rows[int(min(floor(s * 8.0), 7.0))] + 0.5) / regs_PassengerInfo.x;\n"
+    u"}\n"
     u"float regs_passengers(float lod) {\n"
     u"  vec3 p = regs_ModelPos;\n"
     u"  vec2 band = regs_Cabin.xy;\n"
@@ -204,8 +212,8 @@ const char16_t* kNightMapsDecl =
     u"    if (inside > 0.5 && m.a > 0.15 && m.a < 0.35 && regs_PassengerInfo.x > 0.5 && regs_CabinUpper.y > regs_CabinUpper.x + 0.3) {\n"
     u"      float HU = regs_CabinUpper.y - regs_CabinUpper.x, fillU = clamp(regs_Cabin.z * 2.0, 0.0, 1.0);\n"
     u"      float topU = regs_CabinUpper.x + HU * 0.62 + 0.17;\n"
-    u"      float pa = regs_figure(regs_ModelPos.x + 0.5, topU, regs_ModelPos.y, vec4(0.0, 0.23, 0.0, 0.61), plod, 2.0) * step(0.25, fillU);\n"
-    u"      float pb = regs_figure(regs_ModelPos.x - 0.5, topU, regs_ModelPos.y, vec4(1.0, 0.67, 0.0, 0.13), plod, 2.0) * step(0.75, fillU);\n"
+    u"      float pa = regs_figure(regs_ModelPos.x + 0.5, topU, regs_ModelPos.y, vec4(0.0, regs_bareHead(fract(regs_CabinUpper.z + 0.37)), 0.0, 0.61), plod, 2.0) * step(0.25, fillU);\n"
+    u"      float pb = regs_figure(regs_ModelPos.x - 0.5, topU, regs_ModelPos.y, vec4(1.0, regs_bareHead(fract(regs_CabinUpper.z + 0.71)), 0.0, 0.13), plod, 2.0) * step(0.75, fillU);\n"
     u"      cabin *= 1.0 - 0.85 * max(pa, pb);\n"
     u"    }\n"
     // the driver (2026-11-24): on the windscreen of the leading end (head lamps there, or the model's front by day),
@@ -218,7 +226,7 @@ const char16_t* kNightMapsDecl =
     u"      if (lead && HB > 0.3) {\n"
     u"        float seat = frontGlass ? -0.45 : 0.45;\n"
     u"        float top = regs_Cabin.x + HB * 0.62 + 0.17;\n"
-    u"        float drv = regs_figure(regs_ModelPos.x - seat, top, regs_ModelPos.y, vec4(0.0, 0.41, 0.0, 0.37), plod, 3.0);\n"
+    u"        float drv = regs_figure(regs_ModelPos.x - seat, top, regs_ModelPos.y, vec4(0.0, regs_bareHead(regs_CabinUpper.z), 0.0, 0.37), plod, 3.0);\n"
     u"        cabin *= 1.0 - 0.85 * drv;\n"
     u"      }\n"
     u"    }\n"
