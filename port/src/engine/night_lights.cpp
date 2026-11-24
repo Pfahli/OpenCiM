@@ -1141,8 +1141,14 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     if (y < minY + 0.12f * height || y > minY + 0.6f * height || std::fabs(x) > 0.85f * hw) continue;
     zFront = std::min(zFront, z), zRear = std::max(zRear, z);
   }
-  if (zFront > zRear) return false;
+  // a middle section of an articulated tram may have no body at lamp height across its ends: no lamps then, but its
+  // windows still count (until 2026-11-24 such a section had no lit cabin)
+  const bool noEnds = zFront > zRear;
+  if (noEnds) zFront = mesh.boundsMin[2], zRear = mesh.boundsMax[2];
   const float depth = std::max(0.25f, 0.06f * (zRear - zFront));
+  // the driver's cab stays dark: the cabin light fades in from 1.5 to 4.5 m behind a cab end, on short cars over the
+  // same share of their length (an end car of 7 m with a lamp at each end was dark all over)
+  const float fadeFrom = std::min(1.5f, 0.12f * (zRear - zFront)), fadeTo = std::min(4.5f, 0.3f * (zRear - zFront));
   // every texel the material's triangles cover: which end it faces, at lamp height
   std::vector<uint8_t> side(size_t(w) * size_t(h), 0);  // 1 front, 2 rear
   // the cabin light fades towards the front: the driver's cab stays dark (0 up to 1.5 m from the front, full at 4.5 m)
@@ -1177,10 +1183,10 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
           }
           texY[size_t(y) * size_t(w) + size_t(x)] = py3;
           float& fd = fade[size_t(y) * size_t(w) + size_t(x)];
-          fd = std::min(fd, smooth(zFront + 1.5f, zFront + 4.5f, pz));
+          fd = std::min(fd, smooth(zFront + fadeFrom, zFront + fadeTo, pz));
           float& fr = fadeRear[size_t(y) * size_t(w) + size_t(x)];
-          fr = std::min(fr, smooth(zRear - 1.5f, zRear - 4.5f, pz));
-          if (py3 < minY + 0.08f * height || py3 > minY + 0.58f * height) continue;
+          fr = std::min(fr, smooth(zRear - fadeFrom, zRear - fadeTo, pz));
+          if (noEnds || py3 < minY + 0.08f * height || py3 > minY + 0.58f * height) continue;
           uint8_t& sd = side[size_t(y) * size_t(w) + size_t(x)];
           if (nz < -0.45f && pz < zFront + depth) sd = 1;
           else if (nz > 0.45f && pz > zRear - depth) sd = 2;

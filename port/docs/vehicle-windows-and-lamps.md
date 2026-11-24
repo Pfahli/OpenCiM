@@ -27,7 +27,11 @@ passengers as dark figures against the lit cabin.
   from 0.3 % count too when they are solid rectangles (fill ≥ 85 %, aspect ≤ 8). `regs-tool vehiclelamps` (glass drawn
   blue) over the 145 base-game vehicles: tram-01 to tram-04, bus-01 and bus-03 to bus-07, the double-decker, metro-01
   to metro-04, the water buses and the el-train gained a lit cabin; the cars' masks changed too, but only line vehicles
-  use the cabin light. Seen on the player's save at night: seated passengers' heads and shoulders in a lit window
+  use the cabin light. Articulated trams: a middle section without a body at lamp height across its ends (tram05b,
+  tram05c) no longer ends the search before the windows; the driver's-cab fade (dark up to 1.5 m behind a cab end, full
+  from 4.5 m) shrinks on short cars to 12-30 % of their length (tram05e, 7 m with lamps at both ends, was dark all
+  over). The red articulated tram on the player's save now has lit windows with passengers in every section. Seen on
+  the player's save at night: seated passengers' heads and shoulders in a lit window
   (`testing/shots/out/cim2b-window.png`).
 
 ## Lamps
