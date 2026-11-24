@@ -828,6 +828,12 @@ Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.passengerInfo = at("regs_PassengerInfo");
   l.passengerAnim = at("regs_PassengerAnim");
   l.cabinUpper = at("regs_CabinUpper");
+  for (int i = 0; i < 3; ++i) {
+    l.signA[i] = at(("regs_SignA" + std::to_string(i)).c_str());
+    l.signB[i] = at(("regs_SignB" + std::to_string(i)).c_str());
+    l.signC[i] = at(("regs_SignC" + std::to_string(i)).c_str());
+  }
+  l.signMeta = at("regs_SignMeta");
   return l;
 }
 
@@ -961,6 +967,15 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
   for (int k = 0; k < 4; ++k) tint[k] = it.colorize[k] * float(p.colorize >> (k == 3 ? 24 : 16 - 8 * k) & 0xFF) / 255.0f;
   dev().uniform4fv(l.colorize, 1, tint);
   dev().uniform1f(l.reflection, m.reflection);
+  if (l.signMeta >= 0) {  // destination displays: the line number (by day and night, with or without the cycle)
+    int n = m.windowKind == 1 && it.lineNumber > 0 ? m.signCount : 0;
+    dev().uniform4f(l.signMeta, float(n), it.lineNumber, v.night[3], 0);
+    for (int i = 0; i < n; ++i) {
+      dev().uniform4fv(l.signA[i], 1, m.signA[i]);
+      dev().uniform4fv(l.signB[i], 1, m.signB[i]);
+      dev().uniform4fv(l.signC[i], 1, m.signC[i]);
+    }
+  }
   if (l.windowOn >= 0) {  // port night lights: the material's window groups, on the first unit after its textures
     const int maskUnit = int(m.textures.size());
     float code = !m.windowMask || maskUnit >= kMaterialUnits ? 0.0f : m.windowKind == 1 ? it.lampCode

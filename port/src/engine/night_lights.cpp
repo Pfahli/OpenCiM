@@ -1111,6 +1111,35 @@ const LampFix kLampFixes[] = {
      {{158.5f / 512.0f, 127.5f / 256.0f, 4.5f / 512.0f}, {349.5f / 512.0f, 170.5f / 256.0f, 4.5f / 512.0f}, {0, 0, 0}}},
 };
 
+// The number fields of vehicles' destination displays, by diffuse texture, in texels of a w x h texture (measured on
+// the base game's textures, 2026-11-24); solid: a roller blind or flap (filled glyphs), else an LED dot matrix
+struct SignField {
+  const char* texture;
+  int w, h, x0, y0, x1, y1;
+  bool solid;
+  int boardX0 = -1, boardX1 = -1;  // the whole display board across (when shiny: not window glass), else the field
+};
+const SignField kSignFields[] = {
+    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 17, 150, 29, 162, false},    // front "100", 2 lines
+    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 162, 168, 177, 181, false},  // side "100"
+    {"metro/objects/vehicles/bus-13/bus13.dds", 512, 256, 29, 120, 41, 130, false},    // front "090 LEHNIKEN"
+    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 57, 128, 75, 142, false},    // front "143 Pinzberg"
+    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 171, 185, 186, 193, false},  // side
+    {"metro/objects/vehicles/double-decker/double-decker.dds", 512, 256, 17, 145, 29, 156, false, 9, 78},  // "55 MUSTRA"
+    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 452, 60, 471, 73, true},  // roof boxes "7"
+    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 489, 60, 506, 73, true},
+    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 471, 73, 489, 87, true},
+    {"metro/objects/vehicles/tram-05/tram05.dds", 512, 256, 28, 97, 45, 109, false},   // front "10 Stadtplatz"
+    {"metro/objects/vehicles/tram-07/tram07.dds", 512, 256, 67, 142, 79, 154, false},  // front "Stadtplatz 61"
+};
+
+bool sameTexture(const std::string& a, const char* b) {
+  if (a.size() != std::strlen(b)) return false;
+  for (size_t i = 0; i < a.size(); ++i)
+    if (std::tolower(static_cast<unsigned char>(a[i])) != b[i]) return false;
+  return true;
+}
+
 const LampFix* lampFixFor(const std::string& texture) {
   std::string t = texture;
   std::transform(t.begin(), t.end(), t.begin(), [](unsigned char c) { return char(std::tolower(c)); });
@@ -1422,18 +1451,92 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       }
     }
   }
+  {  // destination displays with a line number (2026-11-24): the number fields of kSignFields on this texture. The
+    // reading direction comes from the model (the triangle under the field), the text colour from the texture
+    for (const SignField& sf : kSignFields) {
+      if (st.signCount >= 3 || !sameTexture(texture, sf.texture)) continue;
+      int x0 = sf.x0 * w / sf.w, x1 = sf.x1 * w / sf.w, y0 = sf.y0 * h / sf.h, y1 = sf.y1 * h / sf.h;
+      x0 = std::clamp(x0, 0, w - 1), x1 = std::clamp(x1, x0 + 1, w), y0 = std::clamp(y0, 0, h - 1), y1 = std::clamp(y1, y0 + 1, h);
+      float cu = 0.5f * float(x0 + x1), cv = 0.5f * float(y0 + y1);
+      bool found = false, rot = false, flipS = false, flipT = false;
+      for (const Submesh& sm : mesh.submeshes) {
+        if (sm.material != material || found) continue;
+        for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size() && !found; k += 3) {
+          uint32_t t[3] = {mesh.indices[k], mesh.indices[k + 1], mesh.indices[k + 2]};
+          if (t[0] >= nv || t[1] >= nv || t[2] >= nv) continue;
+          float ub = std::floor(std::min({mesh.uv0[t[0] * 2], mesh.uv0[t[1] * 2], mesh.uv0[t[2] * 2]}));
+          float vb = std::floor(std::min({mesh.uv0[t[0] * 2 + 1], mesh.uv0[t[1] * 2 + 1], mesh.uv0[t[2] * 2 + 1]}));
+          float u[3], v[3];
+          for (int j = 0; j < 3; ++j) u[j] = (mesh.uv0[t[j] * 2] - ub) * float(w), v[j] = (mesh.uv0[t[j] * 2 + 1] - vb) * float(h);
+          float area = (u[1] - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (v[1] - v[0]);
+          if (std::fabs(area) < 1e-6f) continue;
+          float b1 = ((cu - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (cv - v[0])) / area;
+          float b2 = ((u[1] - u[0]) * (cv - v[0]) - (cu - u[0]) * (v[1] - v[0])) / area;
+          if (b1 < -0.01f || b2 < -0.01f || b1 + b2 > 1.01f) continue;
+          Vec3 P[3];
+          for (int j = 0; j < 3; ++j) P[j] = {mesh.positions[t[j] * 3], mesh.positions[t[j] * 3 + 1], mesh.positions[t[j] * 3 + 2]};
+          Vec3 e1 = P[1] - P[0], e2 = P[2] - P[0];
+          float a = dot(e1, e1), bb = dot(e1, e2), c = dot(e2, e2), det = a * c - bb * bb;
+          if (std::fabs(det) < 1e-12f) continue;
+          auto grad = [&](float d1, float d2) { return e1 * ((d1 * c - d2 * bb) / det) + e2 * ((d2 * a - d1 * bb) / det); };
+          Vec3 gU = grad(u[1] - u[0], u[2] - u[0]), gV = grad(v[1] - v[0], v[2] - v[0]);
+          Vec3 n = normalize(cross(e1, e2));
+          Vec3 vn{mesh.normals[t[0] * 3], mesh.normals[t[0] * 3 + 1], mesh.normals[t[0] * 3 + 2]};
+          if (dot(n, vn) < 0) n = n * -1.0f;
+          Vec3 up{0, 1, 0}, right = cross(n * -1.0f, up);
+          if (dot(right, right) < 1e-6f) continue;  // a face looking up or down
+          // the text reads along u, or along v when the field is turned on the texture (tram-04's side boxes)
+          rot = std::fabs(dot(gU, right)) < std::fabs(dot(gV, right));
+          flipS = (rot ? dot(gV, right) : dot(gU, right)) < 0;
+          flipT = (rot ? dot(gU, up) : dot(gV, up)) > 0;
+          found = true;
+        }
+      }
+      if (!found) continue;
+      // the text colour: the brightest quarter of the field
+      std::vector<std::array<int, 4>> px;
+      for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x) {
+          const uint8_t* q = &dif[(size_t(y) * size_t(w) + size_t(x)) * 4];
+          px.push_back({q[0] * 30 + q[1] * 59 + q[2] * 11, q[0], q[1], q[2]});
+        }
+      std::sort(px.begin(), px.end(), [](const auto& l, const auto& r) { return l[0] > r[0]; });
+      float rgb[3] = {0, 0, 0};
+      size_t top = std::max<size_t>(1, px.size() / 4);
+      for (size_t i = 0; i < top; ++i)
+        for (int ch = 0; ch < 3; ++ch) rgb[ch] += float(px[i][size_t(ch) + 1]) / 255.0f / float(top);
+      float mx = std::max({rgb[0], rgb[1], rgb[2], 0.05f});
+      VehicleLampInfo::Sign& sg = st.signs[st.signCount++];
+      sg.u0 = float(x0) / float(w), sg.u1 = float(x1) / float(w), sg.v0 = float(y0) / float(h), sg.v1 = float(y1) / float(h);
+      sg.aspect = rot ? float(y1 - y0) / float(x1 - x0) : float(x1 - x0) / float(y1 - y0);
+      sg.flipU = flipS, sg.flipV = flipT, sg.rot = rot, sg.style = sf.solid ? 1 : 0;
+      for (int ch = 0; ch < 3; ++ch) sg.colour[ch] = rgb[ch] / mx;  // full brightness, the hue of the original text
+      // the display board is no window (a shiny board was taken for glass: lit, with passengers over it)
+      int bx0 = sf.boardX0 >= 0 ? sf.boardX0 * w / sf.w : x0, bx1 = sf.boardX1 >= 0 ? sf.boardX1 * w / sf.w : x1;
+      for (int y = std::max(0, y0 - 1); y < std::min(h, y1 + 1); ++y)
+        for (int x = std::max(0, bx0); x < std::min(w, bx1); ++x) {
+          size_t k = size_t(y) * size_t(w) + size_t(x);
+          win[k] = 0, cabGlass[k] = 0;
+        }
+    }
+  }
   if (st.windowY3 > 0) {
     // a double-decker: the cab is downstairs. Upstairs the front is passenger seats (the best ones): full light, and
     // its front glass marked 64 for passengers seen from the front (the shader), not a driver
     const float split = 0.5f * (st.windowY1 + st.windowY2);
     for (const auto& pane : panes)
       for (size_t p : pane) {
+        // between the decks' window bands there are no windows: a shiny destination board there (the London bus)
+        if (texY[p] > st.windowY1 + 0.08f && texY[p] < st.windowY2 - 0.08f) {
+          win[p] = 0, cabGlass[p] = 0;
+          continue;
+        }
         if (texY[p] <= split) continue;
         win[p] = uint8_t(std::lround(255.0f * glassLevel[p]));
         if (cabGlass[p]) cabGlass[p] = 64, --st.windscreen;
       }
   }
-  if (!st.frontLamps && !st.rearLamps && !st.windows) return false;
+  if (!st.frontLamps && !st.rearLamps && !st.windows && !st.signCount) return false;
   // BGRA: R = front lamps, G = rear lamps, B = windows, A = windscreen glass (the driver, 255 front / 128 rear)
   std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);
   for (size_t i = 0; i < lamp.size(); ++i) {
@@ -1478,6 +1581,20 @@ uint32_t vehicleLampMask(Display& d, VM& vm, const ObjectData& od, int material,
   cache.emplace(keyv, std::make_pair(tex, li));
   if (info) *info = li;
   return tex;
+}
+
+void applyVehicleLamps(GpuMaterial& g, const VehicleLampInfo& li) {
+  g.cabinY[0] = li.windowY0, g.cabinY[1] = li.windowY1, g.cabinY[2] = li.windowY2, g.cabinY[3] = li.windowY3;
+  g.signCount = li.signCount;
+  for (int i = 0; i < li.signCount; ++i) {
+    const VehicleLampInfo::Sign& s = li.signs[i];
+    float a[4] = {s.u0, s.v0, s.u1, s.v1};
+    float b[4] = {s.flipU ? 1.0f : 0.0f, s.flipV ? 1.0f : 0.0f, s.aspect, float(s.style) + (s.rot ? 10.0f : 0.0f)};
+    float c[4] = {s.colour[0], s.colour[1], s.colour[2], 0};
+    std::copy(a, a + 4, g.signA[i]);
+    std::copy(b, b + 4, g.signB[i]);
+    std::copy(c, c + 4, g.signC[i]);
+  }
 }
 
 VehicleLampInfo vehicleLamps(Display& d, VM& vm, const ObjectData& od) {

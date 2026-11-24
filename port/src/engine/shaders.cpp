@@ -251,8 +251,56 @@ const char16_t* kNightMapsDecl =
     u"#}\n";
 const char16_t* kNightMapsCall =
     u"  #if ($regsNight) {\n"
-    u"  regs_windowGlow = regs_windows(v_texCoord.xy, diffusemap.rgb);\n"
+    u"  vec3 regsSignGlow = vec3(0.0);\n"
+    u"  diffusemap.rgb = regs_signs(v_texCoord.xy, diffusemap.rgb, regsSignGlow);\n"
+    u"  regs_windowGlow = regs_windows(v_texCoord.xy, diffusemap.rgb) + regsSignGlow;\n"
     u"  #}\n";
+// destination displays (2026-11-24): a line vehicle's number field (engine/night_lights.h VehicleLampInfo::Sign)
+// redrawn as an amber LED dot matrix of the real line number, a 5x7 font, dark between the dots; it glows, more at
+// night. regs_SignMeta: x signs, y line number, z night01
+const char16_t* kSignDecl =
+    u"uniform vec4 regs_SignA0, regs_SignB0, regs_SignA1, regs_SignB1, regs_SignA2, regs_SignB2;\n"
+    u"uniform vec4 regs_SignC0, regs_SignC1, regs_SignC2;\n"
+    u"uniform vec4 regs_SignMeta;\n"
+    u"const int regs_font5x7[70] = int[70](14,17,19,21,25,17,14, 4,12,4,4,4,4,14, 14,17,1,2,4,8,31, 31,2,4,2,1,17,14,\n"
+    u"  2,6,10,18,31,2,2, 31,16,30,1,1,17,14, 6,8,16,30,17,17,14, 31,1,2,4,8,8,8, 14,17,17,14,17,17,14, 14,17,17,15,1,2,12);\n"
+    // B: x flip along the text, y flip across, z width over height, w style (+10: the text runs along v); C: colour
+    u"vec3 regs_signAt(vec4 A, vec4 B, vec4 C, vec2 uv, vec3 col, inout vec3 glow) {\n"
+    u"  vec2 f = fract(uv);\n"
+    u"  if (f.x < A.x || f.x > A.z || f.y < A.y || f.y > A.w) return col;\n"
+    u"  float s = (f.x - A.x) / (A.z - A.x), t = (f.y - A.y) / (A.w - A.y);\n"
+    u"  bool rot = B.w > 9.5, solid = B.w - (rot ? 10.0 : 0.0) > 0.5;\n"
+    u"  if (rot) { float tmp = s; s = t; t = tmp; }\n"
+    u"  if (B.x > 0.5) s = 1.0 - s;\n"
+    u"  if (B.y > 0.5) t = 1.0 - t;\n"
+    u"  int n = int(regs_SignMeta.y + 0.5);\n"
+    u"  int nd = n >= 100 ? 3 : n >= 10 ? 2 : 1;\n"
+    u"  float dots = float(nd * 6 - 1);\n"
+    u"  float d = min(1.0 / 9.0, B.z / (dots + 1.0));\n"  // the dot pitch in display heights, 9 rows or the width
+    u"  float X = (s * B.z - 0.5 * (B.z - dots * d)) / d, Y = (t - 0.5 * (1.0 - 7.0 * d)) / d;\n"
+    u"  vec3 bg = vec3(0.025, 0.022, 0.02), amber = C.rgb;\n"
+    u"  vec2 cell = fract(vec2(X, Y));\n"
+    u"  float dotMask = solid ? 1.0 : 1.0 - smoothstep(0.32, 0.45, length(cell - 0.5));\n"
+    u"  float lit = 0.0;\n"
+    u"  if (X >= 0.0 && Y >= 0.0 && X < dots && Y < 7.0) {\n"
+    u"    int ci = int(X) / 6, cx = int(X) - ci * 6, row = int(Y);\n"
+    u"    int p = nd - 1 - ci, v = n;\n"
+    u"    for (int k = 0; k < 3; ++k) if (k < p) v /= 10;\n"
+    u"    int digit = v - (v / 10) * 10;\n"
+    u"    if (cx < 5) lit = float((regs_font5x7[digit * 7 + row] >> (4 - cx)) & 1);\n"
+    u"  }\n"
+    // a roller blind is printed, not lit: its glyphs only reflect light; LEDs glow, more at night
+    u"  if (solid) return mix(bg, amber * 0.85, lit);\n"
+    u"  glow += amber * lit * dotMask * (0.5 + 1.5 * regs_SignMeta.z);\n"
+    u"  return mix(bg, mix(amber * 0.07, amber, lit), dotMask);\n"
+    u"}\n"
+    u"vec3 regs_signs(vec2 uv, vec3 col, inout vec3 glow) {\n"
+    u"  if (regs_SignMeta.x < 0.5) return col;\n"
+    u"  col = regs_signAt(regs_SignA0, regs_SignB0, regs_SignC0, uv, col, glow);\n"
+    u"  if (regs_SignMeta.x > 1.5) col = regs_signAt(regs_SignA1, regs_SignB1, regs_SignC1, uv, col, glow);\n"
+    u"  if (regs_SignMeta.x > 2.5) col = regs_signAt(regs_SignA2, regs_SignB2, regs_SignC2, uv, col, glow);\n"
+    u"  return col;\n"
+    u"}\n";
 const char16_t* kNightColorDecl =
     u"#$regsLamp = !bool($envFlags & (ENVIROMENT_SHADOWMAP_RENDER | ENVIROMENT_SHADOW_RENDER)) && "
     u"!bool($matFlags & (MATERIAL_ADDITIVE | MATERIAL_ADDITIVE_A));\n"
@@ -350,7 +398,9 @@ std::u16string portShaderPatch(const std::u16string& path, std::u16string text) 
   }
   if (path.ends_with(u"shaders/default/maps.fragment")) {
     std::u16string t = text;
-    if (insertBefore(t, u"void maps_input() {", kNightMapsDecl) && insertBefore(t, u"  geometry_input();", kNightMapsCall))
+    if (insertBefore(t, u"void maps_input() {", kNightMapsDecl) && insertBefore(t, u"void maps_input() {", u"#if ($regsNight) {\n") &&
+        insertBefore(t, u"void maps_input() {", kSignDecl) && insertBefore(t, u"void maps_input() {", u"#}\n") &&
+        insertBefore(t, u"  geometry_input();", kNightMapsCall))
       text = t;
     else
       LOG_WARN("shader component %s: no anchor for the lit windows", utf16ToUtf8(path).c_str());

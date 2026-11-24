@@ -63,7 +63,20 @@ struct VehicleLampInfo {
   float windowY0 = 0, windowY1 = 0;   // the window band's model height (passenger silhouettes), 0 0 = unknown
   float windowY2 = 0, windowY3 = 0;   // a double-decker's upper deck band, 0 0 = one deck
   int windscreen = 0;                 // texels of windscreen glass (the driver's place)
+  // destination displays with a line number (2026-11-24): the number's field on the texture (fractions, v down),
+  // its width over height, whether the text reads along -u / -v on the model, the style (0 amber LED)
+  struct Sign {
+    float u0 = 0, v0 = 0, u1 = 0, v1 = 0, aspect = 1;
+    bool flipU = false, flipV = false;  // the text reads against its axis / runs bottom to top
+    bool rot = false;                   // the text runs along v (the field is turned on the texture)
+    int style = 0;                      // 0 LED dots, 1 solid glyphs (a roller blind)
+    float colour[3] = {1, 0.6f, 0.15f}; // the original text's hue at full brightness
+  };
+  Sign signs[3];
+  int signCount = 0;
 };
+// A vehicle material's lamp results into its GPU material: the window bands and the destination displays.
+void applyVehicleLamps(render::GpuMaterial& g, const VehicleLampInfo& li);
 // texture: the diffuse map's VFS path (a few models' lamps are corrected by it, kLampFixes)
 bool makeVehicleLampMask(const render::MeshData& mesh, int material, const render::Image& diffuse,
                          const render::Image* specular, render::Image& out, VehicleLampInfo* info, bool rail = false,

@@ -2840,8 +2840,7 @@ static void prepareVehicleObject(Display& d, VM& vm, ObjectObj* o) {
     o->materials->push_back(objectMaterial(d, vm, o, o->data->materials[i]));
     VehicleLampInfo li;
     o->materials->back().windowMask = vehicleLampMask(d, vm, *o->data, int(i), &li);  // port night lights
-    o->materials->back().cabinY[0] = li.windowY0, o->materials->back().cabinY[1] = li.windowY1;
-    o->materials->back().cabinY[2] = li.windowY2, o->materials->back().cabinY[3] = li.windowY3;
+    applyVehicleLamps(o->materials->back(), li);
     o->materials->back().windowKind = 1;
   }
 }
@@ -2909,7 +2908,8 @@ static void collectLineup(Display& d, VM& vm, GridObj* grid, const char* spec, s
     }
     float vseed = std::fmod(float(&e - lineup.data()) * 0.618034f, 1.0f);
     for (size_t k = first; k < items.size(); ++k)
-      items[k].lampCode = code, items[k].cabinLight = 1.0f, items[k].passengers = load, items[k].vehicleSeed = vseed;
+      items[k].lampCode = code, items[k].cabinLight = 1.0f, items[k].passengers = load, items[k].vehicleSeed = vseed,
+      items[k].lineNumber = float(int(&e - lineup.data()) * 37 % 199 + 1);  // 1-3 digits, a different number each
   }
 }
 
@@ -2945,8 +2945,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
         o->materials->push_back(objectMaterial(d, vm, o, o->data->materials[i]));
         VehicleLampInfo li;
         o->materials->back().windowMask = vehicleLampMask(d, vm, *o->data, int(i), &li);  // port night lights
-        o->materials->back().cabinY[0] = li.windowY0, o->materials->back().cabinY[1] = li.windowY1;
-    o->materials->back().cabinY[2] = li.windowY2, o->materials->back().cabinY[3] = li.windowY3;
+        applyVehicleLamps(o->materials->back(), li);
         o->materials->back().windowKind = 1;
       }
     }
@@ -2994,7 +2993,11 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
           shown[mi] += (target - shown[mi]) * std::min(1.0f, vm.frameDt() * 0.8f);
           if (std::fabs(target - shown[mi]) < 0.01f) shown[mi] = target;
         }
-        for (size_t k = first; k < items.size(); ++k) items[k].passengers = shown[mi];
+        // the line's number for the destination displays ($index, linepanel.script: counted per transport type)
+        float lineNo = 0;
+        if (vs.line >= 0 && size_t(vs.line) < s->lines.size() && s->lines[size_t(vs.line)].object)
+          lineNo = float(vm.toInt(vm.resolve(vm.getMember(Value::heap(VT::Object, s->lines[size_t(vs.line)].object.get()), u"$index"))));
+        for (size_t k = first; k < items.size(); ++k) items[k].passengers = shown[mi], items[k].lineNumber = lineNo;
       }
     }
     for (size_t k = first; k < items.size(); ++k) {  // animated parts: custom4 = (angle, spin), stepAnimatedParts

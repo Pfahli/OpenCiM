@@ -831,6 +831,12 @@ int cmdVehicleLamps(int argc, char** argv) {
         ok = engine::makeVehicleLampMask(od.mesh, int(mi), di, spec ? &si : nullptr, mask, &info, rail, m.textures[0]);
       }
       std::printf("%s / %s: %d front, %d rear lamp areas\n", argv[a], m.name.c_str(), info.frontLamps, info.rearLamps);
+      for (int s = 0; s < info.signCount; ++s) {
+        const auto& sg = info.signs[s];
+        std::printf("  display %d: texels %d..%d x %d..%d, aspect %.2f%s%s%s, colour %.2f %.2f %.2f\n", s, int(sg.u0 * float(di.width)),
+                    int(sg.u1 * float(di.width)), int(sg.v0 * float(di.height)), int(sg.v1 * float(di.height)), sg.aspect,
+                    sg.flipU ? ", mirrored" : "", sg.flipV ? ", upside down" : "", sg.rot ? ", turned" : "", sg.colour[0], sg.colour[1], sg.colour[2]);
+      }
       if (info.windows)
         std::printf("  %d window areas, %d windscreen texels, band y %.2f..%.2f%s\n", info.windows, info.windscreen, info.windowY0, info.windowY1,
                     info.windowY3 > 0 ? (", upper deck " + std::to_string(info.windowY2).substr(0, 4) + ".." +

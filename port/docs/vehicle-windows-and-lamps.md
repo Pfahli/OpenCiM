@@ -67,3 +67,22 @@ passengers as dark figures against the lit cabin.
   (`buildMips(…, 0b0110)`), so a lamp of a texel or two keeps its light at any distance. The shader's boost of up to
   16× from the pixel's footprint, which made up for an averaged mip and flickered as cars moved, is gone. On Berlin at
   night, six consecutive frames: 135 → 106 blinking bright pixels per frame, the spikes (221) gone.
+
+## Destination displays with the line number (2026-11-24)
+
+The number on a line vehicle's display shows its line's real number (`$index`, counted per transport type as the line
+panel does), redrawn in the texture's number field by the default shader before lighting (`regs_signs` in
+`engine/shaders.cpp`): an LED dot matrix (5x7 font) in the original text's colour, glowing more at night, or filled
+white glyphs on the roller boxes of tram-04. The rest of the display (the place name) stays as painted.
+
+* **Where:** `kSignFields` in `engine/night_lights.cpp`, measured by hand on the textures (automatic detection of
+  the text was unreliable at 512 texels: digits merge with letters): bus-12 (front and side), bus-13, bus-14 (front
+  and side), the London double-decker, tram-04 (roof box), tram-05, tram-07. The reading direction (mirrored, upside
+  down, turned) comes from the triangle under the field; the colour from the field's brightest quarter.
+* **The board** of a field may be marked (`boardX0..1`) so a shiny display is not taken for window glass; on a
+  double-decker no glass between the two decks' bands counts (the London bus's board was lit like a window, with
+  passengers over it).
+* **Checked** in the lineup (`REGS_TEST_LINEUP=0,0,1,180`, each vehicle a different number): bus-12 "10", bus-13
+  "47", bus-14 "158", the double-decker "70", tram-04 "56", tram-05 "138 Stadtplatz", tram-07 "Stadtplatz 128". Not
+  seen yet: the side displays of bus-12 and bus-14; tram-04's two side boxes (not found on the model); displays
+  without a number (bus-10, bus80) and the older vehicles' painted boards are not changed.

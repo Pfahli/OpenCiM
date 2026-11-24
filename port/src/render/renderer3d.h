@@ -61,6 +61,10 @@ struct GpuMaterial {
   float reflection = 0;   // header byte 0x27 / 255
   uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
   float cabinY[4] = {0, 0, 0, 0};  // vehicles: the window band's model height (passenger silhouettes), [2..3] upper deck
+  // vehicles: destination displays showing the line number (engine/night_lights.h VehicleLampInfo::Sign): per sign
+  // (u0, v0, u1, v1) and (flipU, flipV, aspect, style)
+  float signA[3][4] = {}, signB[3][4] = {}, signC[3][4] = {};  // C: the text colour
+  int signCount = 0;
   uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign, 5: clock face
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
@@ -229,6 +233,7 @@ struct DrawItem {
   float lampCode = 0;
   float cabinLight = 0;  // port night lights: the cabin light's strength (line vehicles: 0.5 by day, 1 at night)
   float vehicleSeed = 0;  // 0..1 per vehicle: which citizens drive it and sit at its upper front (shaders.cpp)
+  float lineNumber = 0;   // a line vehicle's line number for its destination displays (0: the texture's own)
   float passengers = 0;  // port night lights: the vehicle's shown occupancy 0..1 (silhouettes in the windows)  // port night lights: vehicle lamps (engine/night_lights.h vehicleLampCode), 0 = off  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
   // a per-instance custom4.xy over the material's (vehicles' animated parts: rotor angle and spin-up, which the engine
   // writes into each vehicle's own material copy, L:0x081adca0.c:604-690); z and w stay the material's
@@ -351,7 +356,7 @@ class Renderer3D {
     int eyePos = -1;  // raytraced reflections: the camera in world space
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1, passengerAtlas = -1, passengerInfo = -1,
-        passengerAnim = -1, cabinUpper = -1;
+        passengerAnim = -1, cabinUpper = -1, signA[3] = {-1, -1, -1}, signB[3] = {-1, -1, -1}, signC[3] = {-1, -1, -1}, signMeta = -1;
     // draw(): the view (viewSerial_) whose per-view uniforms (setupProgram) the program holds. They stay in the
     // program between uses (GL program objects; the Vulkan device's per-program uniform block and sampler units),
     // so a program used again in the same draw() is not set up again.
