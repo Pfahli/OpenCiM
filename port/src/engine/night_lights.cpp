@@ -1,6 +1,7 @@
-﻿// Night lights of the port's day/night cycle: lit windows and street lamps (engine/night_lights.h,
+// Night lights of the port's day/night cycle: lit windows and street lamps (engine/night_lights.h,
 // docs/renderer/night-lights.md).
 #include "engine/night_lights.h"
+#include "engine/passenger_atlas.h"
 #include "core/env.h"
 
 #include <algorithm>
@@ -64,7 +65,10 @@ bool decodeAtMost(const Image& img, int maxSize, std::vector<uint8_t>& rgba, int
 }
 
 // box-filtered mip chain of BGRA8 level 0
-void buildMips(Image& img) {
+// maxChannels: bit per byte of a BGRA texel whose smaller levels keep the brightest of the four instead of the mean
+// (the vehicle lamps: a lamp of a texel or two keeps its full light at every distance, so the shader needs no boost
+// that made it flicker as the car moved)
+void buildMips(Image& img, unsigned maxChannels = 0) {
   img.mipCount = 1;
   int w = img.width, h = img.height;
   while (w > 1 || h > 1) {
@@ -74,14 +78,16 @@ void buildMips(Image& img) {
     for (int y = 0; y < nh; ++y)
       for (int x = 0; x < nw; ++x)
         for (int c = 0; c < 4; ++c) {
-          int sum = 0, n = 0;
+          int sum = 0, n = 0, mx = 0;
           for (int dy = 0; dy < 2; ++dy)
             for (int dx = 0; dx < 2; ++dx) {
               int sx = std::min(w - 1, 2 * x + dx), sy = std::min(h - 1, 2 * y + dy);
-              sum += src[(size_t(sy) * size_t(w) + size_t(sx)) * 4 + size_t(c)];
+              int s = src[(size_t(sy) * size_t(w) + size_t(sx)) * 4 + size_t(c)];
+              sum += s, mx = std::max(mx, s);
               ++n;
             }
-          dst[(size_t(y) * size_t(nw) + size_t(x)) * 4 + size_t(c)] = uint8_t((sum + n / 2) / n);
+          dst[(size_t(y) * size_t(nw) + size_t(x)) * 4 + size_t(c)] =
+              uint8_t((maxChannels >> c & 1) ? mx : (sum + n / 2) / n);
         }
     img.levels.push_back(std::move(dst));
     ++img.mipCount;
@@ -1085,10 +1091,41 @@ uint32_t buildingWindowMask(Display& d, VM& vm, const MaterialDef& m, const std:
 
 // ---- vehicle lamps ----
 
+namespace {
+
+// Vehicles whose head lamps the search below gets wrong, by their diffuse texture: the front lamps are these lens
+// discs instead (texture fractions u, v, radius in widths), and nothing else on that texture
+struct LampFix {
+  const char* texture;
+  int count;  // lamps on the model (VehicleLampInfo::frontLamps)
+  struct Disc {
+    float u, v, r;
+  };
+  Disc discs[3];
+};
+const LampFix kLampFixes[] = {
+    // the 1920s Berlin tram (tram-01): the two roof-corner lamps (both on the hexagonal lens at texel (158, 127), above
+    // the search's height band) and the lamp in the middle of the dash (the round lens at texel (350, 171)); the
+    // search took the cream panel under the windows instead (one large glow, off centre and far too bright)
+    {"metro/objects/vehicles/tram-01/tram01.dds", 3,
+     {{158.5f / 512.0f, 127.5f / 256.0f, 4.5f / 512.0f}, {349.5f / 512.0f, 170.5f / 256.0f, 4.5f / 512.0f}, {0, 0, 0}}},
+};
+
+const LampFix* lampFixFor(const std::string& texture) {
+  std::string t = texture;
+  std::transform(t.begin(), t.end(), t.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+  for (const LampFix& f : kLampFixes)
+    if (t == f.texture) return &f;
+  return nullptr;
+}
+
+}  // namespace
+
 bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffuse, const Image* specular, Image& out,
-                         VehicleLampInfo* info, bool rail) {
+                         VehicleLampInfo* info, bool rail, const std::string& texture) {
   VehicleLampInfo local;
   VehicleLampInfo& st = info ? *info : local;
+  const LampFix* fix = lampFixFor(texture);
   std::vector<uint8_t> dif, spe;
   int w = 0, h = 0, sw = 0, sh = 0;
   if (!decodeAtMost(diffuse, 512, dif, w, h)) return false;
@@ -1239,6 +1276,21 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       }
     keep.swap(grow);
   }
+  if (fix) {  // the known lamps of this texture instead of the front lamps found
+    for (size_t k = 0; k < keep.size(); ++k)
+      if (keep[k] && lamp[k] == 1) keep[k] = 0, lamp[k] = 0;
+    for (const LampFix::Disc& dc : fix->discs) {
+      if (dc.r <= 0) continue;
+      float cx = dc.u * float(w), cy = dc.v * float(h), r = dc.r * float(w);
+      for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+          if (std::hypot(float(x) + 0.5f - cx, float(y) + 0.5f - cy) <= r) {
+            size_t k = size_t(y) * size_t(w) + size_t(x);
+            keep[k] = 1, lamp[k] = 1;
+          }
+    }
+    st.frontLamps = fix->count;
+  }
   // window glass (interior light of buses, trams and trains): the specular map's bright areas, above 60 % of its
   // brightest level (the paint is shiny too, but well below the glass); window-sized areas only (no lamp lenses)
   std::vector<uint8_t> win(lamp.size(), 0);
@@ -1299,7 +1351,7 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
   out.format = Image::Format::BGRA8;
   out.width = w, out.height = h;
   out.levels.push_back(std::move(px));
-  buildMips(out);
+  buildMips(out, 0b0110);  // the lamps (G rear, R front) by their brightest texel; the windows (B) averaged
   return true;
 }
 
@@ -1323,7 +1375,8 @@ uint32_t vehicleLampMask(Display& d, VM& vm, const ObjectData& od, int material,
     std::string n = od.name;
     std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     bool rail = n.find("tram") != std::string::npos || n.find("metro") != std::string::npos || n.find("train") != std::string::npos;
-    if (makeVehicleLampMask(od.mesh, material, di, haveSpec ? &si : nullptr, mask, &li, rail)) tex = d.r2d().createTexture(mask);
+    if (makeVehicleLampMask(od.mesh, material, di, haveSpec ? &si : nullptr, mask, &li, rail, m.textures[0]))
+      tex = d.r2d().createTexture(mask);
   }
   if (debugNight())
     LOG_INFO("night: vehicle lamps %s / %s: %d front, %d rear, %d windows", od.name.c_str(), m.name.c_str(), li.frontLamps,
@@ -1769,6 +1822,8 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
   NightState ns = skyNightState(sky);
   vehicleNight01() = 0;
   vehicleCycleOn() = false;
+  // the passengers in lit cabins (by day too, and without the cycle): the game's citizens as silhouettes
+  v.passengerAtlas = passengerAtlasTexture(vm.vfs(), v.passengerInfo);
   if (!ns.on) return;
   float windows = smooth(0.18f, 0.72f, ns.night01);
   float lamps = smooth(0.32f, 0.62f, ns.night01);

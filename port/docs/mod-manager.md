@@ -128,7 +128,8 @@ speeds and multiplies its lives by it.
 Script natives: `regsMods()` (§4.1) and `regsShaderUniform(name, value)`: sets a `vec4` uniform of the shader hooks
 (float → (v, 0, 0, 0), vector → (x, y, z, 0), quat → (x, y, z, w)), applied to every hooked program from the next frame.
 `regsShaderTexture(sampler, path)`: a texture of the mod's own for its hooks, read as `uniform sampler2D <sampler>;` in
-the hook file. It gets one of the three texture units kept for mods (13-15); returns false and logs who holds them
+the hook file. It gets one of the two texture units kept for mods (13-14; 15 holds the passenger silhouettes since
+2026-11-24); returns false and logs who holds them
 when all are taken. The port keeps everything within the 16 units every GL 3.3 GPU has (Macs, Raspberry Pi and many
 ARM GPUs have no more): materials 0-5, the night lights' light map 6, the shadow map 7, the hooks' maps 8-12 (the
 environment cube; the surface classes; the lanes with their lists and cells in one texture; the top map with the

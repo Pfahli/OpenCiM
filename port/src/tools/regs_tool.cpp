@@ -1,4 +1,4 @@
-﻿// regs-tool: developer commands for the ReGS port.
+// regs-tool: developer commands for the ReGS port.
 //   regs-tool vfs <gameDir> stats|verify|list [prefix]|cat <path> [out]
 //   regs-tool parse-all <gameDir> [maxErrors]   parse every script-source file in the VFS
 //   regs-tool parse <file>                      dump the AST of one file on disk
@@ -25,6 +25,7 @@
 #include "engine/engine.h"
 #include "engine/host.h"
 #include "engine/night_lights.h"
+#include "engine/passenger_atlas.h"
 #include "engine/shaders.h"
 #include "platform/window.h"
 #include "render/gpu.h"
@@ -529,6 +530,27 @@ int cmdSkinTest(int argc, char** argv) {
   return 0;
 }
 
+// passengers <gameDir> <out.pgm>: the passenger silhouette atlas (engine/passenger_atlas.h) as a greyscale image
+int cmdPassengers(int argc, char** argv) {
+  if (argc < 4) return 2;
+  Vfs vfs;
+  vfs.setInstallRoot(widen(argv[2]));
+  vfs.rescan();
+  engine::PassengerAtlas a;
+  if (!engine::buildPassengerAtlas(vfs, a)) {
+    std::printf("no citizen models found\n");
+    return 1;
+  }
+  for (size_t r = 0; r < a.models.size(); ++r) std::printf("row %zu: %s\n", r, a.models[r].c_str());
+  std::FILE* f = std::fopen(argv[3], "wb");
+  if (!f) return 1;
+  std::fprintf(f, "P5\n%d %d\n255\n", a.width(), a.height());
+  std::fwrite(a.pixels.data(), 1, a.pixels.size(), f);
+  std::fclose(f);
+  std::printf("%dx%d texels\n", a.width(), a.height());
+  return 0;
+}
+
 // shadowtest: the light-camera fit on the worked example of docs/renderer/shadows.md §3.7, compared with its numbers
 int cmdShadowTest(int, char**) {
   engine::ShadowFitIn in;
@@ -803,9 +825,14 @@ int cmdVehicleLamps(int argc, char** argv) {
         ok = engine::makeLampGlassMask(od.mesh, int(mi), engine::findLampHeads(od.mesh), di, spec ? &si : nullptr, mask, &texels);
         info.frontLamps = texels;
       } else {
-        ok = engine::makeVehicleLampMask(od.mesh, int(mi), di, spec ? &si : nullptr, mask, &info);
+        std::string n = od.name;  // as vehicleLampMask decides it
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        bool rail = n.find("tram") != std::string::npos || n.find("metro") != std::string::npos || n.find("train") != std::string::npos;
+        ok = engine::makeVehicleLampMask(od.mesh, int(mi), di, spec ? &si : nullptr, mask, &info, rail, m.textures[0]);
       }
       std::printf("%s / %s: %d front, %d rear lamp areas\n", argv[a], m.name.c_str(), info.frontLamps, info.rearLamps);
+      if (info.windows)
+        std::printf("  %d window areas, band y %.2f..%.2f\n", info.windows, info.windowY0, info.windowY1);
       if (!ok) continue;
       std::vector<uint8_t> drgba;
       int dw = 0, dh = 0, level = 0;
@@ -916,6 +943,7 @@ int main(int argc, char** argv) {
     else if (cmd == "shaders") rc = cmdShaders(argc, argv);
     else if (cmd == "shadowtest") rc = cmdShadowTest(argc, argv);
     else if (cmd == "skintest") rc = cmdSkinTest(argc, argv);
+    else if (cmd == "passengers") rc = cmdPassengers(argc, argv);
     else if (cmd == "sound") rc = cmdSound(argc, argv);
     else if (cmd == "cut") rc = cmdCut(argc, argv);
     else if (cmd == "softdot") rc = cmdSoftDot(argc, argv);

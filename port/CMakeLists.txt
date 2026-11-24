@@ -76,6 +76,7 @@ add_library(regs_engine STATIC
   src/engine/stereo.cpp
   src/engine/headtrack.cpp
   src/engine/night_lights.cpp
+  src/engine/passenger_atlas.cpp
   src/engine/texture_upscale.cpp
   src/engine/traffic_lights.cpp
   src/engine/interaction.cpp

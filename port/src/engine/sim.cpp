@@ -2891,14 +2891,24 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
       float code = vehicleLampCode(front, rear, cabin, std::max(on, cabin ? 0.02f : 0.0f));
       float cabinLight = cabin ? 0.5f + 0.5f * on : 0.0f;
       for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code, items[k].cabinLight = cabinLight;
-      // passengers in the windows: the line vehicle's load, eased so the silhouettes fade in and out
+      // passengers in the windows: the line vehicle's load in steps the eye can count (empty, up to a quarter, half,
+      // three quarters, full: 0, 0.25, 0.5, 0.75, 1), eased so the silhouettes fade in and out, and snapped to the
+      // step at the end (an empty car shows nobody, not a last figure fading forever)
       if (m.transit && m.vehicle >= 0) {
         static std::vector<float> shown;
         size_t mi = size_t(&m - s->movers.data());
         if (shown.size() <= mi) shown.resize(mi + 1, 0.0f);
         const VehicleState& vs = s->vehicles[size_t(m.vehicle)];
-        float target = vs.capacity > 0 ? std::clamp(float(vs.passengerCount) / float(vs.capacity), 0.0f, 1.0f) : 0.0f;
-        if (unit == 0) shown[mi] += (target - shown[mi]) * std::min(1.0f, vm.frameDt() * 0.8f);
+        float load = vs.capacity > 0 ? std::clamp(float(vs.passengerCount) / float(vs.capacity), 0.0f, 1.0f) : 0.0f;
+        float target = vs.passengerCount > 0 ? std::ceil(load * 4.0f - 1e-4f) / 4.0f : 0.0f;
+        target = std::clamp(target, vs.passengerCount > 0 ? 0.25f : 0.0f, 1.0f);
+        // REGS_TEST_PASSENGERS=<0..1> (screenshots): every line vehicle shows that load
+        static const char* testLoad = regs::envVar("REGS_TEST_PASSENGERS");
+        if (testLoad) target = std::clamp(float(std::atof(testLoad)), 0.0f, 1.0f);
+        if (unit == 0) {
+          shown[mi] += (target - shown[mi]) * std::min(1.0f, vm.frameDt() * 0.8f);
+          if (std::fabs(target - shown[mi]) < 0.01f) shown[mi] = target;
+        }
         for (size_t k = first; k < items.size(); ++k) items[k].passengers = shown[mi];
       }
     }

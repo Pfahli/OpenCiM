@@ -25,7 +25,10 @@ constexpr int kHookSurfaceUnit = 9;       // the map's surface classes (regs_Sur
 constexpr int kHookLaneTrafficUnit = 10;  // the lanes, their lists and cells (regs_LaneTraffic)
 constexpr int kHookTopUnit = 11;          // the top map and the trodden map (regs_TopMap: r top, g trodden)
 constexpr int kHookFootAtlasUnit = 12;    // the footprint map, atlas and tile index in one (regs_footprintAt)
-constexpr int kModUnitFirst = 13, kModUnitCount = 3;  // the mods' texture units
+constexpr int kModUnitFirst = 13, kModUnitCount = 2;  // the mods' texture units
+// the passenger silhouette atlas (engine/passenger_atlas.h): most vehicle materials fill all of units 0-5, so it has
+// a unit of its own (the mods kept 13-15 until 2026-11-24, none used them)
+constexpr int kPassengerUnit = 15;
 
 // shader programs linked so far and the seconds spent (load-time measurements, REGS_LOG_TIME)
 extern int gProgramsLinked;
@@ -185,6 +188,10 @@ struct SceneView {
   uint32_t carMap = 0;                // the same light map's other half: headlights around the view
   float carMapXf[4] = {0, 0, 0, 0};   // uv = (world.xz − (x, y)) · (z, w)
   float carLight[4] = {0, 1, 0, 0};   // ground height = [0] + a · [1]; [2] = strength (0: none)
+  // passenger silhouettes (engine/passenger_atlas.h): the atlas, bound on the unit after a vehicle's window mask, and
+  // its rows, columns, cell height and width in model units (rows 0: none, the shader's plain figures)
+  uint32_t passengerAtlas = 0;
+  float passengerInfo[4] = {0, 8, 2.3f, 1.1f};
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
   // shadows: the map on texture unit 7 (main pass with ENVIROMENT_SHADOWMAP) and the shader uniforms
@@ -342,7 +349,8 @@ class Renderer3D {
     int sunPos = -1;  // raytraced shadows (render/glsl.h)
     int eyePos = -1;  // raytraced reflections: the camera in world space
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
-        lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1;
+        lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1, passengerAtlas = -1, passengerInfo = -1,
+        passengerAnim = -1;
     // draw(): the view (viewSerial_) whose per-view uniforms (setupProgram) the program holds. They stay in the
     // program between uses (GL program objects; the Vulkan device's per-program uniform block and sampler units),
     // so a program used again in the same draw() is not set up again.

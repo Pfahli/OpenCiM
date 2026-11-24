@@ -62,8 +62,10 @@ struct VehicleLampInfo {
   int windows = 0;                    // window glass areas (channel B: interior light)
   float windowY0 = 0, windowY1 = 0;   // the window band's model height (passenger silhouettes), 0 0 = unknown
 };
+// texture: the diffuse map's VFS path (a few models' lamps are corrected by it, kLampFixes)
 bool makeVehicleLampMask(const render::MeshData& mesh, int material, const render::Image& diffuse,
-                         const render::Image* specular, render::Image& out, VehicleLampInfo* info, bool rail = false);
+                         const render::Image* specular, render::Image& out, VehicleLampInfo* info, bool rail = false,
+                         const std::string& texture = {});
 // The GL lamp mask of a vehicle model's material (cached), 0 when it has no lamps; the lamps of the whole model.
 uint32_t vehicleLampMask(Display& d, script::VM& vm, const render::ObjectData& od, int material,
                          VehicleLampInfo* info = nullptr);

@@ -824,6 +824,9 @@ Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.carMap = at("regs_CarMap");
   l.carMapXf = at("regs_CarMapXf");
   l.carLight = at("regs_CarLight");
+  l.passengerAtlas = at("regs_PassengerAtlas");
+  l.passengerInfo = at("regs_PassengerInfo");
+  l.passengerAnim = at("regs_PassengerAnim");
   return l;
 }
 
@@ -876,6 +879,8 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   dev().uniform4fv(l.lampMapXf, 1, v.lampMapXf);
   dev().uniform4fv(l.lampHeight, 1, v.lampHeight);
   dev().uniform1i(l.carMap, kNightMapUnit);
+  dev().uniform1i(l.passengerAtlas, kNightMapUnit);
+  dev().uniform4f(l.passengerAnim, v.timer, 0, 0, 0);
   dev().uniform4fv(l.carMapXf, 1, v.carMapXf);
   dev().uniform4f(l.carLight, v.carLight[0], v.carLight[1], v.carMap ? v.carLight[2] : 0.0f, 0);
   if (l.hookOn >= 0) {  // the mods' shader hooks: colour passes of hooked views; shadow-map passes for some (2)
@@ -966,6 +971,14 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
     dev().uniform1i(l.windowMask, code > 0 ? maskUnit : kNightMapUnit);
     if (code > 0) {
       dev().bindTexture(maskUnit, m.windowMask);
+    }
+    // passenger silhouettes: the atlas on its own unit, else the plain figures
+    if (l.passengerInfo >= 0 && m.windowKind == 1) {
+      bool atlas = code > 0 && v.passengerAtlas;
+      float info[4] = {atlas ? v.passengerInfo[0] : 0.0f, v.passengerInfo[1], v.passengerInfo[2], v.passengerInfo[3]};
+      dev().uniform4fv(l.passengerInfo, 1, info);
+      dev().uniform1i(l.passengerAtlas, atlas ? kPassengerUnit : kNightMapUnit);
+      if (atlas) dev().bindTexture(kPassengerUnit, v.passengerAtlas);
     }
   }
   for (int i = 0; i < 8; ++i) dev().uniform4fv(l.custom[i], 1, it.layerCustom ? it.layerCustom[i] : m.custom[i]);
