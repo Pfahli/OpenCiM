@@ -1441,7 +1441,9 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
             float u = b0 * mesh.uv0[t[0] * 2] + b1 * mesh.uv0[t[1] * 2] + b2 * mesh.uv0[t[2] * 2];
             float v = b0 * mesh.uv0[t[0] * 2 + 1] + b1 * mesh.uv0[t[1] * 2 + 1] + b2 * mesh.uv0[t[2] * 2 + 1];
             int tx = std::clamp(int((u - std::floor(u)) * float(w)), 0, w - 1), ty = std::clamp(int((v - std::floor(v)) * float(h)), 0, h - 1);
-            if (win[size_t(ty) * size_t(w) + size_t(tx)] > 128) ys.push_back(b0 * a.y + b1 * b.y + b2 * c.y);
+            // side glass only: a windscreen may reach over both decks (tram-07's front) and hide the gap between them
+            size_t kk = size_t(ty) * size_t(w) + size_t(tx);
+            if (win[kk] > 128 && !endFace[kk]) ys.push_back(b0 * a.y + b1 * b.y + b2 * c.y);
           }
       }
     }
@@ -1452,6 +1454,30 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       float gap = 0;
       for (size_t i = ys.size() / 20; i + 1 < ys.size() * 19 / 20; ++i)
         if (ys[i + 1] - ys[i] > gap) gap = ys[i + 1] - ys[i], cut = i + 1;
+      if (!(gap > 0.35f && gap > 0.2f * (hi - lo))) {
+        // no empty gap: a thin place between two dense bands (tram-07, whose bulging front glass reaches over both
+        // decks): heights in 0.1 bins, smoothed; the emptiest bin between the 25th and 75th percentile, when it holds
+        // under a third of the denser bins on both sides
+        const float b0 = lo;
+        const int nb = std::max(1, int((hi - lo) / 0.1f) + 1);
+        std::vector<float> hist(size_t(nb), 0), sm(size_t(nb), 0);
+        for (float y : ys)
+          if (y >= lo && y <= hi) hist[size_t(std::min(nb - 1, int((y - b0) / 0.1f)))] += 1;
+        for (int i = 0; i < nb; ++i)
+          for (int k = -1; k <= 1; ++k) sm[size_t(i)] += hist[size_t(std::clamp(i + k, 0, nb - 1))] / 3.0f;
+        int i0 = std::clamp(int((ys[ys.size() / 4] - b0) / 0.1f), 0, nb - 1), i1 = std::clamp(int((ys[ys.size() * 3 / 4] - b0) / 0.1f), 0, nb - 1);
+        int best = -1;
+        for (int i = i0; i <= i1; ++i)
+          if (best < 0 || sm[size_t(i)] < sm[size_t(best)]) best = i;
+        if (best > 0) {
+          float below = *std::max_element(sm.begin(), sm.begin() + best), above = *std::max_element(sm.begin() + best, sm.end());
+          if (sm[size_t(best)] < std::min(below, above) / 3.0f) {
+            float cy = b0 + (float(best) + 0.5f) * 0.1f;
+            cut = size_t(std::lower_bound(ys.begin(), ys.end(), cy) - ys.begin());
+            gap = 1.0f;  // accepted below
+          }
+        }
+      }
       if (gap > 0.35f && gap > 0.2f * (hi - lo) && cut > ys.size() / 5 && cut < ys.size() * 4 / 5) {
         st.windowY0 = ys[cut / 10], st.windowY1 = ys[cut * 9 / 10];
         size_t n2 = ys.size() - cut;

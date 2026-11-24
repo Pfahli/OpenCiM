@@ -31,7 +31,8 @@ passengers as dark figures against the lit cabin.
   triangle, the ones on lit glass), not from the texture, since both decks may use the same panes; a clear gap in the
   heights splits it into a lower and an upper deck band (`windowY2..3`, `regs_CabinUpper`), each deck with its own
   people. Until then a double-decker's figures stood across both floors. Found two decks: the double-decker, bus-07,
-  bus-12, tram-02. Left: bus-07's upper windows are found as glass in one pane only.
+  bus-12, tram-02, tram-07 (its bulging front glass reaches over both decks and filled the gap: a thin place in the
+  heights between two dense bands counts as the split too, 2026-11-24). Left: bus-07's upper windows are found as glass in one pane only.
 * **The driver** (2026-11-24, owner's request): the cab is lit at half the cabin light (it was dark), and the
   leading end's windscreen shows a citizen seen from the front, seated on the vehicle's left (the viewer's right). The
   windscreen glass is marked in the mask's alpha (255 out of the model's front, 128 out of its rear, kept through the
