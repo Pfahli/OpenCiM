@@ -74,6 +74,8 @@ struct VehicleLampInfo {
     float boardU0 = 0, boardU1 = 0;     // the whole display board along u (number and name), 0 0: the number only
     float boardAspect = 1;
     bool numberLast = false;            // "Stadtplatz 61" rather than "61 Stadtplatz"
+    float angle = 0;                    // a slanted board: radians; then u0, v0 its centre, u1, v1 half sizes in u units
+    float texRatio = 0.5f;              // the texture's height over width (slanted boards)
   };
   Sign signs[3];
   int signCount = 0;

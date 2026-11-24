@@ -1121,6 +1121,9 @@ struct SignField {
   int solid;  // 0 LED dots, 1 printed light glyphs on a dark box, 2 printed dark glyphs on a light plate
   int boardX0 = -1, boardX1 = -1;  // the whole display board across (when shiny: not window glass), else the field
   bool numberLast = false;
+  // a slanted display (degrees, the text rising to the right on the texture): then x0, y0 is the board's centre and
+  // x1, y1 its length and height along and across the text, and the whole board shows number and name
+  float angle = 0;
 };
 const SignField kSignFields[] = {
     {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 17, 150, 29, 162, 0, 15, 68},     // front "100 S-Bahn..."
@@ -1141,6 +1144,8 @@ const SignField kSignFields[] = {
     {"metro/objects/vehicles/metro-02/metro02.dds", 512, 256, 406, 100, 422, 108, 1},    // box "10"
     {"metro/objects/vehicles/metro-03/metro03.dds", 512, 256, 24, 118, 41, 128, 1},      // boxes "13"
     {"metro/objects/vehicles/tram-03/tram03.dds", 512, 256, 202, 150, 218, 166, 2},      // round plate "1"
+    // tram-06: the front display, slanted 29 degrees on the texture (amber text from (458, 104) to (480, 92))
+    {"metro/objects/vehicles/tram-06/tram06.dds", 512, 256, 466, 98, 40, 8, 0, -1, -1, false, 29.0f},
 };
 
 bool sameTexture(const std::string& a, const char* b) {
@@ -1491,9 +1496,20 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     // reading direction comes from the model (the triangle under the field), the text colour from the texture
     for (const SignField& sf : kSignFields) {
       if (st.signCount >= 3 || !sameTexture(texture, sf.texture)) continue;
-      int x0 = sf.x0 * w / sf.w, x1 = sf.x1 * w / sf.w, y0 = sf.y0 * h / sf.h, y1 = sf.y1 * h / sf.h;
+      const bool slanted = sf.angle != 0;
+      const float ang = sf.angle * 3.14159265f / 180.0f, ca = std::cos(ang), sa = std::sin(ang);
+      float sLen = float(sf.x1) * float(w) / float(sf.w), sHgt = float(sf.y1) * float(h) / float(sf.h);
+      int x0, x1, y0, y1;
+      if (slanted) {  // the bounding box of the turned board
+        float cxs = float(sf.x0) * float(w) / float(sf.w), cys = float(sf.y0) * float(h) / float(sf.h);
+        float ex = 0.5f * (std::fabs(sLen * ca) + std::fabs(sHgt * sa)), ey = 0.5f * (std::fabs(sLen * sa) + std::fabs(sHgt * ca));
+        x0 = int(cxs - ex), x1 = int(cxs + ex) + 1, y0 = int(cys - ey), y1 = int(cys + ey) + 1;
+      } else {
+        x0 = sf.x0 * w / sf.w, x1 = sf.x1 * w / sf.w, y0 = sf.y0 * h / sf.h, y1 = sf.y1 * h / sf.h;
+      }
       x0 = std::clamp(x0, 0, w - 1), x1 = std::clamp(x1, x0 + 1, w), y0 = std::clamp(y0, 0, h - 1), y1 = std::clamp(y1, y0 + 1, h);
-      float cu = 0.5f * float(x0 + x1), cv = 0.5f * float(y0 + y1);
+      float cu = slanted ? float(sf.x0) * float(w) / float(sf.w) : 0.5f * float(x0 + x1);
+      float cv = slanted ? float(sf.y0) * float(h) / float(sf.h) : 0.5f * float(y0 + y1);
       bool found = false, rot = false, flipS = false, flipT = false;
       for (const Submesh& sm : mesh.submeshes) {
         if (sm.material != material || found) continue;
@@ -1522,9 +1538,15 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
           Vec3 up{0, 1, 0}, right = cross(n * -1.0f, up);
           if (dot(right, right) < 1e-6f) continue;  // a face looking up or down
           // the text reads along u, or along v when the field is turned on the texture (tram-04's side boxes)
-          rot = std::fabs(dot(gU, right)) < std::fabs(dot(gV, right));
-          flipS = (rot ? dot(gV, right) : dot(gU, right)) < 0;
-          flipT = (rot ? dot(gU, up) : dot(gV, up)) > 0;
+          if (slanted) {  // along the text: (cos, -sin) in texels (v grows downwards); across: (sin, cos)
+            Vec3 along = gU * ca + gV * -sa, across = gU * sa + gV * ca;
+            flipS = dot(along, right) < 0;
+            flipT = dot(across, up) > 0;
+          } else {
+            rot = std::fabs(dot(gU, right)) < std::fabs(dot(gV, right));
+            flipS = (rot ? dot(gV, right) : dot(gU, right)) < 0;
+            flipT = (rot ? dot(gU, up) : dot(gV, up)) > 0;
+          }
           found = true;
         }
       }
@@ -1533,6 +1555,10 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       std::vector<std::array<int, 4>> px;
       for (int y = y0; y < y1; ++y)
         for (int x = x0; x < x1; ++x) {
+          if (slanted) {  // only inside the turned board (its corners hold the frame)
+            float dx = float(x) + 0.5f - cu, dy = float(y) + 0.5f - cv;
+            if (std::fabs(dx * ca - dy * sa) > 0.5f * sLen || std::fabs(dx * sa + dy * ca) > 0.5f * sHgt) continue;
+          }
           const uint8_t* q = &dif[(size_t(y) * size_t(w) + size_t(x)) * 4];
           px.push_back({q[0] * 30 + q[1] * 59 + q[2] * 11, q[0], q[1], q[2]});
         }
@@ -1551,6 +1577,11 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
         sg.boardU0 = float(b0) / float(w), sg.boardU1 = float(b1) / float(w);
         sg.boardAspect = float(b1 - b0) / float(y1 - y0);
         sg.numberLast = sf.numberLast;
+      }
+      if (slanted) {  // centre and half sizes in u units, the angle, the texture's height over width
+        sg.u0 = cu / float(w), sg.v0 = cv / float(h), sg.u1 = 0.5f * sLen / float(w), sg.v1 = 0.5f * sHgt / float(w);
+        sg.aspect = sLen / sHgt, sg.angle = ang, sg.texRatio = float(h) / float(w), sg.rot = false;
+        sg.boardU0 = sg.boardU1 = 0, sg.boardAspect = sg.aspect, sg.numberLast = sf.numberLast;
       }
       for (int ch = 0; ch < 3; ++ch) sg.colour[ch] = rgb[ch] / mx;  // full brightness, the hue of the original text
       // (a light plate: the brightest quarter is the plate, kept at its own brightness)
@@ -1634,11 +1665,12 @@ void applyVehicleLamps(GpuMaterial& g, const VehicleLampInfo& li) {
     const VehicleLampInfo::Sign& s = li.signs[i];
     float a[4] = {s.u0, s.v0, s.u1, s.v1};
     float b[4] = {s.flipU ? 1.0f : 0.0f, s.flipV ? 1.0f : 0.0f, s.aspect, float(s.style) + (s.rot ? 10.0f : 0.0f)};
-    float c[4] = {s.colour[0], s.colour[1], s.colour[2], 0};
+    float c[4] = {s.colour[0], s.colour[1], s.colour[2], s.angle};
     std::copy(a, a + 4, g.signA[i]);
     std::copy(b, b + 4, g.signB[i]);
     std::copy(c, c + 4, g.signC[i]);
-    float dd[4] = {s.boardU0, s.boardU1, s.boardAspect, s.numberLast ? 1.0f : 0.0f};
+    // (a slanted board: x -1 marks the whole board as number and name, z the texture's height over width)
+    float dd[4] = {s.angle != 0 ? -1.0f : s.boardU0, s.boardU1, s.angle != 0 ? s.texRatio : s.boardAspect, s.numberLast ? 1.0f : 0.0f};
     std::copy(dd, dd + 4, g.signD[i]);
   }
 }

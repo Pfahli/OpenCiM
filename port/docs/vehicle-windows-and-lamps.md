@@ -105,3 +105,4 @@ with the game's own fonts:
 Seen in the lineup: "47 Ostkreuz" scrolling (bus-13), "158 Rathaus" (bus-14), "70 Zoo" (London bus), "130
 Stadtplatz" (tram-05), "Stadtplatz 128" (tram-07), Blair numbers on bus-03 and tram-03. Not seen on a running line
 of a save yet (names and end stops come from the line panel's data).
+* **Slanted displays** (2026-11-24): a field may be turned on the texture (ngle; centre, length and height instead of a box); the shader turns it back. tram-06 (the red articulated tram of the player's save): its front display, 29 degrees on the texture, shows number and end stop as an LED ticker. Seen on the save at night: running, but at the game's closest zoom the board is about 10 pixels high, so the text is hard to read.
