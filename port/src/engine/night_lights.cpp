@@ -1144,6 +1144,9 @@ const SignField kSignFields[] = {
     {"metro/objects/vehicles/metro-02/metro02.dds", 512, 256, 406, 100, 422, 108, 1},    // box "10"
     {"metro/objects/vehicles/metro-03/metro03.dds", 512, 256, 24, 118, 41, 128, 1},      // boxes "13"
     {"metro/objects/vehicles/tram-03/tram03.dds", 512, 256, 202, 150, 218, 166, 2},      // round plate "1"
+    // side displays (2026-11-24): tram-05's two-line LED board, tram-01's printed name plate
+    {"metro/objects/vehicles/tram-05/tram05.dds", 512, 256, 335, 112, 452, 125, 0, 335, 452},
+    {"metro/objects/vehicles/tram-01/tram01.dds", 512, 256, 52, 188, 108, 195, 2, 52, 108},
     // tram-06: the front display, slanted 29 degrees on the texture (amber text from (458, 104) to (480, 92))
     {"metro/objects/vehicles/tram-06/tram06.dds", 512, 256, 466, 98, 40, 8, 0, -1, -1, false, 29.0f},
 };
@@ -1372,6 +1375,19 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     for (size_t acc = 0; top > 0 && (acc += size_t(hist[size_t(top)])) < lamp.size() / 200;) --top;
     float T = std::max(0.3f, 0.6f * float(top) / 255.0f);
     std::vector<int> lab(lamp.size(), -1);
+    struct Box {
+      int x0, y0, x1, y1;
+    };
+    std::vector<Box> paneBox;                                   // of the panes taken
+    std::vector<std::pair<Box, std::vector<size_t>>> smallPanes;  // solid panes too small alone (see below)
+    auto boxOf = [&](const std::vector<size_t>& comp) {
+      Box b{w, h, -1, -1};
+      for (size_t p : comp) {
+        int x = int(p % size_t(w)), y = int(p / size_t(w));
+        b.x0 = std::min(b.x0, x), b.x1 = std::max(b.x1, x), b.y0 = std::min(b.y0, y), b.y1 = std::max(b.y1, y);
+      }
+      return b;
+    };
     for (size_t i = 0; i < lamp.size(); ++i) {
       if (sv[i] <= T || keep[i] || lab[i] >= 0) continue;
       std::vector<size_t> comp;
@@ -1393,18 +1409,45 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       if (comp.size() * 1000 < lamp.size() * 15) {
         // a smaller area only as a solid pane: old trams' windows are split by their bars into panes of 0.3-1 % of
         // the texture (tram-01: 0.5 %); chrome trims and lamp lenses are thin or small
-        int bx0 = w, bx1 = -1, by0 = h, by1 = -1;
-        for (size_t p : comp) {
-          int x = int(p % size_t(w)), y = int(p / size_t(w));
-          bx0 = std::min(bx0, x), bx1 = std::max(bx1, x), by0 = std::min(by0, y), by1 = std::max(by1, y);
-        }
-        int bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+        Box b = boxOf(comp);
+        int bw = b.x1 - b.x0 + 1, bh = b.y1 - b.y0 + 1;
         float fill = float(comp.size()) / float(bw * bh);
-        if (comp.size() * 1000 < lamp.size() * 3 || fill < 0.85f || std::max(bw, bh) > 8 * std::min(bw, bh)) continue;
+        if (std::max(bw, bh) > 8 * std::min(bw, bh)) continue;
+        // (a pane under 0.3 %, or a little less solid, only beside another window: see below)
+        if (comp.size() * 1000 < lamp.size() * 3 || fill < 0.85f) {
+          if (fill >= 0.8f && comp.size() * 10000 >= lamp.size() * 4) smallPanes.push_back({b, std::move(comp)});
+          continue;
+        }
       }
+      paneBox.push_back(boxOf(comp));
       panes.push_back(std::move(comp));
       ++st.windows;
     }
+    // the narrow panes beside an old tram's windows and the vent panes over a double-decker's (under 0.3 % of the
+    // texture, 2026-11-24): taken when they sit right next to a window taken, beside it or above/below it. Two such
+    // panes of a window split by its bar (bus-07's rear window upstairs), together over 0.3 %, count as one window
+    const int near = std::max(3, w / 40);
+    auto adjacent = [&](const Box& b, const Box& o) {
+      int gapX = std::max(o.x0 - b.x1, b.x0 - o.x1), gapY = std::max(o.y0 - b.y1, b.y0 - o.y1);
+      int overX = std::min(o.x1, b.x1) - std::max(o.x0, b.x0), overY = std::min(o.y1, b.y1) - std::max(o.y0, b.y0);
+      // (the overlap against the lower of the two: a window split by its bar into an upper and a lower pane)
+      return (gapX <= near && overY * 2 >= std::min(b.y1 - b.y0, o.y1 - o.y0)) ||
+             (gapY <= near && overX * 2 >= std::min(b.x1 - b.x0, o.x1 - o.x0));
+    };
+    std::vector<uint8_t> taken(smallPanes.size(), 0);
+    for (size_t i = 0; i < smallPanes.size(); ++i)
+      for (size_t j = i + 1; j < smallPanes.size(); ++j) {
+        size_t a = smallPanes[i].second.size(), b = smallPanes[j].second.size();
+        if (a * 1000 < lamp.size() * 3 / 2 || b * 1000 < lamp.size() * 3 / 2 || (a + b) * 1000 < lamp.size() * 3) continue;
+        if (adjacent(smallPanes[i].first, smallPanes[j].first)) taken[i] = taken[j] = 1;
+      }
+    for (size_t i = 0; i < smallPanes.size(); ++i)
+      if (taken[i]) paneBox.push_back(smallPanes[i].first);
+    for (size_t i = 0; i < smallPanes.size(); ++i)
+      for (size_t k = 0; k < paneBox.size() && !taken[i]; ++k)
+        if (adjacent(smallPanes[i].first, paneBox[k])) taken[i] = 1;
+    for (size_t i = 0; i < smallPanes.size(); ++i)
+      if (taken[i]) panes.push_back(std::move(smallPanes[i].second)), ++st.windows;
     // a driver's cab is an end with a windscreen: glass facing out of it. The cabin light fades out towards a cab (the
     // driver sits in the dark); a coupling end or a bus's rear window does not count. (Until 2026-11-24 a cab was an
     // end with lamps found, and two stray bright texels at a coupling made tram-05's short end car dark all over.)
@@ -1421,6 +1464,9 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
                                      (rearCab ? 0.5f + 0.5f * fadeRear[p] : 1.0f)));
         if (frontCab && (endFace[p] & 1)) cabGlass[p] = 255, ++st.windscreen;
         else if (rearCab && (endFace[p] & 2)) cabGlass[p] = 128, ++st.windscreen;
+        // other glass facing out of an end (a bus's rear window): passengers seen from behind (32), not the side
+        // windows' rows smeared across it (2026-11-24)
+        else if (endFace[p]) cabGlass[p] = 32;
       }
   }
   {  // the window band's height on the model (10th to 90th percentile of the glass): where the passengers show. The
@@ -1608,11 +1654,12 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
         }
         if (texY[p] <= split) continue;
         win[p] = uint8_t(std::lround(255.0f * glassLevel[p]));
-        if (cabGlass[p]) cabGlass[p] = 64, --st.windscreen;
+        if (cabGlass[p] >= 128) cabGlass[p] = 64, --st.windscreen;
       }
   }
   if (!st.frontLamps && !st.rearLamps && !st.windows && !st.signCount) return false;
-  // BGRA: R = front lamps, G = rear lamps, B = windows, A = windscreen glass (the driver, 255 front / 128 rear)
+  // BGRA: R = front lamps, G = rear lamps, B = windows, A = end glass (the driver's windscreen 255 front / 128 rear,
+  // a double-decker's upper front 64, a rear window without a cab 32)
   std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);
   for (size_t i = 0; i < lamp.size(); ++i) {
     if (keep[i]) px[i * 4 + (lamp[i] == 1 ? 2 : 1)] = 255;

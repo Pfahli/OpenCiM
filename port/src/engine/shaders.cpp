@@ -216,6 +216,21 @@ const char16_t* kNightMapsDecl =
     u"      float pb = regs_figure(regs_ModelPos.x - 0.5, topU, regs_ModelPos.y, vec4(1.0, regs_bareHead(fract(regs_CabinUpper.z + 0.71)), 0.0, 0.13), plod, 2.0) * step(0.75, fillU);\n"
     u"      cabin *= 1.0 - 0.85 * max(pa, pb);\n"
     u"    }\n"
+    // a rear window that is no cab (alpha 32, 2026-11-24): two passengers of that deck seen from behind (the atlas's
+    // back view, angle 4 of 8), the second from half full
+    u"    if (inside > 0.5 && m.a > 0.08 && m.a < 0.15 && regs_PassengerInfo.x > 0.5) {\n"
+    u"      vec2 bandR = regs_Cabin.xy;\n"
+    u"      bool upR = regs_CabinUpper.y > regs_CabinUpper.x + 0.3 && regs_ModelPos.y > 0.5 * (regs_Cabin.y + regs_CabinUpper.x);\n"
+    u"      if (upR) bandR = regs_CabinUpper.xy;\n"
+    u"      float HR = bandR.y - bandR.x, fillR = clamp(regs_Cabin.z * 2.0, 0.0, 1.0);\n"
+    u"      if (HR > 0.3) {\n"
+    u"        float topR = bandR.x + HR * 0.62 + 0.17, sR = fract(regs_CabinUpper.z + (upR ? 0.29 : 0.53));\n"
+    u"        float back = 4.5 / max(regs_PassengerInfo.y, 1.0);\n"
+    u"        float ra = regs_figure(regs_ModelPos.x - 0.5, topR, regs_ModelPos.y, vec4(0.0, regs_bareHead(sR), back, 0.47), plod, 2.0) * step(0.25, fillR);\n"
+    u"        float rb = regs_figure(regs_ModelPos.x + 0.55, topR, regs_ModelPos.y, vec4(1.0, regs_bareHead(fract(sR + 0.41)), back, 0.81), plod, 2.0) * step(0.75, fillR);\n"
+    u"        cabin *= 1.0 - 0.85 * max(ra, rb);\n"
+    u"      }\n"
+    u"    }\n"
     // the driver (2026-11-24): on the windscreen of the leading end (head lamps there, or the model's front by day),
     // a citizen seen from the front, seated on the left side (left of the direction of travel: -x for the model's
     // front, +x for its rear)

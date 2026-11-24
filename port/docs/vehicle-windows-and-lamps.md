@@ -32,7 +32,7 @@ passengers as dark figures against the lit cabin.
   heights splits it into a lower and an upper deck band (`windowY2..3`, `regs_CabinUpper`), each deck with its own
   people. Until then a double-decker's figures stood across both floors. Found two decks: the double-decker, bus-07,
   bus-12, tram-02, tram-07 (its bulging front glass reaches over both decks and filled the gap: a thin place in the
-  heights between two dense bands counts as the split too, 2026-11-24). Left: bus-07's upper windows are found as glass in one pane only.
+  heights between two dense bands counts as the split too, 2026-11-24). (bus-07's upper windows, found in one pane only before, are whole since the small-pane rule below.)
 * **The driver** (2026-11-24, owner's request): the cab is lit at half the cabin light (it was dark), and the
   leading end's windscreen shows a citizen seen from the front, seated on the vehicle's left (the viewer's right). The
   windscreen glass is marked in the mask's alpha (255 out of the model's front, 128 out of its rear, kept through the
@@ -56,6 +56,16 @@ passengers as dark figures against the lit cabin.
   over). The red articulated tram on the player's save now has lit windows with passengers in every section. Seen on
   the player's save at night: seated passengers' heads and shoulders in a lit window
   (`testing/shots/out/cim2b-window.png`).
+* **Small panes beside a window** (2026-11-24, owner's report: unlit windows on the old tram and the double-decker):
+  solid panes under 0.3 % (from 0.04 %, fill ≥ 80 %), or panes from 0.3 % a little less solid (80-85 %), count when
+  they sit within w/40 texels of a window taken, beside it or above/below it with half the smaller one's height (or
+  width) shared; two such panes of at least 0.15 % each, together from 0.3 %, count as one window. Gained: tram-01's
+  four narrow panes between its big windows, bus-07's vent panes over the side windows and its upper rear window
+  (two panes split by a bar), and a few panes on tram-02, bus-01 and bus-02 (all real glass in the masks).
+* **Rear windows** (2026-11-24): glass facing out of an end that is no driver's cab (a bus's rear window, a
+  double-decker's upper rear) is marked 32 in the mask's alpha; the shader draws two passengers of that deck seen
+  from behind (the atlas's back view; the second from half full) instead of the side windows' rows, which smeared
+  into grey blocks across the end.
 
 ## Lamps
 
@@ -88,6 +98,10 @@ white glyphs on the roller boxes of tram-04. The rest of the display (the place 
   seen yet: the side displays of bus-12 and bus-14; tram-04's two side boxes (not found on the model); displays
   without a number (bus-10, bus80) and the older vehicles' painted boards are not changed.
 * **More (2026-11-24):** bus-03 (number plate, dark on light), bus-07 (three boxes), metro-02 (box), metro-03 (boxes), tram-03 (round plate). Styles: 0 LED dots, 1 light glyphs on a dark box, 2 dark glyphs on a light plate. Seen in the lineup: bus-03 "75", bus-07 "61", metro-03 "51", tram-03 "181". Left out: bus-15 (the number landed in the display's second line); metro-02's box not seen from the front.
+* **Side displays of the trams** (2026-11-24): tram-05's long LED board along its side (number and the name,
+  running text when long; seen in the side lineup `REGS_TEST_LINEUP=0,0,1,90`) and tram-01's printed name plate (the
+  plate is found on the model, mirrored, but not seen in a shot yet). tram-02, -03, -06 and -07 have no side display on
+  their textures; tram-04's side boxes are still not found on the model.
 
 ### Line name or end stop, and two fonts (2026-11-24)
 
