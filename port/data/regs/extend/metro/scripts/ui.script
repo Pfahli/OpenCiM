@@ -16,6 +16,7 @@
 //@rename setCameraDirection regsBaseSetCameraDirection
 //@rename setCameraZoom regsBaseSetCameraZoom
 //@rename updateControls regsBaseUpdateControls
+//@rename setCameraPos regsBaseSetCameraPos
 
 //@base
 
@@ -23,6 +24,9 @@ $regsTurnUnit = 0.25 * PI;      // radians per $cameraDir unit
 $regsTurnSign = 1.0;            // a turn of the map counterclockwise on screen raises $cameraDir by this sign
 $regsDirGoal = float($cameraDir);
 $regsZoomGoal = $cameraZoom;
+// the nearest zoom: 40 instead of the game's 75 (owner's request 2026-11-25: closer to the vehicles and their
+// destination displays). The game's zoom keys stop at 75 (controls.script); setCameraZoom below goes on from there.
+$regsMinZoom = 40.0;
 $regsFreeTurn = false;          // a stepless turn is going on: it may snap when it ends
 $regsFreeIdle = 0.0;            // seconds since the last stepless turn input
 $regsTurnRate = 0.0;            // the direct turn's recent speed (units per second), for the glide after a release
@@ -93,6 +97,19 @@ function setCameraDirection($value) {
   regsApplyTilt();
 }
 
+// nearer than the game's 75: its camera height term (y − (zoom − 75)·0.3) would lift the pivot above the ground, so
+// the camera is placed as at 75 (the zoom itself stays)
+function setCameraPos($x, $z, $force = false) {
+  if ($cameraZoom >= 75.0) {
+    regsBaseSetCameraPos($x, $z, $force);
+    return;
+  }
+  $regsZoomNow = $cameraZoom;
+  $cameraZoom = 75.0;
+  regsBaseSetCameraPos($x, $z, $force);
+  $cameraZoom = $regsZoomNow;
+}
+
 function setCameraZoom($value) {
   if (!regsSmoothOn() || $cameraZoom <= 0.0) {
     regsBaseSetCameraZoom($value);
@@ -101,9 +118,12 @@ function setCameraZoom($value) {
     return;
   }
   $f = $value / $cameraZoom;
+  // a zoom-in key at the game's own limit (controls.script asks for max(75, zoom / 1.2) = 75): one more step towards
+  // the port's nearer limit
+  if (abs($value - 75.0) < 0.001 && $regsZoomGoal <= 75.01 && regsZoomInHeld()) $f = 1.0 / 1.2;
   if ($f > 0.79 && $f < 1.26 && abs($f - 1.0) > 0.0001) {
     // the zoom keys (a factor of 1.2 from where the camera is): from the goal, eased
-    $regsZoomGoal = min(500.0, max(75.0, $regsZoomGoal * $f));
+    $regsZoomGoal = min(500.0, max($regsMinZoom, $regsZoomGoal * $f));
     return;
   }
   regsBaseSetCameraZoom($value);
@@ -133,6 +153,10 @@ $regsRightKeys = regsKeyNames(["rotateRight", "rotateRight2"]);
 function regsHeld($keys) {
   foreach ($keys) if (regsKeyHeld(current)) return true;
   return false;
+}
+$regsZoomInKeys = regsKeyNames(["zoomIn", "zoomIn2"]);
+function regsZoomInHeld() {
+  return regsHeld($regsZoomInKeys);
 }
 
 // the world point under a pixel (y = 0 plane)
@@ -188,7 +212,7 @@ function regsPadTick($in, $dt, $smooth) {
     setCameraZoom(min(500.0, $cameraZoom * 1.2));
   } else if ($regsPadZoomSteps < -$step) {
     $regsPadZoomSteps = 0.0;
-    setCameraZoom(max(75.0, $cameraZoom / 1.2));
+    setCameraZoom(max($regsMinZoom, $cameraZoom / 1.2));
   }
   if ($regsPadTurnSteps > $regsTurnUnit) {
     $regsPadTurnSteps = 0.0;
@@ -211,18 +235,28 @@ function regsCameraTick($dt) {
   $in[3] += $in[13];
   $in[8] += $in[16];
   if ($in[15] != 0) $in[9] = 1;
+  // while the mouse turns the camera (right drag, Ctrl + middle drag) the screen edges do not scroll the map (owner's
+  // request 2026-11-25): bit 16 of $scrollerKeys keeps the base's onMouseMove from starting the edge scroller
+  if ($in[9] != 0) {
+    if (($scrollerKeys & 16) == 0) {
+      if ($scrollerKeys == 0) stopScrolling();
+      $scrollerKeys |= 16;
+    }
+  } else if ($scrollerKeys & 16) {
+    $scrollerKeys &= ~16;
+  }
   if (regsKeyHeld("Shift")) $regsNoSnap = true;
   else if (!$regsFreeTurn && $regsHold <= 0.0 && abs($regsDirGoal - $cameraDir) < 0.001) $regsNoSnap = false;
   $dir = float($cameraDir);
   $zoom = $cameraZoom;
 
   // zoom: the wheel (eased) and the pinch (followed, about the fingers' centre)
-  if ($in[0] != 0.0) $regsZoomGoal = min(500.0, max(75.0, $regsZoomGoal * regsExp($in[0])));
+  if ($in[0] != 0.0) $regsZoomGoal = min(500.0, max($regsMinZoom, $regsZoomGoal * regsExp($in[0])));
   $pinch = $in[1] != 0.0;
   if ($pinch) {
     $f = regsExp($in[1]);
-    $regsZoomGoal = min(500.0, max(75.0, $regsZoomGoal * $f));
-    $zoom = min(500.0, max(75.0, $zoom * $f));
+    $regsZoomGoal = min(500.0, max($regsMinZoom, $regsZoomGoal * $f));
+    $zoom = min(500.0, max($regsMinZoom, $zoom * $f));
   }
 
   // turning: keys held, the sideways wheel (eased), twists and drags (followed)

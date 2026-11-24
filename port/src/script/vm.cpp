@@ -815,12 +815,23 @@ Value VM::execute(ThreadObj* t) {
       case Opc::RefLocal: {
         Ref<Env> env = f.env;
         uint16_t s = rd16();
+        // '@' of a variable that is itself an '@' alias (a parameter passed by reference) passes that reference on: a
+        // reference to the local would end at the local (2026-11-24, owner's report: a line's new name was not kept,
+        // linepanel renameLine → ui.script showInputDialog → showDialog hand the name down as @$value twice)
+        if (env->slots[s].ref()) {
+          st.push_back(env->slots[s]);
+          break;
+        }
         st.push_back(makeRef([env, s] { return plain(env->slots[s]); }, [env, s](const Value& v) { env->slots[s] = v; }));
         break;
       }
       case Opc::RefVar: {
         std::u16string n = rdS();
         Ref<Object> self = f.self;
+        if (Value* cur = self ? self->findVar(n) : nullptr; cur && cur->ref()) {  // an alias: passed on (as RefLocal)
+          st.push_back(*cur);
+          break;
+        }
         st.push_back(makeRef([self, n] { Value* v = self ? self->findVar(n) : nullptr; return v ? plain(*v) : Value(); },
                              [self, n](const Value& v) { if (self) self->var(n) = v; }));
         break;

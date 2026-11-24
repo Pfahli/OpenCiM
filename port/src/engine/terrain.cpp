@@ -1534,6 +1534,12 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   // with the 8 circles nearest to its centre (gsGridDivision::updateDataLayer L:0x081635d0)
   std::vector<StopCircle> circles;
   visibleStopCircles(vm, grid, circles);
+  if (static const bool dbg = regs::envVar("REGS_DEBUG_TOOLS") != nullptr; dbg && !circles.empty()) {
+    static int n = 0;
+    if (n++ % 60 == 0)
+      LOG_INFO("catchment: %zu circles, first at %.0f,%.0f r %.0f, data material %d", circles.size(), double(circles[0].x),
+               double(circles[0].z), double(circles[0].radius), tc.dataMaterial);
+  }
   auto layerFor = [&](int index, GridDivision& dv) {
     if (circles.empty() || tc.dataMaterial < 0) return false;
     const int shift = int(std::min(g.bucketShift, 8u));

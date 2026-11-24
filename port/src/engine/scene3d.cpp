@@ -366,8 +366,11 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
       // a skinned model (vehicle templates in the vehicle shop's preview scene): the skinning variant, posed as a line
       // vehicle with closed doors (its first animation at 0, as sim.cpp draws them); the bind pose has some trams' doors
       // elsewhere (owner's report 2026-11-07: odd tram models in the shop)
+      // (2026-11-25, owner's report "I can see the inside of the tram": many models' clip starts with the doors open;
+      // closed is where the opening starts, the model's doorOpenStart, as the simulation's stop cycle uses it)
       size_t first = items.size();
-      collectSkinned(d, vm, o, worldOf(vm, o), poseFirstAnimation(vm, o, 0.0f), items);
+      const float closedAt = std::max(0.0f, floatOr(vm, fieldOf(vm, o, u"doorOpenStart"), 0.0f));
+      collectSkinned(d, vm, o, worldOf(vm, o), poseFirstAnimation(vm, o, closedAt), items);
       for (size_t i = first; i < items.size(); ++i) {
         argbToFloats(o->colorizeArgb, items[i].colorize);
         items[i].surfaceClass = kSurfaceOverlay;  // scene objects (previews, markers, cursors): not a surface
@@ -618,6 +621,14 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
   Object* sky = nullptr;
   const SceneClasses sceneClasses{vm.findClass("gsSky"), vm.findClass("gsSun")};
   { auto ts_ = std::chrono::steady_clock::now(); collect(d, vm, scene, items, suns, grids, sky, sceneClasses); gPhaseSeconds[1] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+  // background pipelines (Renderer3D::draw) only for the map view on screen, which is drawn again every frame: a view
+  // into a texture (the vehicle shop's pictures, drawn once) or a pop-out waits for them, else the parts lacking one
+  // stayed missing (2026-11-25, owner's report: the shop's tram showed its inside)
+  struct WaitPipelines {
+    bool on;
+    explicit WaitPipelines(bool w) : on(w) { if (on) ++render::gWaitForPipelines; }
+    ~WaitPipelines() { if (on) --render::gWaitForPipelines; }
+  } waitPipelines(ov || rt || grids.empty());
   if (!ov && !rt && !grids.empty()) {
     g_mapViewport = Ref<ControlObj>(vp);
     g_mapCamera = Ref<Object>(cam);

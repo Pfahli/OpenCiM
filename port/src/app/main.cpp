@@ -395,6 +395,19 @@ int main(int argc, char** argv) {
           } catch (...) {
           }
           continue;
+        } else if (sc.action == "script") {
+          // script:<vfs path>: runs a script file into MAIN (tests: a tool chosen as its button would, e.g.
+          // /userdata/test.script from the documents stand-in's OpenCiM folder)
+          try {
+            auto& vm = eng.vm();
+            script::LoadOptions opt;
+            if (script::Value* main = vm.findGlobal(u"MAIN"); main && main->object()) opt.into = script::Ref<script::Object>(main->object());
+            vm.load(utf8ToUtf16(sc.arg), opt);
+            LOG_INFO("test: script %s run", sc.arg.c_str());
+          } catch (const std::exception& ex) {
+            LOG_ERROR("test: script %s: %s", sc.arg.c_str(), ex.what());
+          }
+          continue;
         } else if (sc.action == "setting") {
           // setting:<name>,<number>: MAIN.$settings.$<name> while the game runs, as the options pages set it (tests of
           // live setting changes, e.g. setting:regsRtAo,1)
