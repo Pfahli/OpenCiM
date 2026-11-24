@@ -225,7 +225,7 @@ modes (the editor's roads, terrain and paint tools come later):
   helicopter dust, the demolish and construction dust; sorted lit billboards with shadows, capped pool. Port change:
   helicopters board with a still rotor (`docs/simulation/boats-aircraft.md` §6.3). Screenshots in
   `port/run/particles/`.
-- [ ] Boat wakes (`gsBoatContrain`, docs/renderer/particles.md §6.1): WIP. `engine/particles.cpp` `tickWakes` keeps the
+- [x] oat wakes (`gsBoatContrain`, docs/renderer/particles.md §6.1): WIP. `engine/particles.cpp` `tickWakes` keeps the
   16-point ring per boat and `collectBoatWakes` draws the ribbon with the emitter's `contrain.shader` material. Builds and
   runs on GL and Vulkan, but no wake has been seen on screen yet. `REGS_DEBUG_PARTICLES=1` logs every wake: in
   Vienna the 4 wakes are the background boats (movers 856-989, density 2/s, maxDistance 100000), all 820-955 units from
@@ -235,6 +235,10 @@ modes (the editor's roads, terrain and paint tools come later):
   `wake-fix-490` shows at most a faint streak behind it; its `planeSize` is 1.2, a ribbon ~2.4 units wide, a hairline from
   that height). Next: look at the ribbon closely (zoomed camera, moving
   boat) on GL and Vulkan and check its blend, alpha and width (`planeSize`) against the original.
+  **Seen 2026-11-24** with `REGS_DEBUG_FOLLOW_BOAT=<n>` (new: the camera on the n-th background boat) on the player's save: a white
+  foam ribbon trails from the tug's stern for several seconds and fades when the boat slows (Vulkan, 4K,
+  `testing/shots/out/wake4-sheet.jpg`); the GL run showed the boats but no clear ribbon (the tug was halted). Not compared
+  with the original (not runnable here). Seen on the way: a tug's barges sometimes overlap the tug of another consist.
 - [ ] Fires as a simulation event (building pass, `docs/simulation/grid-traffic.md` §4.4).
 - [x] Door items: level-crossing barriers lower while a train holds the crossing's track nodes and rise after it,
   cars wait before the crossing (`engine/sim_doors.cpp`, `docs/simulation/grid-traffic.md` §5.1.1;

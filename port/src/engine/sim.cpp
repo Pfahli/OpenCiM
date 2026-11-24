@@ -2167,6 +2167,20 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
         type = -1;
       }
   }
+  // debugging: REGS_DEBUG_FOLLOW_BOAT=<n> keeps the camera on the n-th background boat (the wakes, particles.md §7)
+  if (const char* fb = regs::envVar("REGS_DEBUG_FOLLOW_BOAT")) {
+    int nth = std::atoi(fb);
+    for (const Mover& m : s->movers)
+      if (m.live && m.boat && !m.units.empty() && nth-- == 0) {
+        Vec3 p = unitPose(*s, m, m.units[0], m.dist).position;
+        try {
+          if (Value* main = vm.findGlobal(u"MAIN"))
+            vm.call(vm.getMember(vm.getMember(*main, u"$gameUI"), u"setCameraPos"), {Value::real(p.x), Value::real(p.z), Value::boolean(true)});
+        } catch (...) {
+        }
+        break;
+      }
+  }
   // debugging: REGS_DEBUG_CAMERA=<item> puts the camera on that item once, 30 ticks into the game (for scripted clicks)
   if (const char* c = regs::envVar("REGS_DEBUG_CAMERA"); c && *c) {
     static int ticks = 0;
