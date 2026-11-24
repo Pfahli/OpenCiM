@@ -691,7 +691,9 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     double pipelineMs;
     ~SlowFrame() {
       double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-      if (on && ms > 250)
+      // REGS_SLOW_FRAME_MS: a lower threshold (hitch hunting while the camera moves)
+      static const double limit = regs::envVar("REGS_SLOW_FRAME_MS") ? std::atof(regs::envVar("REGS_SLOW_FRAME_MS")) : 250.0;
+      if (on && ms > limit)
         LOG_INFO("slow frame: %.0f ms (%d shader programs linked in %.0f ms, %d pipelines in %.0f ms; scene %.0f, grid %.0f, vehicles %.0f, particles %.0f, night %.0f, programs %.0f ms)",
                  ms, render::gProgramsLinked - linked, (render::gLinkSeconds - link) * 1000,
                  render::gpu::dev().pipelinesCreated() - pipelines, render::gpu::dev().pipelineMs() - pipelineMs,

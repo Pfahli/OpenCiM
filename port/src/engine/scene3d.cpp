@@ -674,7 +674,10 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
     v.eye = se;
     v.view = lookAt(se, sl, up);
   }
-  { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items); gPhaseSeconds[2] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
+  // the corner rays' length per unit of depth (the distance culling must reach the far plane's corners)
+  const float tanHalf = std::tan(camFov * 3.14159265f / 360.0f), aspect = float(w) / float(std::max(1, h));
+  const float cornerFactor = std::sqrt(1.0f + tanHalf * tanHalf * (1.0f + aspect * aspect));
+  { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectGrid(d, vm, g, eye, v.proj * v.view, farZ * viewScale, viewScale, detailScale, items, cornerFactor); gPhaseSeconds[2] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   { auto ts_ = std::chrono::steady_clock::now(); for (GridObj* g : grids) collectSimVehicles(d, vm, g, eye, v.proj * v.view, farZ * viewScale, items); gPhaseSeconds[3] += std::chrono::duration<double>(std::chrono::steady_clock::now() - ts_).count(); }
   addSkyItems(d, vm, sky, suns, eye, farZ * viewScale, items);  // sky dome and sun disc (engine/sky.cpp)
   for (Object* s : suns) {

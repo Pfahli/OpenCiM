@@ -1,0 +1,9 @@
+// ReGS extension of metro/scripts/system.script (used as installed; see VM::extendSource). The game pauses while its
+// window is out of focus when $settings.$stopWithoutFocus is on, which the original reads once, as the script loads.
+// Port (owner's request 2026-11-24): the setting has a checkbox on the graphics page and applies at once. The base's
+// focus handlers are always made (the setting is on while it loads); the engine passes the window's focus changes to
+// them only while the setting is on (engine/input.cpp), and the return of focus always after a pause it caused.
+$regsStopWithoutFocus = MAIN.$settings.$stopWithoutFocus : true;
+MAIN.$settings.$stopWithoutFocus = true;
+//@base
+MAIN.$settings.$stopWithoutFocus = $regsStopWithoutFocus;

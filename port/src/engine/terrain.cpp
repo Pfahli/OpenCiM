@@ -1393,7 +1393,7 @@ void collectCurves(Display& d, VM& vm, GridObj* grid, TerrainCache& tc, std::vec
 }
 
 void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ, float viewScale,
-                 float detailScale, std::vector<DrawItem>& items) {
+                 float detailScale, std::vector<DrawItem>& items, float cornerFactor) {
   if (!grid->data || grid->data->height.empty()) return;
   ensureGridCache(d, vm, grid);
   const GridData& g = *grid->data;
@@ -1477,7 +1477,9 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     }
     return true;
   };
-  float reach = std::min(kCullDistance * viewScale, farZ), freeDistance = kFreeDistance * viewScale;
+  // (the distance reach covers the far plane's corners: a sphere of the far depth cut them off, the corners of a view
+  // zoomed out stayed empty, owner's report 2026-11-24)
+  float reach = std::min(kCullDistance * viewScale, farZ) * std::max(1.0f, cornerFactor), freeDistance = kFreeDistance * viewScale;
   if (const char* td = regs::envVar("REGS_DEBUG_TOPDOWN"); td && *td)  // the debug camera high up sees the whole map
     reach = farZ, freeDistance = std::max(freeDistance, farZ * 1.5f);
   // a division's terrain and items of one LOD are built together and shown only together: terrain without its items
@@ -1664,6 +1666,10 @@ void registerTerrainNatives(VM& vm) {
       Value* camera = m->findVar(u"camera");
       auto* vp = vpv ? dynamic_cast<ControlObj*>(v.resolve(*vpv).object()) : nullptr;
       if (vp && scene && camera) {  // the game state gives the viewport its scene and camera only after Spielen
+        struct Wait {  // this view waits for its pipelines (they are what this pass is for)
+          Wait() { ++render::gWaitForPipelines; }
+          ~Wait() { --render::gWaitForPipelines; }
+        } wait;
         Value self = Value::heap(VT::Object, vp);
         Value oldScene = v.getMember(self, u"scene"), oldCamera = v.getMember(self, u"camera");
         try {

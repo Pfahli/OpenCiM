@@ -1079,6 +1079,9 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
   // Vulkan: the pipelines this list lacks are made side by side first (gpu::Device::wantsPipelineCollect): the list
   // runs once with the device only collecting their keys (no particles: their programs and state are their own and
   // their vertices would be streamed twice), then for real
+  // While the game runs the lacking pipelines are made in the background and their parts show a few frames later
+  // (gpu::Device::setPipelinesAsync); on the loading screen (gWaitForPipelines) the list waits for them
+  dev().setPipelinesAsync(gWaitForPipelines == 0);
   if (dev().wantsPipelineCollect()) {
     SceneView collect = v;
     collect.particles = nullptr;
@@ -1087,7 +1090,10 @@ void Renderer3D::draw(const SceneView& v, const std::vector<DrawItem>& items) {
     dev().endPipelineCollect();
   }
   drawList(v, items);
+  dev().setPipelinesAsync(false);
 }
+
+int gWaitForPipelines = 0;
 
 void Renderer3D::drawList(const SceneView& v, const std::vector<DrawItem>& items) {
   const uint64_t view = ++viewSerial_;  // each program's per-view uniforms once per call (ProgramLocs::setupView)

@@ -1655,7 +1655,13 @@ bool registerStop(VM& vm, GridObj* grid, SimState& s, size_t i) {
   s.stops.push_back(o);
   if (auto* to = transport(o.get()); to && grid->sim.get() == &s) to->sim = grid->sim;
   // gsGridItem::gsGridItem (L:0x08187fc0.c:152-161): a STOP item's controller is announced with grid event 6; the game
-  // makes the stop's bubble (passengers, mood) there and sets its attractiveness (ui.script:317)
+  // makes the stop's bubble (passengers, mood) there and sets its attractiveness (ui.script:317). Port: a train
+  // station's stops are marked ($regsStation) so the gameUI extension shows their bubbles only while a line serves
+  // them (owner's request 2026-11-24: the main station's six bubbles stood there with no line)
+  if (station) try {
+      vm.setMember(Value::heap(VT::Object, o.get()), u"$regsStation", Value::boolean(true));
+    } catch (const ScriptError&) {
+    }
   vm.fireEvent(grid, u"transportStopCreated", {Value::heap(VT::Object, o.get())});
   return true;
 }

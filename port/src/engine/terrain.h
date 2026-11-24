@@ -22,7 +22,9 @@ void prepareTerrainCells(GridData& g);
 // viewScale and detailScale (port graphics options, 1 = the original) scale the cull/free distances and the near
 // LOD band.
 void collectGrid(Display& d, script::VM& vm, GridObj* grid, const render::Vec3& eye, const render::Mat4& viewProj,
-                 float farZ, float viewScale, float detailScale, std::vector<render::DrawItem>& items);
+                 float farZ, float viewScale, float detailScale, std::vector<render::DrawItem>& items,
+                 float cornerFactor = 1.0f);  // the view's corner ray against its axis (1/cos): how much farther the
+                                              // corners at the far depth are than the depth (distance culling)
 
 // The map's surface map for the mods' shader hooks (engine/surface_map.h): its texture and (originX, originZ,
 // 1 / sizeX, 1 / sizeZ) in world units; false when there is none.

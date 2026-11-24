@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 #include "script/vm.h"
 
@@ -28,7 +29,9 @@ int engineKeyOf(int vk);
 
 // Smooth camera (camera_input.cpp): sees every OS event first and takes the ones meant for the camera (true: not
 // passed on to the game); its script natives (regsSmoothCamera, regsCameraInput, regsKeyHeld)
-bool cameraInputEvent(script::VM& vm, WindowObj* w, const platform::InputEvent& e);
+// true: taken (not passed on); then `replay` may hold events to pass on instead (a held-back right click)
+bool cameraInputEvent(script::VM& vm, WindowObj* w, const platform::InputEvent& e,
+                      std::vector<platform::InputEvent>* replay = nullptr);
 void registerCameraInputNatives(script::VM& vm);
 // the pointer is over the world (the desktop's hover control is MAIN.$player or inside it), not a panel
 bool overWorld(script::VM& vm, WindowObj* w);

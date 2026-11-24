@@ -788,6 +788,9 @@ void buildHighlightOverlay(const GridData& g, const GridObj& grid, const Terrain
   for (uint32_t i : grid.highlightItems) {
     if (i >= g.items.size() || g.items[i].removed || !(g.items[i].flags & 0x100)) continue;
     if (g.items[i].flags & (kFlagHidden | kItemPortHidden)) continue;  // hidden items (gave way to a tool's preview) are not drawn at all
+    // nor a deactivated event item (a parade or demonstration not going on: owner's report 2026-11-24, the parade
+    // showed as a green ghost under the track tool's selection)
+    if (g.items[i].typeOverride == kTypeMarker) continue;
     if (g.curveAnchors.count(i)) continue;  // port: curve stop anchors
     const GridData::Item& it = g.items[i];
     int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;

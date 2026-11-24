@@ -330,6 +330,10 @@ class WorkerPool {
     work_.notify_one();
     return j;
   }
+  bool done(const std::shared_ptr<Job>& j) {
+    std::lock_guard<std::mutex> lk(m_);
+    return j->state == 2;
+  }
   void wait(const std::shared_ptr<Job>& j) {
     std::unique_lock<std::mutex> lk(m_);
     while (j->state != 2) {
@@ -540,6 +544,10 @@ class VkDeviceImpl final : public Device {
   bool wantsPipelineCollect() override;
   void beginPipelineCollect() override;
   void endPipelineCollect() override;
+  void setPipelinesAsync(bool on) override {
+    static const bool sync = regs::envVar("REGS_VK_SYNC_PIPELINES") != nullptr;  // tests: every pipeline waited for
+    asyncPipes_ = on && !sync;
+  }
   void useProgram(uint32_t prog) override { program_ = prog < programs_.size() ? prog : 0; }
   uint32_t currentProgram() const override { return program_; }
   int uniformLocation(uint32_t prog, const char* name) override;
@@ -1045,6 +1053,16 @@ class VkDeviceImpl final : public Device {
   bool collectLastValid_ = false;
   std::vector<std::unique_ptr<PipeBuild>> pending_;
   std::unordered_set<PipeKey, PipeHash> pendingKeys_;
+  // background pipelines (setPipelinesAsync): builds running on the pool, taken in by harvestPipelines
+  bool asyncPipes_ = false;
+  struct Inflight {
+    std::unique_ptr<PipeBuild> b;
+    std::shared_ptr<WorkerPool::Job> job;
+  };
+  std::vector<Inflight> inflight_;
+  std::unordered_set<PipeKey, PipeHash> inflightKeys_;
+  void harvestPipelines(bool wait = false);
+  void startInflight(std::unique_ptr<PipeBuild> b);
   std::vector<std::pair<TargetSig, uint64_t>> collected_;
   struct {
     State st;
@@ -1710,6 +1728,7 @@ void VkDeviceImpl::shutdown() {
     return;
   }
   if (dev_) {
+    harvestPipelines(true);  // background pipelines finish and join the map (destroyed with it, cached)
     pool_.stop();  // no compile or pipeline job runs past this point
     fgStop();
     vkDeviceWaitIdle(dev_);
@@ -3009,6 +3028,14 @@ VkPipeline VkDeviceImpl::pipelineForKey(Prim prim) {
   const PipeKey key = keyFor(prim);
   auto it = pipelines_.find(key);
   if (it != pipelines_.end()) return it->second;
+  if (!inflight_.empty()) {  // made in the background meanwhile?
+    harvestPipelines(!asyncPipes_ && inflightKeys_.count(key));  // not in a scene list: wait for it
+    if (auto it2 = pipelines_.find(key); it2 != pipelines_.end()) return it2->second;
+  }
+  if (asyncPipes_) {  // a scene list: skip this draw, the pipeline comes from a worker thread
+    if (!inflightKeys_.count(key)) startInflight(pipeBuild(prim, key));
+    return VK_NULL_HANDLE;
+  }
   std::unique_ptr<PipeBuild> b = pipeBuild(prim, key);
   createPipeline(*b);
   pipelineMs_ += b->ms;
@@ -3182,9 +3209,37 @@ void VkDeviceImpl::collectPipeline(Prim prim) {
   collectLast_ = in;
   collectLastValid_ = true;
   const PipeKey key = keyFor(prim);
-  if (pipelines_.count(key) || pendingKeys_.count(key)) return;
+  if (pipelines_.count(key) || pendingKeys_.count(key) || inflightKeys_.count(key)) return;
   pendingKeys_.insert(key);
   pending_.push_back(pipeBuild(prim, key));
+}
+
+void VkDeviceImpl::startInflight(std::unique_ptr<PipeBuild> b) {
+  PipeBuild* pb = b.get();
+  inflightKeys_.insert(pb->key);
+  Inflight f;
+  f.job = pool_.submit([this, pb] { createPipeline(*pb); });
+  f.b = std::move(b);
+  inflight_.push_back(std::move(f));
+}
+
+// the background builds that are done (all of them with wait) go into the pipeline map
+void VkDeviceImpl::harvestPipelines(bool wait) {
+  bool any = false;
+  for (size_t i = 0; i < inflight_.size();) {
+    Inflight& f = inflight_[i];
+    if (wait) pool_.wait(f.job);
+    else if (!pool_.done(f.job)) {
+      ++i;
+      continue;
+    }
+    f.b->ahead = true;
+    storePipeline(*f.b);
+    inflightKeys_.erase(f.b->key);
+    inflight_.erase(inflight_.begin() + std::ptrdiff_t(i));
+    any = true;
+  }
+  if (any) lastPipeline_ = VK_NULL_HANDLE;
 }
 
 // the pipelines the pass collected, made side by side on the worker threads (one alone: here)
@@ -3200,6 +3255,13 @@ void VkDeviceImpl::endPipelineCollect() {
     if (sig == s) serialAt = programSerial_, found = true;
   if (!found) collected_.push_back({s, programSerial_});
   if (pending_.empty()) return;
+  if (asyncPipes_) {  // the game's scene: made in the background, the list draws what is ready
+    for (auto& b : pending_) startInflight(std::move(b));
+    pending_.clear();
+    pendingKeys_.clear();
+    lastPipeline_ = VK_NULL_HANDLE;
+    return;
+  }
   auto t0 = std::chrono::steady_clock::now();
   if (pending_.size() == 1) {
     createPipeline(*pending_[0]);

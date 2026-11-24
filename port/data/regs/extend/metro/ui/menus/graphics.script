@@ -214,6 +214,16 @@ function regsSetShowFps($value) {
   MAIN.$ui.selectChoiceButton($showFps ? $regsShowFpsButton : null, $regsShowFpsButton);
 }
 regsSetShowFps($showFps);
+// the game's own $stopWithoutFocus (system.script, no menu in the original): the game pauses while its window is not
+// in focus (default) or runs on behind other windows; applied live on OK (engine/input.cpp, owner's request 2026-11-24)
+$pauseUnfocused = $settings.$stopWithoutFocus : true;
+$regsPauseUnfocusedButton = MAIN.$ui.createChoiceButton($box.$content, "self", $regsColX[0], 383, 16, 16, "", macro :: regsSetPauseUnfocused(!$pauseUnfocused), "/metro/ui/menus/checkbox.dds", "/metro/ui/menus/checkbox_se.dds", "/metro/ui/menus/checkbox.dds");
+regsLabel($regsColX[0] + 20, 382, $regs.$regs_pauseUnfocused_item);
+function regsSetPauseUnfocused($value) {
+  $pauseUnfocused = $value;
+  MAIN.$ui.selectChoiceButton($pauseUnfocused ? $regsPauseUnfocusedButton : null, $regsPauseUnfocusedButton);
+}
+regsSetPauseUnfocused($pauseUnfocused);
 
 // ---- quality ----
 $x = $regsColX[1];
@@ -438,7 +448,8 @@ function save() {
   $settings.$regsShowFps = $showFps;   // the engine reads it every frame: shown or hidden at once
   $settings.$regsDayNight = $dayNight; // read every frame too (engine/sky.cpp)
   $settings.$regsTextureUpscale = $textureUpscale; // read every frame (engine/display.cpp)
-  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsVignette", "regsFilmGrain", "regsShowFps", "regsDayNight", "regsTextureUpscale");
+  $settings.$stopWithoutFocus = $pauseUnfocused;  // read at each focus change (engine/input.cpp)
+  $settings.exportVariables("regsViewDistance", "regsDetailDistance", "fpsLimit", "regsColorStyle", "regsLensBlur", "regsVignette", "regsFilmGrain", "regsShowFps", "regsDayNight", "regsTextureUpscale", "stopWithoutFocus");
   $regsNewScale = $uiScale != $regsUiScaleShown;
   if ($regsNewScale) {
     $settings.$regsUiScale = $uiScaleValues[$uiScale];

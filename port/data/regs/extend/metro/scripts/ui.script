@@ -349,6 +349,22 @@ function updateControls() {
   regsPadBindings();
 }
 
+// Train station stops (the port's trams at a station's platforms, engine/sim.cpp registerStop): their bubbles show only
+// while a line serves the stop (owner's request 2026-11-24: the main station's six empty bubbles). The base handler
+// above made the bubble; this one runs after it and keeps the stop in a list the thread below goes through.
+$regsStationStops = [];
+event MAIN.$grid.transportStopCreated::($stop) {
+  if ($stop.$regsStation : false) $regsStationStops[] = $stop;
+}
+$regsStationThread = thread "gameUI" :: loop {
+  wait 0.5;
+  foreach ($regsStationStops) {
+    $s = current;
+    $t = $s.$tracer1 : null;
+    if ($t) $t.visible = #$s.getPassengersByLine() > 0;
+  }
+};
+
 $regsCameraThread = thread "gameUI" :: loop {
   $regsCameraDt = skip_frame;
   regsCameraTick($regsCameraDt);

@@ -213,6 +213,11 @@ class Device {
   virtual bool wantsPipelineCollect() { return false; }
   virtual void beginPipelineCollect() {}
   virtual void endPipelineCollect() {}
+  // Background pipelines (2026-11-24, owner's report of hitches while the camera moves: a new pipeline took up to a
+  // second): while on, a draw whose pipeline is not made yet is skipped and the pipeline made on a worker thread (the
+  // thing shows a few frames later); endPipelineCollect does not wait either. Renderer3D::draw turns it on for the
+  // game's scene lists, off for everything else (post passes, the GUI) and on the loading screen.
+  virtual void setPipelinesAsync(bool on) { (void)on; }
 
   // ---- ray queries (docs/renderer/vulkan.md §9.3): Vulkan with VK_KHR_ray_query only; the defaults do nothing ----
   virtual bool rayTracing() const { return false; }

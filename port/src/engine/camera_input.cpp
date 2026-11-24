@@ -5,7 +5,7 @@
 //     notch, so touchpads (two-finger scroll, pinch = Ctrl + wheel) zoom steplessly; Shift + wheel stays the place
 //     tool's turn (tools.h toolWheel);
 //   * the sideways wheel (two fingers swiped sideways on a touchpad, a tilting wheel) turns the camera;
-//   * Ctrl + middle mouse drag turns it with the mouse;
+//   * Ctrl + middle mouse drag turns it (sideways) and tilts it (up and down); so does a right drag over the world
 //   * two fingers on a touchscreen zoom (pinch), turn (twist) and move (pan) it; a twist on a touchpad turns it.
 // The amounts collect here and the gameUI extension takes them once a frame (regsCameraInput), eases or follows them
 // and snaps to the eight main directions (docs: port/docs/camera.md).
@@ -26,6 +26,9 @@ namespace {
 constexpr float kPi = 3.14159265f;
 constexpr float kDragTurn = 0.25f * kPi / 180.0f;  // Ctrl + middle drag: a quarter of a degree per pixel
 constexpr float kSideNotch = kPi / 16.0f;          // sideways wheel: 11.25 degrees per notch
+constexpr int kRightDragStart = 6;                 // pixels the right button moves before it is a drag, not a click
+constexpr float kRightTurn = 0.006f;               // right drag: radians per pixel sideways (as the pop-out views)
+constexpr float kRightTilt = 0.004f;               // and up / down
 
 struct CameraInput {
   bool smooth = false;
@@ -35,7 +38,12 @@ struct CameraInput {
   float pivotX = -1, pivotY = -1;        // the last gesture's centre (client pixels)
   int released = 0;                      // free turns that ended (fingers lifted, drag released)
   bool dragging = false;
-  int dragX = 0;
+  int dragX = 0, dragY = 0;
+  // the right button over the world (owner's request 2026-11-24): held back until it moves (a drag: sideways turns,
+  // up and down tilts, as in the pop-out views) or is let go (a click: passed on then, down and up)
+  bool rightHeld = false, rightDrag = false;
+  int rightX = 0, rightY = 0;
+  platform::InputEvent rightDown;
   bool held[kKeyCount] = {};
   // the controller (gamepad.cpp): pan in screen heights, zoom as ln of the distance factor (eased), turn in radians
   // (followed), tilt in radians; a turn by stick is going on, turns by stick ended
@@ -73,7 +81,7 @@ void cameraPadInput(const CameraPad& p) {
   if (p.tiltReset) ++g_cam.padTiltReset;
 }
 
-bool cameraInputEvent(VM& vm, WindowObj* w, const platform::InputEvent& e) {
+bool cameraInputEvent(VM& vm, WindowObj* w, const platform::InputEvent& e, std::vector<platform::InputEvent>* replay) {
   using T = platform::InputEvent::Type;
   switch (e.type) {
     case T::KeyDown:
@@ -85,10 +93,32 @@ bool cameraInputEvent(VM& vm, WindowObj* w, const platform::InputEvent& e) {
     case T::MouseUp: {
       const int k = e.button == 0 ? kMouseLeft : e.button == 1 ? kMouseRight : kMouseMiddle;
       g_cam.held[k] = e.type == T::MouseDown;
+      if (e.button == 1) {
+        if (e.type == T::MouseDown && replay && g_cam.smooth && !g_cam.rightHeld && overWorld(vm, w)) {
+          g_cam.rightHeld = true;
+          g_cam.rightDrag = false;
+          g_cam.rightX = e.x, g_cam.rightY = e.y;
+          g_cam.rightDown = e;
+          return true;
+        }
+        if (e.type == T::MouseUp && g_cam.rightHeld) {
+          g_cam.rightHeld = false;
+          if (g_cam.rightDrag) {
+            g_cam.rightDrag = false;
+            ++g_cam.released;  // the turn ends (it may snap)
+          } else if (replay) {
+            replay->push_back(g_cam.rightDown);  // a click: the game gets it now, where it was pressed
+            replay->push_back(e);
+          }
+          return true;
+        }
+        return false;
+      }
       if (e.button != 2) return false;
       if (e.type == T::MouseDown && g_cam.smooth && (inputModifiers() & 0x200) && overWorld(vm, w)) {
         g_cam.dragging = true;  // Ctrl + middle: turning, not the game's panning
         g_cam.dragX = e.x;
+        g_cam.dragY = e.y;
         return true;
       }
       if (e.type == T::MouseUp && g_cam.dragging) {
@@ -101,7 +131,18 @@ bool cameraInputEvent(VM& vm, WindowObj* w, const platform::InputEvent& e) {
     case T::MouseMove:
       if (g_cam.dragging) {
         g_cam.turnDirect += float(e.x - g_cam.dragX) * kDragTurn;
+        g_cam.padTilt += float(e.y - g_cam.dragY) * kRightTilt;  // up and down tilts (owner's request 2026-11-24)
         g_cam.dragX = e.x;
+        g_cam.dragY = e.y;
+      }
+      if (g_cam.rightHeld) {
+        const int dx = e.x - g_cam.rightX, dy = e.y - g_cam.rightY;
+        if (!g_cam.rightDrag && dx * dx + dy * dy >= kRightDragStart * kRightDragStart) g_cam.rightDrag = true;
+        if (g_cam.rightDrag) {
+          g_cam.turnDirect += float(dx) * kRightTurn;
+          g_cam.padTilt += float(dy) * kRightTilt;  // down: looking further down
+          g_cam.rightX = e.x, g_cam.rightY = e.y;
+        }
       }
       return false;
     case T::MouseWheel:
@@ -149,7 +190,7 @@ void registerCameraInputNatives(VM& vm) {
     arr->items = {Value::real(g_cam.zoomSmooth), Value::real(g_cam.zoomDirect), Value::real(g_cam.turnSmooth),
                   Value::real(g_cam.turnDirect), Value::real(g_cam.panX),       Value::real(g_cam.panY),
                   Value::real(g_cam.pivotX),     Value::real(g_cam.pivotY),     Value::integer(g_cam.released),
-                  Value::integer(g_cam.dragging ? 1 : 0),
+                  Value::integer(g_cam.dragging || g_cam.rightDrag ? 1 : 0),
                   Value::real(g_cam.padPanX),    Value::real(g_cam.padPanY),    Value::real(g_cam.padZoom),
                   Value::real(g_cam.padTurn),    Value::real(g_cam.padTilt),    Value::integer(g_cam.padTurning ? 1 : 0),
                   Value::integer(g_cam.padReleased), Value::integer(g_cam.padTiltReset)};

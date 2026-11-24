@@ -26,6 +26,7 @@ $regs_renderer_item = "Grafik-Engine:";
 $regs_renderer_values = ["OpenGL 3.3", "Vulkan"];
 $regs_renderer_hint = "Gilt nach einem Neustart. Vulkan fällt auf OpenGL zurück, wenn Grafikkarte oder Treiber es nicht können";
 $regs_showFps_item = "Leistungsanzeige (FPS, Bildzeit)";
+$regs_pauseUnfocused_item = "Spiel pausieren, wenn das Fenster nicht im Fokus ist";
 $regs_dayNight_item = "Tag und Nacht (wechselnde Tageszeit)";
 $regs_textureUpscale_item = "Schärfere Texturen (2x hochskaliert)";
 $regs_textureUpscale_progress = "Texturen werden vorbereitet:";

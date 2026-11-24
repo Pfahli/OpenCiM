@@ -33,6 +33,9 @@ constexpr int kPassengerUnit = 15;
 
 // shader programs linked so far and the seconds spent (load-time measurements, REGS_LOG_TIME)
 extern int gProgramsLinked;
+// > 0: scene lists wait for the pipelines they lack (the loading screen's first view); else those are made in the
+// background and their parts drawn once ready (Renderer3D::draw, gpu::Device::setPipelinesAsync)
+extern int gWaitForPipelines;
 extern double gLinkSeconds;
 
 // GpuMaterial::surfaceClass: the map surfaces a shader hook can tell apart (mod-manager.md §4.3)

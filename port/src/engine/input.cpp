@@ -13,6 +13,7 @@
 #include "engine/gui.h"
 #include "engine/host.h"
 #include "engine/interaction.h"
+#include "engine/settings.h"
 #include "engine/tools.h"
 
 namespace regs::engine {
@@ -527,19 +528,35 @@ void pollMouse(VM& vm, WindowObj* w) {
   desk->inputMousePos(vm, float(d->mouseX()) / ww, float(d->mouseY()) / wh);
 }
 
+void dispatchOne(VM& vm, WindowObj* w, Display* d, const platform::InputEvent& e);
+
 void dispatchInput(Engine& eng) {
   WindowObj* w = gameWindow();
   Display* d = display();
   VM& vm = eng.vm();
   using T = platform::InputEvent::Type;
-  for (const auto& e : host().input) {
-    if (e.type == T::Close) {
+  std::vector<platform::InputEvent> replay;
+  for (const auto& e0 : host().input) {
+    if (e0.type == T::Close) {
       host().quit = true;  // WM_CLOSE → PostQuitMessage
       continue;
     }
     if (!w) continue;
     Ref<Object> keepW(w);
-    if (cameraInputEvent(vm, w, e)) continue;  // the smooth camera's wheel, gestures and Ctrl + middle drag
+    // the smooth camera's wheel, gestures and drags; a right click it held back (a right drag turns the camera)
+    // comes back in `replay` once it is known to be a click
+    replay.clear();
+    if (cameraInputEvent(vm, w, e0, &replay)) {
+      for (const auto& r : replay) dispatchOne(vm, w, d, r);
+      continue;
+    }
+    dispatchOne(vm, w, d, e0);
+  }
+}
+
+void dispatchOne(VM& vm, WindowObj* w, Display* d, const platform::InputEvent& e) {
+  using T = platform::InputEvent::Type;
+  {
     bool events = !vm.truthy(vm.getMember(obj(w), u"disableInputEvents"));
     auto key = [&](const char16_t* ev, int k) {
       w->fieldValues[u"key"] = Value::integer(k);
@@ -581,9 +598,23 @@ void dispatchInput(Engine& eng) {
         break;
       case T::Activate:
       case T::Deactivate:
+      {
         w->appActive = e.type == T::Activate;
-        vm.fireEvent(w, w->appActive ? u"onActivate" : u"onDeactivate", {});
+        // the game pauses out of focus only with $settings.$stopWithoutFocus on (the graphics page; read at each change,
+        // owner's request 2026-11-24): system.script's handlers hear the loss of focus only then, and its return after
+        // a pause they made (a setting turned off meanwhile still lets the game go on)
+        static bool pausedByFocus = false;
+        if (!w->appActive) {
+          if (settingNumber(vm, u"stopWithoutFocus", 1.0f) != 0.0f) {
+            pausedByFocus = true;
+            vm.fireEvent(w, u"onDeactivate", {});
+          }
+        } else if (pausedByFocus) {
+          pausedByFocus = false;
+          vm.fireEvent(w, u"onActivate", {});
+        }
         break;
+      }
       default: break;
     }
   }
