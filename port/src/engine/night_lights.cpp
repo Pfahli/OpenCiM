@@ -1116,21 +1116,28 @@ const LampFix kLampFixes[] = {
 struct SignField {
   const char* texture;
   int w, h, x0, y0, x1, y1;
-  bool solid;
+  int solid;  // 0 LED dots, 1 light glyphs on a dark plate, 2 dark glyphs on a light plate
   int boardX0 = -1, boardX1 = -1;  // the whole display board across (when shiny: not window glass), else the field
 };
 const SignField kSignFields[] = {
-    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 17, 150, 29, 162, false},    // front "100", 2 lines
-    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 162, 168, 177, 181, false},  // side "100"
-    {"metro/objects/vehicles/bus-13/bus13.dds", 512, 256, 29, 120, 41, 130, false},    // front "090 LEHNIKEN"
-    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 57, 128, 75, 142, false},    // front "143 Pinzberg"
-    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 171, 185, 186, 193, false},  // side
-    {"metro/objects/vehicles/double-decker/double-decker.dds", 512, 256, 17, 145, 29, 156, false, 9, 78},  // "55 MUSTRA"
-    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 452, 60, 471, 73, true},  // roof boxes "7"
-    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 489, 60, 506, 73, true},
-    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 471, 73, 489, 87, true},
-    {"metro/objects/vehicles/tram-05/tram05.dds", 512, 256, 28, 97, 45, 109, false},   // front "10 Stadtplatz"
-    {"metro/objects/vehicles/tram-07/tram07.dds", 512, 256, 67, 142, 79, 154, false},  // front "Stadtplatz 61"
+    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 17, 150, 29, 162, 0},    // front "100", 2 lines
+    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 162, 168, 177, 181, 0},  // side "100"
+    {"metro/objects/vehicles/bus-13/bus13.dds", 512, 256, 29, 120, 41, 130, 0},    // front "090 LEHNIKEN"
+    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 57, 128, 75, 142, 0},    // front "143 Pinzberg"
+    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 171, 185, 186, 193, 0},  // side
+    {"metro/objects/vehicles/double-decker/double-decker.dds", 512, 256, 17, 145, 29, 156, 0, 9, 78},  // "55 MUSTRA"
+    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 452, 60, 471, 73, 1},  // roof boxes "7"
+    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 489, 60, 506, 73, 1},
+    {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 471, 73, 489, 87, 1},
+    {"metro/objects/vehicles/tram-05/tram05.dds", 512, 256, 28, 97, 45, 109, 0},   // front "10 Stadtplatz"
+    {"metro/objects/vehicles/tram-07/tram07.dds", 512, 256, 67, 142, 79, 154, 0},  // front "Stadtplatz 61"
+    {"metro/objects/vehicles/bus-03/bus03.dds", 512, 256, 8, 128, 29, 141, 2},           // plate "A16"
+    {"metro/objects/vehicles/bus-07/bus07.dds", 512, 256, 8, 114, 20, 124, 1},           // boxes "15"
+    {"metro/objects/vehicles/bus-07/bus07.dds", 512, 256, 103, 130, 118, 143, 1},
+    {"metro/objects/vehicles/bus-07/bus07.dds", 512, 256, 466, 132, 479, 143, 1},
+    {"metro/objects/vehicles/metro-02/metro02.dds", 512, 256, 406, 100, 422, 108, 1},    // box "10"
+    {"metro/objects/vehicles/metro-03/metro03.dds", 512, 256, 24, 118, 41, 128, 1},      // boxes "13"
+    {"metro/objects/vehicles/tram-03/tram03.dds", 512, 256, 202, 150, 218, 166, 2},      // round plate "1"
 };
 
 bool sameTexture(const std::string& a, const char* b) {
@@ -1509,8 +1516,10 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       VehicleLampInfo::Sign& sg = st.signs[st.signCount++];
       sg.u0 = float(x0) / float(w), sg.u1 = float(x1) / float(w), sg.v0 = float(y0) / float(h), sg.v1 = float(y1) / float(h);
       sg.aspect = rot ? float(y1 - y0) / float(x1 - x0) : float(x1 - x0) / float(y1 - y0);
-      sg.flipU = flipS, sg.flipV = flipT, sg.rot = rot, sg.style = sf.solid ? 1 : 0;
+      sg.flipU = flipS, sg.flipV = flipT, sg.rot = rot, sg.style = sf.solid;
       for (int ch = 0; ch < 3; ++ch) sg.colour[ch] = rgb[ch] / mx;  // full brightness, the hue of the original text
+      // (a light plate: the brightest quarter is the plate, kept at its own brightness)
+      if (sf.solid == 2) for (int ch = 0; ch < 3; ++ch) sg.colour[ch] = rgb[ch];
       // the display board is no window (a shiny board was taken for glass: lit, with passengers over it)
       int bx0 = sf.boardX0 >= 0 ? sf.boardX0 * w / sf.w : x0, bx1 = sf.boardX1 >= 0 ? sf.boardX1 * w / sf.w : x1;
       for (int y = std::max(0, y0 - 1); y < std::min(h, y1 + 1); ++y)

@@ -86,3 +86,4 @@ white glyphs on the roller boxes of tram-04. The rest of the display (the place 
   "47", bus-14 "158", the double-decker "70", tram-04 "56", tram-05 "138 Stadtplatz", tram-07 "Stadtplatz 128". Not
   seen yet: the side displays of bus-12 and bus-14; tram-04's two side boxes (not found on the model); displays
   without a number (bus-10, bus80) and the older vehicles' painted boards are not changed.
+* **More (2026-11-24):** bus-03 (number plate, dark on light), bus-07 (three boxes), metro-02 (box), metro-03 (boxes), tram-03 (round plate). Styles: 0 LED dots, 1 light glyphs on a dark box, 2 dark glyphs on a light plate. Seen in the lineup: bus-03 "75", bus-07 "61", metro-03 "51", tram-03 "181". Left out: bus-15 (the number landed in the display's second line); metro-02's box not seen from the front.

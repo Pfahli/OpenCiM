@@ -269,7 +269,9 @@ const char16_t* kSignDecl =
     u"  vec2 f = fract(uv);\n"
     u"  if (f.x < A.x || f.x > A.z || f.y < A.y || f.y > A.w) return col;\n"
     u"  float s = (f.x - A.x) / (A.z - A.x), t = (f.y - A.y) / (A.w - A.y);\n"
-    u"  bool rot = B.w > 9.5, solid = B.w - (rot ? 10.0 : 0.0) > 0.5;\n"
+    u"  bool rot = B.w > 9.5;\n"
+    u"  float style = B.w - (rot ? 10.0 : 0.0);\n"
+    u"  bool solid = style > 0.5, plate = style > 1.5;\n"  // 1 light glyphs on dark, 2 dark glyphs on a light plate
     u"  if (rot) { float tmp = s; s = t; t = tmp; }\n"
     u"  if (B.x > 0.5) s = 1.0 - s;\n"
     u"  if (B.y > 0.5) t = 1.0 - t;\n"
@@ -290,6 +292,7 @@ const char16_t* kSignDecl =
     u"    if (cx < 5) lit = float((regs_font5x7[digit * 7 + row] >> (4 - cx)) & 1);\n"
     u"  }\n"
     // a roller blind is printed, not lit: its glyphs only reflect light; LEDs glow, more at night
+    u"  if (plate) return mix(amber, vec3(0.06, 0.06, 0.07), lit);\n"
     u"  if (solid) return mix(bg, amber * 0.85, lit);\n"
     u"  glow += amber * lit * dotMask * (0.5 + 1.5 * regs_SignMeta.z);\n"
     u"  return mix(bg, mix(amber * 0.07, amber, lit), dotMask);\n"
