@@ -832,7 +832,7 @@ int cmdVehicleLamps(int argc, char** argv) {
       }
       std::printf("%s / %s: %d front, %d rear lamp areas\n", argv[a], m.name.c_str(), info.frontLamps, info.rearLamps);
       if (info.windows)
-        std::printf("  %d window areas, band y %.2f..%.2f%s\n", info.windows, info.windowY0, info.windowY1,
+        std::printf("  %d window areas, %d windscreen texels, band y %.2f..%.2f%s\n", info.windows, info.windscreen, info.windowY0, info.windowY1,
                     info.windowY3 > 0 ? (", upper deck " + std::to_string(info.windowY2).substr(0, 4) + ".." +
                                          std::to_string(info.windowY3).substr(0, 4)).c_str() : "");
       if (!ok) continue;
@@ -947,7 +947,7 @@ int main(int argc, char** argv) {
     else if (cmd == "shaders") rc = cmdShaders(argc, argv);
     else if (cmd == "shadowtest") rc = cmdShadowTest(argc, argv);
     else if (cmd == "skintest") rc = cmdSkinTest(argc, argv);
-    else if (cmd == "passengers") rc = cmdPassengers(argc, argv);
+    else if (cmd == "passengers") rc = cmdPassengers(argc, argv);
     else if (cmd == "sound") rc = cmdSound(argc, argv);
     else if (cmd == "cut") rc = cmdCut(argc, argv);
     else if (cmd == "softdot") rc = cmdSoftDot(argc, argv);

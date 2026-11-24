@@ -32,6 +32,15 @@ passengers as dark figures against the lit cabin.
   heights splits it into a lower and an upper deck band (`windowY2..3`, `regs_CabinUpper`), each deck with its own
   people. Until then a double-decker's figures stood across both floors. Found two decks: the double-decker, bus-07,
   bus-12, tram-02. Left: bus-07's upper windows are found as glass in one pane only.
+* **The driver** (2026-11-24, owner's request): the cab is lit at half the cabin light (it was dark), and the
+  leading end's windscreen shows a citizen seen from the front, seated on the vehicle's left (the viewer's right). The
+  windscreen glass is marked in the mask's alpha (255 out of the model's front, 128 out of its rear, kept through the
+  mip levels); the shader takes the end whose lamps are head lamps (the model's front by day). Windscreens are
+  glass facing out of an end within the front quarter of the length (old buses have theirs behind a bonnet).
+  `regs-tool vehiclelamps` counts the windscreen texels. Lineup facing the camera: `REGS_TEST_LINEUP=0,0,1,180`.
+  Seen with a driver: bus-08, bus-10a, bus-12, bus-13a, bus-14, bus-15, bus80, the double-decker, tram-01, tram-04,
+  tram-05, tram-07, metro-03. Not visible yet: the old buses bus-01 to bus-07, tram-02, tram-03, metro-01, metro-02,
+  metro-04 to metro-06 (windscreen found but the figure sits outside the glass, or no windscreen found).
 * **Driver's cab:** an end counts as a cab when glass faces out of it (a windscreen), not when lamps were found there;
   a pane the texture repeats along the car takes the brightest of its places; ends found at lamp height that span
   less than half the model are not its ends (tram05e). The last car of tram-05 is lit all along now.

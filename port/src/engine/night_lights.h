@@ -62,6 +62,7 @@ struct VehicleLampInfo {
   int windows = 0;                    // window glass areas (channel B: interior light)
   float windowY0 = 0, windowY1 = 0;   // the window band's model height (passenger silhouettes), 0 0 = unknown
   float windowY2 = 0, windowY3 = 0;   // a double-decker's upper deck band, 0 0 = one deck
+  int windscreen = 0;                 // texels of windscreen glass (the driver's place)
 };
 // texture: the diffuse map's VFS path (a few models' lamps are corrected by it, kLampFixes)
 bool makeVehicleLampMask(const render::MeshData& mesh, int material, const render::Image& diffuse,

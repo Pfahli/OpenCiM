@@ -199,6 +199,20 @@ const char16_t* kNightMapsDecl =
     u"    vec2 pdx = dFdx(regs_ModelPos.zy), pdy = dFdy(regs_ModelPos.zy);\n"
     u"    float plod = log2(max(max(length(pdx), length(pdy)) / max(regs_PassengerInfo.z / 92.0, 1e-4), 1.0));\n"
     u"    if (inside > 0.5 && m.b > 0.0) cabin *= 1.0 - 0.85 * regs_passengers(plod);\n"
+    // the driver (2026-11-24): on the windscreen of the leading end (head lamps there, or the model's front by day),
+    // a citizen seen from the front, seated on the left side (left of the direction of travel: -x for the model's
+    // front, +x for its rear)
+    u"    if (inside > 0.5 && m.a > 0.3 && regs_PassengerInfo.x > 0.5) {\n"
+    u"      bool frontGlass = m.a > 0.75;\n"
+    u"      bool lead = frontGlass ? (fm > 0.5 && fm < 1.5) || (fm < 0.5 && rm < 0.5) : (rm > 0.5 && rm < 1.5);\n"
+    u"      float HB = regs_Cabin.y - regs_Cabin.x;\n"
+    u"      if (lead && HB > 0.3) {\n"
+    u"        float seat = frontGlass ? -0.45 : 0.45;\n"
+    u"        float top = regs_Cabin.x + HB * 0.62 + 0.17;\n"
+    u"        float drv = regs_figure(regs_ModelPos.x - seat, top, regs_ModelPos.y, vec4(0.0, 0.41, 0.0, 0.37), plod, 3.0);\n"
+    u"        cabin *= 1.0 - 0.85 * drv;\n"
+    u"      }\n"
+    u"    }\n"
     // a lamp smaller than a pixel keeps its light through the mask's mip levels, which hold the brightest texel
     // (night_lights.cpp buildMips); until 2026-11-24 a boost of up to 16x from the pixel's footprint made up for an
     // averaged mip and flickered as the car moved

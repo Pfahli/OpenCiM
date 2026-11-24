@@ -2858,8 +2858,8 @@ static void collectLineup(Display& d, VM& vm, GridObj* grid, const char* spec, s
   static std::vector<Entry> lineup;
   static bool built = false;
   float load = 1.0f;
-  float ax = 0, az = 0;
-  std::sscanf(spec, "%f,%f,%f", &ax, &az, &load);
+  float ax = 0, az = 0, turnDeg = 90;  // turn: the models' heading about y (90: lengthwise along x; 0 or 180: facing)
+  std::sscanf(spec, "%f,%f,%f,%f", &ax, &az, &load, &turnDeg);
   if (!built && grid->data) {
     built = true;
     const char* kinds[] = {"/bus", "/tram", "/metro"};
@@ -2878,12 +2878,14 @@ static void collectLineup(Display& d, VM& vm, GridObj* grid, const char* spec, s
       int cz = std::clamp(int(z / g.cellSize + float(g.length) * 0.5f), 0, g.length - 1);
       return float(g.height[size_t(cz) * size_t(g.width) + size_t(cx)]) * g.cellSize / 256.0f;
     };
-    const render::Quat turn{0, 0.70710678f, 0, 0.70710678f};  // a quarter turn: the model's length (z) along x
+    const float ha = turnDeg * 3.14159265f / 360.0f;
+    const render::Quat turn{0, std::sin(ha), 0, std::cos(ha)};
     for (int k = 0; k < 3; ++k) {
       std::sort(rows[k].begin(), rows[k].end());
       float x = ax - 120.0f, z = az + (float(k) - 1.0f) * 40.0f;  // rows 40 apart: one row per close view
       for (auto& [path, o] : rows[k]) {
-        float len = o->data->mesh.boundsMax[2] - o->data->mesh.boundsMin[2];
+        float l = o->data->mesh.boundsMax[2] - o->data->mesh.boundsMin[2], wd = o->data->mesh.boundsMax[0] - o->data->mesh.boundsMin[0];
+        float len = l * std::fabs(std::sin(2 * ha)) + wd * std::fabs(std::cos(2 * ha)) + (std::fabs(std::cos(2 * ha)) > 0.5f ? 1.0f : 0.0f);
         x += len * 0.5f + 1.5f;
         lineup.push_back({o, render::translation({x, ground(x, z), z}) * render::rotation(turn)});
         LOG_INFO("lineup: x %6.1f z %4.0f  %s", x, z, path.c_str());

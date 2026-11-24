@@ -1193,7 +1193,8 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
           float& fr = fadeRear[size_t(y) * size_t(w) + size_t(x)];
           fr = std::max(fr, smooth(zRear - fadeFrom, zRear - fadeTo, pz));
           // glass facing out of an end (a windscreen) makes that end a driver's cab (cabEnd below)
-          const float reach = std::max(depth, 0.08f * (zRear - zFront));
+          // (old buses' windscreens sit behind a long bonnet: the front quarter of the length)
+          const float reach = std::max(depth, 0.25f * (zRear - zFront));
           if (nz < -0.7f && pz < zFront + reach) endFace[size_t(y) * size_t(w) + size_t(x)] |= 1;
           if (nz > 0.7f && pz > zRear - reach) endFace[size_t(y) * size_t(w) + size_t(x)] |= 2;
           if (noEnds || py3 < minY + 0.08f * height || py3 > minY + 0.58f * height) continue;
@@ -1310,6 +1311,7 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
   // window glass (interior light of buses, trams and trains): the specular map's bright areas, above 60 % of its
   // brightest level (the paint is shiny too, but well below the glass); window-sized areas only (no lamp lenses)
   std::vector<uint8_t> win(lamp.size(), 0);
+  std::vector<uint8_t> cabGlass(lamp.size(), 0);  // windscreen glass: 255 front, 128 rear (mask alpha)
   if (haveSpec) {
     std::vector<float> sv(lamp.size());
     std::vector<int> hist(256, 0);
@@ -1365,9 +1367,15 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     for (const auto& pane : panes)
       for (size_t p : pane) frontCab |= (endFace[p] & 1) != 0, rearCab |= (endFace[p] & 2) != 0;
     if (!rail) rearCab = false;
+    // the cab itself at half the cabin light (the driver's lamp), not dark (2026-11-24, owner's request); its
+    // windscreen glass is marked in the mask's alpha (255 out of the front, 128 out of the rear) for the driver
     for (const auto& pane : panes)
-      for (size_t p : pane)
-        win[p] = uint8_t(std::lround(255.0f * smooth(T, T + 0.1f, sv[p]) * (frontCab ? fade[p] : 1.0f) * (rearCab ? fadeRear[p] : 1.0f)));
+      for (size_t p : pane) {
+        win[p] = uint8_t(std::lround(255.0f * smooth(T, T + 0.1f, sv[p]) * (frontCab ? 0.5f + 0.5f * fade[p] : 1.0f) *
+                                     (rearCab ? 0.5f + 0.5f * fadeRear[p] : 1.0f)));
+        if (frontCab && (endFace[p] & 1)) cabGlass[p] = 255, ++st.windscreen;
+        else if (rearCab && (endFace[p] & 2)) cabGlass[p] = 128, ++st.windscreen;
+      }
   }
   {  // the window band's height on the model (10th to 90th percentile of the glass): where the passengers show. The
     // heights come from the glass triangles (by their size), not the texels: a double-decker's two decks may use the
@@ -1413,16 +1421,18 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     }
   }
   if (!st.frontLamps && !st.rearLamps && !st.windows) return false;
-  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);  // BGRA: R = front lamps, G = rear lamps, B = windows
+  // BGRA: R = front lamps, G = rear lamps, B = windows, A = windscreen glass (the driver, 255 front / 128 rear)
+  std::vector<uint8_t> px(size_t(w) * size_t(h) * 4, 0);
   for (size_t i = 0; i < lamp.size(); ++i) {
     if (keep[i]) px[i * 4 + (lamp[i] == 1 ? 2 : 1)] = 255;
     px[i * 4] = win[i];
+    px[i * 4 + 3] = cabGlass[i];
   }
   out = Image();
   out.format = Image::Format::BGRA8;
   out.width = w, out.height = h;
   out.levels.push_back(std::move(px));
-  buildMips(out, 0b0110);  // the lamps (G rear, R front) by their brightest texel; the windows (B) averaged
+  buildMips(out, 0b1110);  // the lamps (G, R) and the windscreen mark (A) by their brightest texel; the windows (B) averaged
   return true;
 }
 
