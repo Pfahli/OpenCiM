@@ -361,7 +361,9 @@ void DesktopObj::inputMouseMove(VM& vm, float dx, float dy) {
   if (ControlObj* m = asControl(pointer)) m->setRect(vm, ox, oy, m->width, m->height);  // pointer at the OLD position
   ControlObj* cap = asControl(capture);
   if (!cap || cap == this) {
-    ControlObj* hit = controlAt(ox, oy);
+    // the control under the NEW position (port, 2026-11-24: the engine took the old one, so the hover lagged one
+    // event behind; a quick move off a drop-down list left it highlighted until the mouse moved again)
+    ControlObj* hit = controlAt(nx, ny);
     if (hit != asControl(hover)) {
       if (ControlObj* h = asControl(hover)) h->mouseOut(vm);
       hover = Ref<Object>(hit);

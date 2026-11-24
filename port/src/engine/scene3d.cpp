@@ -842,7 +842,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
   // port TAA and render scale (game view, engine/temporal.h): the scene is drawn jittered and/or smaller into the
   // temporal input, then resolved or upscaled to the view's size (before the colour styles)
   TemporalPass temporal;
-  if (!rt && !grids.empty() && !stereoView) temporal = temporalBegin(d, vm, w, h, v);  // (no history across eyes)
+  if (!rt && !grids.empty() && !stereoView)  // (no history across eyes; with bloom its composite fills the input)
+    temporal = temporalBegin(d, vm, w, h, v, bloom != nullptr);
   if (temporal.ao && !ensureRayScene()) temporal.ao = false;
   const int sw = temporal.active ? temporal.rw : w, sh = temporal.active ? temporal.rh : h;
   // bloom (on-screen viewports): the scene goes into its HDR target, bottom-left aligned, then the chain composites
@@ -859,8 +860,11 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
   if (!rt && !grids.empty() && (styleActive(vm) || postHooks))
     styled = styleTarget(d, vm, w, h, hdr || temporal.active ? 0 : d.antialiasing);
   if (temporal.active) {
+    // (a target's rect counts rows from the bottom: y 0 is the bottom-left corner the composite reads. Until
+    // 2026-11-24 y was hdr->height - sh, which moved the view up once the grow-only target was larger than it: a
+    // render scale lowered while playing)
     if (hdr) {  // bloom at the render size, composited into the temporal input with its depth
-      d.r3d().begin(hdr, 0, hdr->height - sh, sw, sh, clear, (clear >> 24) != 0, bw, bh);
+      d.r3d().begin(hdr, 0, 0, sw, sh, clear, (clear >> 24) != 0, bw, bh);
       d.r3d().draw(v, items);
       d.r3d().end(bw, bh);
       bloomFinish(d, vm, bloom, 0, 0, sw, sh, bw, bh, temporal.input);
@@ -873,7 +877,7 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
     temporalFinish(d, vm, temporal, x, y, w, h, bw, bh, styled);
     d.r3d().end(bw, bh);
   } else if (hdr) {
-    d.r3d().begin(hdr, 0, hdr->height - h, w, h, clear, (clear >> 24) != 0, bw, bh);
+    d.r3d().begin(hdr, 0, 0, w, h, clear, (clear >> 24) != 0, bw, bh);
     d.r3d().draw(v, items);
     d.r3d().end(bw, bh);
     bloomFinish(d, vm, bloom, x, y, w, h, bw, bh, styled);

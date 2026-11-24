@@ -219,6 +219,15 @@ int main(int argc, char** argv) {
   fs::create_directories(documents);
   // crash reports next to the player's saves: Documents\OpenCiM\crashes (core/crash.h, docs/crash-reports.md)
   crashSetReportDir(documents / engine::kPortFolderName / "crashes");
+  // the port's log of a player's run (not a test's stand-in, whose output the test captures): Documents\OpenCiM\
+  // opencim.log, the run before as opencim.old.log (2026-11-24: a started game's log went nowhere)
+  if (!standIn) {
+    std::error_code lec;
+    fs::path dir = documents / engine::kPortFolderName;
+    fs::create_directories(dir, lec);
+    fs::rename(dir / "opencim.log", dir / "opencim.old.log", lec);
+    logSetFile((dir / "opencim.log").string());
+  }
   engine::host().headless = false;
   std::error_code ec;
   if (fs::is_directory(data, ec)) engine::host().dataDir = data;
@@ -382,6 +391,21 @@ int main(int argc, char** argv) {
               script::Value ui = vm.getMember(*main, u"$gameUI");
               if (sc.action == "tilt") vm.setMember(ui, u"$screenShotMode", script::Value::boolean(true));  // ui.script: tilt only then
               vm.call(vm.getMember(ui, fn), {arg});
+            }
+          } catch (...) {
+          }
+          continue;
+        } else if (sc.action == "setting") {
+          // setting:<name>,<number>: MAIN.$settings.$<name> while the game runs, as the options pages set it (tests of
+          // live setting changes, e.g. setting:regsRtAo,1)
+          try {
+            auto& vm = eng.vm();
+            size_t comma = sc.arg.find(',');
+            if (script::Value* main = vm.findGlobal(u"MAIN"); main && comma != std::string::npos) {
+              script::Value st = vm.getMember(*main, u"$settings");
+              std::u16string name = u"$" + utf8ToUtf16(sc.arg.substr(0, comma));
+              vm.setMember(st, name, script::Value::integer(std::atoi(sc.arg.c_str() + comma + 1)));
+              LOG_INFO("test: setting %s = %s", sc.arg.substr(0, comma).c_str(), sc.arg.c_str() + comma + 1);
             }
           } catch (...) {
           }

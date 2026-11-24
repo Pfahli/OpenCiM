@@ -23,7 +23,10 @@ struct TemporalPass {
   int rw = 0, rh = 0;   // render size
   const render::RenderTarget* input = nullptr;
 };
-TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, render::SceneView& v);
+// composite: the scene reaches the input as bloom's composite (drawn into its single-sample colour), not drawn into it;
+// the input then has no MSAA of its own (bloom's scene target has it), else its empty multisample buffer, resolved in
+// temporalFinish, wiped the frame (2026-11-24: a black map view with antialiasing, bloom and TAA, AO or a render scale)
+TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, render::SceneView& v, bool composite = false);
 void temporalFinish(Display& d, script::VM& vm, const TemporalPass& t, int x, int y, int w, int h, int backW, int backH,
                     const render::RenderTarget* out);
 // render targets are made again at the next frame (window size or UI scale changed)

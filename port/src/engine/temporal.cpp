@@ -78,7 +78,7 @@ bool ensure(Display& d, RenderTarget& t, int w, int h, int samples, bool depth, 
 
 }  // namespace
 
-TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& v) {
+TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& v, bool composite) {
   TemporalState& s = state();
   TemporalPass t;
   if (s.failed) return t;
@@ -143,7 +143,7 @@ TemporalPass temporalBegin(Display& d, script::VM& vm, int w, int h, SceneView& 
   t.rw = std::max(1, int(std::lround(float(w) * scale)));
   t.rh = std::max(1, int(std::lround(float(h) * scale)));
   // the input keeps the antialiasing setting's MSAA (TAA on top of it is allowed; it is the player's choice)
-  int samples = std::max(0, d.antialiasing);
+  int samples = composite ? 0 : std::max(0, d.antialiasing);
   if (!ensure(d, s.input, t.rw, t.rh, samples, true, TargetFormat::Rgba16f) &&
       !(samples > 0 && ensure(d, s.input, t.rw, t.rh, samples = 0, true, TargetFormat::Rgba16f))) {
     s.failed = true;
