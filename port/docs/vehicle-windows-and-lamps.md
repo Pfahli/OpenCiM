@@ -37,7 +37,7 @@ passengers as dark figures against the lit cabin.
   windscreen glass is marked in the mask's alpha (255 out of the model's front, 128 out of its rear, kept through the
   mip levels); the shader takes the end whose lamps are head lamps (the model's front by day). Windscreens are
   glass facing out of an end within the front quarter of the length (old buses have theirs behind a bonnet).
-  `regs-tool vehiclelamps` counts the windscreen texels. Lineup facing the camera: `REGS_TEST_LINEUP=0,0,1,180`.
+  `regs-tool vehiclelamps` counts the windscreen texels. On a double-decker the cab is downstairs only: the upper deck's front is passenger seats at full light, its front glass marked 64, where the shader draws two passengers seen from the front (the second from half full); glass facing out of an end no longer gets the side windows' rows of figures. Lineup facing the camera: `REGS_TEST_LINEUP=0,0,1,180`.
   Seen with a driver: bus-08, bus-10a, bus-12, bus-13a, bus-14, bus-15, bus80, the double-decker, tram-01, tram-04,
   tram-05, tram-07, metro-03. Not visible yet: the old buses bus-01 to bus-07, tram-02, tram-03, metro-01, metro-02,
   metro-04 to metro-06 (windscreen found but the figure sits outside the glass, or no windscreen found).

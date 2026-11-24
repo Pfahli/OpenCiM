@@ -198,7 +198,16 @@ const char16_t* kNightMapsDecl =
     // the atlas's mip level from the model-space footprint of a pixel (here, outside the branch below: derivatives)
     u"    vec2 pdx = dFdx(regs_ModelPos.zy), pdy = dFdy(regs_ModelPos.zy);\n"
     u"    float plod = log2(max(max(length(pdx), length(pdy)) / max(regs_PassengerInfo.z / 92.0, 1e-4), 1.0));\n"
-    u"    if (inside > 0.5 && m.b > 0.0) cabin *= 1.0 - 0.85 * regs_passengers(plod);\n"
+    // (glass facing out of an end, marked in alpha, gets its own figures below, not the side windows' rows)
+    u"    if (inside > 0.5 && m.b > 0.0 && m.a < 0.1) cabin *= 1.0 - 0.85 * regs_passengers(plod);\n"
+    // a double-decker's upper front (alpha 64): two passengers seen from the front, the second from half full
+    u"    if (inside > 0.5 && m.a > 0.15 && m.a < 0.35 && regs_PassengerInfo.x > 0.5 && regs_CabinUpper.y > regs_CabinUpper.x + 0.3) {\n"
+    u"      float HU = regs_CabinUpper.y - regs_CabinUpper.x, fillU = clamp(regs_Cabin.z * 2.0, 0.0, 1.0);\n"
+    u"      float topU = regs_CabinUpper.x + HU * 0.62 + 0.17;\n"
+    u"      float pa = regs_figure(regs_ModelPos.x + 0.5, topU, regs_ModelPos.y, vec4(0.0, 0.23, 0.0, 0.61), plod, 2.0) * step(0.25, fillU);\n"
+    u"      float pb = regs_figure(regs_ModelPos.x - 0.5, topU, regs_ModelPos.y, vec4(1.0, 0.67, 0.0, 0.13), plod, 2.0) * step(0.75, fillU);\n"
+    u"      cabin *= 1.0 - 0.85 * max(pa, pb);\n"
+    u"    }\n"
     // the driver (2026-11-24): on the windscreen of the leading end (head lamps there, or the model's front by day),
     // a citizen seen from the front, seated on the left side (left of the direction of travel: -x for the model's
     // front, +x for its rear)
