@@ -131,25 +131,31 @@ const char16_t* kNightMapsDecl =
     // the load in steps the eye can count: shown = 0, 0.25, 0.5, 0.75, 1 (the simulation eases between them). Seats
     // fill first: half of them at a quarter, all at half; the standing places fill from half to full. Nobody in an
     // empty car
+    // a double-decker: regs_CabinUpper is its upper deck's band (0 0 for one deck); each deck has its own figures
+    u"uniform vec4 regs_CabinUpper;\n"
     u"float regs_passengers(float lod) {\n"
-    u"  float H = regs_Cabin.y - regs_Cabin.x;\n"
-    u"  if (H < 0.3) return 0.0;\n"
     u"  vec3 p = regs_ModelPos;\n"
+    u"  vec2 band = regs_Cabin.xy;\n"
+    u"  if (regs_CabinUpper.y > regs_CabinUpper.x + 0.3 && p.y > 0.5 * (regs_Cabin.y + regs_CabinUpper.x)) band = regs_CabinUpper.xy;\n"
+    u"  float H = band.y - band.x;\n"
+    u"  if (H < 0.3) return 0.0;\n"
     u"  float side = p.x < 0.0 ? 1.0 : 2.0, occ = regs_Cabin.z;\n"
     u"  float seatFill = clamp(occ * 2.0, 0.0, 1.0), standFill = clamp(occ * 2.0 - 1.0, 0.0, 1.0);\n"
     // figures at the game's character scale (its people are drawn ~1.6x life size): a seat every 1.3 m per side
     u"  float slot = floor(p.z / 1.3);\n"
     u"  vec4 h = regs_hash4(slot * 3.0 + side, 7.0);\n"
     u"  float ux = p.z - (slot + 0.5) * 1.3 - (h.y - 0.5) * 0.25;\n"
-    u"  float headY = regs_Cabin.x + H * (0.48 + 0.1 * h.z), r = 0.15 + 0.03 * h.w;\n"
+    u"  float deck = band.x > regs_Cabin.x + 0.1 ? 17.0 : 0.0;\n"  // the upper deck's own people
+    u"  h = regs_hash4(slot * 3.0 + side + deck, 7.0);\n"
+    u"  float headY = band.x + H * (0.48 + 0.1 * h.z), r = 0.15 + 0.03 * h.w;\n"
     u"  float slotS = floor(p.z / 1.3 + 0.5);\n"
-    u"  vec4 g = regs_hash4(slotS * 5.0 + side, 9.0);\n"
+    u"  vec4 g = regs_hash4(slotS * 5.0 + side + deck, 9.0);\n"
     u"  float us = p.z - slotS * 1.3 - (g.y - 0.5) * 0.25;\n"
-    u"  float headS = regs_Cabin.x + H * (0.84 + 0.1 * g.z), rs = 0.16 + 0.03 * g.w;\n"
+    u"  float headS = band.x + H * (0.84 + 0.1 * g.z), rs = 0.16 + 0.03 * g.w;\n"
     u"  float seated, standing;\n"
     u"  if (regs_PassengerInfo.x > 0.5) {\n"
-    u"    seated = regs_figure(ux, headY + r, p.y, regs_hash4(slot * 3.0 + side, 11.0), lod, 2.0);\n"
-    u"    standing = regs_figure(us, headS + rs, p.y, regs_hash4(slotS * 5.0 + side, 13.0), lod, 1.0);\n"
+    u"    seated = regs_figure(ux, headY + r, p.y, regs_hash4(slot * 3.0 + side + deck, 11.0), lod, 2.0);\n"
+    u"    standing = regs_figure(us, headS + rs, p.y, regs_hash4(slotS * 5.0 + side + deck, 13.0), lod, 1.0);\n"
     u"  } else {\n"
     u"    float head = 1.0 - smoothstep(r - 0.03, r + 0.01, length(vec2(ux, (p.y - headY) * 0.9)));\n"
     u"    float body = (1.0 - smoothstep(0.26, 0.31, abs(ux))) * (1.0 - smoothstep(headY - r - 0.12, headY - r - 0.03, p.y));\n"

@@ -22,6 +22,19 @@ passengers as dark figures against the lit cabin.
   mods keep units 13-14.
 * Without the atlas (no citizen models found) the old plain figures (a disc and a box) stay.
 * `REGS_TEST_PASSENGERS=<0..1>` gives every line vehicle that load (screenshots).
+* **Lineup** `REGS_TEST_LINEUP=<x>,<z>[,<load>]`: every bus, tram and metro part the game has loaded, in three rows
+  (buses, trams, metros, 40 apart) around that point, lamps and cabin light on, the given load (default full); the log
+  lists each part with its x. With an empty map (`REGS_START=map:addons/none/empty.grid`) and `REGS_DEBUG_TIME=22`
+  the whole fleet can be checked in a few shots (`testing/shots/out/lineup4-*.jpg`, 2026-11-24: 19 bus, 16 tram and 12
+  metro parts, all lit and full).
+* **Double-deckers:** the window band comes from the glass's triangles on the model (points spread over each
+  triangle, the ones on lit glass), not from the texture, since both decks may use the same panes; a clear gap in the
+  heights splits it into a lower and an upper deck band (`windowY2..3`, `regs_CabinUpper`), each deck with its own
+  people. Until then a double-decker's figures stood across both floors. Found two decks: the double-decker, bus-07,
+  bus-12, tram-02. Left: bus-07's upper windows are found as glass in one pane only.
+* **Driver's cab:** an end counts as a cab when glass faces out of it (a windscreen), not when lamps were found there;
+  a pane the texture repeats along the car takes the brightest of its places; ends found at lamp height that span
+  less than half the model are not its ends (tram05e). The last car of tram-05 is lit all along now.
 * **More glass found** (2026-11-24): the search took only glass areas of 1.5-15 % of the texture, so windows split by
   their bars into small panes (the old trams: 0.5 % each) were left out and those vehicles had no lit cabin. Now panes
   from 0.3 % count too when they are solid rectangles (fill ≥ 85 %, aspect ≤ 8). `regs-tool vehiclelamps` (glass drawn

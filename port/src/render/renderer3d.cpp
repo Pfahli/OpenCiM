@@ -827,6 +827,7 @@ Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
   l.passengerAtlas = at("regs_PassengerAtlas");
   l.passengerInfo = at("regs_PassengerInfo");
   l.passengerAnim = at("regs_PassengerAnim");
+  l.cabinUpper = at("regs_CabinUpper");
   return l;
 }
 
@@ -966,7 +967,10 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
                  : m.windowKind >= 4 ? (v.night[3] > 0.05f ? float(m.windowKind) : 0.0f)
                  : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
     dev().uniform1f(l.windowOn, code);
-    if (m.windowKind == 1) dev().uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, it.cabinLight);
+    if (m.windowKind == 1) {
+      dev().uniform4f(l.cabin, m.cabinY[0], m.cabinY[1], it.passengers, it.cabinLight);
+      dev().uniform4f(l.cabinUpper, m.cabinY[2], m.cabinY[3], 0, 0);
+    }
     // the sampler points at the light map's unit when unused: never at a unit where the material has a cube
     dev().uniform1i(l.windowMask, code > 0 ? maskUnit : kNightMapUnit);
     if (code > 0) {

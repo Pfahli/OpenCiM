@@ -60,7 +60,7 @@ struct GpuMaterial {
   float shininess = 1;
   float reflection = 0;   // header byte 0x27 / 255
   uint32_t windowMask = 0;  // port night lights (engine/night_lights.h): the window groups of a building texture
-  float cabinY[2] = {0, 0};  // vehicles: the window band's model height (passenger silhouettes)
+  float cabinY[4] = {0, 0, 0, 0};  // vehicles: the window band's model height (passenger silhouettes), [2..3] upper deck
   uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign, 5: clock face
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
   std::vector<uint8_t> cube;  // textures[i] is a cube map
@@ -350,7 +350,7 @@ class Renderer3D {
     int eyePos = -1;  // raytraced reflections: the camera in world space
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1, passengerAtlas = -1, passengerInfo = -1,
-        passengerAnim = -1;
+        passengerAnim = -1, cabinUpper = -1;
     // draw(): the view (viewSerial_) whose per-view uniforms (setupProgram) the program holds. They stay in the
     // program between uses (GL program objects; the Vulkan device's per-program uniform block and sampler units),
     // so a program used again in the same draw() is not set up again.

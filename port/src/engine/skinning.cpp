@@ -269,7 +269,7 @@ void collectSkinned(Display& d, VM& vm, ObjectObj* model, const Mat4& world, con
       if (vehicle) {  // port night lights: the vehicle's own lamps
         VehicleLampInfo li;
         g.windowMask = vehicleLampMask(d, vm, *model->data, int(&m - model->data->materials.data()), &li);
-        g.cabinY[0] = li.windowY0, g.cabinY[1] = li.windowY1;
+        g.cabinY[0] = li.windowY0, g.cabinY[1] = li.windowY1, g.cabinY[2] = li.windowY2, g.cabinY[3] = li.windowY3;
         g.windowKind = 1;
       }
       sm.materials.push_back(g);

@@ -1144,7 +1144,10 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
   // a middle section of an articulated tram may have no body at lamp height across its ends: no lamps then, but its
   // windows still count (until 2026-11-24 such a section had no lit cabin)
   const bool noEnds = zFront > zRear;
-  if (noEnds) zFront = mesh.boundsMin[2], zRear = mesh.boundsMax[2];
+  // ends found at lamp height that span less than half the model (tram05e: only its cab end, z 2.71..3.16 of
+  // -3.16..3.16) are not the car's ends: the model's own then (its front fade had darkened all of it)
+  if (noEnds || zRear - zFront < 0.5f * (mesh.boundsMax[2] - mesh.boundsMin[2]))
+    zFront = std::min(zFront, mesh.boundsMin[2]), zRear = std::max(zRear, mesh.boundsMax[2]);
   const float depth = std::max(0.25f, 0.06f * (zRear - zFront));
   // the driver's cab stays dark: the cabin light fades in from 1.5 to 4.5 m behind a cab end, on short cars over the
   // same share of their length (an end car of 7 m with a lamp at each end was dark all over)
@@ -1153,7 +1156,8 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
   std::vector<uint8_t> side(size_t(w) * size_t(h), 0);  // 1 front, 2 rear
   // the cabin light fades towards the front: the driver's cab stays dark (0 up to 1.5 m from the front, full at 4.5 m)
   std::vector<float> texY(size_t(w) * size_t(h), -1e30f);  // model height of the face using the texel
-  std::vector<float> fade(size_t(w) * size_t(h), 1.0f), fadeRear(size_t(w) * size_t(h), 1.0f);  // rail: a cab at each end
+  std::vector<float> fade(size_t(w) * size_t(h), 0.0f), fadeRear(size_t(w) * size_t(h), 0.0f);  // rail: a cab at each end
+  std::vector<uint8_t> endFace(size_t(w) * size_t(h), 0);  // bit 1: faces out of the front, 2: out of the rear
   for (const Submesh& sm : mesh.submeshes) {
     if (sm.material != material) continue;
     for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size(); k += 3) {
@@ -1182,10 +1186,16 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
             nz += bb[j] * mesh.normals[t[j] * 3 + 2];
           }
           texY[size_t(y) * size_t(w) + size_t(x)] = py3;
+          // a pane the texture repeats along the car (side windows) is lit when any of its places is out of the cab's
+          // shade, not dark when one of them is next to the cab: the brightest of its places (a windscreen has one)
           float& fd = fade[size_t(y) * size_t(w) + size_t(x)];
-          fd = std::min(fd, smooth(zFront + fadeFrom, zFront + fadeTo, pz));
+          fd = std::max(fd, smooth(zFront + fadeFrom, zFront + fadeTo, pz));
           float& fr = fadeRear[size_t(y) * size_t(w) + size_t(x)];
-          fr = std::min(fr, smooth(zRear - fadeFrom, zRear - fadeTo, pz));
+          fr = std::max(fr, smooth(zRear - fadeFrom, zRear - fadeTo, pz));
+          // glass facing out of an end (a windscreen) makes that end a driver's cab (cabEnd below)
+          const float reach = std::max(depth, 0.08f * (zRear - zFront));
+          if (nz < -0.7f && pz < zFront + reach) endFace[size_t(y) * size_t(w) + size_t(x)] |= 1;
+          if (nz > 0.7f && pz > zRear - reach) endFace[size_t(y) * size_t(w) + size_t(x)] |= 2;
           if (noEnds || py3 < minY + 0.08f * height || py3 > minY + 0.58f * height) continue;
           uint8_t& sd = side[size_t(y) * size_t(w) + size_t(x)];
           if (nz < -0.45f && pz < zFront + depth) sd = 1;
@@ -1314,6 +1324,7 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
     for (size_t acc = 0; top > 0 && (acc += size_t(hist[size_t(top)])) < lamp.size() / 200;) --top;
     float T = std::max(0.3f, 0.6f * float(top) / 255.0f);
     std::vector<int> lab(lamp.size(), -1);
+    std::vector<std::vector<size_t>> panes;  // the glass areas taken
     for (size_t i = 0; i < lamp.size(); ++i) {
       if (sv[i] <= T || keep[i] || lab[i] >= 0) continue;
       std::vector<size_t> comp;
@@ -1344,19 +1355,61 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
         float fill = float(comp.size()) / float(bw * bh);
         if (comp.size() * 1000 < lamp.size() * 3 || fill < 0.85f || std::max(bw, bh) > 8 * std::min(bw, bh)) continue;
       }
-      // the fade only on a cab car (head lamps at its front); middle sections are lit evenly
-      for (size_t p : comp) win[p] = uint8_t(std::lround(255.0f * smooth(T, T + 0.1f, sv[p]) * (st.frontLamps ? fade[p] : 1.0f) *
-                                                         (rail && st.rearLamps ? fadeRear[p] : 1.0f)));
+      panes.push_back(std::move(comp));
       ++st.windows;
     }
+    // a driver's cab is an end with a windscreen: glass facing out of it. The cabin light fades out towards a cab (the
+    // driver sits in the dark); a coupling end or a bus's rear window does not count. (Until 2026-11-24 a cab was an
+    // end with lamps found, and two stray bright texels at a coupling made tram-05's short end car dark all over.)
+    bool frontCab = false, rearCab = false;
+    for (const auto& pane : panes)
+      for (size_t p : pane) frontCab |= (endFace[p] & 1) != 0, rearCab |= (endFace[p] & 2) != 0;
+    if (!rail) rearCab = false;
+    for (const auto& pane : panes)
+      for (size_t p : pane)
+        win[p] = uint8_t(std::lround(255.0f * smooth(T, T + 0.1f, sv[p]) * (frontCab ? fade[p] : 1.0f) * (rearCab ? fadeRear[p] : 1.0f)));
   }
-  {  // the window band's height on the model (10th to 90th percentile of the glass): where the passengers show
+  {  // the window band's height on the model (10th to 90th percentile of the glass): where the passengers show. The
+    // heights come from the glass triangles (by their size), not the texels: a double-decker's two decks may use the
+    // same panes of the texture. A clear gap in them splits the band into two decks (until 2026-11-24 the figures of
+    // a double-decker stood across both floors)
     std::vector<float> ys;
-    for (size_t i = 0; i < win.size(); ++i)
-      if (win[i] > 128 && texY[i] > -1e29f) ys.push_back(texY[i]);
+    for (const Submesh& sm : mesh.submeshes) {
+      if (sm.material != material) continue;
+      for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size(); k += 3) {
+        uint32_t t[3] = {mesh.indices[k], mesh.indices[k + 1], mesh.indices[k + 2]};
+        if (t[0] >= nv || t[1] >= nv || t[2] >= nv) continue;
+        Vec3 a{mesh.positions[t[0] * 3], mesh.positions[t[0] * 3 + 1], mesh.positions[t[0] * 3 + 2]};
+        Vec3 b{mesh.positions[t[1] * 3], mesh.positions[t[1] * 3 + 1], mesh.positions[t[1] * 3 + 2]};
+        Vec3 c{mesh.positions[t[2] * 3], mesh.positions[t[2] * 3 + 1], mesh.positions[t[2] * 3 + 2]};
+        Vec3 n = cross(b - a, c - a);
+        // points spread over the triangle (more on larger ones); the ones on glass give their height (a pane is often
+        // two large triangles, and body triangles may cross glass in the texture)
+        int m = std::clamp(int(std::sqrt(std::sqrt(dot(n, n))) * 8.0f), 2, 24);
+        for (int i = 0; i < m; ++i)
+          for (int j = 0; i + j < m; ++j) {
+            float b1 = (float(i) + 0.33f) / float(m), b2 = (float(j) + 0.33f) / float(m), b0 = 1.0f - b1 - b2;
+            float u = b0 * mesh.uv0[t[0] * 2] + b1 * mesh.uv0[t[1] * 2] + b2 * mesh.uv0[t[2] * 2];
+            float v = b0 * mesh.uv0[t[0] * 2 + 1] + b1 * mesh.uv0[t[1] * 2 + 1] + b2 * mesh.uv0[t[2] * 2 + 1];
+            int tx = std::clamp(int((u - std::floor(u)) * float(w)), 0, w - 1), ty = std::clamp(int((v - std::floor(v)) * float(h)), 0, h - 1);
+            if (win[size_t(ty) * size_t(w) + size_t(tx)] > 128) ys.push_back(b0 * a.y + b1 * b.y + b2 * c.y);
+          }
+      }
+    }
     if (ys.size() > 20) {
       std::sort(ys.begin(), ys.end());
-      st.windowY0 = ys[ys.size() / 10], st.windowY1 = ys[ys.size() * 9 / 10];
+      float lo = ys[ys.size() / 20], hi = ys[ys.size() * 19 / 20];
+      size_t cut = 0;
+      float gap = 0;
+      for (size_t i = ys.size() / 20; i + 1 < ys.size() * 19 / 20; ++i)
+        if (ys[i + 1] - ys[i] > gap) gap = ys[i + 1] - ys[i], cut = i + 1;
+      if (gap > 0.35f && gap > 0.2f * (hi - lo) && cut > ys.size() / 5 && cut < ys.size() * 4 / 5) {
+        st.windowY0 = ys[cut / 10], st.windowY1 = ys[cut * 9 / 10];
+        size_t n2 = ys.size() - cut;
+        st.windowY2 = ys[cut + n2 / 10], st.windowY3 = ys[cut + n2 * 9 / 10];
+      } else {
+        st.windowY0 = ys[ys.size() / 10], st.windowY1 = ys[ys.size() * 9 / 10];
+      }
     }
   }
   if (!st.frontLamps && !st.rearLamps && !st.windows) return false;

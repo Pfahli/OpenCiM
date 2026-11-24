@@ -2831,8 +2831,87 @@ void simVehicleLights(GridObj* grid, const Vec3& eye, float range, std::vector<V
     if (m.live && !m.transit) light(m);
 }
 
+// a vehicle model's GPU mesh and materials with the night lights' lamp mask (made once)
+static void prepareVehicleObject(Display& d, VM& vm, ObjectObj* o) {
+  if (o->gpu) return;
+  o->gpu = std::make_shared<render::GpuMesh>(d.r3d().upload(o->data->mesh));
+  o->materials = std::make_shared<std::vector<render::GpuMaterial>>();
+  for (size_t i = 0; i < o->data->materials.size(); ++i) {
+    o->materials->push_back(objectMaterial(d, vm, o, o->data->materials[i]));
+    VehicleLampInfo li;
+    o->materials->back().windowMask = vehicleLampMask(d, vm, *o->data, int(i), &li);  // port night lights
+    o->materials->back().cabinY[0] = li.windowY0, o->materials->back().cabinY[1] = li.windowY1;
+    o->materials->back().cabinY[2] = li.windowY2, o->materials->back().cabinY[3] = li.windowY3;
+    o->materials->back().windowKind = 1;
+  }
+}
+
+// REGS_TEST_LINEUP=<x>,<z>[,<load 0..1>] (screenshots, 2026-11-24): every bus, tram and metro part the game has loaded
+// (the vehicle templates under metro/objects/vehicles/), side by side in one row per kind around that world point,
+// lengthwise along x, with head and tail lamps, the cabin light and the given load (default full), so all their
+// lights, windows and passengers can be checked in one picture. Drawn only; nothing in the simulation changes.
+static void collectLineup(Display& d, VM& vm, GridObj* grid, const char* spec, std::vector<DrawItem>& items) {
+  struct Entry {
+    ObjectObj* o;
+    Mat4 world;
+  };
+  static std::vector<Entry> lineup;
+  static bool built = false;
+  float load = 1.0f;
+  float ax = 0, az = 0;
+  std::sscanf(spec, "%f,%f,%f", &ax, &az, &load);
+  if (!built && grid->data) {
+    built = true;
+    const char* kinds[] = {"/bus", "/tram", "/metro"};
+    std::vector<std::pair<std::string, ObjectObj*>> rows[3];
+    for (auto& [name, obj] : grid->templates) {
+      auto* o = dynamic_cast<ObjectObj*>(obj.get());
+      if (!o || !o->data || o->pendingPath.find("metro/objects/vehicles/") == std::string::npos) continue;
+      std::string p = o->pendingPath.substr(o->pendingPath.find("vehicles/") + 8);
+      int k = p.rfind("/bus", 0) == 0 || p.rfind("/double-decker", 0) == 0 ? 0 : p.rfind("/tram", 0) == 0 ? 1 : p.rfind("/metro", 0) == 0 ? 2 : -1;
+      if (k < 0 || o->data->mesh.vertexCount() < 50) continue;  // doors and other small parts drawn with their car
+      rows[k].emplace_back(o->pendingPath, o);
+    }
+    const GridData& g = *grid->data;
+    auto ground = [&](float x, float z) {
+      int cx = std::clamp(int(x / g.cellSize + float(g.width) * 0.5f), 0, g.width - 1);
+      int cz = std::clamp(int(z / g.cellSize + float(g.length) * 0.5f), 0, g.length - 1);
+      return float(g.height[size_t(cz) * size_t(g.width) + size_t(cx)]) * g.cellSize / 256.0f;
+    };
+    const render::Quat turn{0, 0.70710678f, 0, 0.70710678f};  // a quarter turn: the model's length (z) along x
+    for (int k = 0; k < 3; ++k) {
+      std::sort(rows[k].begin(), rows[k].end());
+      float x = ax - 120.0f, z = az + (float(k) - 1.0f) * 40.0f;  // rows 40 apart: one row per close view
+      for (auto& [path, o] : rows[k]) {
+        float len = o->data->mesh.boundsMax[2] - o->data->mesh.boundsMin[2];
+        x += len * 0.5f + 1.5f;
+        lineup.push_back({o, render::translation({x, ground(x, z), z}) * render::rotation(turn)});
+        LOG_INFO("lineup: x %6.1f z %4.0f  %s", x, z, path.c_str());
+        x += len * 0.5f + 1.5f;
+      }
+      LOG_INFO("lineup: %zu %s parts in a row at z %.0f", rows[k].size(), kinds[k] + 1, z);
+    }
+  }
+  float code = vehicleLampCode(1, 2, true, 1.0f);
+  for (const Entry& e : lineup) {
+    prepareVehicleObject(d, vm, e.o);
+    size_t first = items.size();
+    if (isSkinnedModel(vm, e.o)) {
+      collectSkinned(d, vm, e.o, e.world, Pose(), items);
+    } else {
+      DrawItem it;
+      it.mesh = e.o->gpu.get();
+      it.materials = e.o->materials.get();
+      it.world = e.world;
+      items.push_back(it);
+    }
+    for (size_t k = first; k < items.size(); ++k) items[k].lampCode = code, items[k].cabinLight = 1.0f, items[k].passengers = load;
+  }
+}
+
 void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4& viewProj, float farZ,
                         std::vector<DrawItem>& items) {
+  if (static const char* lineup = regs::envVar("REGS_TEST_LINEUP"); lineup) collectLineup(d, vm, grid, lineup, items);
   SimState* s = simOf(grid);
   if (!s) return;
   collectCharacters(d, vm, *s, eye, viewProj, farZ, items);
@@ -2863,6 +2942,7 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
         VehicleLampInfo li;
         o->materials->back().windowMask = vehicleLampMask(d, vm, *o->data, int(i), &li);  // port night lights
         o->materials->back().cabinY[0] = li.windowY0, o->materials->back().cabinY[1] = li.windowY1;
+    o->materials->back().cabinY[2] = li.windowY2, o->materials->back().cabinY[3] = li.windowY3;
         o->materials->back().windowKind = 1;
       }
     }
