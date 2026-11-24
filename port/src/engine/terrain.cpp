@@ -54,6 +54,7 @@ constexpr float kLod0Distance = 266.4f, kCullDistance = 880.0f, kFreeDistance = 
 // in view (or casting into it) at once, up to kVisibleBuildsPerFrame, else the nearest kItemBuildsPerFrame per frame,
 // including a kPrefetchMargin ring just outside the view so panning finds them ready
 constexpr int kItemBuildsPerFrame = 6, kVisibleBuildsPerFrame = 64;
+constexpr double kVisibleBuildMs = 6.0, kAheadBuildMs = 2.5;  // per frame (collectGrid's time budget)
 constexpr float kPrefetchMargin = 120.0f;
 
 struct Corner {
@@ -1506,6 +1507,16 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   };
   std::vector<Pending> pending;
   int buildsLeft = kVisibleBuildsPerFrame;
+  // a time budget for the builds of a frame (owner's report 2026-11-25: zoomed out at 200 % view distance, panning
+  // built dozens of divisions in one frame, 60+ ms): divisions in view up to kVisibleBuildMs, those ahead of the view
+  // up to kAheadBuildMs of the frame's build time; the first build of a frame always runs, and on the loading screen
+  // (the first view, render::gWaitForPipelines) everything is built at once
+  const auto buildStart = std::chrono::steady_clock::now();
+  bool builtAny = false;
+  auto withinBudget = [&](double ms) {
+    if (!builtAny || render::gWaitForPipelines > 0) return builtAny = true;
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count() < ms;
+  };
   // the grid clock of animated items: wall time scaled by grid.timeSpeed (0 while paused), as gsGrid.tick scales the
   // dt its items move by; one clock per grid, so several views in a frame do not advance it twice
   static std::map<const GridObj*, std::pair<std::chrono::steady_clock::time_point, double>> clocks;
@@ -1571,7 +1582,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       bool near = visible(gc, 2.0f * gr), ahead = visible(gc, gr + kPrefetchMargin * viewScale);
       if (!near && !ahead) continue;
       if (!complete(lod)) {
-        if (near && buildsLeft > 0) {
+        if (near && buildsLeft > 0 && withinBudget(kVisibleBuildMs)) {
           build(dv, index, lod);
           --buildsLeft;
         } else {
@@ -1626,7 +1637,10 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   collectProcBuildings(d, vm, grid, items);  // port: procedural buildings
   std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.dist < b.dist; });
   if (pending.size() > size_t(kItemBuildsPerFrame)) pending.resize(size_t(kItemBuildsPerFrame));
-  for (const Pending& p : pending) build(tc.divisions[size_t(p.division)], p.division, p.lod);  // shown from the next frame
+  for (const Pending& p : pending) {  // shown from the next frame
+    if (!withinBudget(kAheadBuildMs)) break;
+    build(tc.divisions[size_t(p.division)], p.division, p.lod);
+  }
   if (tc.surfaceMap) surfaceMapUpload(*tc.surfaceMap);
 }
 

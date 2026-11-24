@@ -508,7 +508,7 @@ bool pickSegment(VM& vm, Object* player, float x, float y, Vec3& start, Vec3& en
   cameraFrame(vm, cam, eye, look, up);
   float nearZ, farZ;
   viewDepthRange(vm, vp, cam, nearZ, farZ);
-  farZ *= std::clamp(settingNumber(vm, u"regsViewDistance", 1.0f), 0.5f, 4.0f);  // what the port's view shows
+  farZ *= std::clamp(settingNumber(vm, u"regsViewDistance", 2.0f), 0.5f, 4.0f);  // what the port's view shows (default 200 %)
   float w = vp->width, h = vp->height;
   float nx = 2.0f * (x - vp->desktopLeft()) / w - 1.0f, ny = 1.0f - 2.0f * (y - vp->desktopTop()) / h;
   float t = std::tan(numberOf(vm, cam, u"fov", 60.0f) * 3.14159265f / 360.0f);

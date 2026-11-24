@@ -660,7 +660,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
   // farther and keeps near detail longer; the shadow fit below keeps the original distance
   float viewScale = 1, detailScale = 1;
   if (!grids.empty()) {
-    viewScale = std::clamp(settingNumber(vm, u"regsViewDistance", 1.0f), 0.5f, 4.0f);
+    // (unset: 200 %, the port's standard since 2026-11-25, owner's request; the "Original" preset sets 100 %)
+    viewScale = std::clamp(settingNumber(vm, u"regsViewDistance", 2.0f), 0.5f, 4.0f);
     detailScale = std::clamp(settingNumber(vm, u"regsDetailDistance", 1.0f), 0.5f, 4.0f);
   }
   v.proj = perspective(camFov, float(w) / float(h), nearZ, farZ * viewScale);
