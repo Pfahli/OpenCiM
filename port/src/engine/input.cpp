@@ -514,8 +514,12 @@ void WindowObj::updateInputTarget(VM& vm) {
 void pollMouse(VM& vm, WindowObj* w) {
   w->snapshot = w->inputTarget;
   Display* d = display();
-  if (!d || !w->appActive) return;
+  if (!d) return;
   Value cap = vm.getMember(obj(w), u"mouseCapture");
+  // fullscreen: the cursor stays on the game's screen while the game has the mouse (edge scrolling on a setup with
+  // more monitors; owner's request 2026-11-25); let go out of focus, in the menus that release the mouse, windowed
+  d->window().clipCursor(w->appActive && d->window().fullscreen() && vm.truthy(cap));
+  if (!w->appActive) return;
   if (!vm.truthy(cap)) return;
   auto* desk = dynamic_cast<DesktopObj*>(w->inputTarget.get());
   if (!desk || desk->destroyed) return;

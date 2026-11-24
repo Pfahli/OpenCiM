@@ -66,6 +66,9 @@ class Window {
   virtual void showCursor(bool on) = 0;
   // moves the system cursor to a client position (the controller's virtual cursor; no effect without the focus)
   virtual void warpCursor(int, int) {}
+  // keeps the system cursor inside the client area (on) or lets it go (off); on again every call (the OS drops the
+  // clip on some events, e.g. another window's activation)
+  virtual void clipCursor(bool) {}
   virtual int width() const = 0;   // client size in pixels
   virtual int height() const = 0;
   // Switches between a captioned window with a w × h client area and fullscreen (borderless over the monitor the

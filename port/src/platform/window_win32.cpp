@@ -249,6 +249,18 @@ class Win32Window final : public Window {
     ClientToScreen(hwnd_, &p);
     SetCursorPos(p.x, p.y);
   }
+  void clipCursor(bool on) override {
+    if (on && GetForegroundWindow() == hwnd_) {
+      RECT r;
+      GetClientRect(hwnd_, &r);
+      MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&r), 2);
+      ClipCursor(&r);
+      clipped_ = true;
+    } else if (clipped_) {
+      ClipCursor(nullptr);
+      clipped_ = false;
+    }
+  }
   int width() const override { return width_; }
   int height() const override { return height_; }
   bool fullscreen() const override { return fullscreen_; }
@@ -788,6 +800,7 @@ class Win32Window final : public Window {
   HMODULE opengl32_ = nullptr;
   SwapInterval swapInterval_ = nullptr;
   bool fullscreen_ = false, cursor_ = true;
+  bool clipped_ = false;  // clipCursor holds the cursor in the client area
   int width_ = 0, height_ = 0;
   char16_t highSurrogate_ = 0;
   std::vector<InputEvent> queued_;
