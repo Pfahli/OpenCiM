@@ -96,10 +96,10 @@ Each text is rendered once into an R8 sign atlas (`engine/sign_atlas.cpp`, textu
 with the game's own fonts:
 
 * **LED displays** (the modern buses and trams): Tahoma 8 px at one texel per pixel, each pixel an LED dot (only the
-  glyph's white fill; the UI's dark outline is left out), in the original text's colour; a text longer than its
-  board scrolls, pausing at both ends.
+  glyph's white fill; the UI's dark outline is left out), in the original text's colour. On a board the number stands fixed at its end and the label beside it
+  runs as a ticker when it is longer than the space left (owner's request); the number alone is centred.
 * **Printed** (roller blinds and number boxes of older vehicles: bus-03, bus-07, metro-02/03, tram-03, tram-04):
-  Blair 18 px, the engraved small capitals of the game's UI, squeezed when wider than the box; not lit.
+  Blair 18 px, the engraved small capitals of the game's UI; no ticker: a name over 12 letters is cut to 11 and a dot; not lit.
 
 Seen in the lineup: "47 Ostkreuz" scrolling (bus-13), "158 Rathaus" (bus-14), "70 Zoo" (London bus), "130
 Stadtplatz" (tram-05), "Stadtplatz 128" (tram-07), Blair numbers on bus-03 and tram-03. Not seen on a running line

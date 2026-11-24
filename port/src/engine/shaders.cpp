@@ -287,21 +287,33 @@ const char16_t* kSignDecl =
     u"  if (B.x > 0.5) s = 1.0 - s;\n"
     u"  if (B.y > 0.5) t = 1.0 - t;\n"
     u"  float aspect = board ? D.z : B.z;\n"
-    u"  vec4 T = board ? (D.w > 0.5 ? regs_SignT1 : regs_SignT0) : regs_SignT2;\n"
+    u"  vec4 T = board ? (solid ? regs_SignT1 : regs_SignT0) : regs_SignT2;\n"  // LED board: the label; T2 the number
     u"  vec3 bg = vec3(0.025, 0.022, 0.02), amber = C.rgb;\n"
     u"  float lit = 0.0, dotMask = 1.0;\n"
-    u"  if (T.x >= 0.0 && !solid) {\n"
-    // LED: the board 14 dots high; a text longer than the board scrolls, pausing at its ends
+    u"  if ((T.x >= 0.0 || (board && regs_SignT2.x >= 0.0)) && !solid) {\n"
+    // LED: the board 14 dots high. On a board the number stands fixed at its end (start, or end for "Stadtplatz 61")
+    // and the label fills the rest, running as a ticker when it is longer (a gap of a board's width between turns);
+    // the number alone is centred
     u"    float rows = 14.0, cols = floor(aspect * rows);\n"
-    u"    float X = s * aspect * rows, Y = t * rows;\n"
-    u"    float off;\n"
-    u"    if (T.y <= cols) off = board ? (D.w > 0.5 ? T.y - cols : -1.0) : 0.5 * (T.y - cols);\n"
-    u"    else off = clamp(mod(regs_PassengerAnim.x * 7.0, T.y - cols + 24.0) - 12.0, 0.0, T.y - cols);\n"
-    u"    lit = regs_signLed(T, floor(X + floor(off)), floor(Y));\n"
-    u"    dotMask = 1.0 - smoothstep(0.32, 0.45, length(fract(vec2(X, Y)) - 0.5));\n"
+    u"    float X = floor(s * aspect * rows), Y = floor(t * rows);\n"
+    u"    if (board) {\n"
+    u"      float nw = regs_SignT2.y, gap = 3.0;\n"
+    u"      bool last = D.w > 0.5;\n"
+    u"      float n0 = last ? cols - nw : 0.0;\n"  // the number's first column
+    u"      float l0 = last ? 0.0 : nw + gap, lw = max(cols - nw - gap, 1.0);\n"  // the label's columns
+    u"      if (X >= n0 && X < n0 + nw) lit = regs_signLed(regs_SignT2, X - n0, Y);\n"
+    u"      else if (T.x >= 0.0 && X >= l0 && X < l0 + lw) {\n"
+    u"        float lx = X - l0;\n"
+    u"        if (T.y > lw) lx = mod(lx + floor(regs_PassengerAnim.x * 7.0), T.y + lw);\n"
+    u"        lit = regs_signLed(T, lx, Y);\n"
+    u"      }\n"
+    u"    } else {\n"
+    u"      lit = regs_signLed(T, X + floor(0.5 * (T.y - cols)), Y);\n"
+    u"    }\n"
+    u"    dotMask = 1.0 - smoothstep(0.32, 0.45, length(fract(vec2(s * aspect * rows, t * rows)) - 0.5));\n"
     u"  } else if (T.x >= 0.0) {\n"
     // printed (a roller blind, a number box): the Blair text, squeezed when it is wider than the board
-    u"    float avail = aspect * 32.0, xs = max(1.0, T.z / avail);\n"
+    u"    float avail = aspect * 32.0, xs = max(1.0, T.z / avail);\n"  // (names are cut short on the CPU)
     u"    float x = (s * avail - 0.5 * (avail - T.z / xs)) * xs, y = 16.0 + t * 32.0;\n"
     u"    if (x >= 0.0 && x < T.z) lit = textureLod(regs_SignAtlas, vec2(x / 512.0, (T.x * 48.0 + y) / 9216.0), 0.0).r;\n"
     u"  } else {\n"

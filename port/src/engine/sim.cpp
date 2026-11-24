@@ -2832,11 +2832,15 @@ void simVehicleLights(GridObj* grid, const Vec3& eye, float range, std::vector<V
     if (m.live && !m.transit) light(m);
 }
 
-// a line vehicle's display texts in the sign atlas: "N label", "label N" and "N", where the label is the line's name
-// ($name, linepanel.script) or, for a line without one, its last stop's name
+// a line vehicle's display texts in the sign atlas: the label alone, "N label" (printed boards) and the number alone;
+// the label is the line's name ($name, linepanel.script) or, for a line without one, its last stop's name. An LED
+// board draws the number fixed at its end and the label beside it, scrolling when it is too long
 static void signTexts(VM& vm, int number, const std::u16string& label, float out[3][4]) {
   std::u16string n = utf8ToUtf16(std::to_string(number));
-  const std::u16string texts[3] = {label.empty() ? n : n + u" " + label, label.empty() ? n : label + u" " + n, n};
+  // a printed blind has no ticker: a long name is cut to 11 letters and a dot (owner's request 2026-11-24)
+  std::u16string shortLabel = label.size() > 12 ? label.substr(0, 11) + u"." : label;
+  while (shortLabel.size() > 1 && shortLabel[shortLabel.size() - 2] == u' ') shortLabel.erase(shortLabel.size() - 2, 1);
+  const std::u16string texts[3] = {label, shortLabel.empty() ? n : n + u" " + shortLabel, n};
   for (int k = 0; k < 3; ++k) {
     SignText t = signText(vm, texts[k]);
     out[k][0] = float(t.slot), out[k][1] = t.ledWidth, out[k][2] = t.printWidth, out[k][3] = 0;
