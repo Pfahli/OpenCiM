@@ -25,7 +25,8 @@ constexpr int kHookSurfaceUnit = 9;       // the map's surface classes (regs_Sur
 constexpr int kHookLaneTrafficUnit = 10;  // the lanes, their lists and cells (regs_LaneTraffic)
 constexpr int kHookTopUnit = 11;          // the top map and the trodden map (regs_TopMap: r top, g trodden)
 constexpr int kHookFootAtlasUnit = 12;    // the footprint map, atlas and tile index in one (regs_footprintAt)
-constexpr int kModUnitFirst = 13, kModUnitCount = 2;  // the mods' texture units
+constexpr int kModUnitFirst = 13, kModUnitCount = 1;  // the mods' texture units
+constexpr int kSignUnit = 14;  // the destination display texts (engine/sign_atlas.h), since 2026-11-24
 // the passenger silhouette atlas (engine/passenger_atlas.h): most vehicle materials fill all of units 0-5, so it has
 // a unit of its own (the mods kept 13-15 until 2026-11-24, none used them)
 constexpr int kPassengerUnit = 15;
@@ -64,6 +65,7 @@ struct GpuMaterial {
   // vehicles: destination displays showing the line number (engine/night_lights.h VehicleLampInfo::Sign): per sign
   // (u0, v0, u1, v1) and (flipU, flipV, aspect, style)
   float signA[3][4] = {}, signB[3][4] = {}, signC[3][4] = {};  // C: the text colour
+  float signD[3][4] = {};  // the whole board: u0, u1, aspect, number last
   int signCount = 0;
   uint8_t windowKind = 0;   // 0: building windows, 1: vehicle lamps (DrawItem::lampCode), 2: street-lamp glass, 3: lit sign, 5: clock face
   uint32_t envCube = 0;   // textures/envmap.dds as a cube map (REFLECTION)
@@ -195,6 +197,7 @@ struct SceneView {
   // passenger silhouettes (engine/passenger_atlas.h): the atlas, bound on the unit after a vehicle's window mask, and
   // its rows, columns, cell height and width in model units (rows 0: none, the shader's plain figures)
   uint32_t passengerAtlas = 0;
+  uint32_t signAtlas = 0;  // the destination display texts (engine/sign_atlas.h), kSignUnit
   float passengerInfo[4] = {0, 8, 2.3f, 1.1f};
   // pass environment (ENVIROMENT_* of the pass, interfaces-3d.md §1.4) and the light count << 12 it adds
   uint32_t env = 0;
@@ -234,6 +237,9 @@ struct DrawItem {
   float cabinLight = 0;  // port night lights: the cabin light's strength (line vehicles: 0.5 by day, 1 at night)
   float vehicleSeed = 0;  // 0..1 per vehicle: which citizens drive it and sit at its upper front (shaders.cpp)
   float lineNumber = 0;   // a line vehicle's line number for its destination displays (0: the texture's own)
+  // its display texts in the sign atlas (engine/sign_atlas.h): number first, number last, number only; each
+  // (strip, LED width, printed width, 0), strip -1: none
+  float signText[3][4] = {{-1, 0, 0, 0}, {-1, 0, 0, 0}, {-1, 0, 0, 0}};
   float passengers = 0;  // port night lights: the vehicle's shown occupancy 0..1 (silhouettes in the windows)  // port night lights: vehicle lamps (engine/night_lights.h vehicleLampCode), 0 = off  // a caster outside the view (inside it with the doubled radius, shadows.md §4.3)
   // a per-instance custom4.xy over the material's (vehicles' animated parts: rotor angle and spin-up, which the engine
   // writes into each vehicle's own material copy, L:0x081adca0.c:604-690); z and w stay the material's
@@ -356,7 +362,7 @@ class Renderer3D {
     int eyePos = -1;  // raytraced reflections: the camera in world space
     int viewInverse = -1, projInverse = -1, night = -1, shop = -1, cabin = -1, windowMask = -1, windowOn = -1, lampMap = -1, lampMapXf = -1,
         lampHeight = -1, carMap = -1, carMapXf = -1, carLight = -1, passengerAtlas = -1, passengerInfo = -1,
-        passengerAnim = -1, cabinUpper = -1, signA[3] = {-1, -1, -1}, signB[3] = {-1, -1, -1}, signC[3] = {-1, -1, -1}, signMeta = -1;
+        passengerAnim = -1, cabinUpper = -1, signA[3] = {-1, -1, -1}, signB[3] = {-1, -1, -1}, signC[3] = {-1, -1, -1}, signD[3] = {-1, -1, -1}, signT[3] = {-1, -1, -1}, signMeta = -1, signAtlas = -1;
     // draw(): the view (viewSerial_) whose per-view uniforms (setupProgram) the program holds. They stay in the
     // program between uses (GL program objects; the Vulkan device's per-program uniform block and sampler units),
     // so a program used again in the same draw() is not set up again.

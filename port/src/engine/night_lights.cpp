@@ -2,6 +2,7 @@
 // docs/renderer/night-lights.md).
 #include "engine/night_lights.h"
 #include "engine/passenger_atlas.h"
+#include "engine/sign_atlas.h"
 #include "core/env.h"
 
 #include <algorithm>
@@ -1112,25 +1113,27 @@ const LampFix kLampFixes[] = {
 };
 
 // The number fields of vehicles' destination displays, by diffuse texture, in texels of a w x h texture (measured on
-// the base game's textures, 2026-11-24); solid: a roller blind or flap (filled glyphs), else an LED dot matrix
+// the base game's textures, 2026-11-24). A field with a board (boardX0..1) shows the line's number and name (or end
+// stop) across the whole board, the number at its start or end (numberLast); one without shows the number alone
 struct SignField {
   const char* texture;
   int w, h, x0, y0, x1, y1;
-  int solid;  // 0 LED dots, 1 light glyphs on a dark plate, 2 dark glyphs on a light plate
+  int solid;  // 0 LED dots, 1 printed light glyphs on a dark box, 2 printed dark glyphs on a light plate
   int boardX0 = -1, boardX1 = -1;  // the whole display board across (when shiny: not window glass), else the field
+  bool numberLast = false;
 };
 const SignField kSignFields[] = {
-    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 17, 150, 29, 162, 0},    // front "100", 2 lines
-    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 162, 168, 177, 181, 0},  // side "100"
-    {"metro/objects/vehicles/bus-13/bus13.dds", 512, 256, 29, 120, 41, 130, 0},    // front "090 LEHNIKEN"
-    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 57, 128, 75, 142, 0},    // front "143 Pinzberg"
-    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 171, 185, 186, 193, 0},  // side
+    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 17, 150, 29, 162, 0, 15, 68},     // front "100 S-Bahn..."
+    {"metro/objects/vehicles/bus-12/bus12.dds", 512, 256, 162, 168, 177, 181, 0},           // side "100"
+    {"metro/objects/vehicles/bus-13/bus13.dds", 512, 256, 29, 120, 41, 130, 0, 27, 78},     // front "090 LEHNIKEN"
+    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 57, 128, 75, 142, 0, 22, 80},     // front "143 Pinzberg"
+    {"metro/objects/vehicles/bus-14/bus14.dds", 512, 256, 171, 185, 186, 193, 0, 170, 214}, // side
     {"metro/objects/vehicles/double-decker/double-decker.dds", 512, 256, 17, 145, 29, 156, 0, 9, 78},  // "55 MUSTRA"
     {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 452, 60, 471, 73, 1},  // roof boxes "7"
     {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 489, 60, 506, 73, 1},
     {"metro/objects/vehicles/tram-04/tram_04.dds", 512, 256, 471, 73, 489, 87, 1},
-    {"metro/objects/vehicles/tram-05/tram05.dds", 512, 256, 28, 97, 45, 109, 0},   // front "10 Stadtplatz"
-    {"metro/objects/vehicles/tram-07/tram07.dds", 512, 256, 67, 142, 79, 154, 0},  // front "Stadtplatz 61"
+    {"metro/objects/vehicles/tram-05/tram05.dds", 512, 256, 28, 97, 45, 109, 0, 26, 96},    // front "10 Stadtplatz"
+    {"metro/objects/vehicles/tram-07/tram07.dds", 512, 256, 67, 142, 79, 154, 0, 12, 80, true},  // "Stadtplatz 61"
     {"metro/objects/vehicles/bus-03/bus03.dds", 512, 256, 8, 128, 29, 141, 2},           // plate "A16"
     {"metro/objects/vehicles/bus-07/bus07.dds", 512, 256, 8, 114, 20, 124, 1},           // boxes "15"
     {"metro/objects/vehicles/bus-07/bus07.dds", 512, 256, 103, 130, 118, 143, 1},
@@ -1517,6 +1520,12 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       sg.u0 = float(x0) / float(w), sg.u1 = float(x1) / float(w), sg.v0 = float(y0) / float(h), sg.v1 = float(y1) / float(h);
       sg.aspect = rot ? float(y1 - y0) / float(x1 - x0) : float(x1 - x0) / float(y1 - y0);
       sg.flipU = flipS, sg.flipV = flipT, sg.rot = rot, sg.style = sf.solid;
+      if (sf.boardX0 >= 0 && sf.boardX1 > sf.boardX0 && !rot) {
+        int b0 = sf.boardX0 * w / sf.w, b1 = sf.boardX1 * w / sf.w;
+        sg.boardU0 = float(b0) / float(w), sg.boardU1 = float(b1) / float(w);
+        sg.boardAspect = float(b1 - b0) / float(y1 - y0);
+        sg.numberLast = sf.numberLast;
+      }
       for (int ch = 0; ch < 3; ++ch) sg.colour[ch] = rgb[ch] / mx;  // full brightness, the hue of the original text
       // (a light plate: the brightest quarter is the plate, kept at its own brightness)
       if (sf.solid == 2) for (int ch = 0; ch < 3; ++ch) sg.colour[ch] = rgb[ch];
@@ -1603,6 +1612,8 @@ void applyVehicleLamps(GpuMaterial& g, const VehicleLampInfo& li) {
     std::copy(a, a + 4, g.signA[i]);
     std::copy(b, b + 4, g.signB[i]);
     std::copy(c, c + 4, g.signC[i]);
+    float dd[4] = {s.boardU0, s.boardU1, s.boardAspect, s.numberLast ? 1.0f : 0.0f};
+    std::copy(dd, dd + 4, g.signD[i]);
   }
 }
 
@@ -2044,6 +2055,7 @@ void addNightLights(Display& d, VM& vm, const std::vector<GridObj*>& grids, Obje
   vehicleCycleOn() = false;
   // the passengers in lit cabins (by day too, and without the cycle): the game's citizens as silhouettes
   v.passengerAtlas = passengerAtlasTexture(vm.vfs(), v.passengerInfo);
+  v.signAtlas = signAtlasTexture();  // the line vehicles' display texts (made as the vehicles are drawn)
   if (!ns.on) return;
   float windows = smooth(0.18f, 0.72f, ns.night01);
   float lamps = smooth(0.32f, 0.62f, ns.night01);

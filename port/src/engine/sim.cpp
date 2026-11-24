@@ -7,6 +7,7 @@
 #include "engine/sim.h"
 #include "core/env.h"
 #include "engine/night_lights.h"
+#include "engine/sign_atlas.h"
 
 #include <algorithm>
 #include <chrono>
@@ -2831,6 +2832,24 @@ void simVehicleLights(GridObj* grid, const Vec3& eye, float range, std::vector<V
     if (m.live && !m.transit) light(m);
 }
 
+// a line vehicle's display texts in the sign atlas: "N label", "label N" and "N", where the label is the line's name
+// ($name, linepanel.script) or, for a line without one, its last stop's name
+static void signTexts(VM& vm, int number, const std::u16string& label, float out[3][4]) {
+  std::u16string n = utf8ToUtf16(std::to_string(number));
+  const std::u16string texts[3] = {label.empty() ? n : n + u" " + label, label.empty() ? n : label + u" " + n, n};
+  for (int k = 0; k < 3; ++k) {
+    SignText t = signText(vm, texts[k]);
+    out[k][0] = float(t.slot), out[k][1] = t.ledWidth, out[k][2] = t.printWidth, out[k][3] = 0;
+  }
+}
+
+static std::u16string lineLabel(VM& vm, const LineState& line) {
+  if (!line.object) return {};
+  std::u16string name = vm.toStr(vm.resolve(vm.getMember(Value::heap(VT::Object, line.object.get()), u"$name")));
+  if (!name.empty() || line.stops.empty() || !line.stops.back().stop) return name;
+  return vm.toStr(vm.resolve(vm.getMember(Value::heap(VT::Object, line.stops.back().stop.get()), u"name")));
+}
+
 // a vehicle model's GPU mesh and materials with the night lights' lamp mask (made once)
 static void prepareVehicleObject(Display& d, VM& vm, ObjectObj* o) {
   if (o->gpu) return;
@@ -2910,6 +2929,14 @@ static void collectLineup(Display& d, VM& vm, GridObj* grid, const char* spec, s
     for (size_t k = first; k < items.size(); ++k)
       items[k].lampCode = code, items[k].cabinLight = 1.0f, items[k].passengers = load, items[k].vehicleSeed = vseed,
       items[k].lineNumber = float(int(&e - lineup.data()) * 37 % 199 + 1);  // 1-3 digits, a different number each
+    {  // and a stop name each, some long enough to scroll on an LED display
+      static const char16_t* names[] = {u"Hauptbahnhof", u"Stadtplatz", u"Zoo", u"Museumsinsel", u"Ostkreuz",
+                                        u"Breitenbachplatz", u"Messe Nord / ICC", u"Rathaus"};
+      int idx = int(&e - lineup.data());
+      float texts[3][4];
+      signTexts(vm, int(items[first].lineNumber), names[idx % 8], texts);
+      for (size_t k = first; k < items.size(); ++k) std::copy(&texts[0][0], &texts[0][0] + 12, &items[k].signText[0][0]);
+    }
   }
 }
 
@@ -2995,9 +3022,16 @@ void collectSimVehicles(Display& d, VM& vm, GridObj* grid, const Vec3& eye, cons
         }
         // the line's number for the destination displays ($index, linepanel.script: counted per transport type)
         float lineNo = 0;
-        if (vs.line >= 0 && size_t(vs.line) < s->lines.size() && s->lines[size_t(vs.line)].object)
-          lineNo = float(vm.toInt(vm.resolve(vm.getMember(Value::heap(VT::Object, s->lines[size_t(vs.line)].object.get()), u"$index"))));
-        for (size_t k = first; k < items.size(); ++k) items[k].passengers = shown[mi], items[k].lineNumber = lineNo;
+        float texts[3][4] = {{-1, 0, 0, 0}, {-1, 0, 0, 0}, {-1, 0, 0, 0}};
+        if (vs.line >= 0 && size_t(vs.line) < s->lines.size() && s->lines[size_t(vs.line)].object) {
+          const LineState& ln = s->lines[size_t(vs.line)];
+          lineNo = float(vm.toInt(vm.resolve(vm.getMember(Value::heap(VT::Object, ln.object.get()), u"$index"))));
+          if (lineNo > 0) signTexts(vm, int(lineNo), lineLabel(vm, ln), texts);
+        }
+        for (size_t k = first; k < items.size(); ++k) {
+          items[k].passengers = shown[mi], items[k].lineNumber = lineNo;
+          std::copy(&texts[0][0], &texts[0][0] + 12, &items[k].signText[0][0]);
+        }
       }
     }
     for (size_t k = first; k < items.size(); ++k) {  // animated parts: custom4 = (angle, spin), stepAnimatedParts

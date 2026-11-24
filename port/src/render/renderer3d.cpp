@@ -832,8 +832,11 @@ Renderer3D::ProgramLocs& Renderer3D::locs(uint32_t prog) {
     l.signA[i] = at(("regs_SignA" + std::to_string(i)).c_str());
     l.signB[i] = at(("regs_SignB" + std::to_string(i)).c_str());
     l.signC[i] = at(("regs_SignC" + std::to_string(i)).c_str());
+    l.signD[i] = at(("regs_SignD" + std::to_string(i)).c_str());
+    l.signT[i] = at(("regs_SignT" + std::to_string(i)).c_str());
   }
   l.signMeta = at("regs_SignMeta");
+  l.signAtlas = at("regs_SignAtlas");
   return l;
 }
 
@@ -887,6 +890,7 @@ void Renderer3D::setupProgram(const SceneView& v, uint32_t prog) {
   dev().uniform4fv(l.lampHeight, 1, v.lampHeight);
   dev().uniform1i(l.carMap, kNightMapUnit);
   dev().uniform1i(l.passengerAtlas, kNightMapUnit);
+  dev().uniform1i(l.signAtlas, kNightMapUnit);
   dev().uniform4f(l.passengerAnim, v.timer, 0, 0, 0);
   dev().uniform4fv(l.carMapXf, 1, v.carMapXf);
   dev().uniform4f(l.carLight, v.carLight[0], v.carLight[1], v.carMap ? v.carLight[2] : 0.0f, 0);
@@ -974,6 +978,16 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
       dev().uniform4fv(l.signA[i], 1, m.signA[i]);
       dev().uniform4fv(l.signB[i], 1, m.signB[i]);
       dev().uniform4fv(l.signC[i], 1, m.signC[i]);
+      dev().uniform4fv(l.signD[i], 1, m.signD[i]);
+    }
+    if (n > 0) {
+      bool atlas = v.signAtlas != 0;
+      for (int k = 0; k < 3; ++k) {
+        float t[4] = {atlas ? it.signText[k][0] : -1.0f, it.signText[k][1], it.signText[k][2], 0};
+        dev().uniform4fv(l.signT[k], 1, t);
+      }
+      dev().uniform1i(l.signAtlas, atlas ? kSignUnit : kNightMapUnit);
+      if (atlas) dev().bindTexture(kSignUnit, v.signAtlas);
     }
   }
   if (l.windowOn >= 0) {  // port night lights: the material's window groups, on the first unit after its textures

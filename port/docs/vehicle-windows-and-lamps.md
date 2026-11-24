@@ -87,3 +87,20 @@ white glyphs on the roller boxes of tram-04. The rest of the display (the place 
   seen yet: the side displays of bus-12 and bus-14; tram-04's two side boxes (not found on the model); displays
   without a number (bus-10, bus80) and the older vehicles' painted boards are not changed.
 * **More (2026-11-24):** bus-03 (number plate, dark on light), bus-07 (three boxes), metro-02 (box), metro-03 (boxes), tram-03 (round plate). Styles: 0 LED dots, 1 light glyphs on a dark box, 2 dark glyphs on a light plate. Seen in the lineup: bus-03 "75", bus-07 "61", metro-03 "51", tram-03 "181". Left out: bus-15 (the number landed in the display's second line); metro-02's box not seen from the front.
+
+### Line name or end stop, and two fonts (2026-11-24)
+
+Displays with a board (`boardX0..1` in `kSignFields`) show the whole text: the line's number and its name (`$name`),
+or for a line without a name its last stop's name, the number first or last as on the original ("Stadtplatz 61").
+Each text is rendered once into an R8 sign atlas (`engine/sign_atlas.cpp`, texture unit 14, the mods keep unit 13)
+with the game's own fonts:
+
+* **LED displays** (the modern buses and trams): Tahoma 8 px at one texel per pixel, each pixel an LED dot (only the
+  glyph's white fill; the UI's dark outline is left out), in the original text's colour; a text longer than its
+  board scrolls, pausing at both ends.
+* **Printed** (roller blinds and number boxes of older vehicles: bus-03, bus-07, metro-02/03, tram-03, tram-04):
+  Blair 18 px, the engraved small capitals of the game's UI, squeezed when wider than the box; not lit.
+
+Seen in the lineup: "47 Ostkreuz" scrolling (bus-13), "158 Rathaus" (bus-14), "70 Zoo" (London bus), "130
+Stadtplatz" (tram-05), "Stadtplatz 128" (tram-07), Blair numbers on bus-03 and tram-03. Not seen on a running line
+of a save yet (names and end stops come from the line panel's data).

@@ -71,6 +71,9 @@ struct VehicleLampInfo {
     bool rot = false;                   // the text runs along v (the field is turned on the texture)
     int style = 0;                      // 0 LED dots, 1 solid glyphs (a roller blind)
     float colour[3] = {1, 0.6f, 0.15f}; // the original text's hue at full brightness
+    float boardU0 = 0, boardU1 = 0;     // the whole display board along u (number and name), 0 0: the number only
+    float boardAspect = 1;
+    bool numberLast = false;            // "Stadtplatz 61" rather than "61 Stadtplatz"
   };
   Sign signs[3];
   int signCount = 0;
