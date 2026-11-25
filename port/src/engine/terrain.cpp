@@ -787,6 +787,7 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
         d.r3d().destroy(dv.items[k]);
       }
     if (tc.highlightBuilt) d.r3d().destroy(tc.highlight);
+    if (tc.catchmentBuilt) d.r3d().destroy(tc.catchment);
     tc = TerrainCache();
     tc.generation = grid->generation;
     tc.n = 1 << std::min(g.bucketShift, 8u);
@@ -1559,9 +1560,6 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       float* p = dv.layerCustom[i];
       if (size_t(i) < near.size()) p[0] = near[size_t(i)].second->x, p[1] = 0, p[2] = near[size_t(i)].second->z, p[3] = near[size_t(i)].second->radius;
       else p[0] = p[1] = p[2] = 0, p[3] = -1000.0f;
-      float* q = dv.layerCustomItems[i];
-      for (int k = 0; k < 4; ++k) q[k] = p[k];
-      q[1] = 1.0f;  // data.fragment: the fill only (a ring along a facade lit the whole wall)
     }
     return true;
   };
@@ -1615,10 +1613,6 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         if (layer && !it.shadowOnly) {
           it.layerMaterial = tc.dataMaterial;
           it.layerCustom = dv.layerCustom;
-          // port (owner's request 2026-11-25): over the items too (buildings, roads), not only the layerable ground,
-          // so the buildings a stop reaches are lit by the circle's fill (data.fragment override)
-          it.layerAllParts = m == &dv.items[show];
-          if (it.layerAllParts) it.layerCustom = dv.layerCustomItems;
           items.push_back(it);
         }
       }
@@ -1644,6 +1638,41 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
     it.materials = &tc.materials;
     it.surfaceClass = kSurfaceOverlay;  // tool highlights keep their colours under the mods' shader hooks
     items.push_back(it);
+  }
+  // port (owner 2026-11-25: "Gebäude im Kreis grün hervorgehoben, wie auf der Minimap", whole buildings): the
+  // buildings whose centre a shown catchment circle holds, drawn whole with the data layer (data.fragment: custom0.y = 1
+  // tints green; one circle of huge radius covers everything)
+  {
+    std::vector<uint32_t> inside;
+    if (!circles.empty() && tc.dataMaterial >= 0) {
+      std::vector<float> xzr;
+      for (const StopCircle& k : circles) xzr.insert(xzr.end(), {k.x, k.z, k.radius});
+      catchmentBuildings(g, tc, xzr.data(), circles.size(), inside);
+    }
+    if (inside != tc.catchmentItems) {
+      if (tc.catchmentBuilt) d.r3d().destroy(tc.catchment);
+      tc.catchmentBuilt = false;
+      tc.catchmentItems = std::move(inside);
+      if (!tc.catchmentItems.empty()) {
+        MeshData out;
+        buildCatchmentBuildings(g, tc, tc.catchmentItems, out);
+        if (out.vertexCount()) {
+          tc.catchment = d.r3d().upload(out);
+          tc.catchmentBuilt = true;
+        }
+      }
+    }
+    static const float kAll[8][4] = {{0, 1, 0, 1e7f},       {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f},
+                                     {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}};
+    if (tc.catchmentBuilt && !tc.catchment.parts.empty()) {
+      DrawItem it;
+      it.mesh = &tc.catchment;
+      it.materials = &tc.materials;
+      it.layerMaterial = tc.dataMaterial;
+      it.layerAllParts = true;
+      it.layerCustom = kAll;
+      items.push_back(it);
+    }
   }
   collectCurves(d, vm, grid, tc, items);  // port curved roads
   collectGroundOverlay(d, grid, items);    // port OSM import: the satellite picture on the ground

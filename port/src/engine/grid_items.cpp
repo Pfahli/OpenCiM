@@ -846,4 +846,104 @@ void buildHighlightOverlay(const GridData& g, const GridObj& grid, const Terrain
   out.radius = std::sqrt(r2);
 }
 
+void catchmentBuildings(const GridData& g, const TerrainCache& tc, const float* circles, size_t count,
+                        std::vector<uint32_t>& out) {
+  out.clear();
+  const float cs = g.cellSize > 0 ? g.cellSize : 3.0f;
+  if (!count || tc.n <= 0 || tc.cols <= 0 || tc.rows <= 0) return;
+  for (size_t k = 0; k < count; ++k) {
+    const float cx = circles[k * 3], cz = circles[k * 3 + 1], r = circles[k * 3 + 2];
+    // the divisions the circle overlaps, one more on every side (items are bucketed by their footprint centre)
+    auto col = [&](float x) { return int(std::floor((x / cs + float(g.width >> 1)) / float(tc.n))); };
+    auto row = [&](float z) { return int(std::floor((z / cs + float(g.length >> 1)) / float(tc.n))); };
+    const int c0 = std::max(0, col(cx - r) - 1), c1 = std::min(tc.cols - 1, col(cx + r) + 1);
+    const int r0 = std::max(0, row(cz - r) - 1), r1 = std::min(tc.rows - 1, row(cz + r) + 1);
+    for (int rr = r0; rr <= r1; ++rr)
+      for (int cc = c0; cc <= c1; ++cc) {
+        const int division = rr * tc.cols + cc;
+        if (size_t(division) >= tc.divisionItems.size()) continue;
+        const uint32_t view = divisionViewMode(tc, division);
+        for (uint32_t i : tc.divisionItems[size_t(division)]) {
+          const GridData::Item& it = g.items[i];
+          if (it.removed || it.typeOverride == kTypeMarker || (it.flags & (kFlagHidden | kItemPortHidden))) continue;
+          const int ti = it.type < tc.typeTemplate.size() ? tc.typeTemplate[it.type] : -1;
+          if (ti < 0) continue;
+          const GridTemplate& tp = tc.templates[size_t(ti)];
+          if (tp.type != 0x14 || !tp.object || !tp.object->data) continue;
+          if (view != 0xFE && !gridItemVisible(g, tc, i, view)) continue;
+          // the centre as the stops' circles take theirs (interaction.cpp visibleStopCircles): x + (sx >> 1)
+          const ItemFootprint f = itemFootprint(tp.width, tp.length, tp.diagonals, it.orient);
+          const float bx = float(it.x + (f.sx >> 1) - (g.width >> 1)) * cs, bz = float(it.z + (f.sz >> 1) - (g.length >> 1)) * cs;
+          if ((bx - cx) * (bx - cx) + (bz - cz) * (bz - cz) < r * r) out.push_back(i);
+        }
+      }
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+}
+
+void buildCatchmentBuildings(const GridData& g, const TerrainCache& tc, const std::vector<uint32_t>& items, MeshData& out) {
+  struct Group {
+    std::vector<float> positions;
+    std::vector<uint32_t> indices;
+  };
+  std::map<int, Group> groups;  // by template material (the layer's part filter reads it)
+  for (uint32_t i : items) {
+    const GridData::Item& it = g.items[i];
+    const int ti = tc.typeTemplate[it.type], division = itemDivision(g, tc, i);
+    if (division < 0) continue;
+    const GridTemplate& tp = tc.templates[size_t(ti)];
+    const MeshData& mesh = tp.object->data->mesh;
+    const Mat4 world = tc.divisions[size_t(division)].world * itemPlacement(g, tc, i, division);
+    const uint32_t vcount = uint32_t(mesh.vertexCount());
+    for (const Submesh& sm : mesh.submeshes) {
+      if (sm.firstVertex + sm.vertexCount > vcount || sm.firstIndex + sm.indexCount > mesh.indices.size()) continue;
+      Group& gr = groups[tp.materialBase + sm.material];
+      const uint32_t base = uint32_t(gr.positions.size() / 3);
+      for (uint32_t v = sm.firstVertex; v < sm.firstVertex + sm.vertexCount; ++v) {
+        Vec3 q = transformPoint(world, {mesh.positions[size_t(v) * 3], mesh.positions[size_t(v) * 3 + 1], mesh.positions[size_t(v) * 3 + 2]});
+        gr.positions.insert(gr.positions.end(), {q.x, q.y, q.z});
+      }
+      for (uint32_t k = 0; k < sm.indexCount; ++k) {
+        const uint32_t idx = mesh.indices[sm.firstIndex + k];
+        if (idx < sm.firstVertex || idx >= sm.firstVertex + sm.vertexCount) continue;
+        gr.indices.push_back(base + idx - sm.firstVertex);
+      }
+      gr.indices.resize(gr.indices.size() / 3 * 3);
+    }
+  }
+  out = MeshData{};
+  for (auto& [material, gr] : groups) {
+    if (gr.indices.empty()) continue;
+    Submesh sm;
+    sm.firstVertex = uint32_t(out.vertexCount());
+    sm.vertexCount = uint32_t(gr.positions.size() / 3);
+    sm.firstIndex = uint32_t(out.indices.size());
+    sm.indexCount = uint32_t(gr.indices.size());
+    sm.material = material;
+    for (uint32_t idx : gr.indices) out.indices.push_back(sm.firstVertex + idx);
+    out.positions.insert(out.positions.end(), gr.positions.begin(), gr.positions.end());
+    for (uint32_t v = 0; v < sm.vertexCount; ++v) {
+      out.normals.insert(out.normals.end(), {0, 1, 0});
+      out.uv0.insert(out.uv0.end(), {0, 0});
+      out.uv1.insert(out.uv1.end(), {0, 0});
+      out.tangents.insert(out.tangents.end(), {1, 0, 0, 1});
+      out.colors.push_back(0xFFFFFFFFu);
+    }
+    out.submeshes.push_back(sm);
+  }
+  float r2 = 0;
+  out.boundsMin = {1e30f, 1e30f, 1e30f};
+  out.boundsMax = {-1e30f, -1e30f, -1e30f};
+  for (size_t v = 0; v < out.vertexCount(); ++v) {
+    const float* q = &out.positions[v * 3];
+    for (int a = 0; a < 3; ++a) {
+      out.boundsMin[size_t(a)] = std::min(out.boundsMin[size_t(a)], q[a]);
+      out.boundsMax[size_t(a)] = std::max(out.boundsMax[size_t(a)], q[a]);
+    }
+    r2 = std::max(r2, q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+  }
+  out.radius = std::sqrt(r2);
+}
+
 }  // namespace regs::engine

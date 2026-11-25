@@ -31,7 +31,6 @@ struct GridDivision {
   // the data layer's custom0..7 (gsGridDivision::updateDataLayer L:0x081635d0): the 8 area highlights nearest to the
   // division centre as (x, 0, z, radius), unused ones (0, 0, 0, −1000); refreshed while circles are shown
   float layerCustom[8][4] = {};
-  float layerCustomItems[8][4] = {};  // the same circles for the item meshes, y = 1: the fill without the ring
 };
 
 // An item template as the item builder needs it (gsGridObject fields, grid-items.md §1.3).
@@ -70,6 +69,11 @@ struct TerrainCache {
   uint64_t highlightVersion = ~0ull;
   render::GpuMesh highlight;
   bool highlightBuilt = false;
+  // port (owner 2026-11-25): the buildings whose centre lies in a shown catchment circle, copied in world space and
+  // drawn with the data layer in green (data.fragment, custom0.y = 1); rebuilt when that set of items changes
+  std::vector<uint32_t> catchmentItems;
+  render::GpuMesh catchment;
+  bool catchmentBuilt = false;
   // the view mode the division meshes were built for (GridObj::viewMode / viewVersion), and in the underground view
   // the divisions that hold tunnel items (gsGridDivision +0x30 > 0: a TUNNEL item's footprint grown by one cell
   // overlaps them), recounted after live edits (GridObj::itemsVersion)
@@ -103,6 +107,14 @@ bool gridItemVisible(const GridData& g, const TerrainCache& tc, uint32_t item, u
 
 // The tool highlight overlay of the map (cells and items flagged by gsGrid::selectArea / gsGridItem::setSelected).
 void buildHighlightOverlay(const GridData& g, const GridObj& grid, const TerrainCache& tc, render::MeshData& out);
+
+// The visible buildings whose footprint centre lies in one of the circles (x, z, radius in world units, 3 floats
+// each), sorted by item index, as the minimap's catchment view counts a building (by its centre).
+void catchmentBuildings(const GridData& g, const TerrainCache& tc, const float* circles, size_t count,
+                        std::vector<uint32_t>& out);
+// Those buildings' LOD 0 geometry in world space, one submesh per template material (materials index tc.materials).
+void buildCatchmentBuildings(const GridData& g, const TerrainCache& tc, const std::vector<uint32_t>& items,
+                             render::MeshData& out);
 
 // Registers the templates the map uses (materials, tints) and buckets the items per division.
 void initGridItems(Display& d, script::VM& vm, GridObj* grid, TerrainCache& tc);
