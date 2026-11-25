@@ -594,6 +594,56 @@ void gridPlayerMouseUp(VM& vm, ControlObj* c, float x, float y, int key) {
   guarded([&] { toolMouseUp(vm, c, x, y, key); });
 }
 
+// port (stop bubbles behind buildings, 2026-11-25): whether the segment passes through an item's box at its full
+// height (the footprint from its cells, from its base y up by the template height). intersectGrid is the mouse pick:
+// it leaves unnamed buildings out and takes items as flat slabs. Trees, markers and items under 4 m are no obstacle.
+bool segmentBlockedByItems(VM& vm, GridObj* grid, const Vec3& start, const Vec3& end) {
+  if (!grid || !grid->data) return false;
+  const GridData& g = *grid->data;
+  PickState& st = pickState(vm, grid);
+  if (st.cols <= 0) return false;
+  const float cs = g.cellSize, hW = float(g.width) * cs * 0.5f, hL = float(g.length) * cs * 0.5f;
+  auto cellOf = [&](float v, float half) { return int(std::floor((v + half) / cs)); };
+  const int rx0 = std::min(cellOf(start.x, hW), cellOf(end.x, hW)), rx1 = std::max(cellOf(start.x, hW), cellOf(end.x, hW));
+  const int rz0 = std::min(cellOf(start.z, hL), cellOf(end.z, hL)), rz1 = std::max(cellOf(start.z, hL), cellOf(end.z, hL));
+  auto division = [&](int c, int count) { return std::clamp(c < 0 ? -1 : c / st.n, 0, count - 1); };
+  const int dx0 = std::max(0, division(rx0, st.cols) - 1), dx1 = std::min(st.cols - 1, division(rx1, st.cols) + 1);
+  const int dz0 = std::max(0, division(rz0, st.rows) - 1), dz1 = std::min(st.rows - 1, division(rz1, st.rows) + 1);
+  const Vec3 D = end - start;
+  const uint32_t viewMode = uint32_t(vm.toInt(member(vm, grid, u"viewMode")));
+  for (int dz = dz0; dz <= dz1; ++dz)
+    for (int dx = dx0; dx <= dx1; ++dx)
+      for (uint32_t i : st.divisions[size_t(dz) * size_t(st.cols) + size_t(dx)]) {
+        const GridData::Item& it = g.items[i];
+        if (it.removed || it.type >= st.templates.size() || !st.templates[it.type].object) continue;
+        const PickTemplate& tp = st.templates[it.type];
+        const uint32_t f = it.flags | tp.flags;
+        if (f & (kFlagTemp | kFlagHidden | kItemPortHidden)) continue;
+        if (tp.type == kTypeMarker || tp.type == kTypeSpawnPoint || tp.type == kTypeTree) continue;
+        const float height = float(tp.height) * cs / 256.0f;
+        if (height < 4.0f || !itemVisible(g, st, i, viewMode)) continue;
+        const ItemFootprint fp = itemFootprint(tp.width, tp.length, tp.diagonals, it.orient);
+        if (it.x > rx1 || it.x + fp.sx <= rx0 || it.z > rz1 || it.z + fp.sz <= rz0) continue;
+        const float lo[3] = {float(it.x) * cs - hW, float(it.y) * cs / 256.0f, float(it.z) * cs - hL};
+        const float hi[3] = {lo[0] + float(fp.sx) * cs, lo[1] + height, lo[2] + float(fp.sz) * cs};
+        const float s[3] = {start.x, start.y, start.z}, d[3] = {D.x, D.y, D.z};
+        float t0 = 0.0f, t1 = 1.0f;
+        bool miss = false;
+        for (int k = 0; k < 3 && !miss; ++k) {
+          if (std::fabs(d[k]) < 1e-6f) {
+            miss = s[k] < lo[k] || s[k] > hi[k];
+            continue;
+          }
+          float a = (lo[k] - s[k]) / d[k], b = (hi[k] - s[k]) / d[k];
+          if (a > b) std::swap(a, b);
+          t0 = std::max(t0, a), t1 = std::min(t1, b);
+          miss = t0 > t1;
+        }
+        if (!miss) return true;
+      }
+  return false;
+}
+
 // a pick for the editing tools: intersectGrid without vehicles and characters, under a player-local position
 ToolPick toolPick(VM& vm, ControlObj* player, float x, float y, bool terrainOnly) {
   return toolPickLevel(vm, player, x, y, kNoPlane, terrainOnly);
@@ -722,7 +772,7 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
         if (auto* grid = dynamic_cast<GridObj*>(m->parent); grid && dist > 1.0f) {
           // to just short of the stop (its shelter and the road under it are no obstacle)
           const Vec3 end = eye + d * std::max(0.0f, 1.0f - 12.0f / dist);
-          s.hidden = intersectGrid(vm, grid, eye, end, false, false).hit();
+          s.hidden = intersectGrid(vm, grid, eye, end, true, false).hit() || segmentBlockedByItems(vm, grid, eye, end);
         }
       }
       if (s.hidden) {
