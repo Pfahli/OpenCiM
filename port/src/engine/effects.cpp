@@ -175,6 +175,23 @@ const float kLensBlurStrength[] = {0, 120, 250, 0};
 
 int colorStyle(VM& vm) { return std::clamp(int(settingNumber(vm, u"regsColorStyle", 0)), 0, kColorStyleCount - 1); }
 int lensBlur(VM& vm) { return std::clamp(int(settingNumber(vm, u"regsLensBlur", 0)), 0, 3); }
+
+}  // namespace
+
+// the lens blur's radius in pixels at a point of the map view (dof.fragment / tiltshift.fragment on the CPU)
+float lensBlurRadiusAt(VM& vm, float depth, float focus, float screenY01) {
+  const int blur = lensBlur(vm);
+  if (blur <= 0) return 0.0f;
+  if (blur == 3) {
+    float a = std::fabs(screenY01 - 0.5f), t = std::clamp((a - 0.10f) / 0.35f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t) * kLensBlurRadius[blur];
+  }
+  const float f = std::max(focus, 1.0f), z = std::max(depth, 0.1f);
+  const float c = z > f ? 1.0f / f - 1.0f / z : (1.0f / z - 1.0f / f) * 0.35f;
+  return std::clamp(c * kLensBlurStrength[blur], 0.0f, 1.0f) * kLensBlurRadius[blur];
+}
+
+namespace {
 // vignette and film grain (regsVignette, regsFilmGrain): off, light, strong
 const float kVignette[] = {0.0f, 0.3f, 0.55f};
 const float kFilmGrain[] = {0.0f, 0.035f, 0.06f};  // very slight: about 0.7 % and 1.2 % brightness noise

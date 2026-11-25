@@ -627,6 +627,16 @@ struct GuiPass {
     const bool organizer = organizerClass && c->cls->isA(organizerClass);
     if (organizer) organizeTracers(vm, c, &tracerViews);
     if (c->clipped()) return;
+    // a map bubble under the lens blur is drawn as soft as the scene behind it (2026-11-25), with its parts
+    struct Soft {
+      render::Renderer2D& r;
+      float before;
+      ~Soft() { r.setBlur(before); }
+    } soft{d.r2d(), d.r2d().blur()};
+    if (auto b = c->fieldValues.find(u"<regsBlur>"); b != c->fieldValues.end()) {
+      d.r2d().flushAll();
+      d.r2d().setBlur(std::max(soft.before, float(vm.toFloat(b->second))));
+    }
     if (c->cls->name == "gsViewPort") {
       renderViewportScene(d, vm, c);  // fills its render target first
       tracerViews.clear();            // it eased its camera: later tracers project with the new one

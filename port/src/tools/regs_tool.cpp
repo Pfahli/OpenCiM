@@ -763,6 +763,7 @@ int cmdWindowMask(int argc, char** argv) {
   bool haveIllum = (m.flags & render::kMatIlluminationMap) && il < m.textures.size() && load(m.textures[il], illum);
   if (!load(m.textures[0], diffuse) || at >= m.textures.size() || !load(m.textures[at], spec)) return 1;
   engine::WindowMaskInfo info;
+  info.windowTexture = m.textures[at].find("window") != std::string::npos;
   bool ok = engine::makeWindowMask(spec, haveIllum ? &illum : nullptr, mask, &info);
   std::printf("specular %s: %d windows, %d rejected, glass > %.2f, %.1f %% of the texture%s%s\n", m.textures[at].c_str(),
               info.windows, info.rejected, info.threshold, info.coverage * 100, info.skipped ? ": " : "",

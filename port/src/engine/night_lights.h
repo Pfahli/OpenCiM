@@ -37,6 +37,9 @@ struct WindowMaskInfo {
   float threshold = 0;      // specular level taken as glass
   float coverage = 0;       // share of the texture that is window
   const char* skipped = nullptr;  // why there is no mask
+  // input: the texture is a building's window sheet (its name says "window", the station hall's glazing): large
+  // glass areas are windows there, not glass roofs or sheet metal (2026-11-25)
+  bool windowTexture = false;
 };
 
 // The window mask of a building texture from its specular map (and its illumination map, which wins: textures whose

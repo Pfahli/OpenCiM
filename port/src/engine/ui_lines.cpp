@@ -64,6 +64,16 @@ void registerLinePanelNatives(VM& vm) {
   // gsViewPort clearColor: the gsViewport_OGL constructor's 0xFF000000 (L:0x08204470.c:42), so a viewport no script
   // gave a colour clears its colour buffer (to transparent black, scene-basics.md §7); the shop's turning preview
   // otherwise leaves trails
+  // gsViewPort minDistance / maxDistance: the gsViewport_OGL constructor's 0.1 / 400 (+0x54 / +0x58, L:0x08204470).
+  // Unset they read 0, a near plane at 0 leaves no depth precision: the shop's previews showed the vehicles' insides
+  // through their walls (owner's report 2026-11-25)
+  if (ClassInfo* c = vm.findClass("gsViewPort"))
+    for (auto [name, def] : {std::pair{u"minDistance", 0.1f}, std::pair{u"maxDistance", 400.0f}})
+      if (auto f = c->fields.find(name); f != c->fields.end())
+        f->second.get = [key = std::u16string(name), def](VM&, Object* o) {
+          auto it = o->fieldValues.find(key);
+          return it == o->fieldValues.end() || it->second.isNone() ? Value::real(def) : it->second;
+        };
   if (ClassInfo* c = vm.findClass("gsViewPort"))
     if (auto f = c->fields.find(u"clearColor"); f != c->fields.end())
       f->second.get = [](VM&, Object* o) {

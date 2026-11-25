@@ -315,6 +315,27 @@ void Renderer2D::wideLine(const GuiVertex& a, const GuiVertex& b) {
 
 void Renderer2D::draw(uint32_t tex, Prim prim, const GuiVertex* v, size_t n) {
   bool lines = prim == Prim::Lines || prim == Prim::LineStrip;
+  if (blur_ >= 0.75f && !lines && n) {  // setBlur: the centre and 8 copies on a ring, alpha shared out
+    const float r = blur_;
+    blur_ = 0;
+    std::vector<GuiVertex> tmp(v, v + n);
+    auto at = [&](float dx, float dy, float w) {
+      for (size_t i = 0; i < n; ++i) {
+        tmp[i] = v[i];
+        tmp[i].x += dx, tmp[i].y += dy;
+        uint32_t a = uint32_t(std::lround(float(v[i].rgba >> 24) * w));
+        tmp[i].rgba = (v[i].rgba & 0x00FFFFFFu) | (std::min(a, 255u) << 24);
+      }
+      draw(tex, prim, tmp.data(), n);
+    };
+    at(0, 0, 0.35f);
+    for (int k = 0; k < 8; ++k) {
+      const float ang = float(k) * 0.785398f;
+      at(std::cos(ang) * r * 0.6f, std::sin(ang) * r * 0.6f, 0.15f);
+    }
+    blur_ = r;
+    return;
+  }
   if (lines && lineWidth > 1) {  // core profiles only guarantee 1-pixel lines
     if (tex != batchTex_ || lines_) {
       flush();

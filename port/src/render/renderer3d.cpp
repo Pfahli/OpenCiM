@@ -991,8 +991,14 @@ void Renderer3D::drawCombined(const SceneView& v, const DrawItem& it, const GpuM
     }
   }
   if (l.windowOn >= 0) {  // port night lights: the material's window groups, on the first unit after its textures
-    const int maskUnit = int(m.textures.size());
-    float code = !m.windowMask || maskUnit >= kMaterialUnits ? 0.0f : m.windowKind == 1 ? it.lampCode
+    // a material with all six units in use (the department store: diffuse, specular, normal, illumination, ambient
+    // occlusion, environment cube) had no unit left and no lit windows until 2026-11-25: buildings then take the
+    // destination displays' unit (vehicles only), vehicles the mods' unit while no mod texture holds it
+    const int maskUnit = int(m.textures.size()) < kMaterialUnits ? int(m.textures.size())
+                         : m.windowKind != 1                     ? kSignUnit
+                         : shaderHookTextures().empty()          ? kModUnitFirst
+                                                                 : -1;
+    float code = !m.windowMask || maskUnit < 0 ? 0.0f : m.windowKind == 1 ? it.lampCode
                  : m.windowKind >= 4 ? (v.night[3] > 0.05f ? float(m.windowKind) : 0.0f)
                  : m.windowKind >= 2 ? (v.night[2] > 0 ? float(m.windowKind) : 0.0f) : v.night[0] > 0 ? 1.0f : 0.0f;
     dev().uniform1f(l.windowOn, code);

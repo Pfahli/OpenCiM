@@ -873,7 +873,8 @@ bool makeWindowMask(const Image& specular, const Image* illumination, Image& out
           const uint8_t* p = &il[(size_t(y * ih / h) * size_t(iw) + size_t(x * iw / w)) * 4];
           if (std::max({p[0], p[1], p[2]}) > 40) lit[size_t(y) * size_t(w) + size_t(x)] = 1, ++count;
         }
-      if (count > n / 60) {
+      // (until 2026-11-25 a sixtieth: the department store's two lit lamp columns, under 2 %, left all its windows dark)
+      if (count > n / 12) {
         st.skipped = "the illumination map lights it";
         return false;
       }
@@ -961,7 +962,7 @@ bool makeWindowMask(const Image& specular, const Image* illumination, Image& out
   size_t covered = 0;
   for (size_t c = 0; c < comps.size(); ++c) {
     if (comps[c].glass == 0) continue;
-    if (comps[c].glass > n * 6 / 100) {
+    if (comps[c].glass > n * 6 / 100 && !st.windowTexture) {
       ++st.rejected;
       continue;
     }
@@ -1031,6 +1032,7 @@ void runMaskJob(MaskJob& j) {
   if (!j.illum.empty()) j.vfs->read(j.illum, illumData);
   Image si, ii;
   bool haveIllum = !illumData.empty() && parseDds(illumData, ii, nullptr);
+  j.info.windowTexture = j.spec.find("window") != std::string::npos;
   j.ok = !specData.empty() && parseDds(specData, si, nullptr) && makeWindowMask(si, haveIllum ? &ii : nullptr, j.mask, &j.info, j.mesh, j.material);
 }
 

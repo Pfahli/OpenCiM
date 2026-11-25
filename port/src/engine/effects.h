@@ -21,6 +21,9 @@ void bloomFinish(Display& d, script::VM& vm, script::Object* bloom, int x, int y
 // or the bloom composite with 0), null when the effects cannot run. styleFinish: the passes into the back-buffer
 // rect (x, y, w, h with a top-left origin).
 bool styleActive(script::VM& vm);
+// the lens blur's radius in pixels at a point of the map view: its depth along the view, the camera's focus distance,
+// its screen height 0..1 (tilt-shift); 0 with the blur off. The GUI blurs the map's bubbles alike (2026-11-25).
+float lensBlurRadiusAt(script::VM& vm, float depth, float focus, float screenY01);
 const render::RenderTarget* styleTarget(Display& d, script::VM& vm, int w, int h, int samples);
 // nearZ/farZ: the view's depth range; focus: eye-to-camera-target distance (the distance lens blur).
 // post: the view, when the mods' post hooks run on it (render/glsl.h; they come first, on the scene and its depth).

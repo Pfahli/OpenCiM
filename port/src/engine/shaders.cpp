@@ -253,6 +253,10 @@ const char16_t* kNightMapsDecl =
     u"  }\n"
     u"  float s = floor(regs_Seed * 255.0 + 0.5);\n"
     u"  vec4 r = regs_hash4(s, 1.0), t = regs_hash4(s, 2.0), b = regs_hash4(s, 3.0);\n"
+    // the building's earliest group comes on early in the evening: a building whose three groups all drew late hours
+    // stayed dark all night (the tutorial town's department store, owner's report 2026-11-25)
+    u"  float lo = min(r.x, min(r.y, r.z));\n"
+    u"  r.xyz = mix(r.xyz, r.xyz * 0.4, vec3(equal(r.xyz, vec3(lo))));\n"
     u"  vec4 on = smoothstep(r - 0.03, r + 0.03, vec4(regs_Night.y));\n"
     u"  vec3 sum = vec3(0.0);\n"
     u"  for (int k = 0; k < 3; ++k) {\n"

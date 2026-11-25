@@ -1,6 +1,7 @@
 // Picking and selection in the 3D view (docs/ui/selection.md): gsGrid::intersectGrid, the gsGridPlayer select mode
 // (hover, click, editMode) and the grid controllers of picked items.
 #include "engine/interaction.h"
+#include "engine/effects.h"
 #include "core/env.h"
 
 #include <algorithm>
@@ -751,34 +752,43 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
     // port (owner's request 2026-11-25): a stop's bubble is left out far off (beyond about twice the camera's distance
     // to its look point: only with the camera tilted towards the horizon) or behind a building or a hill (a ray from
     // the eye, checked every 0.15 s per bubble)
+    // (2026-11-25, owner: the obstacle test only with the camera low and zoomed in; the bubbles fade in and out over
+    // about half a second instead of popping)
     static const ClassInfo* stopCls = vm.findClass("gsTransportStopController");
+    float fadeAlpha = 1.0f;
     if (Object* m = member(vm, c, kModule).object(); m && stopCls && m->cls->isA(stopCls)) {
       const float dist = std::sqrt(dot(d, d));
-      if (view->focus > 0 && dist > view->focus * 2.2f + 120.0f) {
-        c->left = c->top = -10000;
-        return;
-      }
       struct Seen {
-        std::chrono::steady_clock::time_point at;
+        std::chrono::steady_clock::time_point at, last;
         bool hidden = false;
+        float alpha = 1.0f;
       };
       static std::unordered_map<const ControlObj*, Seen> seen;
       if (seen.size() > 4096) seen.clear();
+      const bool fresh = !seen.count(c);
       Seen& s = seen[c];
       const auto now = std::chrono::steady_clock::now();
+      const bool lowAndClose = -view->fwd.y < 0.64f && view->focus > 0 && view->focus < 260.0f;  // under ~40°, near
       if (now - s.at > std::chrono::milliseconds(150)) {
         s.at = now;
         s.hidden = false;
-        if (auto* grid = dynamic_cast<GridObj*>(m->parent); grid && dist > 1.0f) {
+        if (auto* grid = dynamic_cast<GridObj*>(m->parent); lowAndClose && grid && dist > 1.0f) {
           // to just short of the stop (its shelter and the road under it are no obstacle)
           const Vec3 end = eye + d * std::max(0.0f, 1.0f - 12.0f / dist);
           s.hidden = intersectGrid(vm, grid, eye, end, true, false).hit() || segmentBlockedByItems(vm, grid, eye, end);
         }
       }
-      if (s.hidden) {
+      const bool far = view->focus > 0 && dist > view->focus * 2.2f + 120.0f;
+      const float target = (s.hidden || far) ? 0.0f : 1.0f;
+      const float dt = fresh ? 1.0f : std::min(0.25f, std::chrono::duration<float>(now - s.last).count());
+      s.last = now;
+      s.alpha = target > s.alpha ? std::min(target, s.alpha + dt * 2.0f) : std::max(target, s.alpha - dt * 2.0f);
+      if (fresh) s.alpha = target;
+      if (s.alpha < 0.01f) {
         c->left = c->top = -10000;
         return;
       }
+      fadeAlpha = s.alpha;
     }
     float sx = view->left + (nx + 1) * 0.5f * w, sy = view->top + (1 - ny) * 0.5f * h;
     float px = 0, py = 0;
@@ -786,6 +796,19 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
     c->left = sx - c->width * numberOf(vm, c, kAnchorX, 0.5f) - px;
     c->top = sy - c->height * numberOf(vm, c, kAnchorY, 0.5f) - py;
     tracerFade(vm, c, eye, p);  // enableFade: visibility by distance (engine/sky.cpp)
+    // the lens blur's radius where the bubble's point is: the GUI draws it as soft (engine/display.cpp control)
+    if (float blurPx = lensBlurRadiusAt(vm, z, view->focus, (1 - ny) * 0.5f); blurPx >= 0.75f)
+      c->fieldValues[u"<regsBlur>"] = Value::real(blurPx);
+    else
+      c->fieldValues.erase(u"<regsBlur>");
+    if (fadeAlpha < 1.0f || c->fieldValues.count(u"<regsFaded>")) {  // a stop bubble fading: it and its parts
+      const bool ownFade = c->fieldValues.count(u"<fade>") != 0;
+      c->visibility = (ownFade ? c->visibility : 1.0f) * fadeAlpha;
+      for (auto& k : c->children)
+        if (auto* ch = dynamic_cast<ControlObj*>(k.get())) ch->visibility = fadeAlpha;
+      if (fadeAlpha < 1.0f) c->fieldValues[u"<regsFaded>"] = Value::boolean(true);
+      else c->fieldValues.erase(u"<regsFaded>");
+    }
   });
 }
 

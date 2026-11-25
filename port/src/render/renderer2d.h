@@ -64,6 +64,10 @@ class Renderer2D {
   void setScissor(int x, int y, int w, int h);
 
   void draw(uint32_t tex, Prim prim, const GuiVertex* v, size_t count);
+  // a soft blur for what is drawn until it is set back to 0 (the map's bubbles under the lens blur, 2026-11-25):
+  // every triangle drawn again on a ring of `px` pixels, its alpha shared out
+  void setBlur(float px) { blur_ = px; }
+  float blur() const { return blur_; }
 
   // Hand the context to other GL code (the 3D pass) and take it back with the same projection and scissor.
   void flushAll() { flush(); }
@@ -89,6 +93,7 @@ class Renderer2D {
   void flush();
   void flushWith(bool ownProgram);
   bool lines_ = false;
+  float blur_ = 0;
   uint32_t batchTex_ = 0;
   std::vector<GuiVertex> batch_;
   uint32_t program_ = 0, vao_ = 0, vbo_ = 0;

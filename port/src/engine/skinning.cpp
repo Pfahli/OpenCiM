@@ -262,7 +262,10 @@ void collectSkinned(Display& d, VM& vm, ObjectObj* model, const Mat4& world, con
     sm = SkinnedModel();
     sm.data = model->data;
     bool skinned = !model->data->mesh.skinBones.empty();
-    const bool vehicle = model->pendingPath.find("/vehicles/") != std::string::npos;
+    // (the DLC vehicles live under addons/vehiclepackNN/: until 2026-11-25 their skinned parts, the Prospecta's
+    // modules with doors, had no window light)
+    const bool vehicle = model->pendingPath.find("/vehicles/") != std::string::npos ||
+                         model->pendingPath.find("vehiclepack") != std::string::npos;
     for (const MaterialDef& m : model->data->materials) {
       GpuMaterial g = objectMaterial(d, vm, model, m);
       if (skinned) g.meshFlags = kMeshSkinned;
