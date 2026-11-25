@@ -1,7 +1,7 @@
 // Port override of metro/shaders/selection/data.fragment (the stops' catchment circles, terrain.md §5.2): the
 // original draws a white ring about one unit wide at the radius and nothing inside. Port (owner's request
-// 2026-11-25): the area inside is lit faintly too, so the buildings and ground a stop reaches stand out while a stop
-// is placed (the ring stays as it was).
+// 2026-11-25): the ground inside is lit faintly and the buildings inside are tinted green (as the minimap's catchment
+// view), so what a stop reaches stands out while a stop is placed (the ring stays as it was).
 uniform vec4 custom0;
 uniform vec4 custom1;
 uniform vec4 custom2;
@@ -25,8 +25,13 @@ void main(void) {
   d = min(d, length(v_offset67.xy) - custom6.w);
   d = min(d, length(v_offset67.zw) - custom7.w);
   float inArea = 1.0 - smoothstep(-1.2, -0.7, d);
-  // custom0.y = 1: the item meshes (buildings, roads): the fill only; a ring along a facade lit the whole wall
-  float ring = custom0.y > 0.5 ? 0.0 : 1.0;
+  // custom0.y = 1: the buildings (owner 2026-11-25: green as on the minimap's catchment view), fill only; a ring
+  // along a facade lit the whole wall
+  if (custom0.y > 0.5) {
+    gl_FragColor = vec4(0.25, 1.0, 0.25, 0.45 * inArea);
+    return;
+  }
+  float ring = 1.0;
   float a = ring * (1.0 - smoothstep(0.5, 1.0, abs(d)));
   a = max(a, inArea * 0.3);
   float c = max(inArea, ring * (1.0 - smoothstep(0.3, 0.8, abs(d))));

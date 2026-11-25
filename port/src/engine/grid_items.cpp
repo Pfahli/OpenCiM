@@ -206,6 +206,7 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
       gMatSeconds += std::chrono::duration<double>(tm1 - tm0).count();
       tc.materials.back().surfaceClass =
           road && carriageway && !(m.flags & kMatKeepOnVariation) ? kSurfacePavement : surface;
+      tc.materials.back().building = tp.type == 0x14;
       // port (owner 2026-11-19: "the casino sign is flying around rotating ... same for the Litfasssaeule"): the
       // rotation shader (effects/rotation.shader: ad poles, the casino sign, windmills, the airport radar, the fast-food
       // sign, tower cranes) turns the marked vertices about a point and axis in model space (custom0, custom1). Merged
@@ -252,6 +253,7 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
           tc.materials.push_back(objectMaterial(d, vm, nullptr, def));
           // shared texture variations (the walkways of roads): the class of their first user's walkways
           tc.materials.back().surfaceClass = road ? kSurfacePavement : surface;
+          tc.materials.back().building = tp.type == 0x14;
         } else {
           LOG_WARN("texture variation %s: not found", path.c_str());
         }

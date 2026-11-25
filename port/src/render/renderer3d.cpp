@@ -1188,7 +1188,10 @@ void Renderer3D::drawList(const SceneView& v, const std::vector<DrawItem>& items
         const GpuMaterial& src = (*it.materials)[size_t(p.material)];
         if (!it.layerAllParts && !(src.flags & 0x400000u)) continue;
         // (over all parts: not the cut-out or blended ones, trees and fences, whose whole quads it would light)
-        if (it.layerAllParts && ((src.flags & (kMatAlphaTest | kMatAlphaBlend)) || src.surfaceClass == kSurfaceFoliage)) continue;
+        // (port, owner 2026-11-25: "Gebäude im Kreis grün hervorgehoben, wie auf der Minimap"): buildings only; their
+        // cut-out parts (balconies, railings) are small, so alpha-tested building materials are kept
+        if (it.layerAllParts && (!src.building || (src.flags & kMatAlphaBlend) || src.surfaceClass == kSurfaceFoliage))
+          continue;
       }
       const GpuMaterial& m = materialOf(it, p);
       uint32_t prog = m.programFor(v.env);

@@ -79,6 +79,7 @@ struct GpuMaterial {
   uint32_t meshFlags = 0;     // combiner mesh flags of the meshes using it (MESH_SKINNED 0x100)
   // port: what the surface is, for the mods' shader hooks (render/glsl.h, mod-manager.md §4.3)
   uint8_t surfaceClass = kSurfaceOther;
+  bool building = false;  // a BUILDING template's material (type 0x14): the catchment layer tints these green
   // combiner variants per pass environment (env flags of the pass | light count << 12); program 0 = none (the
   // built-in default shader in normal passes, not drawn in shadow passes)
   struct Variant {
