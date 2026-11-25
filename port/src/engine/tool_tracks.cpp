@@ -628,7 +628,12 @@ void createTramBlock(Ctx& c, int x, int z, uint32_t conn, bool isStart, bool isE
         }
       } else {
         uint32_t oc = o.conn;
-        if (d != (d & oc) && (conn & r4) != r4 && (m7 & oc) == 0 && (conn & m6) == 0) {
+        // port (owner's request 2026-11-25): a 45° branch the engine refused (a connection beside an existing one)
+        // joins when there is a piece for it (the port's tram switches, crossing_templates.cpp)
+        const bool angled = (m7 & oc) != 0 || (conn & m6) != 0;
+        const bool angledFits = angled && d && c.lookup(uint32_t(o.type()), uint32_t(o.tvar()), d | oc, o.conn2, o.flags(), nullptr) &&
+                                c.lookup(uint32_t(T), uint32_t(c.toolType), r4 | conn, 0, 0, nullptr);
+        if (d != (d & oc) && (conn & r4) != r4 && (!angled || angledFits)) {
           uint32_t f = o.flags() & 0xfff3ffffu;
           if (!(o.flags() & 0xc000)) f &= 0xffffff0fu;
           Piece q = c.createRoadItem(rx, o.y, rz, d | oc, o.conn2, o.type(), o.tvar(), f);
@@ -676,7 +681,11 @@ void createTramBlock(Ctx& c, int x, int z, uint32_t conn, bool isStart, bool isE
       uint32_t m5 = rot(d, 1) | rot(d, 7), m7 = rot(r4, 1) | rot(r4, 7);
       if (special == 0) m5 = spread(m5), m7 = spread(m7);
       uint32_t oc = o.conn;
-      if (d != (oc & d) && (conn & r4) != r4 && (oc & m5) == 0 && (conn & m7) == 0) {
+      const bool angled = (oc & m5) != 0 || (conn & m7) != 0;  // as above: a 45° branch with a piece for it joins
+      const bool angledFits = angled && d && special == 0 &&
+                              c.lookup(uint32_t(o.type()), uint32_t(o.tvar()), d | oc, o.conn2, o.flags(), nullptr) &&
+                              c.lookup(uint32_t(T), uint32_t(c.toolType), r4 | conn, 0, 0, nullptr);
+      if (d != (oc & d) && (conn & r4) != r4 && (!angled || angledFits)) {
         uint32_t f;
         if (special == 0 || !P || P->type() != 5 || oc != 0) f = o.flags() & 0xfff3ffffu;
         else f = special | o.flags();

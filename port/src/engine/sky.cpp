@@ -375,7 +375,18 @@ void addPortSky(Display& d, VM& vm, Object* skyObj, const std::vector<Object*>& 
   static std::shared_ptr<GpuMesh> mesh;
   static std::vector<GpuMaterial> material(1);
   if (!mesh) {
-    mesh = std::make_shared<GpuMesh>(d.r3d().upload(domeMesh(12)));
+    // closed underneath (owner's report 2026-11-25: beyond the map's edge, tilted low and seeing far, the view ended in
+    // the clear colour, a flat brown): a cone from the lowest ring down to a pole, drawn in the fog colour by the shader
+    MeshData dome = domeMesh(12);
+    const uint32_t cols = 48, bottom = uint32_t(dome.vertexCount());
+    dome.positions.insert(dome.positions.end(), {0, -1, 0});
+    dome.normals.insert(dome.normals.end(), {0, -1, 0});
+    dome.uv0.insert(dome.uv0.end(), {0, 0.95f});
+    dome.colors.push_back(0xFF000000u | 0xFFu << 16);
+    for (uint32_t s = 0; s < cols; ++s) dome.indices.insert(dome.indices.end(), {s + 1, s, bottom});
+    dome.submeshes[0].vertexCount = uint32_t(dome.vertexCount());
+    dome.submeshes[0].indexCount = uint32_t(dome.indices.size());
+    mesh = std::make_shared<GpuMesh>(d.r3d().upload(dome));
     material[0].flags = kMatNoShadow;
     material[0].shader = "regs/shaders/sky.shader";
   }

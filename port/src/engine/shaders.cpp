@@ -305,15 +305,17 @@ const char16_t* kSignDecl =
     u"    if (f.x < ux0 || f.x > ux1 || f.y < A.y || f.y > A.w) return col;\n"
     u"    s = (f.x - ux0) / (ux1 - ux0); t = (f.y - A.y) / (A.w - A.y);\n"
     u"  }\n"
-    u"  bool rot = B.w > 9.5;\n"
-    u"  float style = B.w - (rot ? 10.0 : 0.0);\n"
+    u"  bool mirrored = B.w > 19.5;\n"  // +20: the model shows the field mirrored elsewhere too
+    u"  float bw = B.w - (mirrored ? 20.0 : 0.0);\n"
+    u"  bool rot = bw > 9.5;\n"
+    u"  float style = bw - (rot ? 10.0 : 0.0);\n"
     u"  bool solid = style > 0.5, plate = style > 1.5;\n"  // 1 light glyphs on dark, 2 dark glyphs on a light plate
     u"  if (rot) { float tmp = s; s = t; t = tmp; }\n"
-    // the reading direction per pixel (2026-11-25, owner's report: the display on the right side was mirrored): the
-    // text runs to the right on screen, whichever side of the vehicle shows the field (a model maps the same texels on
-    // both sides, one of them mirrored); B.x (from one triangle) for slanted boards and faces seen edge-on
+    // the reading direction per pixel for a field the model also shows mirrored (2026-11-25, owner's report: the
+    // display on the right side was mirrored): the text runs to the right on screen on either side; else, and for
+    // slanted boards and faces seen edge-on, B.x from the field's face (a per-pixel rule mirrored a front display)
     u"  float dAlong = rot ? duv.y : duv.x;\n"
-    u"  bool flipS = slanted || abs(dAlong) < 1e-7 ? B.x > 0.5 : dAlong < 0.0;\n"
+    u"  bool flipS = !mirrored || slanted || abs(dAlong) < 1e-7 ? B.x > 0.5 : dAlong < 0.0;\n"
     u"  if (flipS) s = 1.0 - s;\n"
     u"  if (B.y > 0.5) t = 1.0 - t;\n"
     u"  float aspect = board && !slanted ? D.z : B.z;\n"

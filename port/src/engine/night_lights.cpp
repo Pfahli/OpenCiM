@@ -1556,10 +1556,12 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       x0 = std::clamp(x0, 0, w - 1), x1 = std::clamp(x1, x0 + 1, w), y0 = std::clamp(y0, 0, h - 1), y1 = std::clamp(y1, y0 + 1, h);
       float cu = slanted ? float(sf.x0) * float(w) / float(sf.w) : 0.5f * float(x0 + x1);
       float cv = slanted ? float(sf.y0) * float(h) / float(sf.h) : 0.5f * float(y0 + y1);
-      bool found = false, rot = false, flipS = false, flipT = false;
+      bool found = false, rot = false, flipS = false, flipT = false, mirroredToo = false;
       for (const Submesh& sm : mesh.submeshes) {
-        if (sm.material != material || found) continue;
-        for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size() && !found; k += 3) {
+        if (sm.material != material || mirroredToo) continue;
+        // every face under the field: the first gives the reading direction; one that reads the other way (the same
+        // texels mirrored on the vehicle's other side) makes the shader decide per pixel (2026-11-25)
+        for (uint32_t k = sm.firstIndex; k + 2 < sm.firstIndex + sm.indexCount && k + 2 < mesh.indices.size() && !mirroredToo; k += 3) {
           uint32_t t[3] = {mesh.indices[k], mesh.indices[k + 1], mesh.indices[k + 2]};
           if (t[0] >= nv || t[1] >= nv || t[2] >= nv) continue;
           float ub = std::floor(std::min({mesh.uv0[t[0] * 2], mesh.uv0[t[1] * 2], mesh.uv0[t[2] * 2]}));
@@ -1584,16 +1586,22 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
           Vec3 up{0, 1, 0}, right = cross(n * -1.0f, up);
           if (dot(right, right) < 1e-6f) continue;  // a face looking up or down
           // the text reads along u, or along v when the field is turned on the texture (tram-04's side boxes)
+          bool fr = false, fs = false, ft = false;
           if (slanted) {  // along the text: (cos, -sin) in texels (v grows downwards); across: (sin, cos)
             Vec3 along = gU * ca + gV * -sa, across = gU * sa + gV * ca;
-            flipS = dot(along, right) < 0;
-            flipT = dot(across, up) > 0;
+            fs = dot(along, right) < 0;
+            ft = dot(across, up) > 0;
           } else {
-            rot = std::fabs(dot(gU, right)) < std::fabs(dot(gV, right));
-            flipS = (rot ? dot(gV, right) : dot(gU, right)) < 0;
-            flipT = (rot ? dot(gU, up) : dot(gV, up)) > 0;
+            fr = std::fabs(dot(gU, right)) < std::fabs(dot(gV, right));
+            fs = (fr ? dot(gV, right) : dot(gU, right)) < 0;
+            ft = (fr ? dot(gU, up) : dot(gV, up)) > 0;
           }
-          found = true;
+          if (!found) {
+            rot = fr, flipS = fs, flipT = ft;
+            found = true;
+          } else if (fr == rot && fs != flipS) {
+            mirroredToo = true;
+          }
         }
       }
       if (!found) continue;
@@ -1618,6 +1626,7 @@ bool makeVehicleLampMask(const MeshData& mesh, int material, const Image& diffus
       sg.u0 = float(x0) / float(w), sg.u1 = float(x1) / float(w), sg.v0 = float(y0) / float(h), sg.v1 = float(y1) / float(h);
       sg.aspect = rot ? float(y1 - y0) / float(x1 - x0) : float(x1 - x0) / float(y1 - y0);
       sg.flipU = flipS, sg.flipV = flipT, sg.rot = rot, sg.style = sf.solid;
+      sg.mirroredToo = mirroredToo && !slanted;
       if (sf.boardX0 >= 0 && sf.boardX1 > sf.boardX0 && !rot) {
         int b0 = sf.boardX0 * w / sf.w, b1 = sf.boardX1 * w / sf.w;
         sg.boardU0 = float(b0) / float(w), sg.boardU1 = float(b1) / float(w);
@@ -1711,7 +1720,8 @@ void applyVehicleLamps(GpuMaterial& g, const VehicleLampInfo& li) {
   for (int i = 0; i < li.signCount; ++i) {
     const VehicleLampInfo::Sign& s = li.signs[i];
     float a[4] = {s.u0, s.v0, s.u1, s.v1};
-    float b[4] = {s.flipU ? 1.0f : 0.0f, s.flipV ? 1.0f : 0.0f, s.aspect, float(s.style) + (s.rot ? 10.0f : 0.0f)};
+    float b[4] = {s.flipU ? 1.0f : 0.0f, s.flipV ? 1.0f : 0.0f, s.aspect,
+                  float(s.style) + (s.rot ? 10.0f : 0.0f) + (s.mirroredToo ? 20.0f : 0.0f)};
     float c[4] = {s.colour[0], s.colour[1], s.colour[2], s.angle};
     std::copy(a, a + 4, g.signA[i]);
     std::copy(b, b + 4, g.signB[i]);

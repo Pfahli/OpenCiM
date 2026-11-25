@@ -76,6 +76,8 @@ struct VehicleLampInfo {
     bool numberLast = false;            // "Stadtplatz 61" rather than "61 Stadtplatz"
     float angle = 0;                    // a slanted board: radians; then u0, v0 its centre, u1, v1 half sizes in u units
     float texRatio = 0.5f;              // the texture's height over width (slanted boards)
+    bool mirroredToo = false;           // the model shows the field mirrored elsewhere too (a vehicle's two sides):
+                                        // the shader takes the reading direction per pixel
   };
   Sign signs[3];
   int signCount = 0;

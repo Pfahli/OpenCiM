@@ -2908,8 +2908,18 @@ static void collectLineup(Display& d, VM& vm, GridObj* grid, const char* spec, s
     std::vector<std::pair<std::string, ObjectObj*>> rows[3];
     for (auto& [name, obj] : grid->templates) {
       auto* o = dynamic_cast<ObjectObj*>(obj.get());
-      if (!o || !o->data || o->pendingPath.find("metro/objects/vehicles/") == std::string::npos) continue;
-      std::string p = o->pendingPath.substr(o->pendingPath.find("vehicles/") + 8);
+      if (!o || !o->data) continue;
+      // the base game's vehicles, and the vehicle packs' (addons/vehiclepackNN/<kind>NN/, 2026-11-25)
+      std::string p;
+      if (size_t at = o->pendingPath.find("metro/objects/vehicles/"); at != std::string::npos) {
+        p = o->pendingPath.substr(o->pendingPath.find("vehicles/") + 8);
+      } else if (size_t pack = o->pendingPath.find("addons/vehiclepack"); pack != std::string::npos) {
+        size_t slash = o->pendingPath.find('/', pack + 7);
+        if (slash == std::string::npos) continue;
+        p = o->pendingPath.substr(slash);
+      } else {
+        continue;
+      }
       int k = p.rfind("/bus", 0) == 0 || p.rfind("/double-decker", 0) == 0 ? 0 : p.rfind("/tram", 0) == 0 ? 1 : p.rfind("/metro", 0) == 0 ? 2 : -1;
       if (k < 0 || o->data->mesh.vertexCount() < 50) continue;  // doors and other small parts drawn with their car
       rows[k].emplace_back(o->pendingPath, o);

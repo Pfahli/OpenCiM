@@ -376,6 +376,12 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
         items[i].surfaceClass = kSurfaceOverlay;  // scene objects (previews, markers, cursors): not a surface
       }
     } else if (o && o->data) {
+      if (static const bool dbg = regs::envVar("REGS_DEBUG_PREVIEW") != nullptr; dbg) {
+        static int n = 0;
+        if (n++ < 30)
+          LOG_INFO("scene object %s: skeleton field %d, skin bones %zu, vertices %zu", o->pendingPath.c_str(),
+                   int(o->fieldValues.count(u"skeleton")), o->data->mesh.skinBones.size(), o->data->mesh.vertexCount());
+      }
       if (!o->gpu) {
         o->gpu = std::make_shared<GpuMesh>(d.r3d().upload(o->data->mesh));
         o->materials = std::make_shared<std::vector<GpuMaterial>>();

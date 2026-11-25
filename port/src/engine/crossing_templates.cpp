@@ -611,7 +611,79 @@ void makeAlleyCross(VM& vm, GridObj* g, ObjectObj* cross, ObjectObj* track, Obje
 
 }  // namespace
 
+// Port (owner's request 2026-11-25): tram switches for a 45° branch, which the game does not ship. A straight piece
+// and a 45° turn laid over each other, both pieces' paths: a tram from the turn's open end goes on straight or turns.
+//   tram_small_switch45l  small_basic (W–E) + small_turn45l (W–NE): connections W, E, NE (0x46)
+//   tram_small_switch45r  small_basic (W–E) + small_turn45r (W–SE): W, E, SE (0x4C)
+//   tram_small_dswitchl   small_diag (NE–SW) + small_turn45l (W–NE): W, NE, SW (0x62)
+//   tram_small_dswitchr   small_diag turned 90° (SE–NW) + small_turn45r (W–SE): W, SE, NW (0xC8)
+// The frame is the larger piece's (its footprint holds the other's); a piece's mesh origin is its footprint's centre,
+// so the other one moves by the difference of the two centres (cells of 3 units, from offsetx/z and width/length).
+void makeTramSwitch(VM& vm, GridObj* g, const std::string& name, ObjectObj* frame, ObjectObj* other, bool turnFrame,
+                    uint32_t connections) {
+  if (!frame->data || !other->data) return;
+  constexpr float kCell = 3.0f;
+  auto centre = [&](ObjectObj* o, float& cx, float& cz) {
+    auto f = [&](const char16_t* n) { return float(vm.toInt(o->fieldValues[n])); };
+    cx = f(u"offsetx") + 0.5f * f(u"width"), cz = f(u"offsetz") + 0.5f * f(u"length");
+  };
+  float fx, fz, ox, oz;
+  centre(frame, fx, fz);
+  centre(other, ox, oz);
+  const Vec3 shift{(ox - fx) * kCell, 0, (oz - fz) * kCell};
+  // the frame piece turned 90° clockwise seen from above (north −z to east +x: x' = −z, z' = x) for the mirrored
+  // diagonal switch; its footprint is square, the centre stays
+  auto turn = [](Vec3 v) { return Vec3{-v.z, v.y, v.x}; };
+  ObjectObj* o = newTemplate(vm, g, name, frame);
+  if (!o) return;
+  auto data = std::make_shared<ObjectData>();
+  data->name = name;
+  data->nodePosition = frame->data->nodePosition;
+  data->nodeRotation = frame->data->nodeRotation;
+  appendMesh(*data, *frame->data, [&](V& v) {
+    if (!turnFrame) return;
+    v.p = turn(v.p), v.n = turn(v.n);
+    Vec3 t = turn(Vec3{v.tan[0], v.tan[1], v.tan[2]});
+    v.tan[0] = t.x, v.tan[1] = t.y, v.tan[2] = t.z;
+  }, {}, false, 0);
+  appendMesh(*data, *other->data, [&](V& v) { v.p = v.p + shift; }, {}, false, 0);
+  finishMesh(data->mesh);
+  o->data = data;
+  std::vector<TemplatePathDef> paths = templatePathDefs(vm, frame);
+  if (turnFrame)
+    for (TemplatePathDef& p : paths) p.p0 = turn(p.p0), p.p1 = turn(p.p1), p.f0 = turn(p.f0), p.f1 = turn(p.f1);
+  for (TemplatePathDef p : templatePathDefs(vm, other)) {
+    p.name = "branch-" + p.name;
+    p.p0 = p.p0 + shift, p.p1 = p.p1 + shift;
+    paths.push_back(p);
+  }
+  for (TemplatePathDef& p : paths) p.flags = (p.flags & ~0x40u) | 0x10u;  // GRID_PATH_INTERSECTION, no STOP on a switch
+  setTemplatePaths(vm, o, paths);
+  o->fieldValues[u"connections"] = Value::integer(int32_t(connections));
+  LOG_INFO("port switches: %s (%zu tris, %zu paths)", name.c_str(), data->mesh.indices.size() / 3, paths.size());
+}
+
+void portSwitchTemplates(VM& vm, GridObj* g) {
+  ObjectObj* basic = templateObj(g, "tram_small_basic");
+  ObjectObj* diag = templateObj(g, "tram_small_diag");
+  ObjectObj* l = templateObj(g, "tram_small_turn45l");
+  ObjectObj* r = templateObj(g, "tram_small_turn45r");
+  if (!basic || !diag || !l || !r) return;
+  // the turn's footprint holds the straight piece's; the diagonal's holds the turn's
+  if (!templateObj(g, "tram_small_switch45l")) makeTramSwitch(vm, g, "tram_small_switch45l", l, basic, false, 0x46);
+  if (!templateObj(g, "tram_small_switch45r")) makeTramSwitch(vm, g, "tram_small_switch45r", r, basic, false, 0x4C);
+  if (!templateObj(g, "tram_small_dswitchl")) makeTramSwitch(vm, g, "tram_small_dswitchl", diag, l, false, 0x62);
+  if (!templateObj(g, "tram_small_dswitchr")) makeTramSwitch(vm, g, "tram_small_dswitchr", diag, r, true, 0xC8);
+}
+
 void portCrossingTemplates(VM& vm, GridObj* g, const std::string& justLoaded) {
+  if (justLoaded == "tram_small_basic" || justLoaded == "tram_small_diag" || justLoaded == "tram_small_turn45l" ||
+      justLoaded == "tram_small_turn45r")
+    try {
+      portSwitchTemplates(vm, g);
+    } catch (const std::exception& e) {
+      LOG_ERROR("port switches: %s", e.what());
+    }
   static const char* kSources[] = {"track_double_cross_small", "tram_small_basic", "road_large_basic", "track_double_basic",
                                    "alley_footpath_basic"};
   if (!g || std::none_of(std::begin(kSources), std::end(kSources), [&](const char* s) { return justLoaded == s; })) return;

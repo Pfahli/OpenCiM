@@ -4,7 +4,7 @@
 // undersides, clouds drift on a plane overhead and are shaded from the sun's side (their density a little toward the
 // sun darkens them, thin edges near the sun light up), and at night the stars and the moon come out. Under rain or
 // snow the cover closes and everything turns grey. At the very bottom the sky takes the scene's fog colour, so the
-// fogged town meets it without a seam; below the horizon nothing is drawn.
+// fogged town meets it without a seam; below the horizon (beyond the map's edge) the fog colour, distant haze.
 // custom0 = sun direction (world, towards the sun), sun strength   custom1 = zenith colour, cloud cover
 // custom2 = horizon colour, stars                                   custom3 = fog colour, cloud brightness
 // custom4 = moon direction, moon visibility                         custom5 = sunset tint, dusk
@@ -51,7 +51,6 @@ float skyDensity(vec2 p, float cover) {
 
 void main(void) {
   vec3 d = normalize(skyDir);
-  if (d.y < -0.04) discard;
   float up = clamp(d.y, 0.0, 1.0);
   vec3 sun = normalize(custom0.xyz);
   float c = dot(d, sun);
