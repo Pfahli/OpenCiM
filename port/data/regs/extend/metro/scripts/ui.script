@@ -389,6 +389,10 @@ function updateControls() {
 $regsStationStops = [];
 event MAIN.$grid.transportStopCreated::($stop) {
   if ($stop.$regsStation : false) $regsStationStops[] = $stop;
+  // port (owner 2026-11-25: "In Building mode, the buildings should stay green after the station is placed"): a stop
+  // placed while stops of its kind are being placed shows its catchment circle at once, as the others do (the base
+  // onModeChange sets them only on entering the mode)
+  if ($lastEditMode == GRIDMODE_CREATE_STOP && $stop.type == $lastToolMode) $stop.visible = true;
 }
 $regsStationThread = thread "gameUI" :: loop {
   wait 0.5;
