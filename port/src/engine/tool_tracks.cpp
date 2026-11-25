@@ -2235,7 +2235,8 @@ bool toolLayRoad(VM& vm, ControlObj* player, GridObj* grid, int editMode, int to
 // (0x11, on the small roads under it or on grass) along one axis, block by block as the tools lay them, committed when
 // the whole line has pieces and no conflicts
 bool toolLayLine(VM& vm, ControlObj* player, GridObj* grid, int editMode, int toolMode, int x0, int z0, int x1, int z1) {
-  if (!grid || !grid->data || !player || (x0 != x1 && z0 != z1)) return false;
+  // along an axis, or an exact 45° diagonal (blocks step by 4 cells in both; 2026-11-25, the tram switches' tests)
+  if (!grid || !grid->data || !player || (x0 != x1 && z0 != z1 && std::abs(x1 - x0) != std::abs(z1 - z0))) return false;
   auto& fv = player->fieldValues;
   auto keep = [&](const char16_t* k) { auto it = fv.find(k); return it == fv.end() ? Value() : it->second; };
   Value oldEdit = keep(u"editMode"), oldMode = keep(u"toolMode"), oldType = keep(u"toolType"), oldSize = keep(u"toolSize");

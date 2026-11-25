@@ -51,6 +51,7 @@ struct TypeInfo {
   // read when first needed: the walk map (gsGridObject +0x274, the conflict test's per-cell masks) and whether the
   // template has paths (its items get lane nodes, item +0x24)
   bool walkRead = false, pathsRead = false, hasPaths = false;
+  bool portSwitch = false;  // a port tram switch (crossing_templates.cpp): may share cells with the tram pieces beside it
   const std::vector<uint32_t>* walk = nullptr;
 };
 
@@ -118,6 +119,7 @@ TypeInfo typeInfoOf(VM& vm, GridObj* grid, const std::string& name) {
   t.offx = fieldInt(vm, o, u"offsetx", 0);
   t.offz = fieldInt(vm, o, u"offsetz", 0);
   t.connections = uint32_t(fieldInt(vm, o, u"connections", 0));
+  t.portSwitch = fieldInt(vm, o, u"regsSwitch", 0) != 0;
   t.obj = dynamic_cast<ObjectObj*>(o);
   return t;
 }
@@ -856,6 +858,9 @@ bool gridItemsConflict(VM& vm, GridObj* grid, uint32_t a, uint32_t b) {
            ((x == 6 || x == 0xc) && (y == 6 || y == 0xc));
   };
   bool stopA = sa.flags & kStop, stopB = sb.flags & kStop;
+  // port (2026-11-25): a 45° tram switch is a straight piece and a turn laid over each other; the turn reaches a cell
+  // into the next block, where the straight track goes on: tram track pieces on the same level do not conflict with it
+  if ((ta.portSwitch || tb.portSwitch) && tram(sa.type) && tram(sb.type) && !stopA && !stopB && ya == yb) return false;
   if (!stopA && !stopB) {
     if ((tram(sa.type) && sb.type >= 2 && sb.type <= 6) || (tram(sb.type) && sa.type >= 2 && sa.type <= 6)) {
       auto ra = roadXZ(ia, ta, sa), rb = roadXZ(ib, tb, sb);

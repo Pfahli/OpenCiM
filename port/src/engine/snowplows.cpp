@@ -259,7 +259,14 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
       }
     }
     std::vector<int> lanes;
-    for (int n : s.graph.curveNodes)
+    // (REGS_TEST_ALL_LANES=1: every lane of the medium, not only the curves' ones, e.g. trams over 45° switches)
+    static std::vector<int> all;
+    const bool allLanes = regs::envVar("REGS_TEST_ALL_LANES") != nullptr;
+    if (allLanes) {
+      all.resize(s.graph.nodes.size());
+      for (size_t i = 0; i < all.size(); ++i) all[i] = int(i);
+    }
+    for (int n : allLanes ? all : s.graph.curveNodes)
       if ((tt.medium == kPathTrain ? (s.graph.nodes[size_t(n)].flags & kPathClassMask) == tt.medium : (s.graph.nodes[size_t(n)].flags & tt.medium) != 0) &&
           !(s.graph.nodes[size_t(n)].railTwin && tt.medium == kPathTram) && !(s.graph.nodes[size_t(n)].flags & (kPathDeleted | kPathIntersection)))
         lanes.push_back(n);
@@ -311,7 +318,9 @@ void stepSnowplows(script::VM& vm, GridObj* grid, SimState& s, float dt) {
         cars.push_back(id);
         int turns = 0;
         for (int n : path) turns += (s.graph.nodes[size_t(n)].flags & kPathIntersection) ? 1 : 0;
-        LOG_INFO("curve cars: %s %d, %zu lanes, %d through junctions, %.0f m", tt.what, id, path.size(), turns, std::sqrt(best));
+        const Vec3 a = s.graph.nodes[size_t(from)].p0, b = s.graph.nodes[size_t(to)].p1;
+        LOG_INFO("curve cars: %s %d, %zu lanes, %d through junctions, %.0f m (%.0f,%.0f to %.0f,%.0f)", tt.what, id, path.size(), turns,
+                 std::sqrt(best), a.x, a.z, b.x, b.z);
       } else if (regs::envVar("REGS_DEBUG_CURVES")) {
         LOG_INFO("curve cars: no route from lane %d to %d", from, to);
       }
