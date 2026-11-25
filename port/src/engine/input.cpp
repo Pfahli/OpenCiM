@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "core/env.h"
+#include "core/log.h"
 #include "engine/api.h"
 #include "engine/display.h"
 #include "engine/font.h"
@@ -271,13 +273,22 @@ void ControlObj::mouseUp(VM& vm, float x, float y, int key, int buttons) {
   vm.fireEvent(this, u"mouseUp", {Value::real(x), Value::real(y)}, &k);
 }
 
+// the controls that were active (desktop → its active child → …) when the key being dispatched was pressed
+static std::vector<Object*> gKeyChain;
+
 void ControlObj::keyDown(VM& vm, int key, int mask) {
   Ref<Object> keep(this);
+  // the key goes on to the child that was active when it was pressed: a handler here may switch the active child (Esc
+  // in the pause menu closes it and the game view becomes active, which took the same Esc and opened the menu again;
+  // owner's report 2026-11-25)
+  // (the chain is taken at the desktop before any handler runs: gKeyChain)
   if (isEdit()) editKey(vm, this, key);
   Value k = keyValue(key);
   vm.fireEvent(this, u"keyDown", {}, &k);
   vm.fireEvent(this, u"onKeyDown", {k});
-  if (ControlObj* c = asControl(activeChild)) c->keyDown(vm, key, mask);
+  ControlObj* c = asControl(activeChild);
+  if (c && !c->destroyed && (gKeyChain.empty() || std::find(gKeyChain.begin(), gKeyChain.end(), c) != gKeyChain.end()))
+    c->keyDown(vm, key, mask);
 }
 
 void ControlObj::keyUp(VM& vm, int key, int mask) {
@@ -431,7 +442,7 @@ void DesktopObj::inputKeyDown(VM& vm, int k) {
   } else if (shortcutMode && shortCut(vm, k)) {
     return;  // a handled shortcut fires no keyDown events
   }
-  keyDown(vm, k, mask);
+  keyDownChain(vm, k);
 }
 
 void DesktopObj::inputKeyUp(VM& vm, int k) {
@@ -455,6 +466,20 @@ void DesktopObj::inputKeyUp(VM& vm, int k) {
   }
   if (k == kKeyControl || k == kKeyAlt) shortcutMode = false;
   keyUp(vm, k, mask);
+}
+
+void DesktopObj::keyDownChain(VM& vm, int k) {
+  std::vector<Object*> chain;
+  // only shown controls take keys: the game view is hidden while the pause menu is up (main.script exit Game), and
+  // took the menu's closing Esc to open it again (owner's report 2026-11-25)
+  for (ControlObj* c = this; c && c->visible(); c = asControl(c->activeChild)) {
+    if (std::find(chain.begin(), chain.end(), c) != chain.end()) break;
+    chain.push_back(c);
+  }
+  std::vector<Object*> saved = std::move(gKeyChain);
+  gKeyChain = std::move(chain);
+  keyDown(vm, k, mask);
+  gKeyChain = std::move(saved);
 }
 
 void DesktopObj::inputFocus(VM& vm, bool on) {

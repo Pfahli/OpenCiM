@@ -43,6 +43,7 @@ struct TracerViews {
     bool ok = false;  // the viewport has a camera
     render::Vec3 eye, fwd, right, upv;
     float w = 0, h = 0, t = 0, left = 0, top = 0;  // viewport size, tan(fov / 2), desktop position
+    float focus = 0;                               // the eye's distance to the camera's look point
   };
   std::vector<View> views;
   void clear() { views.clear(); }

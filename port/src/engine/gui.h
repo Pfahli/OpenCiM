@@ -133,6 +133,9 @@ class DesktopObj : public ControlObj {
   void inputMouseMove(script::VM& vm, float dx, float dy);  // gsInputObject slot 1
   void inputMousePos(script::VM& vm, float x, float y);     // slot 2
   void inputKeyDown(script::VM& vm, int key);               // slot 3
+  // keyDown down the chain of controls active when the key was pressed (a handler that activates another control
+  // does not hand it the same key)
+  void keyDownChain(script::VM& vm, int key);
   void inputKeyUp(script::VM& vm, int key);                 // slot 6
   void inputFocus(script::VM& vm, bool on);                 // slot 7
   void resetMouseDown(script::VM& vm);

@@ -289,7 +289,7 @@ const char16_t* kSignDecl =
     u"}\n"
     // B: x flip along the text, y flip across, z width over height, w style (+10: the text runs along v); C: colour;
     // D: the whole board (number and name), u0 = u1 for the number alone
-    u"vec3 regs_signAt(vec4 A, vec4 B, vec4 C, vec4 D, vec2 uv, vec3 col, inout vec3 glow) {\n"
+    u"vec3 regs_signAt(vec4 A, vec4 B, vec4 C, vec4 D, vec2 uv, vec2 duv, vec3 col, inout vec3 glow) {\n"
     u"  vec2 f = fract(uv);\n"
     u"  bool slanted = C.w != 0.0;\n"
     u"  bool board = slanted ? D.x < -0.5 : D.y > D.x;\n"
@@ -309,7 +309,12 @@ const char16_t* kSignDecl =
     u"  float style = B.w - (rot ? 10.0 : 0.0);\n"
     u"  bool solid = style > 0.5, plate = style > 1.5;\n"  // 1 light glyphs on dark, 2 dark glyphs on a light plate
     u"  if (rot) { float tmp = s; s = t; t = tmp; }\n"
-    u"  if (B.x > 0.5) s = 1.0 - s;\n"
+    // the reading direction per pixel (2026-11-25, owner's report: the display on the right side was mirrored): the
+    // text runs to the right on screen, whichever side of the vehicle shows the field (a model maps the same texels on
+    // both sides, one of them mirrored); B.x (from one triangle) for slanted boards and faces seen edge-on
+    u"  float dAlong = rot ? duv.y : duv.x;\n"
+    u"  bool flipS = slanted || abs(dAlong) < 1e-7 ? B.x > 0.5 : dAlong < 0.0;\n"
+    u"  if (flipS) s = 1.0 - s;\n"
     u"  if (B.y > 0.5) t = 1.0 - t;\n"
     u"  float aspect = board && !slanted ? D.z : B.z;\n"
     u"  vec4 T = board ? (solid ? regs_SignT1 : regs_SignT0) : regs_SignT2;\n"  // LED board: the label; T2 the number
@@ -365,9 +370,10 @@ const char16_t* kSignDecl =
     u"}\n"
     u"vec3 regs_signs(vec2 uv, vec3 col, inout vec3 glow) {\n"
     u"  if (regs_SignMeta.x < 0.5) return col;\n"
-    u"  col = regs_signAt(regs_SignA0, regs_SignB0, regs_SignC0, regs_SignD0, uv, col, glow);\n"
-    u"  if (regs_SignMeta.x > 1.5) col = regs_signAt(regs_SignA1, regs_SignB1, regs_SignC1, regs_SignD1, uv, col, glow);\n"
-    u"  if (regs_SignMeta.x > 2.5) col = regs_signAt(regs_SignA2, regs_SignB2, regs_SignC2, regs_SignD2, uv, col, glow);\n"
+    u"  vec2 duv = dFdx(uv);\n"  // (screen x: the same on both renderers)
+    u"  col = regs_signAt(regs_SignA0, regs_SignB0, regs_SignC0, regs_SignD0, uv, duv, col, glow);\n"
+    u"  if (regs_SignMeta.x > 1.5) col = regs_signAt(regs_SignA1, regs_SignB1, regs_SignC1, regs_SignD1, uv, duv, col, glow);\n"
+    u"  if (regs_SignMeta.x > 2.5) col = regs_signAt(regs_SignA2, regs_SignB2, regs_SignC2, regs_SignD2, uv, duv, col, glow);\n"
     u"  return col;\n"
     u"}\n";
 const char16_t* kNightColorDecl =

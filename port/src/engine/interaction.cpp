@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <string_view>
+#include <chrono>
 #include <unordered_map>
 
 #include "core/log.h"
@@ -654,6 +655,7 @@ void tracerView(VM& vm, ControlObj* vp, TracerView& v) {
   cameraFrame(vm, cam, eye, look, up);
   v.w = vp->width, v.h = vp->height, v.t = std::tan(numberOf(vm, cam, kFov, 60.0f) * 3.14159265f / 360.0f);
   v.eye = eye;
+  v.focus = std::sqrt(dot(look - eye, look - eye));
   v.fwd = normalize(look - eye), v.right = normalize(cross(v.fwd, up)), v.upv = cross(v.right, v.fwd);
   v.left = vp->desktopLeft(), v.top = vp->desktopTop();
   v.ok = true;
@@ -695,6 +697,38 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
     if (z <= 0 || std::abs(nx) > 1 || std::abs(ny) > 1) {  // behind the camera or outside the four side planes
       c->left = c->top = -10000;
       return;
+    }
+    // port (owner's request 2026-11-25): a stop's bubble is left out far off (beyond about twice the camera's distance
+    // to its look point: only with the camera tilted towards the horizon) or behind a building or a hill (a ray from
+    // the eye, checked every 0.15 s per bubble)
+    static const ClassInfo* stopCls = vm.findClass("gsTransportStopController");
+    if (Object* m = member(vm, c, kModule).object(); m && stopCls && m->cls->isA(stopCls)) {
+      const float dist = std::sqrt(dot(d, d));
+      if (view->focus > 0 && dist > view->focus * 2.2f + 120.0f) {
+        c->left = c->top = -10000;
+        return;
+      }
+      struct Seen {
+        std::chrono::steady_clock::time_point at;
+        bool hidden = false;
+      };
+      static std::unordered_map<const ControlObj*, Seen> seen;
+      if (seen.size() > 4096) seen.clear();
+      Seen& s = seen[c];
+      const auto now = std::chrono::steady_clock::now();
+      if (now - s.at > std::chrono::milliseconds(150)) {
+        s.at = now;
+        s.hidden = false;
+        if (auto* grid = dynamic_cast<GridObj*>(m->parent); grid && dist > 1.0f) {
+          // to just short of the stop (its shelter and the road under it are no obstacle)
+          const Vec3 end = eye + d * std::max(0.0f, 1.0f - 12.0f / dist);
+          s.hidden = intersectGrid(vm, grid, eye, end, false, false).hit();
+        }
+      }
+      if (s.hidden) {
+        c->left = c->top = -10000;
+        return;
+      }
     }
     float sx = view->left + (nx + 1) * 0.5f * w, sy = view->top + (1 - ny) * 0.5f * h;
     float px = 0, py = 0;
