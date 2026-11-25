@@ -1559,6 +1559,9 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       float* p = dv.layerCustom[i];
       if (size_t(i) < near.size()) p[0] = near[size_t(i)].second->x, p[1] = 0, p[2] = near[size_t(i)].second->z, p[3] = near[size_t(i)].second->radius;
       else p[0] = p[1] = p[2] = 0, p[3] = -1000.0f;
+      float* q = dv.layerCustomItems[i];
+      for (int k = 0; k < 4; ++k) q[k] = p[k];
+      q[1] = 1.0f;  // data.fragment: the fill only (a ring along a facade lit the whole wall)
     }
     return true;
   };
@@ -1612,6 +1615,10 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         if (layer && !it.shadowOnly) {
           it.layerMaterial = tc.dataMaterial;
           it.layerCustom = dv.layerCustom;
+          // port (owner's request 2026-11-25): over the items too (buildings, roads), not only the layerable ground,
+          // so the buildings a stop reaches are lit by the circle's fill (data.fragment override)
+          it.layerAllParts = m == &dv.items[show];
+          if (it.layerAllParts) it.layerCustom = dv.layerCustomItems;
           items.push_back(it);
         }
       }

@@ -1185,7 +1185,10 @@ void Renderer3D::drawList(const SceneView& v, const std::vector<DrawItem>& items
     for (const auto& p : it.mesh->parts) {
       if (it.layerMaterial >= 0) {  // a layer: only over the parts with a layerable material of their own
         if (!it.materials || size_t(p.material) >= it.materials->size()) continue;
-        if (!((*it.materials)[size_t(p.material)].flags & 0x400000u)) continue;
+        const GpuMaterial& src = (*it.materials)[size_t(p.material)];
+        if (!it.layerAllParts && !(src.flags & 0x400000u)) continue;
+        // (over all parts: not the cut-out or blended ones, trees and fences, whose whole quads it would light)
+        if (it.layerAllParts && ((src.flags & (kMatAlphaTest | kMatAlphaBlend)) || src.surfaceClass == kSurfaceFoliage)) continue;
       }
       const GpuMaterial& m = materialOf(it, p);
       uint32_t prog = m.programFor(v.env);

@@ -31,6 +31,7 @@ struct GridDivision {
   // the data layer's custom0..7 (gsGridDivision::updateDataLayer L:0x081635d0): the 8 area highlights nearest to the
   // division centre as (x, 0, z, radius), unused ones (0, 0, 0, −1000); refreshed while circles are shown
   float layerCustom[8][4] = {};
+  float layerCustomItems[8][4] = {};  // the same circles for the item meshes, y = 1: the fill without the ring
 };
 
 // An item template as the item builder needs it (gsGridObject fields, grid-items.md §1.3).

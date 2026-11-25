@@ -254,6 +254,7 @@ struct DrawItem {
   // whose own material is MATERIAL_LAYERABLE (0x400000), drawn with (*materials)[layerMaterial] and, when set, these
   // custom0..7 instead of the material's
   int layerMaterial = -1;
+  bool layerAllParts = false;  // the layer covers every part, not only those with a layerable material (catchment)
   const float (*layerCustom)[4] = nullptr;
   // the mods' shader hooks (render/glsl.h): a surface class for this draw over the materials' (-1 = theirs) and a
   // per-draw value (RegsSurface.item; vehicles: 1 parked, 0 moving)
