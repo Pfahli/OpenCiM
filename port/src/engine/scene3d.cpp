@@ -353,6 +353,89 @@ struct SceneClasses {
   const ClassInfo* sun = nullptr;
 };
 
+// one car of a preview train: skinned (doors closed, at the model's doorOpenStart) or static, in the head's colours
+void drawPreviewPart(Display& d, VM& vm, ObjectObj* part, const Mat4& world, uint32_t colorize, std::vector<DrawItem>& items) {
+  size_t first = items.size();
+  if (static const bool dbg = regs::envVar("REGS_DEBUG_PREVIEW") != nullptr; dbg) {
+    static int n = 0;
+    if (n++ < 40)
+      LOG_INFO("preview car %s: skinned %d, skeleton field %d, skin bones %zu", part->pendingPath.c_str(),
+               int(isSkinnedModel(vm, part)), int(part->fieldValues.count(u"skeleton")), part->data->mesh.skinBones.size());
+  }
+  if (isSkinnedModel(vm, part)) {
+    // (REGS_PREVIEW_CLIP_POSE: the clip at doorOpenStart instead of the rest pose, for comparisons)
+    static const bool clip = regs::envVar("REGS_PREVIEW_CLIP_POSE") != nullptr;
+    const float closedAt = std::max(0.0f, floatOr(vm, fieldOf(vm, part, u"doorOpenStart"), 0.0f));
+    collectSkinned(d, vm, part, world, clip ? poseFirstAnimation(vm, part, closedAt) : Pose(), items);
+  } else {
+    if (!part->gpu) {
+      part->gpu = std::make_shared<GpuMesh>(d.r3d().upload(part->data->mesh));
+      part->materials = std::make_shared<std::vector<GpuMaterial>>();
+      for (const auto& m : part->data->materials) part->materials->push_back(objectMaterial(d, vm, part, m));
+    }
+    DrawItem it;
+    it.mesh = part->gpu.get();
+    it.materials = part->materials.get();
+    it.world = world;
+    items.push_back(it);
+  }
+  for (size_t i = first; i < items.size(); ++i) {
+    argbToFloats(colorize, items[i].colorize);
+    items[i].surfaceClass = kSurfaceOverlay;
+  }
+}
+
+// A vehicle template with trailer cars ($trailers of its script: [idName, reversed] each, the grid's templates) in a
+// scene of its own (the vehicle shop's picture, objectlist/renderer.script): the whole train, coupled as the
+// simulation couples them (a car's front against the one before's rear; model front towards −Z), its middle where the
+// head would be and scaled down so a long train fits the picture framed for the head (owner's request 2026-11-25: the
+// articulated trams showed their first car only, open at its coupling end). False: not such a template.
+bool previewTrain(Display& d, VM& vm, ObjectObj* o, std::vector<DrawItem>& items) {
+  Value* tv = o->findVar(u"trailers");
+  ArrayObj* list = tv ? vm.resolve(*tv).array() : nullptr;
+  if (!list || list->items.empty()) return false;
+  Value* mainv = vm.findGlobal(u"MAIN");
+  Value* gv = mainv && mainv->object() ? mainv->object()->findVar(u"grid") : nullptr;
+  auto* grid = gv ? dynamic_cast<GridObj*>(vm.resolve(*gv).object()) : nullptr;
+  if (!grid) return false;
+  auto off = [&](ObjectObj* m, const char16_t* f) { return floatOr(vm, fieldOf(vm, m, f), 0.0f); };
+  struct Part {
+    ObjectObj* obj;
+    float z;
+    bool reversed;
+  };
+  std::vector<Part> parts{{o, 0.0f, false}};
+  const float headFront = off(o, u"frontOffset");
+  float z = off(o, u"rearOffset");
+  for (const Value& e : list->items) {
+    ArrayObj* pair = vm.resolve(e).array();
+    if (!pair || pair->items.empty()) continue;
+    Value name = vm.resolve(pair->items[0]);
+    if (name.type() != VT::String) continue;
+    auto t = grid->templates.find(utf16ToUtf8(name.str()));
+    auto* car = t != grid->templates.end() ? dynamic_cast<ObjectObj*>(t->second.get()) : nullptr;
+    if (!car || !car->data) continue;
+    const bool rev = pair->items.size() > 1 && vm.truthy(vm.resolve(pair->items[1]));
+    const float f = off(car, rev ? u"rearOffset" : u"frontOffset"), r = off(car, rev ? u"frontOffset" : u"rearOffset");
+    parts.push_back({car, z + f, rev});
+    z += f + r;
+  }
+  if (parts.size() < 2) return false;
+  const float total = z + headFront, headLen = headFront + off(o, u"rearOffset");
+  const float scale = total > 0 && headLen > 0 ? std::clamp(1.3f * headLen / total, 0.12f, 1.0f) : 1.0f;
+  const Mat4 base = worldOf(vm, o) * scaling(scale) * translation({0, 0, -(z - headFront) * 0.5f});
+  for (const Part& p : parts) {
+    Mat4 w = base * translation({0, 0, p.z});
+    if (p.reversed) {
+      Mat4 turn = scaling(1.0f);
+      turn.at(0, 0) = -1, turn.at(2, 2) = -1;  // turned about Y by 180 degrees
+      w = w * turn;
+    }
+    drawPreviewPart(d, vm, p.obj, w, o->colorizeArgb, items);
+  }
+  return true;
+}
+
 // collects the drawable objects, suns, grids and the sky (fog) of a scene subtree
 void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std::vector<Object*>& suns,
              std::vector<GridObj*>& grids, Object*& sky, const SceneClasses& classes) {
@@ -362,7 +445,9 @@ void collect(Display& d, VM& vm, Object* node, std::vector<DrawItem>& items, std
     if (c->cls->isA(classes.sky) && c->enabled()) sky = c;  // fog applies even when the dome is hidden
     if (!c->visible()) continue;
     if (auto* g = dynamic_cast<GridObj*>(c)) grids.push_back(g);
-    if (auto* o = dynamic_cast<ObjectObj*>(c); o && o->data && isSkinnedModel(vm, o)) {
+    if (auto* o = dynamic_cast<ObjectObj*>(c); o && o->data && previewTrain(d, vm, o, items)) {
+      // a vehicle template with trailer cars (the vehicle shop's preview): the whole train, drawn by previewTrain
+    } else if (o && o->data && isSkinnedModel(vm, o)) {
       // a skinned model (vehicle templates in the vehicle shop's preview scene): the skinning variant, posed as a line
       // vehicle with closed doors (its first animation at 0, as sim.cpp draws them); the bind pose has some trams' doors
       // elsewhere (owner's report 2026-11-07: odd tram models in the shop)
