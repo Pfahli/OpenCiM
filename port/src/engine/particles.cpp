@@ -1070,14 +1070,9 @@ void simParticlesTick(VM& vm, GridObj* grid, SimState& s, float dt) {
 // original inserts it into the grid bucket under the boat; here it is a draw item of the frame.
 void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float farZ, std::vector<render::DrawItem>& items) {
   if (!s.particles || particlesOff()) return;
+  static int drawFrames = 0;
+  const bool drawLog = ++drawFrames % 120 == 0;
   for (auto& [id, w] : s.particles->wakes) {
-    if (debugParticles()) {
-      static int seen = 0;
-      if (++seen % 240 == 0) {
-        Vec3 q = w.at - eye;
-        LOG_INFO("particles: wake %zu seen: %d points, distance %.0f, farZ %.0f", id, w.count, std::sqrt(dot(q, q)), farZ);
-      }
-    }
     if (!w.emitter || w.count < 2) continue;
     Vec3 e = w.at - eye;
     if (dot(e, e) > farZ * farZ) continue;
@@ -1086,23 +1081,34 @@ void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float fa
       matObj = vm.resolve(vm.getMember(Value::heap(VT::Object, w.emitter), u"material")).object();
     } catch (...) {
     }
-    if (debugParticles()) {
-      static int calls = 0;
-      if (++calls % 240 == 0)
-        LOG_INFO("particles: wake %zu: %d points, material %p, planeSize %.2f, custom0 %.2f %.2f %.2f timer %.2f", id, w.count,
-                 (void*)matObj, w.emitter->planeSize, w.custom0[0], w.custom0[1], w.custom0[2], d.effectTimer);
-    }
     if (!matObj) continue;
     if (w.materials.empty() || w.materialOf != matObj) {
       w.materials = {scriptMaterial(d, vm, matObj)};
       w.materialOf = matObj;
     }
     std::copy(w.custom0, w.custom0 + 4, w.materials[0].custom[0]);
+    static const bool wakeTest = std::getenv("REGS_TEST_WAKE") != nullptr;
+    if (wakeTest) {
+      w.materials[0].custom[0][0] = 1e6f, w.materials[0].custom[0][1] = 0, w.materials[0].custom[0][2] = -1e6f;
+      w.materials[0].ambient[3] = w.materials[0].diffuse[3] = 1.0f;
+    }
+    static const bool wakePlain = std::getenv("REGS_TEST_WAKE_PLAIN") != nullptr;
+    if (wakePlain && w.materials[0].shader.size()) {
+      render::GpuMaterial plain;
+      w.materials = {plain};
+    }
+    if (debugParticles() && drawLog) {
+      Vec3 q = w.at - eye;
+      const render::GpuMaterial& gm = w.materials[0];
+      Vec3 g = w.ring[(w.head + 15) & 15] - w.ring[(w.head + 14) & 15];
+      LOG_INFO("particles: draw wake %zu: %d points, %.0f from eye, step %.2f, still %04x, y %.2f, eye y %.1f, custom0 %.2f %.2f %.2f, timer %.2f, flags %08x",
+               id, w.count, std::sqrt(dot(q, q)), std::sqrt(dot(g, g)), w.still, w.at.y, eye.y, w.custom0[0], w.custom0[1], w.custom0[2], d.effectTimer, gm.flags);
+    }
     if (w.dirty || !w.mesh) {
       w.dirty = false;
       render::MeshData md;
       const int n = w.count;
-      const float plane = w.emitter->planeSize;
+      const float plane = w.emitter->planeSize * (wakeTest ? 8.0f : 1.0f);
       auto pt = [&](int i) { return w.ring[(w.head + 16 - n + i) & 15]; };
       auto dir = [&](int i) {
         Vec3 q = pt(i + 1) - pt(i);
@@ -1116,6 +1122,7 @@ void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float fa
         if (i != n - 1) {
           cur = dir(i);
           md.indices.insert(md.indices.end(), {base, base + 1, base + 2, base + 2, base + 1, base + 3});
+          if (wakeTest) md.indices.insert(md.indices.end(), {base, base + 2, base + 1, base + 2, base + 3, base + 1});
         }
         float f = (1.0f - dot(prev, cur) * 0.5f) * plane;
         Vec3 side{(prev.z + cur.z) * f, 0, -(prev.x + cur.x) * f};
@@ -1123,6 +1130,7 @@ void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float fa
         uint32_t color = (w.still >> slot & 1u) ? 0x00FFFFFFu : 0xFFFFFFFFu;
         for (int k = 0; k < 2; ++k) {
           Vec3 q = k == 0 ? pt(i) + side : pt(i) - side;
+          if (wakeTest) q.y += float(std::atof(std::getenv("REGS_TEST_WAKE")));
           md.positions.insert(md.positions.end(), {q.x, q.y, q.z});
           md.normals.insert(md.normals.end(), {0.0f, 1.0f, 0.0f});
           md.uv0.insert(md.uv0.end(), {float(k), float(i)});

@@ -2350,6 +2350,7 @@ void tickSimulation(VM& vm, GridObj* grid, float dt) {
     for (auto& line : s->lines)
       if (lineActive(vm, line)) stepLine(vm, *s, line, step);
   }
+  stepBuildingPass(vm, grid, *s, x);
   stepAnimatedParts(*s, x);
   syncVehicleFields(*s);
   syncCharacterFields(*s);
