@@ -2,7 +2,7 @@
 // of per-pixel counters (§2-3), gsMapCtrl maps world ↔ control pixels and shifts the image through minimap.shader's
 // custom0 (§4), gsMapViewportCtrl draws the main camera's ground footprint (§5) and gsMapItemCtrl centres pins on
 // their targets (§6). The transport marks (raster bytes 0-5) come from the live stops and line legs (§2.4). Not yet:
-// the selected-line ribbon (gsMapRouteCtrl, §7); the traffic, catchment and popularity data views read 0.
+// the selected-line ribbon (gsMapRouteCtrl, §7); the traffic and popularity data views read 0.
 #include "engine/minimap.h"
 #include "core/env.h"
 
@@ -127,6 +127,53 @@ int dataValue(const MapTemplate& tp, int sx, int sz, uint32_t mode) {
   }
 }
 
+// The transport kind of a stop template (0 bus, 1 tram, 2 metro, 3 waterbus, 4 special), −1 for other items
+int stopKind(int type) {
+  return (type == 2 || type == 5 || type == 6) ? 0
+         : (type >= 10 && type <= 12)          ? 1
+         : (type >= 13 && type <= 15)          ? 2
+         : type == 0x11                        ? 3
+         : type == 0x12                        ? 4
+                                               : -1;
+}
+
+struct MapStop {
+  int cx, cz, kind;
+};
+
+// The live stops by footprint centre (x + (size >> 1)) and kind, for the catchment view
+std::vector<MapStop> mapStops(const GridData& g, const std::vector<MapTemplate>& tpl, const SimState& s) {
+  std::vector<MapStop> out;
+  for (const auto& [item, idx] : s.stopOfItem) {
+    (void)idx;
+    if (item < 0 || size_t(item) >= g.items.size()) continue;
+    const GridData::Item& it = g.items[size_t(item)];
+    if (it.removed || it.type >= tpl.size() || !tpl[it.type].object) continue;
+    const MapTemplate& tp = tpl[it.type];
+    int k = stopKind(tp.type);
+    if (k < 0) continue;
+    ItemFootprint f = itemFootprint(tp.width, tp.length, tp.diagonals, it.orient);
+    out.push_back({it.x + (f.sx >> 1), it.z + (f.sz >> 1), k});
+  }
+  return out;
+}
+
+// §3.5 catchment (0x70000, gsGridItem::getObjectDataValue :108-168): the best reach r − d of the stops of kind c − 1
+// (all stops for c = 0) whose catchment circle (r 100 for bus and tram, 150 otherwise) holds the building's centre,
+// scaled by the building's size; 0 when no stop reaches it (owner's report 2026-11-25: buildings stayed red)
+int catchmentValue(const std::vector<MapStop>& stops, int x, int z, int sx, int sz, int c, float cs) {
+  const float cx = float(x + (sx >> 1)), cz = float(z + (sz >> 1));
+  float best = -1;
+  for (const MapStop& s : stops) {
+    if (c && s.kind != c - 1) continue;
+    const float r = s.kind <= 1 ? 100.0f : 150.0f;
+    const float dx = (cx - float(s.cx)) * cs, dz = (cz - float(s.cz)) * cs, d2 = dx * dx + dz * dz;
+    if (d2 < r * r) best = std::max(best, r - std::sqrt(d2));
+  }
+  if (best < 0) return 0;
+  return std::clamp(int(best * 255.0f / (float(sx + sz) * cs * 0.25f)), 0, 255);
+}
+
 // §2.4: the transport marks (bytes 0..5). The original keeps them incrementally (stop create/destroy, segment
 // updateMesh/clearRoute); the port rebuilds the raster on every render, so it counts the live stops and line legs here.
 void addTransportMarks(std::vector<uint8_t>& R, const GridData& g, const std::vector<MapTemplate>& tpl, const SimState& s) {
@@ -147,12 +194,7 @@ void addTransportMarks(std::vector<uint8_t>& R, const GridData& g, const std::ve
     if (it.removed || it.type >= tpl.size() || !tpl[it.type].object) continue;
     const MapTemplate& tp = tpl[it.type];
     int type = tp.type;
-    int t = (type == 2 || type == 5 || type == 6) ? 0
-            : (type >= 10 && type <= 12)          ? 1
-            : (type >= 13 && type <= 15)          ? 2
-            : type == 0x11                        ? 3
-            : type == 0x12                        ? 4
-                                                  : -1;
+    int t = stopKind(type);
     if (t < 0) continue;
     int sx = (it.orient & 1) ? tp.length : tp.width, sz = (it.orient & 1) ? tp.width : tp.length;
     long cx = it.x + (sx >> 1), cz = it.z + (sz >> 1);
@@ -216,6 +258,9 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
   const int W = g.width, L = g.length;
   std::vector<uint8_t> R(size_t(256) * 256 * 16, 0);
   if (sim) addTransportMarks(R, g, tpl, *sim);
+  const bool catchment = (mode & 0xF0000) == 0x70000;
+  std::vector<MapStop> stops;
+  if (catchment && sim) stops = mapStops(g, tpl, *sim);
   const uint32_t sxr = 0x1000000u / uint32_t(std::max(1, W)), szr = 0x1000000u / uint32_t(std::max(1, L));
   auto rec = [&](int x, int z) -> uint8_t* {
     size_t px = (uint32_t(x) * sxr) >> 16, pz = (uint32_t(z) * szr) >> 16;
@@ -250,7 +295,9 @@ std::vector<uint32_t> renderMapPixels(const GridData& g, const std::vector<MapTe
         for (int x = std::max(0, it.x - 2); x <= std::min(W - 1, it.x + 2); ++x) ++rec(x, z)[8];
       continue;
     }
-    int v = dataValue(tp, f.sx, f.sz, mode);
+    int v = catchment && tp.type == kTypeBuilding
+                ? catchmentValue(stops, it.x, it.z, f.sx, f.sz, int((mode & 0x7000) >> 12), g.cellSize > 0 ? g.cellSize : 3.0f)
+                : dataValue(tp, f.sx, f.sz, mode);
     if (!(tp.type < kTypeTree || tp.type == kTypeBuilding || v != -1)) continue;
     for (int z = 0; z < f.sz; ++z)
       for (int x = 0; x < f.sx; ++x) {
