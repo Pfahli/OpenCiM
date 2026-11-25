@@ -212,6 +212,37 @@ joined (12 turn lanes), test cars round both without jams.
 - A two-way street's track running the same way joins a one-way street's track (the one-lane track swings over to it).
 - Drags of the game's track tool across a curve are red; street tracks meeting a curve with tracks are joined.
 
+### Tram switches (45°, 2026-11-25)
+
+The game has tram junctions at 90° only (T and cross pieces of `tram_small_*`). A drag of the tram tool that ends on
+a standalone tram track at 45° was red; now it lays a switch: the track goes on straight, and the new track branches
+off at 45°.
+
+| Template (port) | Made from | Connections |
+|---|---|---|
+| `tram_small_switch45l` | `small_turn45l` (W–NE) + `small_basic` (W–E) | W, E, NE (0x46) |
+| `tram_small_switch45r` | `small_turn45r` (W–SE) + `small_basic` (W–E) | W, E, SE (0x4C) |
+| `tram_small_dswitchl` | `small_diag` (NE–SW) + `small_turn45l` (W–NE) | W, NE, SW (0x62) |
+| `tram_small_dswitchr` | `small_diag` turned 90° (SE–NW) + `small_turn45r` (W–SE) | W, SE, NW (0xC8) |
+
+- Each switch is the two pieces' meshes and lanes laid over each other (engine/crossing_templates.cpp,
+  `makeTramSwitch`), filed in the catalog with their connections and turned to the other three orientations as every
+  template. The frame is the larger piece (its footprint holds the other's); the other piece moves by the difference
+  of the two footprint centres (frame minus other, 3 units a cell).
+- All lanes of a switch are junction lanes (GRID_PATH_INTERSECTION, no stop), as on the game's junctions; the router
+  takes straight on or the branch (checked with test trams both ways at both kinds of switch).
+- The turn part reaches a cell into the next block of the straight track. Grid items of a switch (`regsSwitch` in the
+  template) therefore do not conflict with tram pieces at the same height (engine/grid_edit.cpp, `gridItemsConflict`).
+- The tool (engine/tool_tracks.cpp, `createTramBlock`) joins a neighbour at an angle only when the catalog has a piece
+  for both the neighbour's new connections and the new block; otherwise the drag stays red as before.
+- A branch at the end of a straight track is not a switch: that is the game's 45° turn.
+- Not done: switches on street tram tracks (tracks in a road), 45° switches on railway and metro tracks, crossings of
+  two tram tracks at 45°. Maps with these switches do not load in the original game.
+- Checks: the test action `--at N:tram:x0,z0,x1,z1` (app/main.cpp, `toolLayLine`) takes exact 45° drags too, as the
+  game's tool; `REGS_SWITCH_SHIFT=<factor>` scales the branch's shift (1 as made, −1 or 0 to compare in the game);
+  `REGS_TEST_CURVE_TRAMS=<n>` with `REGS_TEST_ALL_LANES=1` sends trams between any tram lanes, the log names each
+  trip's ends and the junction lanes passed.
+
 ### Level crossings (grid railway, 2026-11-18)
 
 The game has one level crossing, `track_double_cross_small` (a small road at right angles over the double track; the
@@ -396,6 +427,7 @@ reads the cell flags only (a cut cell counts as its flags say).
 | `REGS_START=editor:<map>` / `map:<map>` / `save:<name>`, `REGS_START_RUN=1` | straight into the editor or a game (main.script) |
 | `REGS_DEBUG_CURVES=1` | tool previews, snaps, junction fitting, "N junctions, M turn lanes, K joined both ways", tram ends |
 | `REGS_TEST_CURVE_CARS=<n>`, `REGS_TEST_CURVE_TRAMS=<n>`, `REGS_TEST_CURVE_METRO=<n>` | n cars / trams / metro cars on random trips between curve lanes (engine/snowplows.cpp) |
+| `REGS_TEST_ALL_LANES=1` | with the switches above: trips between any lanes of the medium, not only curve lanes (tram switches) |
 | `REGS_TEST_CURVE_TRAINS=<n>` | n locomotives end to end over the railway curves (trams on railway tracks) |
 | `REGS_TEST_LINE=<type>` (`REGS_TEST_LINE_MODEL=<vehicle>`) | 60 ticks into a game: a line of that type (0 bus, 1 tram, 2 metro) through every stop of it on the map, with one vehicle, switched on (engine/sim.cpp) |
 | `REGS_TEST_CURVE_TURN=1` | test trips back the way they came (trams turning on a roundabout) |

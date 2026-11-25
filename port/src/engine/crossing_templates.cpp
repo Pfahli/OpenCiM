@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "core/env.h"
 #include "core/log.h"
 #include "core/text.h"
 #include "engine/grid.h"
@@ -630,7 +631,10 @@ void makeTramSwitch(VM& vm, GridObj* g, const std::string& name, ObjectObj* fram
   float fx, fz, ox, oz;
   centre(frame, fx, fz);
   centre(other, ox, oz);
-  const Vec3 shift{(ox - fx) * kCell, 0, (oz - fz) * kCell};
+  // (the frame's centre minus the other's: a footprint offset moves the mesh's origin the other way; checked in the
+  // game at both orientations of a switch, 2026-11-25. REGS_SWITCH_SHIFT=<factor> scales it, for such checks)
+  static const float k = regs::envVar("REGS_SWITCH_SHIFT") ? float(std::atof(regs::envVar("REGS_SWITCH_SHIFT"))) : 1.0f;
+  const Vec3 shift{(fx - ox) * kCell * k, 0, (fz - oz) * kCell * k};
   // the frame piece turned 90° clockwise seen from above (north −z to east +x: x' = −z, z' = x) for the mirrored
   // diagonal switch; its footprint is square, the centre stays
   auto turn = [](Vec3 v) { return Vec3{-v.z, v.y, v.x}; };
@@ -660,7 +664,9 @@ void makeTramSwitch(VM& vm, GridObj* g, const std::string& name, ObjectObj* fram
   for (TemplatePathDef& p : paths) p.flags = (p.flags & ~0x40u) | 0x10u;  // GRID_PATH_INTERSECTION, no STOP on a switch
   setTemplatePaths(vm, o, paths);
   o->fieldValues[u"connections"] = Value::integer(int32_t(connections));
-  LOG_INFO("port switches: %s (%zu tris, %zu paths)", name.c_str(), data->mesh.indices.size() / 3, paths.size());
+  o->fieldValues[u"regsSwitch"] = Value::integer(1);  // shares cells with the tram pieces beside it (grid_edit.cpp)
+  LOG_INFO("port switches: %s (%zu tris, %zu paths, branch moved %.1f,%.1f)", name.c_str(), data->mesh.indices.size() / 3,
+           paths.size(), double(shift.x), double(shift.z));
 }
 
 void portSwitchTemplates(VM& vm, GridObj* g) {
