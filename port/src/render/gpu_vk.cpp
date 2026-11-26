@@ -163,6 +163,7 @@ class Allocator {
       }
     }
   }
+  int memoryType(uint32_t bits, VkMemoryPropertyFlags want) const { return findType(bits, want); }
   void free(Allocation& a) {
     if (!a.memory) return;
     if (a.pool < 0) {
@@ -477,6 +478,15 @@ class VkDeviceImpl final : public Device {
   void blit(uint32_t src, uint32_t dst, int sx0, int sy0, int sx1, int sy1, int dx0, int dy0, int dx1, int dy1,
             bool color, bool depth) override;
   void readPixels(uint32_t fb, int x, int y, int w, int h, uint8_t* rgba) override;
+
+  // ---- another graphics API in the frame (Leia SR weaving through Direct3D 11, engine/leiasr.cpp) ----
+  bool adapterLuid(uint8_t out[8]) const override {
+    if (!luidValid_) return false;
+    std::memcpy(out, luid_, 8);
+    return true;
+  }
+  uint32_t importD3D11Texture(void* ntHandle, int w, int h) override;
+  void finishGpu() override { submitAndWait(); }
 
   // ---- buffers and vertex layouts ----
   uint32_t createBuffer() override {
@@ -1092,6 +1102,9 @@ class VkDeviceImpl final : public Device {
 
   bool timelineSupported_ = false;
   bool hdrWanted_ = false, hdr_ = false, hdrAvailable_ = false, colorspaceExt_ = false, hdrMetadataExt_ = false;
+  // Direct3D 11 interop (importD3D11Texture, adapterLuid)
+  bool externalMemWin32_ = false, luidValid_ = false;
+  uint8_t luid_[8] = {};
   float hdrPeak_ = 1000, hdrPaper_ = 200;
   bool fsrReady_ = false;
   bool fsrErrorLogged_ = false;
@@ -1356,6 +1369,18 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     if (exts) vkGetPhysicalDeviceFeatures2(phys_, &q2);
     rt_ = exts && rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && !regs::envVar("REGS_VK_NO_RT");
     hdrMetadataExt_ = has(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+    // textures shared with Direct3D 11 (Leia SR weaving, engine/leiasr.cpp): import of D3D11 textures' NT handles; the
+    // adapter's LUID to make the D3D11 device on the same GPU
+    externalMemWin32_ = has(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
+    {
+      VkPhysicalDeviceIDProperties idp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+      VkPhysicalDeviceProperties2 ip{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &idp};
+      if (vkGetPhysicalDeviceProperties2) {
+        vkGetPhysicalDeviceProperties2(phys_, &ip);
+        luidValid_ = idp.deviceLUIDValid == VK_TRUE;
+        std::memcpy(luid_, idp.deviceLUID, sizeof luid_);
+      }
+    }
     {
       VkPhysicalDeviceVulkan12Features t12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
       VkPhysicalDeviceFeatures2 t2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &t12};
@@ -1409,6 +1434,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     dexts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
   }
   if (hdrMetadataExt_) dexts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+  if (externalMemWin32_) dexts.push_back(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
   VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f2};
   dci.queueCreateInfoCount = 1;
   dci.pQueueCreateInfos = &qci;
@@ -2440,6 +2466,74 @@ bool VkDeviceImpl::makeImage(Tex& t, Format f, int w, int h, int levels, int sam
   imageBarrier(cmd(), t.image, aspectOf(t), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
   bindlessWriteTex(t);
   return true;
+}
+
+// A texture on a Direct3D 11 texture's memory (Leia SR weaving, engine/leiasr.cpp): the image is made with the external
+// memory flag for D3D11 textures and bound to a dedicated import of the NT handle. It stays in GENERAL like every image;
+// the two APIs take turns (finishGpu on this side, a finished D3D11 flush on the other).
+uint32_t VkDeviceImpl::importD3D11Texture(void* ntHandle, int w, int h) {
+#ifdef _WIN32
+  if (!externalMemWin32_ || !ntHandle || w <= 0 || h <= 0) return 0;
+  uint32_t hnd = newTexture();
+  Tex& t = textures_[hnd];
+  ++targetsVersion_;
+  t.format = Format::RGBA8;
+  t.vkFormat = VK_FORMAT_B8G8R8A8_UNORM;
+  t.w = w;
+  t.h = h;
+  t.levels = t.layers = t.samples = 1;
+  VkExternalMemoryImageCreateInfo emi{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
+  emi.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+  VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, &emi};
+  ici.imageType = VK_IMAGE_TYPE_2D;
+  ici.format = t.vkFormat;
+  ici.extent = {uint32_t(w), uint32_t(h), 1};
+  ici.mipLevels = 1;
+  ici.arrayLayers = 1;
+  ici.samples = VK_SAMPLE_COUNT_1_BIT;
+  ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ici.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  t.usage = ici.usage;
+  ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (VkResult r = vkCreateImage(dev_, &ici, nullptr, &t.image); r != VK_SUCCESS) {
+    LOG_ERROR("vulkan: %s for a shared %dx%d image", vkError("vkCreateImage", r).c_str(), w, h);
+    t = Tex{};
+    return 0;
+  }
+  VkMemoryRequirements req;
+  vkGetImageMemoryRequirements(dev_, t.image, &req);
+  const int type = alloc_.memoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  VkMemoryDedicatedAllocateInfo ded{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO};
+  ded.image = t.image;
+  VkImportMemoryWin32HandleInfoKHR imp{VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR, &ded};
+  imp.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+  imp.handle = static_cast<HANDLE>(ntHandle);
+  VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &imp, req.size, uint32_t(type < 0 ? 0 : type)};
+  VkResult r = type < 0 ? VK_ERROR_FEATURE_NOT_PRESENT : vkAllocateMemory(dev_, &ai, nullptr, &t.mem.memory);
+  if (r != VK_SUCCESS) {
+    LOG_ERROR("vulkan: %s (importing a Direct3D 11 texture)", vkError("vkAllocateMemory", r).c_str());
+    vkDestroyImage(dev_, t.image, nullptr);
+    t = Tex{};
+    return 0;
+  }
+  t.mem.pool = -1;  // dedicated: freeImage frees the import
+  t.mem.size = req.size;
+  vkBindImageMemory(dev_, t.image, t.mem.memory, 0);
+  VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  vci.image = t.image;
+  vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  vci.format = t.vkFormat;
+  vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  vkCreateImageView(dev_, &vci, nullptr, &t.view);
+  endRendering();
+  imageBarrier(cmd(), t.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+  bindlessWriteTex(t);
+  return hnd;
+#else
+  (void)ntHandle, (void)w, (void)h;
+  return 0;
+#endif
 }
 
 void VkDeviceImpl::texImage(uint32_t tex, int face, int level, Format f, int w, int h, Pixels p, const void* data,

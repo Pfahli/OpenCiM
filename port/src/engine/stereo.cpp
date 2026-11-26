@@ -10,6 +10,7 @@
 #include "core/env.h"
 #include "core/log.h"
 #include "engine/display.h"
+#include "engine/leiasr.h"
 #include "engine/settings.h"
 #include "render/gpu.h"
 #include "vfs/vfs.h"
@@ -23,6 +24,7 @@ namespace {
 struct StereoState {
   int eye = 0;
   int lastMode = 0;
+  int lastWanted = 0;  // the mode asked for (before a failed Leia SR start turns it off)
   int testMode = -1;
   bool failed = false;
   uint32_t program = 0;
@@ -44,7 +46,9 @@ StereoState& state() {
 
 int stereoFrameMode(script::VM& vm) {
   StereoState& s = state();
-  int mode = int(settingNumber(vm, u"regsStereo", 0));
+  // no stored choice: glasses-free 3D on its own when the game finds an SR display (owner 2026-11-26: "auto detection")
+  int mode = int(settingNumber(vm, u"regsStereo", -1));
+  if (mode < 0) mode = leiaSrDetected().usable ? kStereoLeiaSr : kStereoOff;
   float depth = settingNumber(vm, u"regsStereoDepth", 50);
   float conv = settingNumber(vm, u"regsStereoConvergence", 100);
   bool swap = settingNumber(vm, u"regsStereoSwap", 0) > 0;
@@ -58,6 +62,12 @@ int stereoFrameMode(script::VM& vm) {
   if (const char* e = regs::envVar("REGS_STEREO_SWAP")) swap = std::atoi(e) != 0;
   if (s.testMode >= 0) mode = s.testMode;
   if (mode < 0 || mode >= kStereoModeCount || s.failed) mode = 0;
+  // glasses-free 3D that could not start (engine/leiasr.cpp logged why): off until the mode is chosen again
+  if (mode != s.lastWanted) {
+    if (mode == kStereoLeiaSr) leiaSrRetry();
+    s.lastWanted = mode;
+  }
+  if (mode == kStereoLeiaSr && leiaSrFailed()) mode = 0;
   // depth 100 = 5 % of the image width between the eyes' pictures of the horizon (comfortable stays under ~3 %)
   s.parallax = std::clamp(depth, 0.0f, 100.0f) / 100.0f * 0.05f;
   s.convergence = std::clamp(conv, 25.0f, 400.0f) / 100.0f;
@@ -146,7 +156,7 @@ void stereoKeepEye(Display& d, int eye, int w, int h) {
   gpu::dev().blit(0, t.fbo, 0, 0, w, h, 0, 0, w, h, true, false);
 }
 
-bool stereoCompose(Display& d, script::VM& vm, int mode, int w, int h) {
+bool stereoCompose(Display& d, script::VM& vm, int mode, int w, int h, uint32_t target, bool flipY) {
   StereoState& s = state();
   if (!s.eyes[0].fbo || !s.eyes[1].fbo || s.eyes[0].width != w || s.eyes[1].width != w) return false;
   if (!s.program && !s.failed) {
@@ -165,8 +175,10 @@ bool stereoCompose(Display& d, script::VM& vm, int mode, int w, int h) {
   gpu::Device& g = gpu::dev();
   const uint32_t tex[2] = {s.eyes[s.swap ? 1 : 0].color, s.eyes[s.swap ? 0 : 1].color};
   const float c0[4] = {float(mode), float(w), float(h), 0};
-  const float uv[4][4] = {{0, 1, 0, 0}, {1, 1, 0, 0}, {1, 0, 0, 0}, {0, 0, 0, 0}};  // TL, TR, BR, BL
-  g.bindFramebuffer(0);
+  float uv[4][4] = {{0, 1, 0, 0}, {1, 1, 0, 0}, {1, 0, 0, 0}, {0, 0, 0, 0}};  // TL, TR, BR, BL
+  if (flipY)
+    for (auto& c : uv) c[1] = 1.0f - c[1];
+  g.bindFramebuffer(target);
   g.scissorTest(false);
   g.viewport(0, 0, w, h);
   d.r3d().drawQuad(s.program, tex, 2, c0, uv);
@@ -174,6 +186,7 @@ bool stereoCompose(Display& d, script::VM& vm, int mode, int w, int h) {
 }
 
 void stereoReset(Display& d) {
+  leiaSrStop(d);  // its targets go with the others (it starts again on the next frame)
   StereoState& s = state();
   d.r3d().destroyTarget(s.eyes[0]);
   d.r3d().destroyTarget(s.eyes[1]);

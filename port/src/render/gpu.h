@@ -199,6 +199,22 @@ class Device {
   // for the vertical blank). The bound framebuffer is 0 afterwards.
   virtual void showInWindow(uint32_t id, uint32_t framebuffer, int w, int h) {}
 
+  // ---- another graphics API in the same frame (Leia SR glasses-free 3D, engine/leiasr.cpp) ----
+  // The GPU's LUID (8 bytes, Windows), to make a Direct3D 11 device on the same adapter; false when unknown.
+  virtual bool adapterLuid(uint8_t out[8]) const { (void)out; return false; }
+  // A texture on the memory of a Direct3D 11 texture (B8G8R8A8, w × h, its NT handle from
+  // IDXGIResource1::CreateSharedHandle): usable as a framebuffer attachment, blit source and sampled texture. Its rows
+  // lie as Direct3D has them (row 0 at the top), the other way round from the device's own targets. 0 when the device
+  // cannot (OpenGL, or Vulkan without VK_KHR_external_memory_win32). destroyTexture frees it (the handle stays the
+  // caller's).
+  virtual uint32_t importD3D11Texture(void* ntHandle, int w, int h) { (void)ntHandle, (void)w, (void)h; return 0; }
+  // Runs everything recorded so far and waits for it, so another API may read what was drawn (and after it wrote,
+  // the device reads the new contents).
+  virtual void finishGpu() {}
+  // Another library drew with this device's own API (OpenGL) and left its state: what the device remembers of it
+  // (current program, active texture unit) is forgotten.
+  virtual void externalStateChanged() {}
+
   // ---- caches (Vulkan: pipeline state objects and the pipeline cache on disk; OpenGL has none of its own) ----
   // Writes the device's on-disk caches now if they grew (after a map's first view was drawn ahead; also at shutdown).
   virtual void saveCaches() {}

@@ -60,9 +60,12 @@ weather and seasons, nights with real lights, controller support, big maps and m
 - **Vulkan renderer** (OpenGL as a fallback) with raytraced shadows, reflections and ambient occlusion on graphics
   cards that support it.
 - **AMD FSR 3.1** upscaling and frame generation, **HDR10** output, TAA and the port's own upscalers.
+- **Glasses-free 3D on Leia SR displays** (Samsung Odyssey 3D, Acer SpatialLabs, Lenovo ThinkVision 3D and others):
+  OpenCiM finds the display by itself and switches to 3D, with the picture woven for where your eyes are. It uses the
+  SR runtime installed with the monitor.
 - **Stereoscopic 3D:** side by side, top and bottom, row-interleaved for passive 3D monitors, and anaglyph for coloured
-  glasses. Depth, screen plane and a miniature effect are adjustable, and head tracking over OpenTrack (for example
-  from SpatialLabs or opentrack) lets you look around the town by moving your head.
+  glasses. Depth, screen plane and a miniature effect are adjustable, and head tracking (the SR display's eye tracker,
+  or opentrack) lets you look around the town by moving your head.
 - **A sharper look:** better shadows, lens blur and tilt-shift, colour styles, and a 200 % view distance.
 - **Sharper textures:** the game's textures upscaled 2× on your PC from your own install.
 - **Fast:** on a large save with 87,000 objects, OpenCiM runs at over 200 fps with Vulkan on an RTX 3080. The original
@@ -176,8 +179,10 @@ build, ARM64, high-res textures and more quality-of-life features ([`port/docs/i
 
 ## License
 
-OpenCiM is free software under the **GNU General Public License v3.0 or later** ([`LICENSE`](LICENSE)). The license
-covers the port's own code, tools, shaders, scripts and documentation. Bundled third-party code keeps its own license
+OpenCiM is free software under the **GNU General Public License v3.0 or later** ([`LICENSE`](LICENSE)), with an
+additional permission under section 7 for combining it with the Leia SR Platform runtime that glasses-free 3D loads
+from the player's computer ([`LICENSE-EXCEPTION.txt`](LICENSE-EXCEPTION.txt)). The license covers the port's own code,
+tools, shaders, scripts and documentation. Bundled third-party code keeps its own license
 (MIT, BSD, Apache-2.0, public domain or CC0); see [`port/README.md`](port/README.md#license).
 
 *Cities in Motion* is a trademark of its owners. OpenCiM is a fan project, not affiliated with or endorsed by Colossal

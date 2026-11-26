@@ -25,6 +25,7 @@ Copy-Item "$bin\regs.exe", "$bin\regs-tool.exe" $stage
 Copy-Item "$bin\data" $stage -Recurse
 Copy-Item "$root\README.md" $stage
 Copy-Item "$root\..\LICENSE" "$stage\LICENSE.txt"  # OpenCiM itself: GPL-3.0-or-later
+Copy-Item "$root\..\LICENSE-EXCEPTION.txt" "$stage\LICENSE-EXCEPTION.txt"  # its section 7 permission (Leia SR runtime)
 $lic = New-Item -ItemType Directory -Force "$stage\licences"
 Copy-Item "$root\third_party\glslang\LICENSE.txt" "$lic\glslang.txt"
 Copy-Item "$root\third_party\vulkan-headers\LICENSE.md" "$lic\vulkan-headers.md"

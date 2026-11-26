@@ -28,6 +28,7 @@
 #include "engine/interaction.h"
 #include "engine/popout.h"
 #include "engine/headtrack.h"
+#include "engine/leiasr.h"
 #include "engine/stereo.h"
 #include "engine/scene3d.h"
 #include "engine/minimap.h"
@@ -352,7 +353,10 @@ struct Display::UpscaleJob {
   }
 };
 
-Display::~Display() { popoutsShutdown(); }
+Display::~Display() {
+  leiaSrStop(*this);  // the SR panel back to 2D (engine/leiasr.h)
+  popoutsShutdown();
+}
 
 int Display::textureUpscaleProgress() const {
   if (!upscaleJob_ || upscaleJob_->progress.finished) return -1;
@@ -754,9 +758,12 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     r2d_.endFrame();
     if (stereo) stereoKeepEye(*this, eyePass == 0 ? -1 : 1, w, h);
   }
+  if (stereo != kStereoLeiaSr) leiaSrStop(*this);  // (nothing to do unless glasses-free 3D was running)
   if (stereo) {
     stereoSetEye(0);
-    stereoCompose(*this, vm, stereo, w, h);
+    // glasses-free 3D: the SR runtime weaves the eyes into the back buffer; if it cannot, side by side this frame
+    // (stereoFrameMode turns the mode off from the next one)
+    if (stereo != kStereoLeiaSr || !leiaSrPresent(*this, vm, w, h)) stereoCompose(*this, vm, stereo == kStereoLeiaSr ? kStereoSideBySide : stereo, w, h);
     r2d_.resume();
   }
   if (captureNext) {
@@ -1019,7 +1026,7 @@ void registerDisplayNatives(VM& vm) {
   }
   // window.regsGraphicsCaps(): what the running graphics engine offers, for the Image quality page (which greys out
   // what does not apply): 1 Vulkan, 2 FSR 3.1, 4 frame generation, 8 ray queries (shadows, occlusion), 16 raytraced
-  // reflections, 32 HDR10 output offered by the display
+  // reflections, 32 HDR10 output offered by the display, 64 a Leia SR display with its runtime (glasses-free 3D)
   implement(vm, "gsWindow_OGL", u"regsGraphicsCaps", [](VM&, Object*, int, const Value*) {
     if (!render::gpu::hasDevice()) return Value::integer(0);
     render::gpu::Device& g = render::gpu::dev();
@@ -1029,7 +1036,14 @@ void registerDisplayNatives(VM& vm) {
     if (g.rayTracing()) bits |= 8;
     if (g.rayReflections()) bits |= 16;
     if (g.hdrAvailable()) bits |= 32;
+    if (leiaSrDetected().usable) bits |= 64;
     return Value::integer(bits);
+  });
+  // window.regsLeiaSrDisplay(): the SR display found ("" when none), for the Image quality page's note
+  if (ClassInfo* c = vm.findClass("gsWindow_OGL")) addMethod(c, u"regsLeiaSrDisplay", 0, 0);
+  implement(vm, "gsWindow_OGL", u"regsLeiaSrDisplay", [](VM&, Object*, int, const Value*) {
+    const LeiaSrInfo& i = leiaSrDetected();
+    return Value::string(utf8ToUtf16(i.usable ? i.monitor : std::string()));
   });
   // window.regsSetRect(control, left, top, width, height): placeControl, for HUD scripts that place a control again
   // when the desktop changes size (their extensions' onChangeRect handlers)

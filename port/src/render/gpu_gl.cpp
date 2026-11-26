@@ -492,6 +492,13 @@ class GlDevice final : public Device {
     gl::UseProgram(prog);
     program_ = prog;
   }
+  void finishGpu() override { gl::Finish(); }
+  void externalStateChanged() override {
+    gl::UseProgram(0);
+    program_ = 0;
+    active_ = -1;
+    gl::BindVertexArray(0);
+  }
   uint32_t currentProgram() const override { return program_; }
   int uniformLocation(uint32_t prog, const char* name) override { return gl::GetUniformLocation(prog, name); }
   void uniform1i(int loc, int v) override { gl::Uniform1i(loc, v); }

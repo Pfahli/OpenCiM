@@ -58,6 +58,7 @@ enum : GLenum {
 
 #define REGS_GL_FUNCS(X)                                                                                    \
   X(void, Clear, GLbitfield)                                                                                \
+  X(void, Finish)                                                                                           \
   X(void, ClearColor, GLfloat, GLfloat, GLfloat, GLfloat)                                                   \
   X(void, Viewport, GLint, GLint, GLsizei, GLsizei)                                                         \
   X(void, Scissor, GLint, GLint, GLsizei, GLsizei)                                                          \

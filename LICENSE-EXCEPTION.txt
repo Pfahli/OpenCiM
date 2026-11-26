@@ -1,0 +1,17 @@
+OpenCiM: additional permission under GNU GPL version 3 section 7
+
+OpenCiM is licensed under the GNU General Public License version 3 or (at your option) any later version (LICENSE).
+In addition, the licensors of OpenCiM grant the following permission:
+
+If you modify this Program, or any covered work, by linking or combining it with the Leia SR Platform runtime (the
+"Simulated Reality" libraries of Leia Inc., formerly Dimenco, installed with SR displays such as the Samsung Odyssey 3D
+or Acer SpatialLabs monitors, for example SimulatedRealityCore.dll, SimulatedRealityOpenGL.dll,
+SimulatedRealityDirectX.dll and SimulatedRealityDisplays.dll), or a modified version of that runtime, containing parts
+covered by the terms of its licence, the licensors of this Program grant you additional permission to convey the
+resulting work. Corresponding Source for a non-source form of such a combination shall not include the source code for
+the parts of the Leia SR Platform runtime used as well as that of the covered work.
+
+OpenCiM does not contain or distribute any part of the Leia SR Platform runtime: it loads the copy installed on the
+player's computer at run time, when glasses-free 3D is used.
+
+Contributions to OpenCiM are accepted under the GNU GPL version 3 or later together with this additional permission.

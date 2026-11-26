@@ -9,6 +9,7 @@
 
 #include "core/env.h"
 #include "core/log.h"
+#include "engine/leiasr.h"
 #include "engine/settings.h"
 
 #ifdef _WIN32
@@ -138,6 +139,15 @@ void headTrackFrame(script::VM& vm, float dt) {
         s.havePose = true;
       }
     }
+  }
+  // glasses-free 3D running: the SR display's own eye tracker is the source (no StereoLoom or opentrack needed)
+  float hx, hy, hz;
+  if (s.on && !s.test && leiaSrHead(hx, hy, hz)) {
+    if (!s.havePose) LOG_INFO("head tracking: from the Leia SR eye tracker");
+    s.rawX = std::clamp(hx, -60.0f, 60.0f);
+    s.rawY = std::clamp(hy, -40.0f, 40.0f);
+    s.last = now;
+    s.havePose = true;
   }
   // no packet for half a second (tracker stopped, head lost): back to the middle
   const bool fresh = s.havePose && (s.test || now - s.last < std::chrono::milliseconds(500));

@@ -27,6 +27,11 @@ Settings > Graphics > Advanced settings, section **Stereoscopic 3D** (applies on
 | 9 Anaglyph red/cyan grey | red/cyan glasses | in grey: no colour, the least ghosting |
 | 10 Anaglyph red/green | old red/green glasses | in grey (red and green filters pass no third colour) |
 | 11 Anaglyph red/blue | old red/blue glasses | in grey |
+| 12 Glasses-free 3D (Leia SR) | Leia SR displays: Samsung Odyssey 3D, Acer SpatialLabs, Lenovo ThinkVision 3D, ... | both eyes side by side, woven by the SR runtime for where the viewer's eyes are (below) |
+
+Without a stored choice (a new player, or the setting never touched) the mode is **12 when an SR display and its
+runtime are found**, else off: the game comes up in 3D on such a monitor by itself (owner 2026-11-26: "auto
+detection"). The settings page then names the display in place of the 3D TV note.
 
 * The interface is drawn in both eyes' pictures at the same place, so it lies on the screen plane; the map is in depth
   around it. The game's own pointer (the default, "system cursor" off) is part of the interface and so appears in both
@@ -39,21 +44,49 @@ Settings > Graphics > Advanced settings, section **Stereoscopic 3D** (applies on
 * Not offered: frame-sequential output for active shutter glasses (needs quad-buffered stereo, which consumer drivers
   no longer offer for Vulkan or OpenGL) and full-width side by side (each eye at half width with its own layout).
 
-## Glasses-free 3D monitors (Samsung Odyssey 3D, Acer SpatialLabs) and head tracking
+## Glasses-free 3D on Leia SR displays (mode 12) and head tracking
 
-Owner's question (2026-11-23): support for Acer SpatialLabs and Samsung Odyssey 3D. Both are **Leia SR** panels (as are
-Sony's Spatial Reality and Lenovo's ThinkVision 3D displays): the SR Platform runtime installed with the monitor holds
-a "weaver" that turns a side-by-side picture into the lenticular, eye-tracked picture. Samsung offers no developer
-interface (its Odyssey 3D Hub enables 3D only for the games on its list); Leia's native SDK is given out on request
-(developer@leiainc.com) under a licence that forbids passing it on, and its weaver works with Direct3D 11 / 12.
+Owner's question (2026-11-23) and request (2026-11-26: "support LeiaSR and auto detection"). The Samsung Odyssey 3D,
+Acer SpatialLabs, Sony Spatial Reality and Lenovo ThinkVision 3D displays are **Leia SR** panels: the SR Platform
+runtime installed with the monitor (`HKLM\SOFTWARE\Dimenco\Simulated Reality` → `C:\Program Files\LeiaSR\Platform`)
+holds a "weaver" that turns two views into the lenticular picture for where the eye tracker predicts the viewer's eyes,
+and the "SR Service" that runs the tracker. `engine/leiasr.cpp` drives it directly; no Leia SDK, header or library is
+used or shipped. The calling sequence comes from the owner's OdySee project (Odyssey 3D research, runtime 1.36.4).
 
-* **What works without the SDK:** the port's side-by-side mode (1) and [StereoLoom](https://github.com/effcol/SR-Loom)
-  (MIT, tray app; formerly SR Loom): it captures the game's window, reads it as half side by side and weaves it, with
-  the eye tracking. The game windowed or borderless (not exclusive fullscreen). On the Odyssey 3D, Samsung's Hub is
-  also said to switch 3D on for a maximised side-by-side window (MPC-3D, an Unreal nDisplay setup). Not tried here:
-  there is no such monitor at this PC.
+* **Detection** (`leiaSrDetected`, once): the runtime's DLLs in its `bin` folder, and an active monitor whose EDID id
+  (`EnumDisplayDevices`: `MONITOR\SAM7860\...`) is in the runtime's product table (Odyssey 3D: SAM 0xE067-0xE072 and
+  0x7859-0x7866; Acer ACR 0x0000-0x0003; Lenovo, Dell, BenQ, ViewSonic, LG, ASUS and the SR laptop panels), or the
+  runtime's manual product entry (`...\Simulated Reality\Manual`). `REGS_LEIASR=0` hides it, `=1` claims a display.
+  The log names what was found ("Leia SR: runtime found, display Samsung Odyssey 3D (SAM7860)"); the settings page
+  gets it through `window.regsGraphicsCaps()` bit 64 and `window.regsLeiaSrDisplay()`.
+* **Weaving:** the frame is drawn for both eyes as for side by side; then, instead of `stereoCompose` into the back
+  buffer, `leiaSrPresent`:
+  * OpenGL: the views side by side (half width each) into a texture, `SR::CreateGLWeaver`'s weaver
+    (`SimulatedRealityOpenGL.dll`) weaves it into the window's framebuffer; the device then forgets its GL state.
+  * Vulkan: the runtime has no Vulkan weaver. A Direct3D 11 device on the same GPU (by LUID) makes two shared
+    textures (NT handles) that the Vulkan device imports (`importD3D11Texture`, `VK_KHR_external_memory_win32`):
+    Vulkan composes the views into the first (rows turned to Direct3D's order) and waits (`finishGpu`),
+    `SR::CreateDX11Weaver`'s weaver (`SimulatedRealityDirectX.dll`) weaves it into the second, D3D11 flushes and
+    waits for an event query, and Vulkan copies the second into its back buffer (rows turned back).
+  * The weaver knows the window (HWND) and weaves for its place on the screen, windowed or fullscreen (runtime ≥ 1.34).
+  * Start order as in the SDK's examples: `SR::SRContext::create` (non-blocking client: fails at once without the
+    service), the weaver, then `SRContext::initialize`. The runtime's interfaces are declared in `leiasr.cpp` with the
+    runtime's virtual method order; the factories are found by their exported names.
+  * The panel's lens: a "switchable lens hint" through the runtime's C functions (`createSwitchableLensHint`,
+    `lensEnableHint`) while the mode runs, released when it ends or the game closes, so the panel goes back to 2D. On
+    the Odyssey, Samsung's Odyssey 3D Hub turns the lens request (or the weaving) into the monitor's 3D switch.
+  * When the runtime cannot start (no service, no weaver), the reason is logged once, that frame shows side by side,
+    and the mode is off until it is chosen again.
+* **Eye tracking:** the weaver's predicted eye positions (mm, display coordinates) are the head tracking's source while
+  glasses-free 3D runs (head tracking on): the middle of both eyes, as the OpenTrack packets give it otherwise.
+* **Cost:** the frame is drawn twice as for every stereo mode; under Vulkan each frame also waits for the GPU twice
+  (before and after the D3D11 weave).
+* HDR with glasses-free 3D: the views are handed over in 8 bits (highlights above paper white are clipped).
+* **Without the runtime**, the side-by-side mode (1) with [StereoLoom](https://github.com/effcol/SR-Loom) (MIT, tray
+  app) still works: it captures the game's window and weaves it.
 * **Head tracking** (settings `$regsHeadTracking` on / off, `$regsHeadTrackingStrength` 0 .. 200 %, image quality page
-  under the stereo rows; `REGS_HEADTRACK=0|1`): `engine/headtrack.cpp` listens for OpenTrack's "UDP over network"
+  under the stereo rows; `REGS_HEADTRACK=0|1`): in glasses-free 3D from the SR eye tracker (above); otherwise
+  `engine/headtrack.cpp` listens for OpenTrack's "UDP over network"
   packets on 127.0.0.1:4242 (48 bytes: six little-endian doubles, x, y, z cm, yaw, pitch, roll degrees) as StereoLoom
   sends the SR display's head pose, and opentrack does from any tracker (webcam, TrackIR clip, phone). The map view's
   camera turns about the point it looks at: sideways by atan(x / 60 cm) × strength about the world's up axis, up and

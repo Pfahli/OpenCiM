@@ -15,7 +15,7 @@
 //   $settings.$regsRtShadows     0 off, 1 raytraced sun shadows (Vulkan on a GPU with ray queries, shadows on)
 //   $settings.$regsRtAo          0 off, 1 raytraced ambient occlusion (Vulkan on a GPU with ray queries)
 //   $settings.$regsRtReflections 0 off, 1 raytraced reflections on water and glass (Vulkan, ray queries, bindless)
-//   $settings.$regsStereo        0 off, 1 .. 9 stereoscopic 3D (drop-down list; engine/stereo.h StereoMode: side by
+//   $settings.$regsStereo        0 off, 1 .. 11 stereoscopic 3D, 12 glasses-free 3D on a Leia SR display (drop-down list; engine/stereo.h StereoMode: side by
 //                                side, top and bottom, rows, columns, checkerboard, four anaglyphs)
 //   $settings.$regsStereoDepth   0 .. 100 (%, slider): 100 = the eyes' pictures of the horizon 5 % of the width apart
 //   $settings.$regsStereoConvergence 50 .. 200 (%, slider): the screen plane at this share of the camera's distance
@@ -52,7 +52,9 @@ $rtShadows = int($settings.$regsRtShadows : 0);
 $rtAo = int($settings.$regsRtAo : 0);
 $rtReflections = int($settings.$regsRtReflections : 0);
 $renderer = int($settings.$regsRenderer : 1);
-$stereo = int($settings.$regsStereo : 0);
+// (no stored choice: glasses-free 3D when the engine found a Leia SR display, regsGraphicsCaps bit 64, as it does
+// itself in engine/stereo.cpp)
+$stereo = int($settings.$regsStereo : ((MAIN.$window.regsGraphicsCaps() & 64) != 0 ? 12 : 0));
 $stereoDepth = int($settings.$regsStereoDepth : 50);
 $stereoConv = int($settings.$regsStereoConvergence : 100);
 $stereoSwap = int($settings.$regsStereoSwap : 0);
@@ -317,7 +319,7 @@ label($x, $y, $colR + $colW - $colL, $regs.$regs_stereo_heading, true);
 rule($x, $y + 22, $colR + $colW - $colL, 1);
 $y += 38;
 rowLabel($x, $y, $regs.$regs_stereo_label, false);
-$stereoList = dropDown("regsStereo", $x + $ctlOff, $y, 230, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], $regs.$regs_stereo_values, $stereo);
+$stereoList = dropDown("regsStereo", $x + $ctlOff, $y, 230, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], $regs.$regs_stereo_values, $stereo);
 $rowL = rowLabel($colR, $y, $regs.$regs_stereoSwap_label, false);
 radioRow("regsStereoSwap", $colR + $ctlOff, $y, [0, 1], $regs.$regs_taa_values, $stereoSwap);
 shade("stereoSwap", $colR, $y, $rowL);
@@ -361,7 +363,8 @@ function setHeadStrength() {
 }
 shade("headStrength", $colR, $y, $rowL);
 $y += 32;
-hint($x, $y, $regs.$regs_q_stereo_hint1);
+// with a Leia SR display attached, its name in place of the 3D TV note
+hint($x, $y, ($caps & 64) != 0 ? $regs.$regs_q_sr_found + MAIN.$window.regsLeiaSrDisplay() : $regs.$regs_q_stereo_hint1);
 hint($colR, $y, $regs.$regs_q_stereo_hint3);
 $y += 20;
 hint($x, $y, $regs.$regs_q_stereo_hint2);

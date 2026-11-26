@@ -25,10 +25,12 @@ enum StereoMode {
   kStereoRedCyanGray = 9,   // red/cyan in grey (least ghosting, no colour)
   kStereoRedGreen = 10,     // red left, green right, in grey (old red/green glasses)
   kStereoRedBlue = 11,      // red left, blue right, in grey (old red/blue glasses)
-  kStereoModeCount = 12
+  kStereoLeiaSr = 12,       // glasses-free: the Leia SR runtime weaves side by side for the panel (engine/leiasr.h)
+  kStereoModeCount = 13
 };
 
 // Display::renderFrame: the mode for this frame (settings, REGS_STEREO=<mode> overrides); 0 = draw once as before.
+// Without a stored choice, Leia SR when an SR display and its runtime are found (engine/leiasr.h), else off.
 int stereoFrameMode(script::VM& vm);
 // the eye being drawn: 0 none (mono or another view), −1 left, +1 right
 int stereoEye();
@@ -41,8 +43,9 @@ inline bool stereoFirstPass() { return stereoEye() <= 0; }
 void stereoCamera(script::VM& vm, render::Vec3& eye, render::Vec3& look, const render::Vec3& up, render::Mat4& proj);
 // after an eye's pass: the back buffer (w × h) copied aside
 void stereoKeepEye(Display& d, int eye, int w, int h);
-// both eyes into the back buffer for the mode; false (back buffer left as the right eye) when the program is missing
-bool stereoCompose(Display& d, script::VM& vm, int mode, int w, int h);
+// both eyes into the back buffer for the mode; false (back buffer left as the right eye) when the program is missing.
+// target: another framebuffer of the same size instead; flipY: rows the other way round (a Direct3D texture's).
+bool stereoCompose(Display& d, script::VM& vm, int mode, int w, int h, uint32_t target = 0, bool flipY = false);
 void stereoReset(Display& d);
 // tests (--at stereo:<mode>): that mode instead of the settings' from now on
 void stereoTestMode(int mode);

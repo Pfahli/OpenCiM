@@ -74,6 +74,7 @@ add_library(regs_engine STATIC
   src/engine/sky.cpp
   src/engine/popout.cpp
   src/engine/stereo.cpp
+  src/engine/leiasr.cpp
   src/engine/headtrack.cpp
   src/engine/night_lights.cpp
   src/engine/passenger_atlas.cpp
@@ -312,7 +313,7 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> padglyphs $<TARGET_FILE_DIR:regs>/data/regs/ui/pad ${CMAKE_SOURCE_DIR}/third_party/kenney-input-prompts)
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
-  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid setupapi dwmapi ws2_32)
+  target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid setupapi dwmapi ws2_32 d3d11 dxgi)
 endif()
 
 
