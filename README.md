@@ -18,8 +18,10 @@ weather and seasons, nights with real lights, controller support, big maps and m
 ### Maps and building
 - **Your own city:** build a map of any real town from OpenStreetMap, with its streets, railways, rivers, parks and
   buildings. Palaces, castles, churches, glass office towers and shops with striped awnings are built for it on the fly.
-- **Free road building:** curves, roundabouts, one-way streets, avenues, junctions at any angle, tunnels, bridges and
-  express ramps.
+- **Free road building:** curved roads of every kind, junctions at any angle, avenues, tunnels, bridges and express
+  ramps.
+- **One-way streets**, also with one-way tram tracks.
+- **Roundabouts** with one or two lanes, with trams running through them.
 - **Tracks:** curved tram tracks, 45° tram switches, level crossings with railways and tram tracks, and trams running on
   railway tracks.
 - **Working traffic lights** at the junction corners, facing the oncoming traffic, with green waves.
