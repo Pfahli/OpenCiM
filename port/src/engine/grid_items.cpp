@@ -216,8 +216,13 @@ void registerTypes(Display& d, VM& vm, GridObj* grid, TerrainCache& tc) {
       // foliage: the materials the trees' wind shader draws (set in the templates' onLoaded)
       if (tc.materials.back().shader.find("shaders/trees/trees.shader") != std::string::npos)
         tc.materials.back().surfaceClass = kSurfaceFoliage;
-      tc.materials.back().windowMask =  // port night lights
-          buildingWindowMask(d, vm, m, o->pendingPath, &o->data->mesh, int(&m - o->data->materials.data()));
+      {  // port night lights (the mask learns from the model that uses the material: a LOD 1 has its own)
+        const int mi = int(&m - o->data->materials.data());
+        const MeshData* mm = &o->data->mesh;
+        if (o->data->hasLod1 && std::none_of(mm->submeshes.begin(), mm->submeshes.end(), [&](const Submesh& s) { return s.material == mi; }))
+          mm = &o->data->lod1;
+        tc.materials.back().windowMask = buildingWindowMask(d, vm, m, o->pendingPath, mm, mi);
+      }
       if (!tc.materials.back().windowMask)
         if (uint32_t glass = lampGlassMask(d, vm, *o->data, int(&m - o->data->materials.data()), o->pendingPath)) {
           tc.materials.back().windowMask = glass;  // a street lamp's glass

@@ -925,6 +925,11 @@ bool makeWindowMask(const Image& specular, const Image* illumination, Image& out
   // shop windows: glass whose texels the mesh uses only within 4.2 m of the model's ground (its origin); they get
   // their own channel (A), the other windows three random groups (B, G, R)
   std::vector<uint8_t> floorOf(n, 0);  // bit 1: a ground-floor face uses the texel, bit 2: a face above it
+  // where on the model the texel is (summed over the faces that use it): a window's place on the building decides its
+  // group, so the near and the far model (own material, own texture) light the same windows (owner 2026-11-26: "the
+  // lit up windows are still changing when zooming out and in")
+  std::vector<float> where(mesh ? n * 3 : 0, 0.0f);
+  std::vector<uint16_t> whereCount(mesh ? n : 0, 0);
   if (mesh && mesh->uv0.size() >= mesh->vertexCount() * 2) {
     const size_t nv = mesh->vertexCount();
     for (const Submesh& sm : mesh->submeshes) {
@@ -948,14 +953,30 @@ bool makeWindowMask(const Image& specular, const Image* illumination, Image& out
             float b0 = 1 - b1 - b2;
             if (b0 < -0.02f || b1 < -0.02f || b2 < -0.02f) continue;
             float py3 = b0 * mesh->positions[t[0] * 3 + 1] + b1 * mesh->positions[t[1] * 3 + 1] + b2 * mesh->positions[t[2] * 3 + 1];
-            floorOf[size_t(y) * size_t(w) + size_t(x)] |= py3 < 4.2f ? 1 : 2;
+            const size_t ti = size_t(y) * size_t(w) + size_t(x);
+            floorOf[ti] |= py3 < 4.2f ? 1 : 2;
+            if (whereCount[ti] < 65535) {
+              for (int a = 0; a < 3; ++a)
+                where[ti * 3 + size_t(a)] += b0 * mesh->positions[t[0] * 3 + size_t(a)] + b1 * mesh->positions[t[1] * 3 + size_t(a)] +
+                                            b2 * mesh->positions[t[2] * 3 + size_t(a)];
+              ++whereCount[ti];
+            }
           }
       }
     }
   }
   std::vector<size_t> groundGlass(comps.size(), 0);
-  for (size_t i = 0; i < n; ++i)
-    if (label[i] >= 0 && glass[i] && floorOf[i] == 1) ++groundGlass[size_t(label[i])];
+  std::vector<double> centre(comps.size() * 3, 0.0);  // each window's glass: its mean place on the model
+  std::vector<size_t> centreCount(comps.size(), 0);
+  for (size_t i = 0; i < n; ++i) {
+    if (label[i] < 0 || !glass[i]) continue;
+    const size_t c = size_t(label[i]);
+    if (floorOf[i] == 1) ++groundGlass[c];
+    if (!whereCount.empty() && whereCount[i]) {
+      for (int a = 0; a < 3; ++a) centre[c * 3 + size_t(a)] += where[i * 3 + size_t(a)] / whereCount[i];
+      ++centreCount[c];
+    }
+  }
   // a glass area over 6 % of the texture is no window (glass roofs, sheet metal); groups at random per window
   std::vector<int> group(comps.size(), -1);
   std::vector<float> bright(comps.size(), 1.0f);  // per window: lamps, curtains, room depth
@@ -967,6 +988,12 @@ bool makeWindowMask(const Image& specular, const Image* illumination, Image& out
       continue;
     }
     uint32_t hc = hash32(hash32(uint32_t(c) * 0x9E3779B9u + 0x632BE5ABu) ^ uint32_t(w));
+    if (centreCount[c]) {  // by its place on the model in 2 m steps: the same in every LOD's texture
+      int32_t q[3];
+      for (int a = 0; a < 3; ++a) q[a] = int32_t(std::floor(centre[c * 3 + size_t(a)] / double(centreCount[c]) / 2.0));
+      hc = hash32(hash32(hash32(uint32_t(q[0]) * 0x9E3779B9u) ^ uint32_t(q[1]) * 0x85EBCA6Bu) ^ uint32_t(q[2]) * 0xC2B2AE35u);
+      ++st.placed;
+    }
     bool shop = groundGlass[c] * 10 >= comps[c].glass * 6;
     group[c] = shop ? 3 : int((hc >> 20) % 3);
     st.shops += shop;
@@ -1022,6 +1049,7 @@ struct MaskJob {
   Image mask;
   WindowMaskInfo info;
   bool ok = false;
+  bool lod1 = false;  // the mesh is the far model (the log)
 };
 
 // the reading and inflating of the source maps is part of the job: prepareWindowMasks runs the jobs on worker threads
@@ -1039,9 +1067,21 @@ void runMaskJob(MaskJob& j) {
 void finishMaskJob(Display& d, MaskJob& j) {
   uint32_t tex = j.ok ? d.r2d().createTexture(j.mask) : 0;
   if (debugNight())
-    LOG_INFO("night: windows %s (%s): %d windows (%d shop), %d rejected, glass > %.2f, %.1f %% %s", j.spec.c_str(), j.objectPath.c_str(),
-             j.info.windows, j.info.shops, j.info.rejected, j.info.threshold, j.info.coverage * 100, j.info.skipped ? j.info.skipped : "");
+    LOG_INFO("night: windows %s (%s): %d windows (%d shop, %d placed on the %s model), %d rejected, glass > %.2f, %.1f %% %s",
+             j.spec.c_str(), j.objectPath.c_str(), j.info.windows, j.info.shops, j.info.placed, j.lod1 ? "far" : "near",
+             j.info.rejected, j.info.threshold, j.info.coverage * 100, j.info.skipped ? j.info.skipped : "");
   maskCache().emplace(j.key, tex);
+}
+
+// the model whose faces use the material: the near model, or the far one for its own material (a LOD 1 has its own
+// material and texture), so the mask learns where on the building each window is (makeWindowMask)
+const MeshData* windowMaskMesh(const ObjectData& od, int material) {
+  for (const Submesh& sm : od.mesh.submeshes)
+    if (sm.material == material) return &od.mesh;
+  if (od.hasLod1)
+    for (const Submesh& sm : od.lod1.submeshes)
+      if (sm.material == material) return &od.lod1;
+  return &od.mesh;
 }
 
 bool newJob(VM& vm, const MaterialDef& m, const std::string& objectPath, MaskJob& j, const MeshData* mesh, int material) {
@@ -1063,7 +1103,9 @@ void prepareWindowMasks(Display& d, VM& vm, const std::vector<std::pair<const Ob
   for (const auto& [od, path] : objects)
     for (size_t i = 0; i < od->materials.size(); ++i) {
       MaskJob j;
-      if (newJob(vm, od->materials[i], path, j, &od->mesh, int(i)) && queued.insert(j.key).second) jobs.push_back(std::move(j));
+      const MeshData* mm = windowMaskMesh(*od, int(i));
+      j.lod1 = mm == &od->lod1;
+      if (newJob(vm, od->materials[i], path, j, mm, int(i)) && queued.insert(j.key).second) jobs.push_back(std::move(j));
     }
   if (jobs.empty()) return;
   // decoding and labelling run on worker threads; the uploads stay on this (the GL) thread

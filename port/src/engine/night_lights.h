@@ -34,6 +34,7 @@ struct WindowMaskInfo {
   int windows = 0;          // window groups (connected glass areas) kept
   int rejected = 0;
   int shops = 0;            // of them shop windows (ground floor, by the mesh)         // glass areas too large for windows (glass roofs, metal sheets)
+  int placed = 0;           // of them grouped by their place on the model (the mesh uses their glass)
   float threshold = 0;      // specular level taken as glass
   float coverage = 0;       // share of the texture that is window
   const char* skipped = nullptr;  // why there is no mask
