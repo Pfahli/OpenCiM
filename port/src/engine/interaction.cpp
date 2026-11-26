@@ -18,11 +18,13 @@
 #include "engine/grid_edit.h"
 #include "engine/grid_render.h"
 #include "engine/gui.h"
+#include "engine/headtrack.h"
 #include "engine/scene3d.h"
 #include "engine/settings.h"
 #include "engine/sim.h"
 #include "engine/sim_state.h"
 #include "engine/sky.h"
+#include "engine/stereo.h"
 #include "engine/tools.h"
 #include "render/math3d.h"
 
@@ -704,6 +706,9 @@ void tracerView(VM& vm, ControlObj* vp, TracerView& v) {
   if (!cam) return;
   Vec3 eye, look, up;
   cameraFrame(vm, cam, eye, look, up);
+  // the camera as the view is drawn: head tracking turns it about its look point (engine/headtrack.h), so the
+  // bubbles stay on their stops while the head moves
+  headTrackCamera(eye, look);
   v.w = vp->width, v.h = vp->height, v.t = std::tan(numberOf(vm, cam, kFov, 60.0f) * 3.14159265f / 360.0f);
   v.eye = eye;
   v.focus = std::sqrt(dot(look - eye, look - eye));
@@ -712,8 +717,16 @@ void tracerView(VM& vm, ControlObj* vp, TracerView& v) {
   v.ok = true;
 }
 
-// views: the viewports already worked out in this GUI pass (null: work the viewport out for this tracer alone)
-void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
+// stereo 3D: each tracer's sideways shift for the eye being drawn (control units), so it lies at its point's depth;
+// an organizer adds it after laying its children out (both eyes then get the same layout)
+std::unordered_map<const ControlObj*, float>& eyeShifts() {
+  static std::unordered_map<const ControlObj*, float> m;
+  return m;
+}
+
+// views: the viewports already worked out in this GUI pass (null: work the viewport out for this tracer alone);
+// applyShift false: the stereo eye's shift is left to the caller (organizeTracers)
+void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views, bool applyShift = true) {
   static const ClassInfo* cls = vm.findClass("gsTracerCtrl");
   if (!cls || !c->cls->isA(cls)) return;
   static FieldKey kViewport(u"targetViewport"), kPosition(u"targetPosition"), kModule(u"targetModule"),
@@ -769,10 +782,13 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
       Seen& s = seen[c];
       const auto now = std::chrono::steady_clock::now();
       const bool lowAndClose = -view->fwd.y < 0.64f && view->focus > 0 && view->focus < 260.0f;  // under ~40°, near
+      // stereo 3D: always (a bubble over a building that stands in front of its stop looks wrong in depth; owner
+      // 2026-11-26 on the Odyssey 3D)
+      const bool testObstacles = lowAndClose || stereoEye() != 0;
       if (now - s.at > std::chrono::milliseconds(150)) {
         s.at = now;
         s.hidden = false;
-        if (auto* grid = dynamic_cast<GridObj*>(m->parent); lowAndClose && grid && dist > 1.0f) {
+        if (auto* grid = dynamic_cast<GridObj*>(m->parent); testObstacles && grid && dist > 1.0f) {
           // to just short of the stop (its shelter and the road under it are no obstacle)
           const Vec3 end = eye + d * std::max(0.0f, 1.0f - 12.0f / dist);
           s.hidden = intersectGrid(vm, grid, eye, end, true, false).hit() || segmentBlockedByItems(vm, grid, eye, end);
@@ -791,6 +807,13 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views) {
       fadeAlpha = s.alpha;
     }
     float sx = view->left + (nx + 1) * 0.5f * w, sy = view->top + (1 - ny) * 0.5f * h;
+    // stereo 3D: moved sideways for the eye being drawn as the scene's point is, so the bubble lies at its stop's
+    // depth instead of on the screen plane
+    if (stereoEye() != 0) {
+      const float shift = stereoEyeShift(eye, eye + fwd * view->focus, h / (w * t), 1.0f / t, z) * 0.5f * w;
+      if (applyShift) sx += shift;
+      else eyeShifts()[c] = shift;
+    }
     float px = 0, py = 0;
     if (ControlObj* parent = c->parentControl()) px = parent->desktopLeft(), py = parent->desktopTop();
     c->left = sx - c->width * numberOf(vm, c, kAnchorX, 0.5f) - px;
@@ -834,10 +857,11 @@ void organizeTracers(VM& vm, ControlObj* organizer, TracerViews* views) {
   TracerViews own;  // without a pass's views: this organizer's target viewports
   if (!views) views = &own;
   static const std::u16string kOrganize = u"organize";
+  eyeShifts().clear();
   for (auto& k : organizer->children) {
     auto* t = dynamic_cast<ControlObj*>(k.get());
     if (!t || t->destroyed || !t->cls->isA(tracer)) continue;
-    placeTracerIn(vm, t, views);
+    placeTracerIn(vm, t, views, false);
     // organize: a plain field the scripts write; unset = the constructor's true (L:0x081d38a0.c:29)
     if (auto o = t->fieldValues.find(kOrganize); o != t->fieldValues.end() && !o->second.isNone() && !vm.toInt(o->second)) continue;
     if (!(t->left > -t->width)) continue;
@@ -867,6 +891,9 @@ void organizeTracers(VM& vm, ControlObj* organizer, TracerViews* views) {
         }
       }
     }
+  // stereo 3D: the eye's shift after the layout, which so stays the same in both eyes' pictures
+  for (const auto& [t, shift] : eyeShifts()) const_cast<ControlObj*>(t)->left += shift;
+  eyeShifts().clear();
 }
 
 Object* gridItemController(VM& vm, GridObj* grid, uint32_t item) {

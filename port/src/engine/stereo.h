@@ -41,6 +41,10 @@ inline bool stereoFirstPass() { return stereoEye() <= 0; }
 // An on-screen view's camera for the eye being drawn: eye and look moved sideways, the projection sheared so the look
 // point stays on the screen plane. Nothing when no eye is drawn.
 void stereoCamera(script::VM& vm, render::Vec3& eye, render::Vec3& look, const render::Vec3& up, render::Mat4& proj);
+// For things drawn over a view at a point of it (the stops' bubbles, engine/interaction.cpp): how far, in NDC (−1..1
+// across the view), the eye being drawn sees a point at view depth z moved sideways, as stereoCamera places that eye
+// for this camera (p00, p11: its projection's scale). 0 when no eye is drawn.
+float stereoEyeShift(const render::Vec3& eye, const render::Vec3& look, float p00, float p11, float z);
 // after an eye's pass: the back buffer (w × h) copied aside
 void stereoKeepEye(Display& d, int eye, int w, int h);
 // both eyes into the back buffer for the mode; false (back buffer left as the right eye) when the program is missing.

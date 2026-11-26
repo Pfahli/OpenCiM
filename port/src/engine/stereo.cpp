@@ -88,19 +88,15 @@ void stereoTestMode(int mode) { state().testMode = mode; }
 int stereoEye() { return state().eye; }
 void stereoSetEye(int eye) { state().eye = eye; }
 
-void stereoCamera(script::VM& vm, Vec3& eye, Vec3& look, const Vec3& up, Mat4& proj) {
-  (void)vm;
-  const StereoState& s = state();
-  if (!s.eye) return;
+namespace {
+
+// the eyes' half distance b and the screen plane's distance D for a camera (stereoCamera, stereoEyeShift); false when
+// the camera gives none
+bool eyeBase(const StereoState& s, const Vec3& eye, const Vec3& look, float p00, float p11, float& b, float& screenD) {
   Vec3 fwd = look - eye;
   const float dist = std::sqrt(dot(fwd, fwd));
-  const float p00 = proj.at(0, 0);
-  if (dist < 1e-4f || std::fabs(p00) < 1e-6f) return;
+  if (dist < 1e-4f || std::fabs(p00) < 1e-6f) return false;
   fwd = fwd * (1.0f / dist);
-  Vec3 right = cross(fwd, up);
-  const float rl = std::sqrt(dot(right, right));
-  if (rl < 1e-6f) return;
-  right = right * (1.0f / rl);
   // Each eye goes sideways by b (half the eyes' distance) and its frustum is shifted back by c = b·P00 / D, so the
   // point at the screen plane distance D does not move. A point at view depth z then lies b·P00·(1/D − 1/z) image
   // widths apart between the eyes' pictures (far: behind the screen, near: in front of it).
@@ -111,11 +107,10 @@ void stereoCamera(script::VM& vm, Vec3& eye, Vec3& look, const Vec3& up, Mat4& p
   // camera has no roll, so the top edge is the farthest ground), decides the rest: the screen plane goes to its middle
   // (equal depth in front and behind, × the screen plane setting) and the eyes come no farther apart than keeps either
   // end within 1.5 × B. Looking down on the town that is far apart; toward the horizon (infinitely far) it closes in.
-  float screenD = dist * s.convergence;
-  float b = s.parallax * screenD / p00;
+  screenD = dist * s.convergence;
+  b = s.parallax * screenD / p00;
   if (s.miniature > 0 && s.parallax > 0) {
     const float h = eye.y - look.y;  // above the ground at the look point
-    const float p11 = proj.at(1, 1);
     if (h > 0.01f && std::fabs(p11) > 1e-6f) {
       const float half = std::atan(1.0f / std::fabs(p11));
       const float pitch = std::asin(std::clamp(-fwd.y, -1.0f, 1.0f));
@@ -132,12 +127,37 @@ void stereoCamera(script::VM& vm, Vec3& eye, Vec3& look, const Vec3& up, Mat4& p
       }
     }
   }
+  return true;
+}
+
+}  // namespace
+
+void stereoCamera(script::VM& vm, Vec3& eye, Vec3& look, const Vec3& up, Mat4& proj) {
+  (void)vm;
+  const StereoState& s = state();
+  if (!s.eye) return;
+  const float p00 = proj.at(0, 0);
+  Vec3 fwd = look - eye;
+  Vec3 right = cross(fwd, up);
+  const float rl = std::sqrt(dot(right, right));
+  if (rl < 1e-6f) return;
+  right = right * (1.0f / rl);
+  float b = 0, screenD = 1;
+  if (!eyeBase(s, eye, look, p00, proj.at(1, 1), b, screenD)) return;
   const float sign = float(s.eye);
   const float c = sign * b * p00 / screenD;
   const Vec3 shift = right * (sign * b);
   eye = eye + shift;
   look = look + shift;
   for (int col = 0; col < 4; ++col) proj.at(0, col) += c * proj.at(3, col);  // x_clip += c · w_clip
+}
+
+float stereoEyeShift(const Vec3& eye, const Vec3& look, float p00, float p11, float z) {
+  const StereoState& s = state();
+  float b = 0, screenD = 1;
+  if (!s.eye || z <= 1e-4f || !eyeBase(s, eye, look, p00, p11, b, screenD)) return 0;
+  // the eye at sign·b, its frustum shifted by sign·b·P00/D: a point at depth z lands sign·b·P00·(1/D − 1/z) away
+  return float(s.eye) * b * p00 * (1.0f / screenD - 1.0f / z);
 }
 
 void stereoKeepEye(Display& d, int eye, int w, int h) {
