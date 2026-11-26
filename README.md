@@ -113,10 +113,12 @@ Multiplayer is being built and is not in the releases yet:
 
 | | |
 |---|---|
-| ![A suburb with tilt-shift](port/src/setup/show/2-free-road-building.jpg) | ![Snow in the old town](port/src/setup/show/3-rain-snow-autumn.jpg) |
-| *A suburb with tilt-shift and soft shadows.* | *Winter in the old town: snow settles on roofs and squares, and cars leave tracks in the streets.* |
-| ![A tram on a tree-lined avenue](port/src/setup/show/5-more-ways-to-run-lines.jpg) | ![The market square with tilt-shift](port/src/setup/show/7-a-sharper-look.jpg) |
-| *A low-floor tram at its stop on a tree-lined avenue.* | *Tilt-shift, soft shadows and colour grading turn the market square into a model town.* |
+| ![Freiburg imported from OpenStreetMap](screenshots/osm-freiburg.jpg) | ![Catchment view](screenshots/catchment.jpg) |
+| *Freiburg im Breisgau, imported from OpenStreetMap: its real street plan, curved roads, parks and old town, filled with buildings.* | *Catchment view: after a stop is placed, every building it serves stays green, here the town hall and the market hall.* |
+| ![Snow](screenshots/snow.jpg) | ![Thunderstorm](screenshots/thunderstorm.jpg) |
+| *Snow on the trees, roofs and roads, from the weather mod.* | *A thunderstorm: rain streaks and wet roads, with passengers behind the tram's windows.* |
+| ![A tram at dusk](screenshots/tram-at-dusk.jpg) | ![The market square with tilt-shift](port/src/setup/show/7-a-sharper-look.jpg) |
+| *At dusk the tram's cabin lights up, and you see the passengers inside.* | *Tilt-shift, soft shadows and colour grading turn the market square into a model town.* |
 | ![Controller settings](screenshots/controller.jpg) | ![Advanced graphics settings](screenshots/graphics-settings.jpg) |
 | *Every button explained, with layouts for Xbox, PlayStation, Steam Deck and Steam Controller.* | *Upscaling and frame generation, Vulkan or OpenGL, raytracing, HDR and stereoscopic 3D.* |
 
