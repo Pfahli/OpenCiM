@@ -1213,6 +1213,13 @@ void Renderer3D::drawList(const SceneView& v, const std::vector<DrawItem>& items
   }
   auto farToNear = [](const Q& a, const Q& b) { return a.key > b.key; };
   std::stable_sort(tested.begin(), tested.end(), farToNear);
+  // the cut-out queue blends its edges (below): foliage after the other cut-out parts, so a leaf's edge mixes with
+  // what stands behind it. A cut-out building with its garden (the villas: one alpha-tested material for house, fence
+  // and lawn) sorts nearer than the trees in it by its large radius; drawn after them, the leaves' edges over the lawn
+  // had mixed with the empty frame and shone white (owner 2026-11-26: "only the leaves that overlap the villa")
+  if (!shadowPass)
+    std::stable_partition(tested.begin(), tested.end(),
+                          [&](const Q& q) { return materialOf(*q.it, *q.p).surfaceClass != kSurfaceFoliage; });
   std::stable_sort(blended.begin(), blended.end(), farToNear);
   if (v.flipCull) dev().cullFace(gpu::Face::Front);
   if (v.env & kEnvShadowMap) {
