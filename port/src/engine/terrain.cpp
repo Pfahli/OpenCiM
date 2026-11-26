@@ -759,6 +759,14 @@ void applyItemColors(GridObj& grid, TerrainCache& tc) {
   grid.itemColorRequests.clear();
 }
 
+// the catchment copies (TerrainCache::catchment) freed
+void dropCatchment(Display& d, TerrainCache& tc) {
+  for (auto& [division, part] : tc.catchment)
+    for (int lod = 0; lod < 2; ++lod)
+      if (part.built[lod]) d.r3d().destroy(part.mesh[lod]);
+  tc.catchment.clear();
+}
+
 }  // namespace
 
 void prepareTerrainCells(GridData& g) {
@@ -787,13 +795,14 @@ void ensureGridCache(Display& d, VM& vm, GridObj* grid) {
         d.r3d().destroy(dv.items[k]);
       }
     if (tc.highlightBuilt) d.r3d().destroy(tc.highlight);
-    if (tc.catchmentBuilt) d.r3d().destroy(tc.catchment);
+    dropCatchment(d, tc);
     tc = TerrainCache();
     tc.generation = grid->generation;
     tc.n = 1 << std::min(g.bucketShift, 8u);
     tc.cols = (g.width + tc.n - 1) / tc.n;
     tc.rows = (g.length + tc.n - 1) / tc.n;
     tc.divisions.resize(size_t(tc.cols * tc.rows));
+    tc.shownLod.assign(tc.divisions.size(), int8_t(-1));
     for (int r = 0; r < tc.rows; ++r)
       for (int c = 0; c < tc.cols; ++c) {
         GridDivision& dv = tc.divisions[size_t(r * tc.cols + c)];
@@ -1565,6 +1574,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
   };
   std::map<const ObjectObj*, std::shared_ptr<const std::vector<Mat4>>> poses;  // one pose per template per frame
   const std::unordered_map<uint32_t, float>* doorTimes = simDoorTimes(grid);   // door items: their own clip time
+  tc.shownLod.assign(tc.divisions.size(), int8_t(-1));  // filled below with what each division shows
   for (int r = 0; r < tc.rows; ++r)
     for (int c = 0; c < tc.cols; ++c) {
       int index = r * tc.cols + c;
@@ -1597,6 +1607,7 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
         }
       }
       int show = complete(lod) ? lod : complete(1 - lod) ? 1 - lod : -1;  // during a LOD switch: the other one
+      if (size_t(index) < tc.shownLod.size()) tc.shownLod[size_t(index)] = int8_t(show);  // (the catchment copies)
       if (show < 0) continue;
       const bool layer = layerFor(index, dv);
       for (GpuMesh* m : {&dv.terrain[show], &dv.items[show]}) {
@@ -1650,23 +1661,29 @@ void collectGrid(Display& d, VM& vm, GridObj* grid, const Vec3& eye, const Mat4&
       catchmentBuildings(g, tc, xzr.data(), circles.size(), inside);
     }
     if (inside != tc.catchmentItems) {
-      if (tc.catchmentBuilt) d.r3d().destroy(tc.catchment);
-      tc.catchmentBuilt = false;
+      dropCatchment(d, tc);
       tc.catchmentItems = std::move(inside);
-      if (!tc.catchmentItems.empty()) {
-        MeshData out;
-        buildCatchmentBuildings(g, tc, tc.catchmentItems, out);
-        if (out.vertexCount()) {
-          tc.catchment = d.r3d().upload(out);
-          tc.catchmentBuilt = true;
+      // the copies per division and LOD (each division draws the one it shows)
+      for (uint32_t i : tc.catchmentItems) {
+        const int division = itemDivision(g, tc, i);
+        if (division < 0 || tc.catchment.count(division)) continue;
+        TerrainCache::CatchmentPart& part = tc.catchment[division];
+        for (int lod = 0; lod < 2; ++lod) {
+          MeshData out;
+          buildCatchmentBuildings(g, tc, tc.catchmentItems, division, lod, out);
+          if (!out.vertexCount()) continue;
+          part.mesh[lod] = d.r3d().upload(out);
+          part.built[lod] = true;
         }
       }
     }
     static const float kAll[8][4] = {{0, 1, 0, 1e7f},       {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f},
                                      {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}, {0, 0, 0, -1000.0f}};
-    if (tc.catchmentBuilt && !tc.catchment.parts.empty()) {
+    for (auto& [division, part] : tc.catchment) {
+      const int show = size_t(division) < tc.shownLod.size() ? tc.shownLod[size_t(division)] : -1;
+      if (show < 0 || !part.built[show] || part.mesh[show].parts.empty()) continue;
       DrawItem it;
-      it.mesh = &tc.catchment;
+      it.mesh = &part.mesh[show];
       it.materials = &tc.materials;
       it.layerMaterial = tc.dataMaterial;
       it.layerAllParts = true;

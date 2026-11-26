@@ -882,7 +882,8 @@ void catchmentBuildings(const GridData& g, const TerrainCache& tc, const float* 
   out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
-void buildCatchmentBuildings(const GridData& g, const TerrainCache& tc, const std::vector<uint32_t>& items, MeshData& out) {
+void buildCatchmentBuildings(const GridData& g, const TerrainCache& tc, const std::vector<uint32_t>& items,
+                             int onlyDivision, int lod, MeshData& out) {
   struct Group {
     std::vector<float> positions;
     std::vector<uint32_t> indices;
@@ -891,9 +892,13 @@ void buildCatchmentBuildings(const GridData& g, const TerrainCache& tc, const st
   for (uint32_t i : items) {
     const GridData::Item& it = g.items[i];
     const int ti = tc.typeTemplate[it.type], division = itemDivision(g, tc, i);
-    if (division < 0) continue;
+    if (division < 0 || division != onlyDivision) continue;
     const GridTemplate& tp = tc.templates[size_t(ti)];
-    const MeshData& mesh = tp.object->data->mesh;
+    const ObjectData& od = *tp.object->data;
+    // the LOD's geometry as buildGridItems takes it (LOD 1: the template's lod1, else LOD 0 unless HIDE_LOD)
+    const MeshData* lodMesh = lod == 0 ? &od.mesh : od.hasLod1 ? &od.lod1 : ((it.flags | tp.flags) & kFlagHideLod) ? nullptr : &od.mesh;
+    if (!lodMesh || lodMesh->positions.empty()) continue;
+    const MeshData& mesh = *lodMesh;
     const Mat4 world = tc.divisions[size_t(division)].world * itemPlacement(g, tc, i, division);
     const uint32_t vcount = uint32_t(mesh.vertexCount());
     for (const Submesh& sm : mesh.submeshes) {

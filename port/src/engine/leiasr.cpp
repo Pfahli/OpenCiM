@@ -464,6 +464,13 @@ bool start(Display& d, SrState& s, int w, int h) {
     if (rc != 0 || !(vulkan ? static_cast<void*>(s.dxWeaver) : static_cast<void*>(s.glWeaver)))
       return fail(s, "the SR runtime made no weaver (error " + std::to_string(rc) + "; is the SR display attached?)");
     s.weaver = vulkan ? static_cast<sr::IWeaverBase1*>(s.dxWeaver) : static_cast<sr::IWeaverBase1*>(s.glWeaver);
+    // the eyes taken as late as possible: just before the GPU weaves, not when the frame starts (as Samsung's Hub does;
+    // owner 2026-11-26: the head tracking glitched at low frame rates)
+    s.weaver->enableLateLatching(true);
+    // from weave() to the picture on the screen: the weave runs at the end of our frame and the present follows at the
+    // next vertical blank, plus the driver's buffer with vsync: two of the monitor's frames (the runtime's docs; it
+    // turns frames into time with the monitor's refresh rate)
+    s.weaver->setLatencyInFrames(2);
     s.initialize(s.context);
   } catch (...) {
     return fail(s, "the SR runtime failed while starting the weaver");
