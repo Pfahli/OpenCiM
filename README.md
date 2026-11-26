@@ -8,7 +8,7 @@ seasons, night lights, controller support, big maps and a mod system.
 > You need your own copy of **Cities in Motion** (Steam, GOG or retail). Nothing from the game is part of this
 > repository, and OpenCiM never changes the files of your install.
 
-![Your own city](port/src/setup/show/1-own-city.jpg)
+![Cities at night](port/src/setup/show/4-cities-at-night.jpg)
 
 ## Features
 
@@ -44,10 +44,8 @@ seasons, night lights, controller support, big maps and a mod system.
 |---|---|
 | ![Free road building](port/src/setup/show/2-free-road-building.jpg) | ![Rain, snow and autumn](port/src/setup/show/3-rain-snow-autumn.jpg) |
 | *Free road building* | *Rain, snow and autumn* |
-| ![Cities at night](port/src/setup/show/4-cities-at-night.jpg) | ![More ways to run lines](port/src/setup/show/5-more-ways-to-run-lines.jpg) |
-| *Cities at night* | *More ways to run lines* |
-| ![Room to build](port/src/setup/show/6-room-to-build.jpg) | ![A sharper look](port/src/setup/show/7-a-sharper-look.jpg) |
-| *Room to build* | *A sharper look* |
+| ![More ways to run lines](port/src/setup/show/5-more-ways-to-run-lines.jpg) | ![A sharper look](port/src/setup/show/7-a-sharper-look.jpg) |
+| *More ways to run lines* | *A sharper look* |
 
 ![Made to be extended](port/src/setup/show/8-made-to-be-extended.jpg)
 *The mod manager*
