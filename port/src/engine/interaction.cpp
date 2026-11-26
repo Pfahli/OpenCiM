@@ -769,7 +769,14 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views, bool applyShift = 
     // about half a second instead of popping)
     static const ClassInfo* stopCls = vm.findClass("gsTransportStopController");
     float fadeAlpha = 1.0f;
-    if (Object* m = member(vm, c, kModule).object(); m && stopCls && m->cls->isA(stopCls)) {
+    Object* m = member(vm, c, kModule).object();
+    const bool isStop = m && stopCls && m->cls->isA(stopCls);
+    // the grid the target lives in (a stop's parent; a passenger's mood smiley follows a character further down)
+    GridObj* targetGrid = nullptr;
+    for (Object* o = m ? m->parent : nullptr; o && !targetGrid; o = o->parent) targetGrid = dynamic_cast<GridObj*>(o);
+    // stereo 3D: every map tracer (the passengers' mood smileys too, owner 2026-11-26) hides behind what stands in
+    // front of its point
+    if (isStop || (stereoEye() != 0 && targetGrid)) {
       const float dist = std::sqrt(dot(d, d));
       struct Seen {
         std::chrono::steady_clock::time_point at, last;
@@ -785,16 +792,18 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views, bool applyShift = 
       // stereo 3D: always (a bubble over a building that stands in front of its stop looks wrong in depth; owner
       // 2026-11-26 on the Odyssey 3D)
       const bool testObstacles = lowAndClose || stereoEye() != 0;
-      if (now - s.at > std::chrono::milliseconds(150)) {
+      // (the many passengers' smileys less often than the stops' bubbles, each at its own moment)
+      const auto every = std::chrono::milliseconds(isStop ? 150 : 250 + int(reinterpret_cast<uintptr_t>(c) >> 4 & 63));
+      if (now - s.at > every) {
         s.at = now;
         s.hidden = false;
-        if (auto* grid = dynamic_cast<GridObj*>(m->parent); testObstacles && grid && dist > 1.0f) {
-          // to just short of the stop (its shelter and the road under it are no obstacle)
-          const Vec3 end = eye + d * std::max(0.0f, 1.0f - 12.0f / dist);
+        if (GridObj* grid = targetGrid; testObstacles && grid && dist > 1.0f) {
+          // to just short of the point (a stop's shelter and the road under it, a passenger's own body are no obstacle)
+          const Vec3 end = eye + d * std::max(0.0f, 1.0f - (isStop ? 12.0f : 2.5f) / dist);
           s.hidden = intersectGrid(vm, grid, eye, end, true, false).hit() || segmentBlockedByItems(vm, grid, eye, end);
         }
       }
-      const bool far = view->focus > 0 && dist > view->focus * 2.2f + 120.0f;
+      const bool far = isStop && view->focus > 0 && dist > view->focus * 2.2f + 120.0f;
       const float target = (s.hidden || far) ? 0.0f : 1.0f;
       const float dt = fresh ? 1.0f : std::min(0.25f, std::chrono::duration<float>(now - s.last).count());
       s.last = now;
