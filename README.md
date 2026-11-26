@@ -63,8 +63,12 @@ account must own the game.
 You need the Visual Studio 2022 Build Tools with the C++ workload. MSVC, CMake and Ninja are taken from there, and
 every other dependency is bundled in `port/third_party`.
 
+Some files in `port/third_party` (AMD FSR) have long paths, so enable long paths in Git before you clone on Windows:
+
 ```powershell
-cd port
+git config --global core.longpaths true
+git clone https://github.com/Pfahli/OpenCiM.git
+cd OpenCiM\port
 .\build.ps1                 # Release x64 into build\x64-Release
 .\build.ps1 -Config Debug   # or RelWithDebInfo; -Arch x86; -Clean
 ```
