@@ -81,7 +81,7 @@ namespace {
   X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)  \
   X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets)          \
   X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer) X(vkCreatePipelineCache) X(vkDestroyPipelineCache)              \
-  X(vkGetPipelineCacheData)
+  X(vkGetPipelineCacheData) X(vkImportSemaphoreWin32HandleKHR)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -487,6 +487,19 @@ class VkDeviceImpl final : public Device {
   }
   uint32_t importD3D11Texture(void* ntHandle, int w, int h) override;
   void finishGpu() override { submitAndWait(); }
+  uint32_t importD3D11Fence(void* ntHandle) override;
+  void signalFence(uint32_t fence, uint64_t value) override;
+  void destroyFence(uint32_t fence) override {
+    if (!fence || fence > sharedFences_.size() || !sharedFences_[fence - 1]) return;
+    VkSemaphore s = sharedFences_[fence - 1];
+    sharedFences_[fence - 1] = VK_NULL_HANDLE;
+    later([this, s] { vkDestroySemaphore(dev_, s, nullptr); });
+  }
+  void waitFence(uint32_t fence, uint64_t value) override {
+    if (!fence || fence > sharedFences_.size() || !sharedFences_[fence - 1]) return;
+    pendingWaits_.push_back({VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, sharedFences_[fence - 1], value,
+                             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0});
+  }
 
   // ---- buffers and vertex layouts ----
   uint32_t createBuffer() override {
@@ -723,7 +736,10 @@ class VkDeviceImpl final : public Device {
   };
   struct Frame {
     VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;  // the one being recorded: cmds[cmdIndex]
+    // signalFence submits the frame so far and goes on in the next of these (all from the frame's pool, reset with it)
+    std::vector<VkCommandBuffer> cmds;
+    size_t cmdIndex = 0;
     VkFence fence = VK_NULL_HANDLE;
     VkSemaphore acquired = VK_NULL_HANDLE;
     std::vector<std::function<void()>> garbage;
@@ -1103,7 +1119,9 @@ class VkDeviceImpl final : public Device {
   bool timelineSupported_ = false;
   bool hdrWanted_ = false, hdr_ = false, hdrAvailable_ = false, colorspaceExt_ = false, hdrMetadataExt_ = false;
   // Direct3D 11 interop (importD3D11Texture, adapterLuid)
-  bool externalMemWin32_ = false, luidValid_ = false;
+  bool externalMemWin32_ = false, externalSemWin32_ = false, luidValid_ = false;
+  std::vector<VkSemaphore> sharedFences_;            // importD3D11Fence: handle i+1
+  std::vector<VkSemaphoreSubmitInfo> pendingWaits_;  // waitFence: the next submit waits for them
   uint8_t luid_[8] = {};
   float hdrPeak_ = 1000, hdrPaper_ = 200;
   bool fsrReady_ = false;
@@ -1372,6 +1390,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     // textures shared with Direct3D 11 (Leia SR weaving, engine/leiasr.cpp): import of D3D11 textures' NT handles; the
     // adapter's LUID to make the D3D11 device on the same GPU
     externalMemWin32_ = has(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
+    externalSemWin32_ = has(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);  // shared D3D11 fences (GPU-side sync)
     {
       VkPhysicalDeviceIDProperties idp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
       VkPhysicalDeviceProperties2 ip{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &idp};
@@ -1435,6 +1454,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   }
   if (hdrMetadataExt_) dexts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
   if (externalMemWin32_) dexts.push_back(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
+  if (externalSemWin32_ && timelineSupported_) dexts.push_back(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);
   VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f2};
   dci.queueCreateInfoCount = 1;
   dci.pQueueCreateInfos = &qci;
@@ -1466,6 +1486,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, f.pool,
                                     VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
     vkAllocateCommandBuffers(dev_, &cai, &f.cmd);
+    f.cmds.push_back(f.cmd);
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, VK_FENCE_CREATE_SIGNALED_BIT};
     vkCreateFence(dev_, &fci, nullptr, &f.fence);
     VkSemaphoreCreateInfo sci2{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
@@ -1808,6 +1829,8 @@ void VkDeviceImpl::shutdown() {
           if (s) vkDestroySemaphore(dev_, s, nullptr);
       }
     destroySwapchain();
+    for (VkSemaphore s : sharedFences_)
+      if (s) vkDestroySemaphore(dev_, s, nullptr);
     if (timestamps_) vkDestroyQueryPool(dev_, timestamps_, nullptr);
     if (hitBuffer_) vkDestroyBuffer(dev_, hitBuffer_, nullptr);
     if (bindlessPool_) vkDestroyDescriptorPool(dev_, bindlessPool_, nullptr);
@@ -1832,6 +1855,8 @@ void VkDeviceImpl::shutdown() {
 void VkDeviceImpl::beginCommands() {
   Frame& f = frames_[frame_];
   vkResetCommandPool(dev_, f.pool, 0);
+  f.cmdIndex = 0;
+  f.cmd = f.cmds[0];
   VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   vkBeginCommandBuffer(f.cmd, &bi);
@@ -1847,10 +1872,13 @@ void VkDeviceImpl::submitAndWait() {
   VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
   si.commandBufferInfoCount = 1;
   si.pCommandBufferInfos = &cbi;
+  si.waitSemaphoreInfoCount = uint32_t(pendingWaits_.size());  // (waitFence)
+  si.pWaitSemaphoreInfos = pendingWaits_.data();
   {
     std::lock_guard<std::mutex> lk(queueMutex_);
     vkQueueSubmit2(queue_, 1, &si, f.fence);
   }
+  pendingWaits_.clear();
   vkWaitForFences(dev_, 1, &f.fence, VK_TRUE, UINT64_MAX);
   vkResetFences(dev_, 1, &f.fence);
   harvestReads(f);
@@ -1970,6 +1998,8 @@ void VkDeviceImpl::present() {
     who.push_back(x);
   };
   if (presentable) add(f.acquired, presentReady_[image], swapchain_, image, nullptr);
+  waits.insert(waits.end(), pendingWaits_.begin(), pendingWaits_.end());  // (waitFence: another API's work first)
+  pendingWaits_.clear();
   for (auto& x : extra_)
     if (x && x->pending) {
       add(x->acquired[frame_], x->ready[x->image], x->swapchain, x->image, x.get());
@@ -2534,6 +2564,70 @@ uint32_t VkDeviceImpl::importD3D11Texture(void* ntHandle, int w, int h) {
   (void)ntHandle, (void)w, (void)h;
   return 0;
 #endif
+}
+
+// A timeline semaphore on a shared ID3D11Fence (its NT handle; Vulkan's D3D12 fence handle type covers D3D11 fences),
+// so the two APIs take turns on the GPU without the CPU waiting (Leia SR weaving, engine/leiasr.cpp).
+uint32_t VkDeviceImpl::importD3D11Fence(void* ntHandle) {
+#ifdef _WIN32
+  if (!externalSemWin32_ || !timelineSupported_ || !vkImportSemaphoreWin32HandleKHR || !ntHandle) return 0;
+  VkSemaphoreTypeCreateInfo tci{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+  VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &tci};
+  VkSemaphore sem = VK_NULL_HANDLE;
+  if (vkCreateSemaphore(dev_, &sci, nullptr, &sem) != VK_SUCCESS) return 0;
+  VkImportSemaphoreWin32HandleInfoKHR ii{VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR};
+  ii.semaphore = sem;
+  ii.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT;
+  ii.handle = static_cast<HANDLE>(ntHandle);
+  if (VkResult r = vkImportSemaphoreWin32HandleKHR(dev_, &ii); r != VK_SUCCESS) {
+    LOG_WARN("vulkan: %s (a Direct3D 11 fence)", vkError("vkImportSemaphoreWin32HandleKHR", r).c_str());
+    vkDestroySemaphore(dev_, sem, nullptr);
+    return 0;
+  }
+  sharedFences_.push_back(sem);
+  return uint32_t(sharedFences_.size());
+#else
+  (void)ntHandle;
+  return 0;
+#endif
+}
+
+// What was recorded so far goes to the GPU, which sets the fence to `value` when it has run (no CPU wait); the frame
+// goes on in the next command buffer of its pool. The frame's fence (signalled by the present's submit) still covers
+// everything, so ring buffers and garbage keep their life time.
+void VkDeviceImpl::signalFence(uint32_t fence, uint64_t value) {
+  if (!fence || fence > sharedFences_.size() || !sharedFences_[fence - 1]) return;
+  endRendering();
+  Frame& f = frames_[frame_];
+  vkEndCommandBuffer(f.cmd);
+  VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, f.cmd, 0};
+  VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, sharedFences_[fence - 1], value,
+                               VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
+  VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+  si.commandBufferInfoCount = 1;
+  si.pCommandBufferInfos = &cbi;
+  si.signalSemaphoreInfoCount = 1;
+  si.pSignalSemaphoreInfos = &signal;
+  si.waitSemaphoreInfoCount = uint32_t(pendingWaits_.size());
+  si.pWaitSemaphoreInfos = pendingWaits_.data();
+  {
+    std::lock_guard<std::mutex> lk(queueMutex_);
+    vkQueueSubmit2(queue_, 1, &si, VK_NULL_HANDLE);
+  }
+  pendingWaits_.clear();
+  if (++f.cmdIndex == f.cmds.size()) {
+    VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, f.pool,
+                                    VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(dev_, &cai, &cb);
+    f.cmds.push_back(cb);
+  }
+  f.cmd = f.cmds[f.cmdIndex];
+  VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(f.cmd, &bi);
+  recording_ = true;
+  resetRecorded();  // a new command buffer has no state
 }
 
 void VkDeviceImpl::texImage(uint32_t tex, int face, int level, Format f, int w, int h, Pixels p, const void* data,

@@ -211,6 +211,15 @@ class Device {
   // Runs everything recorded so far and waits for it, so another API may read what was drawn (and after it wrote,
   // the device reads the new contents).
   virtual void finishGpu() {}
+  // Taking turns with Direct3D 11 on the GPU instead (no CPU wait): a shared ID3D11Fence (its NT handle) as a fence of
+  // this device (0 when not supported: Vulkan without VK_KHR_external_semaphore_win32 or timeline semaphores, OpenGL);
+  // signalFence submits what was recorded so far and has the GPU set the fence to `value` when it has run (drawing
+  // goes on in the same frame); waitFence makes the next submit wait on the GPU until the fence reaches `value`.
+  // destroyFence lets it go once the GPU is done with it.
+  virtual uint32_t importD3D11Fence(void* ntHandle) { (void)ntHandle; return 0; }
+  virtual void signalFence(uint32_t fence, uint64_t value) { (void)fence, (void)value; }
+  virtual void waitFence(uint32_t fence, uint64_t value) { (void)fence, (void)value; }
+  virtual void destroyFence(uint32_t fence) { (void)fence; }
   // Another library drew with this device's own API (OpenGL) and left its state: what the device remembers of it
   // (current program, active texture unit) is forgotten.
   virtual void externalStateChanged() {}

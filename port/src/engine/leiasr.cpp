@@ -46,7 +46,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <d3d11.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
 #endif
 
@@ -216,6 +216,8 @@ struct SrState {
   sr::PtrFn lensDisable = nullptr, deleteLensContext = nullptr, deleteEyeListener = nullptr;
   sr::PtrRetFn deleteLensHint = nullptr;
   float debugTimer = 0;
+  float waitMs = 0, weaveMs = 0, frameMs = 0;  // REGS_DEBUG_LEIASR: summed since the last log line
+  int timedFrames = 0;
   // OpenGL: the views side by side
   render::RenderTarget glViews;
   // Vulkan: Direct3D 11 and the shared textures
@@ -228,6 +230,13 @@ struct SrState {
   ID3D11RenderTargetView* outView = nullptr;
   HANDLE inHandle = nullptr, outHandle = nullptr;
   uint32_t vkIn = 0, vkOut = 0, fbIn = 0, fbOut = 0;
+  // GPU-side turns (2026-11-26, owner: Leia SR was laggy while side by side was fast; the CPU waited ~30 ms a frame for
+  // Vulkan): a shared D3D11 fence, imported by Vulkan; null: the CPU waits as before
+  ID3D11DeviceContext4* d3dc4 = nullptr;
+  ID3D11Fence* fence = nullptr;
+  HANDLE fenceHandle = nullptr;
+  uint32_t vkFence = 0;
+  uint64_t fenceValue = 0;
   int w = 0, h = 0;
   bool loggedFirst = false;
 };
@@ -374,6 +383,17 @@ bool makeD3D(SrState& s) {
   if (FAILED(hr)) return fail(s, "no Direct3D 11 device for the weaver");
   D3D11_QUERY_DESC qd{D3D11_QUERY_EVENT, 0};
   s.d3d->CreateQuery(&qd, &s.done);
+  // the shared fence for GPU-side turns (Direct3D 11.4 and Vulkan's external semaphores; without them the CPU waits)
+  ID3D11Device5* d5 = nullptr;
+  if (SUCCEEDED(s.d3d->QueryInterface(__uuidof(ID3D11Device5), reinterpret_cast<void**>(&d5))) &&
+      SUCCEEDED(s.d3dc->QueryInterface(__uuidof(ID3D11DeviceContext4), reinterpret_cast<void**>(&s.d3dc4))) &&
+      SUCCEEDED(d5->CreateFence(0, D3D11_FENCE_FLAG_SHARED, __uuidof(ID3D11Fence), reinterpret_cast<void**>(&s.fence))) &&
+      SUCCEEDED(s.fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &s.fenceHandle)))
+    s.vkFence = render::gpu::dev().importD3D11Fence(s.fenceHandle);
+  if (d5) d5->Release();
+  s.fenceValue = 0;
+  LOG_INFO("Leia SR: %s", s.vkFence ? "Vulkan and Direct3D 11 take turns on the GPU (shared fence)"
+                                    : "no shared fence: the CPU waits for each API in turn");
   return true;
 }
 
@@ -497,6 +517,12 @@ void stop(Display& d, SrState& s, bool gpu = true) {
   s.context = nullptr;
   lensOff(s);
   freeTextures(d, s, gpu && render::gpu::hasDevice());
+  if (s.vkFence && gpu && render::gpu::hasDevice()) render::gpu::dev().destroyFence(s.vkFence);
+  s.vkFence = 0;
+  if (s.fenceHandle) CloseHandle(s.fenceHandle);
+  s.fenceHandle = nullptr;
+  release(s.fence);
+  release(s.d3dc4);
   release(s.done);
   release(s.d3dc);
   release(s.d3d);
@@ -537,10 +563,32 @@ bool leiaSrPresent(Display& d, script::VM& vm, int w, int h) {
   render::gpu::Device& g = render::gpu::dev();
   const int viewW = w / 2;
   try {
-    if (s.dxWeaver) {
-      // Vulkan: the views into the shared texture (rows as Direct3D has them), run, then the weave in D3D11
+    if (s.dxWeaver && s.vkFence) {
+      // Vulkan: the views into the shared texture (rows as Direct3D has them); the GPU takes turns through the fence:
+      // Vulkan's part sets it to a, D3D11 waits for a, weaves and sets b, Vulkan's copy into its back buffer waits for b
       if (!stereoCompose(d, vm, kStereoSideBySide, w, h, s.fbIn, true)) return false;
+      const uint64_t a = ++s.fenceValue, b = ++s.fenceValue;
+      const auto tWeave0 = std::chrono::steady_clock::now();
+      g.signalFence(s.vkFence, a);
+      s.d3dc4->Wait(s.fence, a);
+      s.d3dc->OMSetRenderTargets(1, &s.outView, nullptr);
+      D3D11_VIEWPORT vp{0, 0, float(w), float(h), 0, 1};
+      s.d3dc->RSSetViewports(1, &vp);
+      s.dxWeaver->setInputViewTexture(s.inView, viewW, h, DXGI_FORMAT_B8G8R8A8_UNORM);
+      s.dxWeaver->weave();
+      s.d3dc4->Signal(s.fence, b);
+      s.d3dc->Flush();
+      g.waitFence(s.vkFence, b);
+      g.blit(s.fbOut, 0, 0, 0, w, h, 0, h, w, 0, true, false);
+      s.weaveMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - tWeave0).count();
+      ++s.timedFrames;
+    } else if (s.dxWeaver) {
+      // Vulkan without a shared fence: the views into the shared texture (rows as Direct3D has them), run, then the
+      // weave in D3D11
+      if (!stereoCompose(d, vm, kStereoSideBySide, w, h, s.fbIn, true)) return false;
+      const auto tWait0 = std::chrono::steady_clock::now();
       g.finishGpu();
+      const auto tWeave0 = std::chrono::steady_clock::now();
       s.d3dc->OMSetRenderTargets(1, &s.outView, nullptr);
       D3D11_VIEWPORT vp{0, 0, float(w), float(h), 0, 1};
       s.d3dc->RSSetViewports(1, &vp);
@@ -553,6 +601,10 @@ bool leiaSrPresent(Display& d, script::VM& vm, int w, int h) {
         if (std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(200)) break;
         std::this_thread::yield();
       }
+      const auto tEnd = std::chrono::steady_clock::now();
+      s.waitMs += std::chrono::duration<float, std::milli>(tWeave0 - tWait0).count();
+      s.weaveMs += std::chrono::duration<float, std::milli>(tEnd - tWeave0).count();
+      ++s.timedFrames;
       // the woven picture into the back buffer, rows turned back to the device's own order
       g.blit(s.fbOut, 0, 0, 0, w, h, 0, h, w, 0, true, false);
     } else {
@@ -577,8 +629,14 @@ bool leiaSrPresent(Display& d, script::VM& vm, int w, int h) {
   }
   // REGS_DEBUG_LEIASR=1: once a second, the weaver's predicted eyes and what the eye tracker sent
   static const bool debug = regs::envVar("REGS_DEBUG_LEIASR") != nullptr;
+  if (debug) s.frameMs += vm.frameDt() * 1000.0f;
   if (debug && (s.debugTimer += vm.frameDt()) >= 1.0f) {
     s.debugTimer = 0;
+    if (s.timedFrames > 0)
+      LOG_INFO("Leia SR: %d frames, frame %.1f ms: waiting for Vulkan %.1f ms, D3D11 weave and wait %.1f ms", s.timedFrames,
+               s.frameMs / float(s.timedFrames), s.waitMs / float(s.timedFrames), s.weaveMs / float(s.timedFrames));
+    s.waitMs = s.weaveMs = s.frameMs = 0;
+    s.timedFrames = 0;
     float l[3] = {}, r[3] = {};
     s.weaver->getPredictedEyePositions(l, r);
     Eyes& e = eyes();
