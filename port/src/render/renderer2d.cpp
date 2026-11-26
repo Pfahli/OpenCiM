@@ -16,12 +16,14 @@ layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec2 aUv;
 layout(location = 2) in vec4 aColor;
 uniform mat4 uMatrix;
+uniform float uDepth;  // NDC depth for setDepth (map tracers tested against the scene), else 0
 out vec2 vUv;
 out vec4 vColor;
 void main() {
   vUv = aUv;
   vColor = aColor;
   gl_Position = uMatrix * vec4(aPos, 0.0, 1.0);
+  gl_Position.z = uDepth;
 }
 )";
 
@@ -66,6 +68,7 @@ bool Renderer2D::init(std::string* error) {
   uTextured_ = d.uniformLocation(program_, "uTextured");
   uTex_ = d.uniformLocation(program_, "uTex");
   uSharp_ = d.uniformLocation(program_, "uSharp");
+  uDepth_ = d.uniformLocation(program_, "uDepth");
   vbo_ = d.createBuffer();
   const gpu::VertexAttrib attrs[3] = {
       {0, 2, gpu::AttribType::Float, vbo_, int(sizeof(GuiVertex)), offsetof(GuiVertex, x)},
@@ -209,14 +212,34 @@ void Renderer2D::beginFrame(int width, int height, uint32_t clearArgb, bool devi
   d.useProgram(program_);
   d.uniform1i(uTex_, 0);
   d.uniform1f(uSharp_, sharpScale > 1 ? sharpScale : 0.0f);
+  d.uniform1f(uDepth_, 0.0f);
+  depthOn_ = false;
+  depth_ = 0;
   d.bindVertexInput(vao_);
   setProjection(0, 0, float(width), float(height), float(width), float(height));
 }
 
 void Renderer2D::endFrame() { flush(); }
 
+void Renderer2D::setDepth(bool on, float ndcDepth) {
+  if (on == depthOn_ && (!on || ndcDepth == depth_)) return;
+  flush();
+  gpu::Device& d = gpu::dev();
+  depthOn_ = on;
+  depth_ = on ? ndcDepth : 0.0f;
+  d.uniform1f(uDepth_, depth_);
+  d.depthTest(on);
+  if (on) {
+    d.depthFunc(gpu::Compare::LEqual);
+    d.depthMask(false);
+  }
+}
+
 void Renderer2D::resume() {
   gpu::Device& d = gpu::dev();
+  depthOn_ = false;
+  depth_ = 0;
+  d.uniform1f(uDepth_, 0.0f);
   d.depthTest(false);
   d.cull(false);
   d.blend(true);
@@ -278,10 +301,13 @@ void Renderer2D::drawWithProgram(uint32_t prog, const uint32_t* textures, int te
     d.bindTexture(i, textures[i]);
   }
   uint32_t keepTex = batchTex_;
+  if (depthOn_) d.depthTest(false);  // (a material program sets no depth of its own)
   draw(textures && textureCount ? textures[0] : 0, prim, v, n);
   flushWith(false);
+  if (depthOn_) d.depthTest(true);
   batchTex_ = keepTex;
   d.useProgram(program_);
+  d.uniform1f(uDepth_, depth_);
 }
 
 void Renderer2D::setScissor(int x, int y, int w, int h) {

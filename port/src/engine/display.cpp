@@ -641,6 +641,15 @@ struct GuiPass {
       d.r2d().flushAll();
       d.r2d().setBlur(std::max(soft.before, float(vm.toFloat(b->second))));
     }
+    // stereo 3D: a map tracer (stop bubble, passenger smiley) and its parts at its point's depth, hidden pixel by
+    // pixel by the scene in front of it (engine/interaction.cpp sets <regsDepth>)
+    struct Deep {
+      render::Renderer2D& r;
+      bool on;
+      float before;
+      ~Deep() { r.setDepth(on, before); }
+    } deep{d.r2d(), d.r2d().depthOn(), d.r2d().depth()};
+    if (auto z = c->fieldValues.find(u"<regsDepth>"); z != c->fieldValues.end()) d.r2d().setDepth(true, float(vm.toFloat(z->second)));
     if (c->cls->name == "gsViewPort") {
       renderViewportScene(d, vm, c);  // fills its render target first
       tracerViews.clear();            // it eased its camera: later tracers project with the new one

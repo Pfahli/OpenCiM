@@ -73,6 +73,10 @@ struct ViewOverride {
 void renderViewportScene(Display& d, script::VM& vm, ControlObj* viewport, const ViewOverride* ov = nullptr);
 // The on-screen viewport that drew a map (a scene with a grid) in the last frame, and its camera; null in the menus.
 void sceneFrameBegin();  // Display::renderFrame, once a frame (lastMapViewport's age)
+// Stereo 3D: whether vp is an on-screen map view drawn this frame for an eye, with its projection's depth terms (a point
+// at view distance z has NDC depth −p22 + p23 / z). Its depth is then in the window's depth buffer under it, for the
+// GUI's map tracers (bubbles, smileys) to be depth-tested against (engine/display.cpp).
+bool mapViewDepthTerms(const ControlObj* vp, float& p22, float& p23);
 script::Object* viewportScene(script::VM& vm, ControlObj* viewport);
 ControlObj* lastMapViewport();
 script::Object* lastMapCamera();

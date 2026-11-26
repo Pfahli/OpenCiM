@@ -99,7 +99,7 @@ void headTrackFrame(script::VM& vm, float dt) {
   HeadState& s = state();
   bool on = settingNumber(vm, u"regsHeadTracking", 0) > 0;
   if (const char* e = regs::envVar("REGS_HEADTRACK")) on = std::atoi(e) != 0;
-  s.strength = std::clamp(settingNumber(vm, u"regsHeadTrackingStrength", 100), 0.0f, 200.0f) / 100.0f;
+  s.strength = std::clamp(settingNumber(vm, u"regsHeadTrackingStrength", 100), 0.0f, 400.0f) / 100.0f;
   if (on != s.on) {
     s.on = on;
     if (on && !s.test) {

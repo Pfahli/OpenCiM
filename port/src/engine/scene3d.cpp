@@ -637,9 +637,25 @@ namespace {
 Ref<ControlObj> g_mapViewport;  // the last frame's map view (pop-out views draw its scene)
 Ref<Object> g_mapCamera;
 uint64_t g_mapFrame = 0, g_frameNo = 0;
+// stereo 3D: this frame's on-screen map views and their projection's depth terms (P22, P23)
+std::unordered_map<const ControlObj*, std::pair<float, float>>& mapDepthTerms() {
+  static std::unordered_map<const ControlObj*, std::pair<float, float>> m;
+  return m;
+}
 }  // namespace
 
-void sceneFrameBegin() { ++g_frameNo; }
+void sceneFrameBegin() {
+  ++g_frameNo;
+  mapDepthTerms().clear();
+}
+
+bool mapViewDepthTerms(const ControlObj* vp, float& p22, float& p23) {
+  auto it = mapDepthTerms().find(vp);
+  if (it == mapDepthTerms().end()) return false;
+  p22 = it->second.first;
+  p23 = it->second.second;
+  return true;
+}
 
 Object* viewportScene(VM& vm, ControlObj* vp) { return vp ? fieldOf(vm, vp, u"scene").object() : nullptr; }
 
@@ -771,6 +787,8 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
   // shifted; culling uses the eye's matrices, but level of detail, billboards, the sky and the shadow fit keep the
   // camera's own eye, so both pictures hold the same things
   const bool stereoView = !ov && !rt && stereoEye() != 0;
+  // its depth terms for the map tracers drawn over it (mapViewDepthTerms; the eye's shift leaves depth alone)
+  if (stereoView && !grids.empty()) mapDepthTerms()[vp] = {v.proj.at(2, 2), v.proj.at(2, 3)};
   if (stereoView) {
     Vec3 se = eye, sl = look;
     stereoCamera(vm, se, sl, up, v.proj);
@@ -1015,6 +1033,17 @@ void renderViewportScene(Display& d, VM& vm, ControlObj* vp, const ViewOverride*
     Vec3 toTarget = look - eye;
     styleFinish(d, vm, x, y, w, h, bw, bh, nearZ, farZ * viewScale, std::sqrt(dot(toTarget, toTarget)), postHooks ? &v : nullptr);
     d.r3d().end(bw, bh);
+  }
+  // stereo 3D: the scene's depth into the window's depth buffer under the view (owner 2026-11-26: the bubbles and
+  // smileys hidden by what stands in front of them, pixel by pixel), so the GUI's map tracers can be depth-tested
+  // against it (engine/display.cpp); drawn straight into the back buffer it is there already
+  if (stereoView && !grids.empty() && !temporal.active) {
+    const RenderTarget* src = hdr ? hdr : styled;
+    if (!src && !rt && d.antialiasing > 0 && (!vp->parentControl() || (clear >> 24))) src = msaaTarget(d, w, h, d.antialiasing);
+    if (src) {
+      render::gpu::dev().scissorTest(false);
+      render::gpu::dev().blit(src->msFbo ? src->msFbo : src->fbo, 0, 0, 0, w, h, x, bh - y - h, x + w, bh - y, false, true);
+    }
   }
   if (!rt) hdrExpandView(d, vm, x, y, w, h, bw, bh);  // HDR output: the view's highlights, before the GUI over it
   if (!rt) temporalHudless(d, vm, x, y, w, h, bw, bh);  // frame generation: the view before the GUI

@@ -774,9 +774,20 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views, bool applyShift = 
     // the grid the target lives in (a stop's parent; a passenger's mood smiley follows a character further down)
     GridObj* targetGrid = nullptr;
     for (Object* o = m ? m->parent : nullptr; o && !targetGrid; o = o->parent) targetGrid = dynamic_cast<GridObj*>(o);
-    // stereo 3D: every map tracer (the passengers' mood smileys too, owner 2026-11-26) hides behind what stands in
-    // front of its point
-    if (isStop || (stereoEye() != 0 && targetGrid)) {
+    // stereo 3D: the tracer is drawn at its point's depth and the scene hides it pixel by pixel (owner 2026-11-26: "real
+    // object occlusion" for the bubbles and the passengers' smileys; engine/display.cpp, scene3d.cpp), a little nearer
+    // than the point so its own stop or passenger does not cover it
+    float p22 = 0, p23 = 0;
+    const bool depthTested = stereoEye() != 0 && targetGrid && mapViewDepthTerms(view->vp, p22, p23);
+    if (depthTested) {
+      const float zz = std::max(z - (isStop ? 12.0f : 4.0f), 0.5f);
+      c->fieldValues[u"<regsDepth>"] = Value::real(std::clamp(-p22 + p23 / zz, -1.0f, 1.0f));
+    } else {
+      c->fieldValues.erase(u"<regsDepth>");
+    }
+    // without that depth (2D, or no map view drawn this frame): the whole tracer hides behind what stands in front of
+    // its point, the stops' bubbles as before, in stereo the passengers' smileys too
+    if (isStop || (stereoEye() != 0 && targetGrid && !depthTested)) {
       const float dist = std::sqrt(dot(d, d));
       struct Seen {
         std::chrono::steady_clock::time_point at, last;
@@ -791,7 +802,7 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views, bool applyShift = 
       const bool lowAndClose = -view->fwd.y < 0.64f && view->focus > 0 && view->focus < 260.0f;  // under ~40°, near
       // stereo 3D: always (a bubble over a building that stands in front of its stop looks wrong in depth; owner
       // 2026-11-26 on the Odyssey 3D)
-      const bool testObstacles = lowAndClose || stereoEye() != 0;
+      const bool testObstacles = !depthTested && (lowAndClose || stereoEye() != 0);
       // (the many passengers' smileys less often than the stops' bubbles, each at its own moment)
       const auto every = std::chrono::milliseconds(isStop ? 150 : 250 + int(reinterpret_cast<uintptr_t>(c) >> 4 & 63));
       if (now - s.at > every) {

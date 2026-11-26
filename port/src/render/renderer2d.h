@@ -68,6 +68,12 @@ class Renderer2D {
   // every triangle drawn again on a ring of `px` pixels, its alpha shared out
   void setBlur(float px) { blur_ = px; }
   float blur() const { return blur_; }
+  // Stereo 3D (2026-11-26): what is drawn until it is turned off lies at this NDC depth and is tested (≤) against the
+  // window's depth buffer, which holds the map view's scene there (engine/scene3d.cpp), without writing it: a stop's
+  // bubble is hidden pixel by pixel where a building stands in front of the stop
+  void setDepth(bool on, float ndcDepth = 0);
+  bool depthOn() const { return depthOn_; }
+  float depth() const { return depth_; }
 
   // Hand the context to other GL code (the 3D pass) and take it back with the same projection and scissor.
   void flushAll() { flush(); }
@@ -97,7 +103,9 @@ class Renderer2D {
   uint32_t batchTex_ = 0;
   std::vector<GuiVertex> batch_;
   uint32_t program_ = 0, vao_ = 0, vbo_ = 0;
-  int uMatrix_ = -1, uTextured_ = -1, uTex_ = -1, uSharp_ = -1;
+  int uMatrix_ = -1, uTextured_ = -1, uTex_ = -1, uSharp_ = -1, uDepth_ = -1;
+  bool depthOn_ = false;
+  float depth_ = 0;
   void wideLine(const GuiVertex& a, const GuiVertex& b);
   size_t vboSize_ = 0;
   int fw_ = 0, fh_ = 0;
