@@ -470,6 +470,22 @@ OpenStreetMap, ARM, mod manager,
 multiplayer, cloud saves, RetroAchievements, …) are
 collected in `docs/ideas.md`.
 
-Third-party code in the tree: miniaudio 0.11.21 (`third_party/miniaudio`, public domain / MIT-0) for the audio device
-and the WAV/MP3 decoders. Others that would speed things up (SDL2 for windows and input on every platform) are not
-used yet; adding them means downloading them, which is a separate decision.
+## License
+
+ReGS / OpenCiM is free software under the GNU General Public License, version 3 or (at your option) any later
+version (GPL-3.0-or-later); the full text is in [`../LICENSE`](../LICENSE). It covers the port's own code, tools,
+shaders, scripts and documentation. Cities in Motion and its data (scripts, models, textures, sounds, maps) belong
+to their owners and are not part of this tree or of this license; the port needs an installed copy of the game.
+
+Third-party code in the tree keeps its own license (each folder has its license file):
+
+| Folder | Use | License |
+|---|---|---|
+| `third_party/miniaudio` (0.11.21) | audio device, WAV/MP3 decoders | public domain / MIT-0 |
+| `third_party/fidelityfx-fsr` | FSR upscaling | MIT |
+| `third_party/glslang` | GLSL to SPIR-V compiler | BSD-2/3-Clause, MIT, Apache-2.0 and others (see its `LICENSES`) |
+| `third_party/vulkan-headers` | Vulkan API headers | Apache-2.0 / MIT |
+| `third_party/kenney-input-prompts` | controller button pictures | CC0 |
+
+Others that would speed things up (SDL2 for windows and input on every platform) are not used yet; adding them means
+downloading them, which is a separate decision.
