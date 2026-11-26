@@ -650,6 +650,40 @@ struct GuiPass {
       ~Deep() { r.setDepth(on, before); }
     } deep{d.r2d(), d.r2d().depthOn(), d.r2d().depth()};
     if (auto z = c->fieldValues.find(u"<regsDepth>"); z != c->fieldValues.end()) d.r2d().setDepth(true, float(vm.toFloat(z->second)));
+    // a stop's bubble smaller with distance (engine/interaction.cpp sets <regsScale>): it and its parts drawn scaled
+    // about its anchor, the point on its stop (the projection and the pass's pixel mapping both)
+    struct Scaled {
+      GuiPass& p;
+      bool on = false;
+      float proj[6] = {}, vx = 0, vy = 0, u = 1;
+      ~Scaled() {
+        if (!on) return;
+        p.d.r2d().setProjection(proj[0], proj[1], proj[2], proj[3], proj[4], proj[5]);
+        p.vpX = vx, p.vpY = vy, p.unit = u;
+      }
+    } scaled{*this};
+    if (auto sc = c->fieldValues.find(u"<regsScale>"); sc != c->fieldValues.end()) {
+      const float s = float(vm.toFloat(sc->second));
+      auto num = [&](const char16_t* n, float def) {
+        auto f = c->fieldValues.find(n);
+        return f == c->fieldValues.end() || f->second.isNone() ? def : float(vm.toFloat(f->second));
+      };
+      const float ax = c->desktopLeft() + c->width * num(u"anchorX", 0.5f);
+      const float ay = c->desktopTop() + c->height * num(u"anchorY", 0.5f);
+      float pr[6];
+      d.r2d().projection(pr);
+      if (s > 0.05f && s < 1.0f && pr[4] > 0 && pr[5] > 0) {
+        scaled.on = true;
+        std::copy(pr, pr + 6, scaled.proj);
+        scaled.vx = vpX, scaled.vy = vpY, scaled.u = unit;
+        const float kx = pr[2] / pr[4], ky = pr[3] / pr[5];  // window pixels per unit
+        const float apx = pr[0] + ax * kx, apy = pr[1] + ay * ky;
+        d.r2d().setProjection(apx - ax * kx * s, apy - ay * ky * s, pr[2] * s, pr[3] * s, pr[4], pr[5]);
+        const float avx = vpX + ax * unit, avy = vpY + ay * unit;
+        unit *= s;
+        vpX = avx - ax * unit, vpY = avy - ay * unit;
+      }
+    }
     if (c->cls->name == "gsViewPort") {
       renderViewportScene(d, vm, c);  // fills its render target first
       tracerViews.clear();            // it eased its camera: later tracers project with the new one

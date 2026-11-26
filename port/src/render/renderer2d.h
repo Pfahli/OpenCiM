@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -60,6 +61,8 @@ class Renderer2D {
   // Coordinate system for following draws: x in [0, unitsW), y in [0, unitsH) top-down, mapped onto the pixel
   // rectangle (top-left origin). A GUI viewport uses its height as one unit unless it is in pixel mode.
   void setProjection(float px, float py, float pw, float ph, float unitsW, float unitsH);
+  // the current projection's six values (px, py, pw, ph, unitsW, unitsH)
+  void projection(float out[6]) const { std::copy(proj_, proj_ + 6, out); }
   // Scissor in window pixels (top-left origin); w or h < 0 disables it.
   void setScissor(int x, int y, int w, int h);
 

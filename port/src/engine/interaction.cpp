@@ -827,6 +827,16 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views, bool applyShift = 
       }
       fadeAlpha = s.alpha;
     }
+    // a stop's bubble smaller with distance (owner 2026-11-26: "the station bubbles in the distance get smaller"): full
+    // size up to the camera's look point, then as (look distance / distance)^0.75, at least 45 %; the GUI draws it and
+    // its parts scaled about its anchor (engine/display.cpp)
+    if (isStop && view->focus > 0) {
+      const float scale = std::clamp(std::pow(view->focus / std::max(z, 1.0f), 0.75f), 0.45f, 1.0f);
+      if (scale < 0.99f) c->fieldValues[u"<regsScale>"] = Value::real(scale);
+      else c->fieldValues.erase(u"<regsScale>");
+    } else {
+      c->fieldValues.erase(u"<regsScale>");
+    }
     float sx = view->left + (nx + 1) * 0.5f * w, sy = view->top + (1 - ny) * 0.5f * h;
     // stereo 3D: moved sideways for the eye being drawn as the scene's point is, so the bubble lies at its stop's
     // depth instead of on the screen plane
