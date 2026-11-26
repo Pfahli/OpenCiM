@@ -113,8 +113,8 @@ Multiplayer is being built and is not in the releases yet:
 
 | | |
 |---|---|
-| ![Curved streets and a roundabout](port/src/setup/show/2-free-road-building.jpg) | ![Snow in the old town](port/src/setup/show/3-rain-snow-autumn.jpg) |
-| *A suburb laid out with the free road tools: curved streets, a roundabout and junctions at any angle.* | *Winter in the old town: snow settles on roofs and squares, and cars leave tracks in the streets.* |
+| ![A suburb with tilt-shift](port/src/setup/show/2-free-road-building.jpg) | ![Snow in the old town](port/src/setup/show/3-rain-snow-autumn.jpg) |
+| *A suburb with tilt-shift and soft shadows.* | *Winter in the old town: snow settles on roofs and squares, and cars leave tracks in the streets.* |
 | ![A tram on a tree-lined avenue](port/src/setup/show/5-more-ways-to-run-lines.jpg) | ![The market square with tilt-shift](port/src/setup/show/7-a-sharper-look.jpg) |
 | *A low-floor tram at its stop on a tree-lined avenue.* | *Tilt-shift, soft shadows and colour grading turn the market square into a model town.* |
 | ![Controller settings](screenshots/controller.jpg) | ![Advanced graphics settings](screenshots/graphics-settings.jpg) |
