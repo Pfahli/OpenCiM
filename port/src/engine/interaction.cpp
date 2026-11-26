@@ -798,8 +798,9 @@ void placeTracerIn(VM& vm, ControlObj* c, TracerViews* views, bool applyShift = 
         s.at = now;
         s.hidden = false;
         if (GridObj* grid = targetGrid; testObstacles && grid && dist > 1.0f) {
-          // to just short of the point (a stop's shelter and the road under it, a passenger's own body are no obstacle)
-          const Vec3 end = eye + d * std::max(0.0f, 1.0f - (isStop ? 12.0f : 2.5f) / dist);
+          // to just short of the point: a stop's shelter and the road under it are no obstacle, nor for the passengers
+          // waiting in it (with a shorter margin the shelter hid every waiting passenger's smiley, 2026-11-26)
+          const Vec3 end = eye + d * std::max(0.0f, 1.0f - 12.0f / dist);
           s.hidden = intersectGrid(vm, grid, eye, end, true, false).hit() || segmentBlockedByItems(vm, grid, eye, end);
         }
       }
