@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <typeindex>
@@ -99,10 +100,16 @@ using ContextMemberFn = void (*)(void* self);        // void SRContext::initiali
 using DeleteContextFn = void (*)(void* context);     // static void SRContext::deleteSRContext(SRContext*)
 using CreateGLWeaverFn = int (*)(void* context, HWND, IGLWeaver1**);  // the SRContext& is passed as a pointer
 using CreateDX11WeaverFn = int (*)(void* context, ID3D11DeviceContext*, HWND, IDX11Weaver1**);
-// the C functions (lens request)
+// the C functions (lens request, eye tracker)
 using NewCFn = void* (*)();
 using PtrFn = void (*)(void*);
 using PtrRetFn = void* (*)(void*);
+struct EyePair {  // SR_eyePair: mm, display coordinates (x right, y up, z out of the screen)
+  uint64_t frameId, timeUs;
+  double left[3], right[3];
+};
+using EyePairCallback = void (*)(const EyePair* pair);  // (x64: the 64-byte struct by value arrives as a pointer)
+using CreateListenerFn = void* (*)(void* tracker, EyePairCallback callback);
 constexpr int kNonBlockingClientMode = 5;  // NetworkMode: fails at once when SRService does not answer
 constexpr unsigned kGlRgba8 = 0x8058;
 }  // namespace sr
@@ -201,11 +208,14 @@ struct SrState {
   sr::IGLWeaver1* glWeaver = nullptr;
   sr::IDX11Weaver1* dxWeaver = nullptr;
   sr::IWeaverBase1* weaver = nullptr;  // whichever runs
-  // the lens request (C functions, its own context)
+  // the lens request and the eye tracker (C functions, their own context)
   void* lensContext = nullptr;
   void* lensHint = nullptr;
-  sr::PtrFn lensDisable = nullptr, deleteLensContext = nullptr;
+  void* eyeListener = nullptr;
+  HMODULE faces = nullptr;
+  sr::PtrFn lensDisable = nullptr, deleteLensContext = nullptr, deleteEyeListener = nullptr;
   sr::PtrRetFn deleteLensHint = nullptr;
+  float debugTimer = 0;
   // OpenGL: the views side by side
   render::RenderTarget glViews;
   // Vulkan: Direct3D 11 and the shared textures
@@ -225,6 +235,26 @@ struct SrState {
 SrState& state() {
   static SrState s;
   return s;
+}
+
+// the newest eye pair from the runtime's eye tracker (its thread writes, the game's reads)
+struct Eyes {
+  std::mutex m;
+  sr::EyePair pair{};
+  uint64_t count = 0;
+  std::chrono::steady_clock::time_point at{};
+};
+Eyes& eyes() {
+  static Eyes e;
+  return e;
+}
+void onEyePair(const sr::EyePair* p) {
+  if (!p) return;
+  Eyes& e = eyes();
+  std::lock_guard<std::mutex> lk(e.m);
+  e.pair = *p;
+  ++e.count;
+  e.at = std::chrono::steady_clock::now();
 }
 
 template <class T>
@@ -268,18 +298,37 @@ void lensOn(SrState& s) {
   auto enable = reinterpret_cast<sr::PtrFn>(GetProcAddress(s.displays, "lensEnableHint"));
   s.lensDisable = reinterpret_cast<sr::PtrFn>(GetProcAddress(s.displays, "lensDisableHint"));
   if (!newCtx || !init || !s.deleteLensContext || !createHint || !s.deleteLensHint || !enable || !s.lensDisable) return;
+  // the eye tracker (SimulatedRealityFaceTrackers.dll): the eyes for head tracking, straight from the tracker; a
+  // listener also keeps the service's face tracking running for this program
+  const LeiaSrInfo& info = leiaSrDetected();
+  if (!s.faces)
+    s.faces = LoadLibraryExW((info.bin + L"\\SimulatedRealityFaceTrackers.dll").c_str(), nullptr,
+                             LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
+  auto createTracker = s.faces ? reinterpret_cast<sr::PtrRetFn>(GetProcAddress(s.faces, "createEyeTracker")) : nullptr;
+  auto createListener = s.faces ? reinterpret_cast<sr::CreateListenerFn>(GetProcAddress(s.faces, "createEyePairListener")) : nullptr;
+  s.deleteEyeListener = s.faces ? reinterpret_cast<sr::PtrFn>(GetProcAddress(s.faces, "deleteEyePairListener")) : nullptr;
   try {
     s.lensContext = newCtx();
     if (!s.lensContext) return;
-    s.lensHint = createHint(s.lensContext);  // the hint before the context is initialised (as the SR Hub does)
+    s.lensHint = createHint(s.lensContext);  // the hint and senses before the context is initialised (as the SR Hub does)
+    if (createTracker && createListener) {
+      if (void* tracker = createTracker(s.lensContext)) s.eyeListener = createListener(tracker, onEyePair);
+    }
+    if (!s.eyeListener) LOG_WARN("Leia SR: no eye tracker listener (SimulatedRealityFaceTrackers.dll)");
     init(s.lensContext);
     if (s.lensHint) enable(s.lensHint);
   } catch (...) {
     s.lensHint = nullptr;
+    s.eyeListener = nullptr;
   }
 }
 
 void lensOff(SrState& s) {
+  try {
+    if (s.eyeListener && s.deleteEyeListener) s.deleteEyeListener(s.eyeListener);
+  } catch (...) {
+  }
+  s.eyeListener = nullptr;
   try {
     if (s.lensHint) {
       s.lensDisable(s.lensHint);
@@ -328,13 +377,18 @@ bool makeD3D(SrState& s) {
   return true;
 }
 
-void freeTextures(Display& d, SrState& s) {
-  render::gpu::Device& g = render::gpu::dev();
-  if (s.fbIn) g.destroyFramebuffer(s.fbIn);
-  if (s.fbOut) g.destroyFramebuffer(s.fbOut);
-  if (s.vkIn) g.destroyTexture(s.vkIn);
-  if (s.vkOut) g.destroyTexture(s.vkOut);
+// gpu false: the game is closing and the render device may be gone already (static teardown): its objects are left
+void freeTextures(Display& d, SrState& s, bool gpu = true) {
+  if (gpu) {
+    render::gpu::Device& g = render::gpu::dev();
+    if (s.fbIn) g.destroyFramebuffer(s.fbIn);
+    if (s.fbOut) g.destroyFramebuffer(s.fbOut);
+    if (s.vkIn) g.destroyTexture(s.vkIn);
+    if (s.vkOut) g.destroyTexture(s.vkOut);
+    if (s.glViews.fbo) d.r3d().destroyTarget(s.glViews);
+  }
   s.fbIn = s.fbOut = s.vkIn = s.vkOut = 0;
+  s.glViews = {};
   release(s.inView);
   release(s.outView);
   release(s.inTex);
@@ -342,7 +396,6 @@ void freeTextures(Display& d, SrState& s) {
   if (s.inHandle) CloseHandle(s.inHandle);
   if (s.outHandle) CloseHandle(s.outHandle);
   s.inHandle = s.outHandle = nullptr;
-  if (s.glViews.fbo) d.r3d().destroyTarget(s.glViews);
   s.w = s.h = 0;
 }
 
@@ -421,7 +474,7 @@ bool start(Display& d, SrState& s, int w, int h) {
   return true;
 }
 
-void stop(Display& d, SrState& s) {
+void stop(Display& d, SrState& s, bool gpu = true) {
   try {
     if (s.dxWeaver) s.dxWeaver->destroy();
     if (s.glWeaver) s.glWeaver->destroy();
@@ -436,7 +489,7 @@ void stop(Display& d, SrState& s) {
   }
   s.context = nullptr;
   lensOff(s);
-  if (render::gpu::hasDevice()) freeTextures(d, s);
+  freeTextures(d, s, gpu && render::gpu::hasDevice());
   release(s.done);
   release(s.d3dc);
   release(s.d3d);
@@ -515,6 +568,18 @@ bool leiaSrPresent(Display& d, script::VM& vm, int w, int h) {
     LOG_INFO("Leia SR: first frame woven (eyes at %.0f,%.0f,%.0f and %.0f,%.0f,%.0f mm)", l[0], l[1], l[2], r[0], r[1], r[2]);
     s.loggedFirst = true;
   }
+  // REGS_DEBUG_LEIASR=1: once a second, the weaver's predicted eyes and what the eye tracker sent
+  static const bool debug = regs::envVar("REGS_DEBUG_LEIASR") != nullptr;
+  if (debug && (s.debugTimer += vm.frameDt()) >= 1.0f) {
+    s.debugTimer = 0;
+    float l[3] = {}, r[3] = {};
+    s.weaver->getPredictedEyePositions(l, r);
+    Eyes& e = eyes();
+    std::lock_guard<std::mutex> lk(e.m);
+    LOG_INFO("Leia SR: weaver eyes %.0f,%.0f,%.0f / %.0f,%.0f,%.0f mm; tracker %llu pairs, last %.0f,%.0f,%.0f / %.0f,%.0f,%.0f",
+             l[0], l[1], l[2], r[0], r[1], r[2], (unsigned long long)e.count, e.pair.left[0], e.pair.left[1],
+             e.pair.left[2], e.pair.right[0], e.pair.right[1], e.pair.right[2]);
+  }
   return true;
 }
 
@@ -523,24 +588,34 @@ bool leiaSrFailed() { return state().failed; }
 bool leiaSrHead(float& x, float& y, float& z) {
   SrState& s = state();
   if (!s.active || !s.weaver) return false;
+  {  // the eye tracker's newest pair, when it is fresh
+    Eyes& e = eyes();
+    std::lock_guard<std::mutex> lk(e.m);
+    if (e.count && std::chrono::steady_clock::now() - e.at < std::chrono::milliseconds(300) && e.pair.left[2] > 1) {
+      x = float(e.pair.left[0] + e.pair.right[0]) * 0.05f;
+      y = float(e.pair.left[1] + e.pair.right[1]) * 0.05f;
+      z = float(e.pair.left[2] + e.pair.right[2]) * 0.05f;
+      return true;
+    }
+  }
   float l[3] = {}, r[3] = {};
   try {
     s.weaver->getPredictedEyePositions(l, r);
   } catch (...) {
     return false;
   }
-  // no face: the runtime reports both eyes at 0 (or not a number)
-  if (!(std::isfinite(l[2]) && std::isfinite(r[2])) || (l[2] == 0 && r[2] == 0)) return false;
+  // no face: the runtime reports both eyes at 0, at one point, or not a number
+  if (!(std::isfinite(l[2]) && std::isfinite(r[2])) || (l[2] == 0 && r[2] == 0) || (l[0] == r[0] && l[1] == r[1])) return false;
   x = (l[0] + r[0]) * 0.05f;  // mm → cm, the middle
   y = (l[1] + r[1]) * 0.05f;
   z = (l[2] + r[2]) * 0.05f;
   return true;
 }
 
-void leiaSrStop(Display& d) {
+void leiaSrStop(Display& d, bool gpuAlive) {
   SrState& s = state();
   if (!s.active && !s.context && !s.lensHint && !s.d3d) return;
-  stop(d, s);
+  stop(d, s, gpuAlive);
   s.loggedFirst = false;
 }
 
@@ -555,7 +630,7 @@ const LeiaSrInfo& leiaSrDetected() {
 bool leiaSrPresent(Display&, script::VM&, int, int) { return false; }
 bool leiaSrFailed() { return true; }
 bool leiaSrHead(float&, float&, float&) { return false; }
-void leiaSrStop(Display&) {}
+void leiaSrStop(Display&, bool) {}
 void leiaSrRetry() {}
 
 #endif

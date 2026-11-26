@@ -354,7 +354,7 @@ struct Display::UpscaleJob {
 };
 
 Display::~Display() {
-  leiaSrStop(*this);  // the SR panel back to 2D (engine/leiasr.h)
+  leiaSrStop(*this, false);  // the SR panel back to 2D (engine/leiasr.h); the render device may be gone by now
   popoutsShutdown();
 }
 

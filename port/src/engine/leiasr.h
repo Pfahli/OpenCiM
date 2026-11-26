@@ -33,8 +33,9 @@ bool leiaSrFailed();
 // The viewer's head (the middle of both eyes) in cm from the screen's centre, x right, y up, z out of the screen, as
 // the SR eye tracker sees it now; false while the weaver is not running or no face is tracked.
 bool leiaSrHead(float& x, float& y, float& z);
-// mode left / game closing: the weaver, context and the lens request let go (the panel goes back to 2D)
-void leiaSrStop(Display& d);
+// mode left / game closing: the weaver, context and the lens request let go (the panel goes back to 2D).
+// gpuAlive false at the game's end (the render device may be gone): its objects are not touched.
+void leiaSrStop(Display& d, bool gpuAlive = true);
 // the mode chosen anew: after a failure, the next frame tries to start again
 void leiaSrRetry();
 
