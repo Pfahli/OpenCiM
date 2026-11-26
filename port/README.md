@@ -10,7 +10,7 @@ native ARM64 builds, better performance, quality-of-life features, a mod loader 
 ## Build (Windows)
 
 Needs the Visual Studio 2022 Build Tools with the C++ workload (MSVC, CMake and Ninja are taken from there).
-There are no third-party dependencies yet.
+Third-party code is bundled in `third_party` (see License below); nothing else has to be installed.
 
 ```powershell
 .\build.ps1                 # Release x64 into build\x64-Release
