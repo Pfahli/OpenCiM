@@ -41,7 +41,7 @@ namespace {
 
 fs::path widen(const std::string& s) {
   auto w = utf8ToUtf16(s);
-  return fs::path(std::wstring(w.begin(), w.end()));
+  return regs::pathFromUtf16(w);
 }
 
 std::string lower(std::string s) {

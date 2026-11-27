@@ -36,6 +36,7 @@
 #include "script/compiler.h"
 #include "script/parser.h"
 #include "vfs/vfs.h"
+#include "core/file.h"
 
 using namespace regs;
 namespace fs = std::filesystem;
@@ -58,7 +59,7 @@ namespace {
 
 fs::path widen(const char* s) {
   auto w = utf8ToUtf16(s);
-  return fs::path(std::wstring(w.begin(), w.end()));
+  return regs::pathFromUtf16(w);
 }
 
 bool isScriptSource(const std::string& path) {
@@ -137,12 +138,12 @@ int cmdVfs(int argc, char** argv) {
     std::vector<std::pair<std::vector<uint8_t>, uint32_t>> packed;
     size_t total = 0;
     for (auto& a : vfs.archives()) {
-      FILE* f = _wfopen(a.file.wstring().c_str(), L"rb");
+      FILE* f = regs::openFile(a.file, "rb");
       if (!f) continue;
       for (auto& e : a.entries) {
         if (e.tag != Archive::kZlib || total > (400u << 20)) continue;
         std::vector<uint8_t> p(e.packedSize);
-        if (_fseeki64(f, e.offset, SEEK_SET) == 0 && std::fread(p.data(), 1, p.size(), f) == p.size()) {
+        if (regs::seekFile(f, e.offset, SEEK_SET) == 0 && std::fread(p.data(), 1, p.size(), f) == p.size()) {
           total += p.size();
           packed.emplace_back(std::move(p), e.size);
         }
@@ -195,7 +196,7 @@ int cmdVfs(int argc, char** argv) {
       return 1;
     }
     if (argc > 5) {
-      FILE* f = _wfopen(widen(argv[5]).wstring().c_str(), L"wb");
+      FILE* f = regs::openFile(widen(argv[5]), "wb");
       if (!f) return 1;
       std::fwrite(data.data(), 1, data.size(), f);
       std::fclose(f);
@@ -259,7 +260,7 @@ int cmdParseAll(int argc, char** argv) {
 
 int cmdParse(int argc, char** argv) {
   if (argc < 3) return 2;
-  FILE* f = _wfopen(widen(argv[2]).wstring().c_str(), L"rb");
+  FILE* f = regs::openFile(widen(argv[2]), "rb");
   if (!f) return 1;
   std::vector<uint8_t> data;
   uint8_t buf[65536];
@@ -727,7 +728,7 @@ int cmdTexPng(int argc, char** argv) {
     return 1;
   }
   std::vector<uint8_t> png = render::encodePng(rgba.data(), w, h);
-  FILE* f = _wfopen(widen(argv[4]).wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(widen(argv[4]), "wb");
   if (!f) return 1;
   std::fwrite(png.data(), 1, png.size(), f);
   std::fclose(f);
@@ -788,7 +789,7 @@ int cmdWindowMask(int argc, char** argv) {
       out[(size_t(y) * size_t(w) + size_t(x)) * 4 + 3] = 255;
     }
   std::vector<uint8_t> png = render::encodePng(out.data(), w, h);
-  FILE* f = _wfopen(widen(argv[4]).wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(widen(argv[4]), "wb");
   if (!f) return 1;
   std::fwrite(png.data(), 1, png.size(), f);
   std::fclose(f);

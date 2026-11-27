@@ -152,11 +152,15 @@ void addUnique(std::vector<GameCandidate>& list, GameCandidate c) {
   fs::path canon = fs::weakly_canonical(c.dir, ec);
   if (!ec) c.dir = canon;
   for (const GameCandidate& o : list) {
+#if defined(_WIN32)
     std::wstring a = o.dir.wstring(), b = c.dir.wstring();
     if (a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](wchar_t x, wchar_t y) {
           return std::towlower(x) == std::towlower(y);
         }))
       return;
+#else
+    if (o.dir == c.dir) return;  // (canonical already; case matters on Linux)
+#endif
   }
   list.push_back(std::move(c));
 }

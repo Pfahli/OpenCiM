@@ -87,4 +87,23 @@ std::u16string decodeTextFile(std::span<const uint8_t> b) {
   return out;
 }
 
+std::filesystem::path pathFromUtf16(std::u16string_view s) {
+#if defined(_WIN32)
+  return std::filesystem::path(std::wstring(s.begin(), s.end()));
+#else
+  return std::filesystem::path(utf16ToUtf8(s));
+#endif
+}
+
+std::u16string pathToUtf16(const std::filesystem::path& p) {
+#if defined(_WIN32)
+  const std::wstring& w = p.native();
+  return std::u16string(w.begin(), w.end());
+#else
+  return utf8ToUtf16(p.native());
+#endif
+}
+
+
 }  // namespace regs
+

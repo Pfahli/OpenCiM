@@ -97,11 +97,11 @@ lizard mode back on:
   Xbox unless it is recognised). Its USB product id and protocol were not known here; if it speaks the Deck's
   protocol, `REGS_VALVE_PIDS` (or one line in `knownPads`) adds it.
 
-### SteamOS / Linux later
+### SteamOS / Linux
 
-A native Linux build would read pads through SDL2/SDL3's game-controller API, which has HIDAPI drivers for the Deck
-and the Steam Controller including their touchpads (`SDL_GetGamepadTouchpadFinger`). It would get access to
-hidraw through Valve's udev rules (the `steam-devices` package; SteamOS has them), and under Steam, as on Windows,
+The native Linux build (`docs/linux.md`, since 0.2.1) reads pads through SDL3's game-controller API
+(`src/platform/gamepad_sdl.cpp`), which has HIDAPI drivers for the Deck and the Steam Controller including their
+touchpads (`SDL_GetGamepadTouchpadFinger`). It gets access to hidraw through Valve's udev rules (the `steam-devices` package; SteamOS has them), and under Steam, as on Windows,
 a virtual gamepad plus the mouse from Steam Input. The Windows build in Proton gets the same Steam Input path (XInput
 and the mouse), so the layout above applies there too. The native HID path would need Proton's hidraw passthrough,
 which Steam does not give while Steam Input owns the pad.
@@ -217,4 +217,5 @@ configurator options, not tried with a Deck).
   the last gap.
 * Remappable pad buttons, rumble (e.g. on a refused placement), snapping the cursor to buttons, radial menus and button
   prompts in the HUD (see `docs/ideas.md`).
-* Other platforms: SDL2's game-controller API would replace `gamepad_win32.cpp` with the ARM/Linux builds.
+* Other platforms: SDL3's game-controller API replaces `gamepad_win32.cpp` on Linux (`gamepad_sdl.cpp`); ARM builds would use
+  the same.

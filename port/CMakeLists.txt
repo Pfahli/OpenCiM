@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(regs VERSION 0.2.1 LANGUAGES CXX)
+project(regs VERSION 0.2.1 LANGUAGES C CXX)
 
 # ReGS: a from-source reimplementation of the GSystem engine that runs Cities in Motion from an installed copy.
 # No game data is part of this tree; everything is read from the user's install at run time.
@@ -45,7 +45,6 @@ add_library(regs_engine STATIC
   src/engine/natives_objects.cpp
   src/engine/natives_ui.cpp
   src/engine/engine.cpp
-  src/engine/platform_win32.cpp
   src/engine/display.cpp
   src/engine/gui_relayout.cpp
   src/engine/font.cpp
@@ -118,14 +117,36 @@ add_library(regs_engine STATIC
   src/engine/snowplows.cpp
   src/engine/user_folders.cpp
   src/engine/debug_economy.cpp
-  src/platform/window_win32.cpp
-  src/platform/touchpad_win32.cpp
-  src/platform/gamepad_win32.cpp
-  src/platform/steam_hid_win32.cpp
   src/audio/audio.cpp
   src/audio/miniaudio_impl.cpp
 )
 target_include_directories(regs_engine PUBLIC src)
+# the platform layer: Win32 on Windows; SDL3 (third_party/SDL3, linked statically) elsewhere (docs/linux.md)
+if(WIN32)
+  target_sources(regs_engine PRIVATE src/engine/platform_win32.cpp src/platform/window_win32.cpp
+                 src/platform/touchpad_win32.cpp src/platform/gamepad_win32.cpp src/platform/steam_hid_win32.cpp)
+  set(REGS_CRASH_SRC src/tools/crash_win32.cpp)
+  set(REGS_PROFILER_SRC src/tools/profiler_win32.cpp)
+else()
+  set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+  set(SDL_STATIC ON CACHE BOOL "" FORCE)
+  set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+  set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+  set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+  set(SDL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+  set(SDL_STATIC_PIC ON CACHE BOOL "" FORCE)
+  add_subdirectory(third_party/SDL3 EXCLUDE_FROM_ALL)
+  find_package(CURL REQUIRED)
+  find_package(Threads REQUIRED)
+  target_sources(regs_engine PRIVATE src/engine/platform_linux.cpp src/platform/window_sdl.cpp src/platform/gamepad_sdl.cpp)
+  target_include_directories(regs_engine PRIVATE third_party/stb)
+  target_link_libraries(regs_engine PUBLIC SDL3::SDL3-static CURL::libcurl Threads::Threads ${CMAKE_DL_LIBS})
+  # the C++ runtime inside the binaries: they run on distributions with an older libstdc++ than the build's
+  add_link_options(-static-libstdc++ -static-libgcc)
+  set(REGS_CRASH_SRC src/tools/crash_linux.cpp)
+  set(REGS_PROFILER_SRC)
+endif()
 # the version and the build's git state (build_info.h: REGS_VERSION_STRING, REGS_BUILD_NUMBER = commit count,
 # REGS_BUILD_COMMIT, REGS_BUILD_DATE), refreshed at every build; the main menu shows them
 add_custom_target(regs_build_info
@@ -166,7 +187,7 @@ endif()
 if(REGS_VULKAN)
   target_sources(regs_engine PRIVATE src/render/gpu_vk.cpp)
   target_include_directories(regs_engine PRIVATE ${REGS_VULKAN_HEADERS})
-  target_compile_definitions(regs_engine PRIVATE REGS_VULKAN=1 VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR)
+  target_compile_definitions(regs_engine PRIVATE REGS_VULKAN=1 VK_NO_PROTOTYPES $<$<BOOL:${WIN32}>:VK_USE_PLATFORM_WIN32_KHR>)
 endif()
 if(REGS_VULKAN AND EXISTS ${CMAKE_SOURCE_DIR}/third_party/glslang/CMakeLists.txt)
   set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
@@ -274,9 +295,13 @@ if(REGS_VULKAN AND EXISTS ${CMAKE_SOURCE_DIR}/third_party/glslang/CMakeLists.txt
       ${FFX_GENERATED})
     target_include_directories(regs_ffx PRIVATE ${FFX_DIR}/include ${FFX_DIR}/src ${FFX_DIR}/src/components ${FFX_DIR}/src/shared
                                ${FFX_DIR}/src/backends/shared ${FFX_GEN} ${REGS_VULKAN_HEADERS} ${CMAKE_SOURCE_DIR}/src)
-    target_compile_definitions(regs_ffx PRIVATE FFX_FSR3UPSCALER FFX_FI FFX_OF VK_USE_PLATFORM_WIN32_KHR _UNICODE UNICODE)
+    target_compile_definitions(regs_ffx PRIVATE FFX_FSR3UPSCALER FFX_FI FFX_OF $<$<BOOL:${WIN32}>:VK_USE_PLATFORM_WIN32_KHR> _UNICODE UNICODE)
     if(MSVC)
       target_compile_options(regs_ffx PRIVATE /W0 /FIbit)
+    else()
+      # the CRT functions and headers the SDK expects from MSVC; larger opaque contexts (wchar_t is 4 bytes)
+      target_compile_options(regs_ffx PRIVATE -w -include ${CMAKE_SOURCE_DIR}/src/render/ffx_compat.h)
+      target_compile_definitions(regs_ffx PRIVATE FFX_GCC "FFX_SDK_DEFAULT_CONTEXT_SIZE=(1024*256)")
     endif()
     target_link_libraries(regs_engine PRIVATE regs_ffx)
     target_compile_definitions(regs_engine PRIVATE REGS_FFX=1)
@@ -287,13 +312,19 @@ else()
   target_sources(regs_engine PRIVATE src/render/gpu_vk_stub.cpp)
 endif()
 
-add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/pad_glyphs.cpp src/tools/texture_tools.cpp src/tools/crash_win32.cpp)
+add_executable(regs-tool src/tools/regs_tool.cpp src/tools/mod_assets.cpp src/tools/pad_glyphs.cpp src/tools/texture_tools.cpp ${REGS_CRASH_SRC})
 target_include_directories(regs-tool PRIVATE third_party/miniaudio)
-target_link_libraries(regs-tool PRIVATE regs_engine dbghelp)
+target_link_libraries(regs-tool PRIVATE regs_engine)
+if(WIN32)
+  target_link_libraries(regs-tool PRIVATE dbghelp)
+endif()
 
 # the game
-add_executable(regs src/app/main.cpp src/tools/crash_win32.cpp src/tools/profiler_win32.cpp)
-target_link_libraries(regs PRIVATE regs_engine dbghelp winmm)
+add_executable(regs src/app/main.cpp ${REGS_CRASH_SRC} ${REGS_PROFILER_SRC})
+target_link_libraries(regs PRIVATE regs_engine)
+if(WIN32)
+  target_link_libraries(regs PRIVATE dbghelp winmm)
+endif()
 # the port's own game files (menu pages, strings, script extensions), mounted over the install from data/ next to the
 # executable; copied on every build (also when only data/ changed and nothing relinks)
 # Built-in mods (data/mods, disabled until listed in the user's mods.json) come along; the weather mod's seamless loops
@@ -301,6 +332,19 @@ target_link_libraries(regs PRIVATE regs_engine dbghelp winmm)
 # sprite drawn by regs-tool softdot, its falling-leaf sprite by regs-tool leaf; the controller legend's button glyphs
 # by regs-tool padglyphs (data/regs/ui/pad, docs/controller.md)
 set(WEATHER_SOUNDS $<TARGET_FILE_DIR:regs>/data/mods/weather/sounds)
+# the controller glyphs' letters are drawn with GDI: other systems copy them from a Windows build's data/regs/ui/pad
+# (REGS_PAD_GLYPHS_DIR; build-linux.ps1 passes build/x64-Release's), or go without
+if(WIN32)
+  set(REGS_PAD_GLYPHS_COMMAND COMMAND $<TARGET_FILE:regs-tool> padglyphs $<TARGET_FILE_DIR:regs>/data/regs/ui/pad
+      ${CMAKE_SOURCE_DIR}/third_party/kenney-input-prompts)
+else()
+  set(REGS_PAD_GLYPHS_DIR "" CACHE PATH "data/regs/ui/pad of a Windows build (the controller glyphs)")
+  if(REGS_PAD_GLYPHS_DIR AND EXISTS ${REGS_PAD_GLYPHS_DIR})
+    set(REGS_PAD_GLYPHS_COMMAND COMMAND ${CMAKE_COMMAND} -E copy_directory ${REGS_PAD_GLYPHS_DIR} $<TARGET_FILE_DIR:regs>/data/regs/ui/pad)
+  else()
+    set(REGS_PAD_GLYPHS_COMMAND)
+  endif()
+endif()
 add_custom_target(regs_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:regs>/data
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/light-rain.mp3 ${WEATHER_SOUNDS}/rain-light.wav 2 20 2 loop
@@ -310,7 +354,7 @@ add_custom_target(regs_data ALL
   COMMAND $<TARGET_FILE:regs-tool> cut ${WEATHER_SOUNDS}/thunder-clap.mp3 ${WEATHER_SOUNDS}/thunder-mid.wav 0 14 4
   COMMAND $<TARGET_FILE:regs-tool> softdot $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/softdot.dds 32
   COMMAND $<TARGET_FILE:regs-tool> leaf $<TARGET_FILE_DIR:regs>/data/mods/weather/textures/leaf.dds 32
-  COMMAND $<TARGET_FILE:regs-tool> padglyphs $<TARGET_FILE_DIR:regs>/data/regs/ui/pad ${CMAKE_SOURCE_DIR}/third_party/kenney-input-prompts)
+  ${REGS_PAD_GLYPHS_COMMAND})
 add_dependencies(regs_data regs regs-tool)
 if(WIN32)
   target_link_libraries(regs_engine PUBLIC user32 gdi32 opengl32 shell32 winhttp windowscodecs ole32 hid setupapi dwmapi ws2_32 d3d11 dxgi)

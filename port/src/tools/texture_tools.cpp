@@ -17,6 +17,7 @@
 #include "engine/texture_upscale.h"
 #include "render/image.h"
 #include "vfs/vfs.h"
+#include "core/file.h"
 
 using namespace regs;
 namespace fs = std::filesystem;
@@ -26,7 +27,7 @@ namespace {
 
 fs::path widenArg(const char* s) {
   auto w = utf8ToUtf16(s);
-  return fs::path(std::wstring(w.begin(), w.end()));
+  return regs::pathFromUtf16(w);
 }
 
 // the files the game sees: the official archives only, as the engine mounts them (engine.cpp)
@@ -36,7 +37,7 @@ void openInstall(Vfs& vfs, const char* gameDir) {
 }
 
 bool writeBytes(const fs::path& p, const std::vector<uint8_t>& d) {
-  FILE* f = _wfopen(p.wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(p, "wb");
   if (!f) return false;
   std::fwrite(d.data(), 1, d.size(), f);
   std::fclose(f);
@@ -144,7 +145,7 @@ int cmdUpscaleCompare(int argc, char** argv) {
 // png-roundtrip <in.png> <out.png>: the PNG reader on a file another program wrote (a check of decodePng)
 int cmdPngRoundtrip(int argc, char** argv) {
   if (argc < 4) return 2;
-  FILE* f = _wfopen(widenArg(argv[2]).wstring().c_str(), L"rb");
+  FILE* f = regs::openFile(widenArg(argv[2]), "rb");
   if (!f) return 1;
   std::vector<uint8_t> d;
   uint8_t buf[65536];
@@ -164,7 +165,7 @@ int cmdPngRoundtrip(int argc, char** argv) {
 int cmdPngDiff(int argc, char** argv) {
   if (argc < 4) return 2;
   auto load = [](const char* p, std::vector<uint8_t>& rgba, int& w, int& h) {
-    FILE* f = _wfopen(widenArg(p).wstring().c_str(), L"rb");
+    FILE* f = regs::openFile(widenArg(p), "rb");
     if (!f) return false;
     std::vector<uint8_t> d;
     uint8_t buf[65536];
@@ -251,7 +252,7 @@ int cmdDdsPng(int argc, char** argv) {
   bool alpha = false;
   for (int i = 4; i < argc; ++i)
     if (std::string(argv[i]) == "--alpha") alpha = true, argc = i;
-  FILE* f = _wfopen(widenArg(argv[2]).wstring().c_str(), L"rb");
+  FILE* f = regs::openFile(widenArg(argv[2]), "rb");
   if (!f) return 1;
   std::vector<uint8_t> d;
   uint8_t buf[65536];

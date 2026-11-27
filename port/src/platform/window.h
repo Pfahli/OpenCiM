@@ -109,6 +109,10 @@ class Window {
   // The OS handles a Vulkan surface is made from (Win32: HWND and HINSTANCE).
   virtual void* nativeWindow() const = 0;
   virtual void* nativeInstance() const = 0;
+  // Vulkan where the window makes the surface itself (SDL, window_sdl.cpp): the instance extensions it needs, and the
+  // surface for a VkInstance (written to *surface, a VkSurfaceKHR*); false when it cannot
+  virtual std::vector<const char*> vulkanExtensions() const { return {}; }
+  virtual bool vulkanSurface(void* instance, void* surface) const { return false; }
 };
 
 std::unique_ptr<Window> createWindow();

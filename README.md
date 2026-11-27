@@ -142,8 +142,11 @@ must own the game. You can also unpack `OpenCiM-<version>-win64.zip` anywhere an
 OpenCiM keeps all player data in `Documents\OpenCiM`, apart from the original game's folder.
 
 ### Linux
-There is no native Linux build yet. OpenCiM's window, input and controller code is Windows-only for now, and a native
-build is planned. Until then, you can try the Windows build through Proton or Wine with Vulkan; this is not tested yet.
+Download `OpenCiM-<version>-linux-x64.tar.gz` from the [latest release](https://github.com/Pfahli/OpenCiM/releases/latest),
+unpack it and run `regs`; `install.sh` adds it to the application menu. Install Cities in Motion once with the Steam client
+for Linux (Steam uses Proton for the Windows game, but OpenCiM only needs its files): OpenCiM finds it in the native,
+Flatpak and Snap Steam libraries. It runs on Ubuntu 22.04+, Debian 12+, Fedora, Arch and SteamOS (Steam Deck), with
+Vulkan or OpenGL. Details, the Steam Deck and building: [`port/docs/linux.md`](port/docs/linux.md).
 
 ### Build from source (Windows)
 You need the Visual Studio 2022 Build Tools with the C++ workload. MSVC, CMake and Ninja are taken from there, and
@@ -174,8 +177,8 @@ Without a folder argument, OpenCiM looks for the game itself.
 
 OpenCiM is in active development. Original saves load and run with full traffic and citizens. You can lay track,
 place stops, create lines, buy vehicles, carry passengers, and save and reload. The remaining work to a fully playable
-game is in [`port/docs/playable-todo.md`](port/docs/playable-todo.md). After that come multiplayer, a native Linux
-build, ARM64, high-res textures and more quality-of-life features ([`port/docs/ideas.md`](port/docs/ideas.md)).
+game is in [`port/docs/playable-todo.md`](port/docs/playable-todo.md). After that come multiplayer,
+ARM64, high-res textures and more quality-of-life features ([`port/docs/ideas.md`](port/docs/ideas.md)).
 
 ## License
 

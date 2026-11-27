@@ -1155,6 +1155,12 @@ void registerDisplayNatives(VM& vm) {
     s->fieldValues[u"mode"] = Value::string(utf8ToUtf16("Video: " + d->r2d().info));
     d->setWindowObject(s);
     g_display = std::move(d);
+#if !defined(_WIN32)
+    // Linux: the display (GL context, Vulkan device, SDL window) goes at exit before the graphics driver's own
+    // libraries tear themselves down; as a static destroyed last it called into an already dismantled Mesa (crash)
+    static const bool closeAtExit = (std::atexit([] { g_display.reset(); }), true);
+    (void)closeAtExit;
+#endif
     return Value();
   });
 }

@@ -30,6 +30,8 @@
 #include "engine/platform.h"
 #include "vfs/archive.h"
 #include "vfs/vfs.h"
+#include "core/file.h"
+#include "core/game_find.h"
 
 namespace regs::engine {
 
@@ -39,29 +41,29 @@ namespace fs = std::filesystem;
 namespace {
 
 std::string u8(const fs::path& p) {
-  auto w = p.wstring();
-  return utf16ToUtf8(std::u16string_view(reinterpret_cast<const char16_t*>(w.data()), w.size()));
+  return regs::pathToUtf8(p);
 }
 fs::path pathOf(const std::string& s) {
   auto w = utf8ToUtf16(s);
-  return fs::path(std::wstring(w.begin(), w.end()));
+  return regs::pathFromUtf16(w);
 }
 Value deref(const Value& v) { return v.ref() ? v.ref()->get() : v; }
 
 std::wstring folded(const fs::path& p) {
   std::error_code ec;
-  std::wstring s = fs::absolute(p, ec).lexically_normal().wstring();
+  const std::u16string u = regs::pathToUtf16(fs::absolute(p, ec).lexically_normal());
+  std::wstring s(u.begin(), u.end());
   for (auto& c : s) c = wchar_t(std::towlower(c));
   while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
   return s;
 }
 
 bool readFile(const fs::path& p, std::vector<uint8_t>& out) {
-  FILE* f = _wfopen(p.wstring().c_str(), L"rb");
+  FILE* f = regs::openFile(p, "rb");
   if (!f) return false;
-  _fseeki64(f, 0, SEEK_END);
-  auto len = _ftelli64(f);
-  _fseeki64(f, 0, SEEK_SET);
+  regs::seekFile(f, 0, SEEK_END);
+  auto len = regs::tellFile(f);
+  regs::seekFile(f, 0, SEEK_SET);
   out.resize(size_t(len));
   bool ok = std::fread(out.data(), 1, out.size(), f) == out.size();
   std::fclose(f);
@@ -70,7 +72,7 @@ bool readFile(const fs::path& p, std::vector<uint8_t>& out) {
 
 // only ever called with paths below host().userFolder (checked by the callers)
 bool writeFile(const fs::path& p, const std::vector<uint8_t>& data) {
-  FILE* f = _wfopen(p.wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(p, "wb");
   if (!f) return false;
   bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size();
   return std::fclose(f) == 0 && ok;
@@ -125,7 +127,9 @@ enum class Kind { Save, Map };
 
 fs::path saveFile(const fs::path& folder, const std::string& name) { return folder / L"saves" / pathOf(name + ".gs"); }
 fs::path mapFile(const fs::path& folder, const std::string& name, const wchar_t* ext) {
-  return folder / L"maps" / fs::path(pathOf(name).wstring() + ext);
+  fs::path file = pathOf(name);
+  file += ext;
+  return folder / L"maps" / file;
 }
 
 // a save: the package file; a map: its files in kMapExts order, each as (extension, size, hash); needs the .grid
@@ -163,7 +167,7 @@ std::vector<std::string> names(Kind k, const fs::path& folder) {
   std::vector<std::string> out;
   std::error_code ec;
   for (auto& e : fs::directory_iterator(folder / (k == Kind::Save ? L"saves" : L"maps"), ec)) {
-    if (!e.is_regular_file(ec) || e.path().extension().wstring() != (k == Kind::Save ? L".gs" : L".grid")) continue;
+    if (!e.is_regular_file(ec) || regs::pathToUtf16(e.path().extension()) != (k == Kind::Save ? u".gs" : u".grid")) continue;
     out.push_back(u8(e.path().stem()));
   }
   std::sort(out.begin(), out.end());
@@ -209,7 +213,7 @@ std::vector<Import> readImports() {
 }
 
 void appendImport(const Import& r) {
-  FILE* f = _wfopen(recordFile().wstring().c_str(), L"ab");
+  FILE* f = regs::openFile(recordFile(), "ab");
   if (!f) return;
   std::fprintf(f, "%s\t%s\t%llu\t%016llx\t%s\t%llu\t%016llx\n", r.kind.c_str(), r.from.c_str(),
                (unsigned long long)r.fromId.size, (unsigned long long)r.fromId.hash, r.to.c_str(),
@@ -366,6 +370,19 @@ fs::path redirectUserdata(Vfs& vfs, const fs::path& requested) {
     return requested;
   }
   host().userFolder = host().documents / kPortFolderName;
+#if !defined(_WIN32)
+  // Linux: the original game ran under Proton, so its saves and maps are in the Wine prefix of its Steam library
+  // (<library>/steamapps/compatdata/73010/pfx/.../Documents/Cities In Motion), not in the Linux Documents folder
+  if (std::error_code ec; !fs::is_directory(original, ec)) {
+    const fs::path apps = vfs.installRoot().parent_path().parent_path();  // <library>/steamapps (common/<game>)
+    const fs::path user = apps / "compatdata" / "73010" / "pfx" / "drive_c" / "users" / "steamuser";
+    for (const char* docs : {"Documents", "My Documents"})
+      if (fs::is_directory(user / docs / kOriginalFolderName, ec)) {
+        original = user / docs / kOriginalFolderName;
+        break;
+      }
+  }
+#endif
   host().originalFolder = original;
   LOG_INFO("userdata: %s (OpenCiM's folder; the scripts asked for the original's)", u8(host().userFolder).c_str());
   LOG_INFO("originals: %s (read only: saves and maps are listed and copied in when opened)", u8(original).c_str());
@@ -451,9 +468,9 @@ void registerUserFolderNatives(VM& vm) {
       for (auto& e : fs::directory_iterator(dir, ec)) {
         std::error_code ec2;
         bool folder = e.is_directory(ec2);
-        std::wstring ext = e.path().extension().wstring();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return wchar_t(std::towlower(c)); });
-        if (!folder && (!e.is_regular_file(ec2) || ext != L".gs")) continue;
+        std::u16string ext = regs::pathToUtf16(e.path().extension());
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](char16_t c) { return char16_t(std::towlower(c)); });
+        if (!folder && (!e.is_regular_file(ec2) || ext != u".gs")) continue;
         std::string name = u8(folder ? e.path().filename() : e.path().stem());
         if (name.empty() || name[0] == '.') continue;
         auto age = std::chrono::duration_cast<std::chrono::seconds>(now - e.last_write_time(ec2)).count();

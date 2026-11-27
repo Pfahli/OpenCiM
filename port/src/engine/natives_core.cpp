@@ -15,6 +15,7 @@
 #include "engine/platform.h"
 #include "engine/user_folders.h"
 #include "vfs/vfs.h"
+#include "core/file.h"
 
 namespace regs::engine {
 
@@ -382,8 +383,7 @@ void registerCoreNatives(VM& vm) {
 
   // ---- files ----
   implementGlobal(vm, u"getMyDocumentsFolder", [](VM&, Object*, int, const Value*) {
-    auto p = host().documents.wstring();
-    std::u16string s(p.begin(), p.end());
+    std::u16string s = regs::pathToUtf16(host().documents);
     for (auto& c : s) if (c == '\\') c = '/';
     return str(s);
   });
@@ -391,7 +391,7 @@ void registerCoreNatives(VM& vm) {
   // the original folder only (engine/user_folders.h)
   implementGlobal(vm, u"init_userdata", [](VM& v, Object*, int, const Value* a) {
     std::u16string root = deref(a[0]).toString();
-    v.vfs().initUserdata(redirectUserdata(v.vfs(), fs::path(std::wstring(root.begin(), root.end()))));
+    v.vfs().initUserdata(redirectUserdata(v.vfs(), regs::pathFromUtf16(root)));
     return Value();
   });
   implementGlobal(vm, u"updateFileSystem", [](VM& v, Object*, int, const Value*) {
@@ -400,7 +400,7 @@ void registerCoreNatives(VM& vm) {
   });
   implementGlobal(vm, u"file_exists", [](VM& v, Object*, int, const Value* a) {
     std::u16string p = deref(a[0]).toString();
-    if ((p.size() > 1 && p[1] == ':') || (!p.empty() && p[0] == '/')) return Value::boolean(fs::exists(fs::path(std::wstring(p.begin(), p.end()))));
+    if ((p.size() > 1 && p[1] == ':') || (!p.empty() && p[0] == '/')) return Value::boolean(fs::exists(regs::pathFromUtf16(p)));
     return Value::boolean(v.vfs().exists(u8(p)));
   });
   implementGlobal(vm, u"copy_file", [](VM& v, Object*, int, const Value* a) {
@@ -484,7 +484,7 @@ void registerCoreNatives(VM& vm) {
   implementGlobal(vm, u"fappend", [](VM& v, Object*, int, const Value* a) {
     fs::path p;
     if (!v.vfs().writableDiskPath(u8(deref(a[0]).toString()), p)) return Value();
-    FILE* f = _wfopen(p.wstring().c_str(), L"a");
+    FILE* f = regs::openFile(p, "a");
     if (!f) v.error("Cannot open file \"" + u8(deref(a[0]).toString()) + "\"");
     std::u16string s = deref(a[1]).toString();
     for (char16_t c : s) std::fputc(int(uint8_t(c)), f);
@@ -494,7 +494,7 @@ void registerCoreNatives(VM& vm) {
   implementGlobal(vm, u"freset", [](VM& v, Object*, int, const Value* a) {
     fs::path p;
     if (!v.vfs().writableDiskPath(u8(deref(a[0]).toString()), p)) return Value();
-    if (FILE* f = _wfopen(p.wstring().c_str(), L"w")) std::fclose(f);
+    if (FILE* f = regs::openFile(p, "w")) std::fclose(f);
     return Value();
   });
   implementGlobal(vm, u"read_file", [](VM& v, Object*, int, const Value* a) {

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "miniaudio.h"
+#include "core/file.h"
 
 namespace fs = std::filesystem;
 
@@ -23,7 +24,7 @@ namespace {
 constexpr int kRate = 44100, kChannels = 2;
 
 bool readFile(const fs::path& p, std::vector<uint8_t>& out) {
-  FILE* f = _wfopen(p.wstring().c_str(), L"rb");
+  FILE* f = regs::openFile(p, "rb");
   if (!f) return false;
   uint8_t buf[65536];
   for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) out.insert(out.end(), buf, buf + n);
@@ -32,7 +33,7 @@ bool readFile(const fs::path& p, std::vector<uint8_t>& out) {
 }
 
 bool writeWav(const fs::path& file, const std::vector<float>& s) {
-  FILE* f = _wfopen(file.wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(file, "wb");
   if (!f) return false;
   auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
   auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
@@ -144,7 +145,7 @@ int cmdSoftDot(int argc, char** argv) {
       }
   std::error_code ec;
   fs::create_directories(out.parent_path(), ec);
-  FILE* f = _wfopen(out.wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(out, "wb");
   bool ok = f && std::fwrite(file.data(), 1, file.size(), f) == file.size();
   if (f) std::fclose(f);
   std::printf("softdot: %s %s (%d px, %d mips)\n", ok ? "wrote" : "FAILED", out.string().c_str(), size, mips);
@@ -219,7 +220,7 @@ int cmdLeaf(int argc, char** argv) {
   }
   std::error_code ec;
   fs::create_directories(out.parent_path(), ec);
-  FILE* f = _wfopen(out.wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(out, "wb");
   bool ok = f && std::fwrite(file.data(), 1, file.size(), f) == file.size();
   if (f) std::fclose(f);
   std::printf("leaf: %s %s (%d px, %d mips)\n", ok ? "wrote" : "FAILED", out.string().c_str(), size, mips);

@@ -1,10 +1,13 @@
+
 // regs-tool padglyphs <out dir>: the controller button glyphs of the controls page's legend (port/docs/controller.md),
 // drawn here at build time so no artwork ships: Xbox, PlayStation, Steam Deck and Steam Controller face buttons,
 // shoulders, triggers, sticks, system buttons, touchpads, back grips and the d-pad. Shapes are antialiased distance
 // fields, letters come from GDI (Segoe UI Bold, antialiased); each glyph is an uncompressed 32-bit DDS, 48 pixels high
 // (shown at 24 by the page, so UI scale 2x stays sharp), 48 or 96 wide. Also the controller pictures of the page's
 // diagram (body_<layout>.dds, 720 x 440) with their label layouts (<layout>.layout).
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -17,7 +20,11 @@
 #include <string>
 #include <vector>
 
+#include "core/file.h"
+
 namespace fs = std::filesystem;
+
+#if defined(_WIN32)  // the letters need GDI; other systems take the glyphs a Windows build drew (docs/linux.md)
 
 namespace {
 
@@ -119,7 +126,7 @@ bool writeDds(const fs::path& out, const Canvas& cv) {
     auto c = [&](float v) { return uint8_t(std::lround(std::clamp(v * inv, 0.0f, 1.0f) * 255)); };
     file.insert(file.end(), {c(p[2]), c(p[1]), c(p[0]), uint8_t(std::lround(a * 255))});
   }
-  FILE* f = _wfopen(out.wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(out, "wb");
   const bool ok = f && std::fwrite(file.data(), 1, file.size(), f) == file.size();
   if (f) std::fclose(f);
   return ok;
@@ -433,7 +440,7 @@ using Poly = std::vector<Pt>;
 
 // the path of an icon as closed polygons (quadratic curves in 12 steps), in icon units; false when unreadable
 bool loadIcon(const fs::path& file, std::vector<Poly>& out) {
-  FILE* f = _wfopen(file.wstring().c_str(), L"rb");
+  FILE* f = regs::openFile(file, "rb");
   if (!f) return false;
   std::string s;
   char buf[4096];
@@ -816,7 +823,7 @@ bool writeLayout(const fs::path& file, const std::vector<Callout>& callouts) {
     s += buf;
   }
   s += "];\n";
-  FILE* f = _wfopen(file.wstring().c_str(), L"wb");
+  FILE* f = regs::openFile(file, "wb");
   const bool ok = f && std::fwrite(s.data(), 1, s.size(), f) == s.size();
   if (f) std::fclose(f);
   return ok;
@@ -872,3 +879,12 @@ int cmdPadGlyphs(int argc, char** argv) {
               dir.string().c_str());
   return written == total && bodies == 4 ? 0 : 1;
 }
+
+#else
+
+int cmdPadGlyphs(int, char**) {
+  std::fprintf(stderr, "padglyphs: needs Windows (GDI letters); copy data/regs/ui/pad from a Windows build\n");
+  return 1;
+}
+
+#endif

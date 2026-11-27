@@ -18,6 +18,7 @@
 #include "render/glsl.h"
 #include "render/renderer3d.h"
 #include "vfs/vfs.h"
+#include "core/file.h"
 
 namespace regs::engine {
 
@@ -176,7 +177,7 @@ class JsonReader {
 };
 
 bool readJson(const fs::path& file, Json& out, std::string& err) {
-  FILE* f = _wfopen(file.wstring().c_str(), L"rb");
+  FILE* f = regs::openFile(file, "rb");
   if (!f) {
     err = "cannot open";
     return false;
@@ -261,7 +262,7 @@ void loadShaderHooks(const ModInfo& m) {
       continue;
     }
     auto w = utf8ToUtf16(file);
-    FILE* f = _wfopen((m.dir / fs::path(std::wstring(w.begin(), w.end()))).wstring().c_str(), L"rb");
+    FILE* f = regs::openFile((m.dir / regs::pathFromUtf16(w)), "rb");
     if (!f) {
       LOG_WARN("mods: %s: shader hook %s not found, skipped", m.id.c_str(), file.c_str());
       continue;

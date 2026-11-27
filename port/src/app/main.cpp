@@ -39,6 +39,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#else
+#include <SDL3/SDL.h>
 #endif
 
 #if defined(_WIN32)
@@ -68,7 +70,18 @@ struct Scripted {
 
 fs::path widen(const char* s) {
   auto w = utf8ToUtf16(s);
-  return fs::path(std::wstring(w.begin(), w.end()));
+  return regs::pathFromUtf16(w);
+}
+
+// the folder of this executable (data/ and install.cfg sit next to it); on Linux the real file, also when started
+// through a link (~/.local/bin/opencim, install.sh) or from the PATH, where argv[0] holds only the name
+fs::path exeDir(const char* argv0) {
+#if defined(__linux__)
+  std::error_code ec;
+  fs::path self = fs::read_symlink("/proc/self/exe", ec);
+  if (!ec && !self.empty()) return self.parent_path();
+#endif
+  return fs::absolute(widen(argv0)).parent_path();
 }
 
 int usage() {
@@ -123,8 +136,7 @@ int main(int argc, char** argv) {
     std::printf("%s\n", ok ? "Cities in Motion is ready. Start OpenCiM without a folder: it finds the game there."
                            : "Cities in Motion was not downloaded.");
     if (ok && argc >= 3) {  // another folder than the default: remembered in install.cfg next to regs
-      const fs::path exeDir = fs::absolute(fs::path(widen(argv[0]))).parent_path();
-      if (!writeInstallCfg(exeDir / "install.cfg", dir)) std::printf("(install.cfg could not be written: start regs with the folder)\n");
+      if (!writeInstallCfg(exeDir(argv[0]) / "install.cfg", dir)) std::printf("(install.cfg could not be written: start regs with the folder)\n");
     }
     return ok ? 0 : 1;
   }
@@ -139,13 +151,15 @@ int main(int argc, char** argv) {
       const std::u16string w = utf8ToUtf16(why);
       MessageBoxW(nullptr, reinterpret_cast<const wchar_t*>(w.c_str()), L"OpenCiM", MB_OK | MB_ICONINFORMATION);
     }
+#else
+    // started from the desktop there is no console: the same as a message box (no box without a display)
+    if (!regs::envVar("REGS_NO_DIALOGS")) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "OpenCiM", why.c_str(), nullptr);
 #endif
     return 1;
   };
   std::string gameSource = "argument";
   if (!gameGiven) {
-    fs::path exeDir = fs::absolute(fs::path(widen(argv[0]))).parent_path();
-    fs::path cfg = readInstallCfgGame(exeDir / "install.cfg");
+    fs::path cfg = readInstallCfgGame(exeDir(argv[0]) / "install.cfg");
     if (!cfg.empty() && checkGameFolder(cfg).ok) game = cfg, gameSource = "install.cfg";
     else game = findGame(&gameSource);
     if (game.empty()) return noGame(gameNotFoundMessage());
@@ -158,7 +172,7 @@ int main(int argc, char** argv) {
   crashSetDialog(true);  // the game shows where its crash report went (tools/crash_win32.cpp)
   bool printPaths = false;
   // the port's own data (menu pages, strings) next to the executable; --data overrides
-  fs::path data = fs::absolute(fs::path(widen(argv[0]))).parent_path() / "data";
+  fs::path data = exeDir(argv[0]) / "data";
   long long maxFrames = -1;
   std::vector<Scripted> scripted;
   for (int i = gameGiven ? 2 : 1; i < argc; ++i) {

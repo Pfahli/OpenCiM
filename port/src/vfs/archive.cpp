@@ -5,11 +5,17 @@
 #include <cstring>
 #include <mutex>
 
+#if defined(_WIN32)
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include "core/deflate.h"
 #include "core/inflate.h"
 #include "core/text.h"
+#include "core/file.h"
 
 namespace regs {
 
@@ -17,10 +23,10 @@ namespace {
 
 struct File {
   FILE* f = nullptr;
-  explicit File(const std::filesystem::path& p) { f = _wfopen(p.wstring().c_str(), L"rb"); }
+  explicit File(const std::filesystem::path& p) { f = regs::openFile(p, "rb"); }
   ~File() { if (f) std::fclose(f); }
   bool readAt(uint64_t off, void* dst, size_t n) const {
-    return _fseeki64(f, int64_t(off), SEEK_SET) == 0 && std::fread(dst, 1, n, f) == n;
+    return regs::seekFile(f, int64_t(off), SEEK_SET) == 0 && std::fread(dst, 1, n, f) == n;
   }
 };
 
@@ -47,8 +53,8 @@ bool Archive::open(const std::filesystem::path& path, std::string* error) {
   mountPath.reset();
   File f(path);
   if (!f.f) return fail(error, "cannot open");
-  _fseeki64(f.f, 0, SEEK_END);
-  uint64_t len = uint64_t(_ftelli64(f.f));
+  regs::seekFile(f.f, 0, SEEK_END);
+  uint64_t len = uint64_t(regs::tellFile(f.f));
   uint8_t hdr[16];
   if (len < 16 || !f.readAt(0, hdr, 16)) return fail(error, "too short");
   if (std::memcmp(hdr, "GS10", 4) != 0) return fail(error, "bad magic");
@@ -109,19 +115,46 @@ bool Archive::open(const std::filesystem::path& path, std::string* error) {
 }
 
 // a Win32 handle (no C runtime stream: an install with many addon archives would exhaust the streams); ReadFile at
-// an explicit offset needs no shared file position, so reads from several threads need no lock
+// an explicit offset needs no shared file position, so reads from several threads need no lock (elsewhere: a file
+// descriptor and pread, for the same reasons)
 struct Archive::OpenFile {
   std::mutex m;  // the first open
+#if defined(_WIN32)
   HANDLE h = INVALID_HANDLE_VALUE;
+#else
+  int fd = -1;
+#endif
   bool tried = false;
   ~OpenFile() {
+#if defined(_WIN32)
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+#else
+    if (fd >= 0) close(fd);
+#endif
   }
 };
 
 bool Archive::readAt(uint64_t offset, void* dst, size_t n, std::string* error) const {
   if (keepOpen) {
     if (!open_) return fail(error, "cannot open archive");  // open() not called or failed
+#if !defined(_WIN32)
+    int fd;
+    {
+      std::lock_guard<std::mutex> lock(open_->m);
+      if (!open_->tried) {
+        open_->tried = true;
+        open_->fd = ::open(file.c_str(), O_RDONLY | O_CLOEXEC);
+      }
+      fd = open_->fd;
+    }
+    if (fd < 0) return fail(error, "cannot open archive");
+    for (auto* p = static_cast<uint8_t*>(dst); n > 0;) {
+      const ssize_t got = pread(fd, p, std::min<size_t>(n, 1u << 30), off_t(offset));
+      if (got <= 0) return fail(error, "short read");
+      p += got, offset += uint64_t(got), n -= size_t(got);
+    }
+    return true;
+#else
     HANDLE h;
     {
       std::lock_guard<std::mutex> lock(open_->m);
@@ -143,6 +176,7 @@ bool Archive::readAt(uint64_t offset, void* dst, size_t n, std::string* error) c
       p += got, offset += got, n -= got;
     }
     return true;
+#endif
   }
   File f(file);
   if (!f.f) return fail(error, "cannot open archive");
@@ -239,8 +273,8 @@ std::vector<uint8_t> buildPackage(const std::vector<std::pair<std::string, std::
 bool isValidPackage(const std::filesystem::path& path) {
   File f(path);
   if (!f.f) return false;
-  _fseeki64(f.f, 0, SEEK_END);
-  uint64_t len = uint64_t(_ftelli64(f.f));
+  regs::seekFile(f.f, 0, SEEK_END);
+  uint64_t len = uint64_t(regs::tellFile(f.f));
   uint8_t hdr[8];
   return len >= 8 && f.readAt(0, hdr, 8) && std::memcmp(hdr, "GS10", 4) == 0 && u32(hdr + 4) == len - 8;
 }

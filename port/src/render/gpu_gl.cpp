@@ -13,6 +13,7 @@
 #include "platform/window.h"
 #include "render/gl.h"
 #include "render/gpu.h"
+#include "core/file.h"
 
 namespace regs::render::gpu {
 
@@ -649,7 +650,7 @@ class GlDevice final : public Device {
     return hex(fnv(all)) + hex(fnv(all, 0x84222325cbf29ce4ull));
   }
   static bool readFile(const std::filesystem::path& p, std::vector<uint8_t>& out) {
-    FILE* f = _wfopen(p.wstring().c_str(), L"rb");
+    FILE* f = regs::openFile(p, "rb");
     if (!f) return false;
     std::fseek(f, 0, SEEK_END);
     long n = std::ftell(f);
@@ -671,7 +672,7 @@ class GlDevice final : public Device {
     for (int i = 0; i < 4; ++i) bin[size_t(i)] = uint8_t(format >> (8 * i));
     std::filesystem::path file = cacheDir_ / (key + L".bin"), tmp = file;
     tmp += L".tmp";
-    if (FILE* f = _wfopen(tmp.wstring().c_str(), L"wb")) {
+    if (FILE* f = regs::openFile(tmp, "wb")) {
       bool ok = std::fwrite(bin.data(), 1, size_t(got) + 4, f) == size_t(got) + 4;
       ok = std::fclose(f) == 0 && ok;
       std::error_code ec;

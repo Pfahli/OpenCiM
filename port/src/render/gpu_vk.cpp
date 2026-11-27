@@ -10,7 +10,11 @@
 //   ends when the framebuffer changes or a copy needs to run, which keeps GL's in-order meaning of uploads and blits.
 // * Uniforms: each program keeps its default uniform block on the CPU; a draw copies it into the frame's ring buffer
 //   and pushes it with the sampled images (VK_KHR_push_descriptor).
+#if defined(_WIN32)
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <vulkan/vulkan.h>
 
@@ -46,7 +50,16 @@ namespace regs::render::gpu {
 
 namespace {
 
-// ---- loader: vulkan-1.dll at run time (no import library) ----
+// ---- loader: vulkan-1.dll (Linux: libvulkan.so.1) at run time (no import library) ----
+
+// the Win32 surface and Direct3D 11 interop exist only on Windows; elsewhere the window makes the surface (SDL)
+#if defined(_WIN32)
+#define REGS_VK_INSTANCE_WIN32(X) X(vkCreateWin32SurfaceKHR)
+#define REGS_VK_DEVICE_WIN32(X) X(vkImportSemaphoreWin32HandleKHR)
+#else
+#define REGS_VK_INSTANCE_WIN32(X)
+#define REGS_VK_DEVICE_WIN32(X)
+#endif
 
 #define REGS_VK_GLOBAL(X) X(vkCreateInstance) X(vkEnumerateInstanceExtensionProperties) X(vkEnumerateInstanceLayerProperties)
 
@@ -54,7 +67,7 @@ namespace {
   X(vkDestroyInstance) X(vkEnumeratePhysicalDevices) X(vkGetPhysicalDeviceProperties)                              \
   X(vkGetPhysicalDeviceFeatures2) X(vkGetPhysicalDeviceQueueFamilyProperties) X(vkGetPhysicalDeviceMemoryProperties) \
   X(vkGetPhysicalDeviceFormatProperties) X(vkCreateDevice) X(vkGetDeviceProcAddr)                                   \
-  X(vkEnumerateDeviceExtensionProperties) X(vkCreateWin32SurfaceKHR) X(vkDestroySurfaceKHR)                         \
+  X(vkEnumerateDeviceExtensionProperties) REGS_VK_INSTANCE_WIN32(X) X(vkDestroySurfaceKHR)                        \
   X(vkGetPhysicalDeviceSurfaceSupportKHR) X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)                              \
   X(vkGetPhysicalDeviceSurfaceFormatsKHR) X(vkGetPhysicalDeviceSurfacePresentModesKHR) X(vkGetPhysicalDeviceProperties2)
 
@@ -81,7 +94,7 @@ namespace {
   X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)  \
   X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets)          \
   X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer) X(vkCreatePipelineCache) X(vkDestroyPipelineCache)              \
-  X(vkGetPipelineCacheData) X(vkImportSemaphoreWin32HandleKHR)
+  X(vkGetPipelineCacheData) REGS_VK_DEVICE_WIN32(X)
 
 #define REGS_VK_DECLARE(name) PFN_##name name = nullptr;
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -945,7 +958,11 @@ class VkDeviceImpl final : public Device {
   float maxAniso_ = 1;
   bool vsync_ = true;
   std::atomic<bool> swapchainDirty_{false};
+#if defined(_WIN32)
   HMODULE lib_ = nullptr;
+#else
+  void* lib_ = nullptr;  // libvulkan.so.1
+#endif
   VkInstance instance_ = VK_NULL_HANDLE;
   VkSurfaceKHR surface_ = VK_NULL_HANDLE;
   VkPhysicalDevice phys_ = VK_NULL_HANDLE;
@@ -1237,12 +1254,22 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   if (const char* c = regs::envVar("REGS_VK_CACHE"); c && std::strcmp(c, "0") == 0) cacheFolder_.clear();
   vk::setCacheFolder(cacheFolder_.empty() ? cacheFolder_ : cacheFolder_ / "spirv");
   recordAll_ = regs::envVar("REGS_VK_RECORD_ALL") != nullptr;
+#if defined(_WIN32)
   lib_ = LoadLibraryW(L"vulkan-1.dll");
   if (!lib_) {
     if (error) *error = "vulkan-1.dll not found (no Vulkan driver)";
     return false;
   }
   vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(lib_, "vkGetInstanceProcAddr"));
+#else
+  lib_ = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+  if (!lib_) lib_ = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+  if (!lib_) {
+    if (error) *error = "libvulkan.so.1 not found (no Vulkan loader installed)";
+    return false;
+  }
+  vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(lib_, "vkGetInstanceProcAddr"));
+#endif
   if (!vkGetInstanceProcAddr) {
     if (error) *error = "vkGetInstanceProcAddr missing";
     return false;
@@ -1254,8 +1281,17 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     if (error) *error = "vkCreateInstance missing";
     return false;
   }
-  // instance: Vulkan 1.3, the Win32 surface; the Khronos validation layer when asked for and installed
+  // instance: Vulkan 1.3, the Win32 surface (elsewhere what the window's surface needs: X11 or Wayland); the Khronos
+  // validation layer when asked for and installed
+#if defined(_WIN32)
   std::vector<const char*> layers, exts = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+#else
+  std::vector<const char*> layers, exts = window_.vulkanExtensions();
+  if (exts.empty()) {
+    if (error) *error = "the window offers no Vulkan surface";
+    return false;
+  }
+#endif
   {  // the HDR colour spaces of the swapchain (§9.6), where the loader has them
     uint32_t n = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr);
@@ -1291,6 +1327,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
 #define REGS_VK_LOAD_INSTANCE(name) name = reinterpret_cast<PFN_##name>(vkGetInstanceProcAddr(instance_, #name));
   REGS_VK_INSTANCE(REGS_VK_LOAD_INSTANCE)
 #undef REGS_VK_LOAD_INSTANCE
+#if defined(_WIN32)
   VkWin32SurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
   sci.hinstance = static_cast<HINSTANCE>(window_.nativeInstance());
   sci.hwnd = static_cast<HWND>(window_.nativeWindow());
@@ -1298,6 +1335,12 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     if (error) *error = vkError("vkCreateWin32SurfaceKHR", r);
     return false;
   }
+#else
+  if (!window_.vulkanSurface(instance_, &surface_)) {
+    if (error) *error = "the window could not make a Vulkan surface";
+    return false;
+  }
+#endif
   // physical device: Vulkan 1.3 with dynamic rendering and synchronization2, BC textures, a queue that draws and
   // presents, VK_KHR_swapchain and VK_KHR_push_descriptor; discrete GPUs first
   uint32_t n = 0;
@@ -1389,8 +1432,10 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     hdrMetadataExt_ = has(VK_EXT_HDR_METADATA_EXTENSION_NAME);
     // textures shared with Direct3D 11 (Leia SR weaving, engine/leiasr.cpp): import of D3D11 textures' NT handles; the
     // adapter's LUID to make the D3D11 device on the same GPU
+#if defined(_WIN32)
     externalMemWin32_ = has(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
     externalSemWin32_ = has(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);  // shared D3D11 fences (GPU-side sync)
+#endif
     {
       VkPhysicalDeviceIDProperties idp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
       VkPhysicalDeviceProperties2 ip{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &idp};
@@ -1453,8 +1498,10 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     dexts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
   }
   if (hdrMetadataExt_) dexts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+#if defined(_WIN32)
   if (externalMemWin32_) dexts.push_back(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
   if (externalSemWin32_ && timelineSupported_) dexts.push_back(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);
+#endif
   VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f2};
   dci.queueCreateInfoCount = 1;
   dci.pQueueCreateInfos = &qci;
@@ -1771,7 +1818,11 @@ void VkDeviceImpl::savePipelineCache() {
 
 void VkDeviceImpl::shutdown() {
   if (!instance_) {
+#if defined(_WIN32)
     if (lib_) FreeLibrary(lib_), lib_ = nullptr;
+#else
+    if (lib_) dlclose(lib_), lib_ = nullptr;
+#endif
     return;
   }
   if (dev_) {
@@ -1846,7 +1897,11 @@ void VkDeviceImpl::shutdown() {
   if (surface_) vkDestroySurfaceKHR(instance_, surface_, nullptr);
   vkDestroyInstance(instance_, nullptr);
   instance_ = VK_NULL_HANDLE;
+#if defined(_WIN32)
   if (lib_) FreeLibrary(lib_), lib_ = nullptr;
+#else
+  if (lib_) dlclose(lib_), lib_ = nullptr;
+#endif
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2038,6 +2093,7 @@ void VkDeviceImpl::present() {
 uint32_t VkDeviceImpl::addWindow(platform::Window& w) {
   auto x = std::make_unique<ExtraWindow>();
   x->window = &w;
+#if defined(_WIN32)
   VkWin32SurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
   sci.hinstance = static_cast<HINSTANCE>(w.nativeInstance());
   sci.hwnd = static_cast<HWND>(w.nativeWindow());
@@ -2045,6 +2101,12 @@ uint32_t VkDeviceImpl::addWindow(platform::Window& w) {
     LOG_WARN("vulkan: no surface for a pop-out window (%s)", vkError("vkCreateWin32SurfaceKHR", r).c_str());
     return 0;
   }
+#else
+  if (!w.vulkanSurface(instance_, &x->surface)) {
+    LOG_WARN("vulkan: no surface for a pop-out window");
+    return 0;
+  }
+#endif
   VkBool32 ok = VK_FALSE;
   vkGetPhysicalDeviceSurfaceSupportKHR(phys_, queueFamily_, x->surface, &ok);
   if (!ok) {  // a monitor on another GPU

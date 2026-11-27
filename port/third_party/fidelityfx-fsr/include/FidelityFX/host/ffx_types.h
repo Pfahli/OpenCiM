@@ -77,7 +77,10 @@
 #define FFX_API __declspec(dllexport)
 #endif // #if defined (FFX_GCC)
 
+// OpenCiM: overridable (Linux builds use more: wchar_t is 4 bytes there and the private contexts outgrow 128K words)
+#ifndef FFX_SDK_DEFAULT_CONTEXT_SIZE
 #define FFX_SDK_DEFAULT_CONTEXT_SIZE (1024 * 128)
+#endif
 
 /// Maximum supported number of simultaneously bound SRVs.
 ///

@@ -1,4 +1,6 @@
 #include "vfs/vfs.h"
+#include "core/file.h"
+#include "core/game_find.h"
 
 #include <algorithm>
 #include <atomic>
@@ -13,7 +15,9 @@
 #include <functional>
 #include <span>
 
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #include "core/log.h"
 #include "core/text.h"
@@ -24,11 +28,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::string pathToUtf8(const fs::path& p) {
-  auto w = p.wstring();
-  return utf16ToUtf8(std::u16string_view(reinterpret_cast<const char16_t*>(w.data()), w.size()));
-}
-
 // NTFS returns directory entries in upper-cased name order; the engine's scan (FindFirstFileW) inherits it, and the
 // order decides which archive is mounted first.
 std::vector<fs::directory_entry> sortedEntries(const fs::path& dir) {
@@ -36,16 +35,15 @@ std::vector<fs::directory_entry> sortedEntries(const fs::path& dir) {
   std::error_code ec;
   for (auto& e : fs::directory_iterator(dir, ec)) v.push_back(e);
   std::sort(v.begin(), v.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
-    auto x = a.path().filename().wstring(), y = b.path().filename().wstring();
+    auto x = regs::pathToUtf16(a.path().filename()), y = regs::pathToUtf16(b.path().filename());
     return std::lexicographical_compare(x.begin(), x.end(), y.begin(), y.end(),
-                                        [](wchar_t c, wchar_t d) { return std::towupper(c) < std::towupper(d); });
+                                        [](char16_t c, char16_t d) { return std::towupper(c) < std::towupper(d); });
   });
   return v;
 }
 
 bool hasGsExtension(const fs::path& p) {
-  auto e = p.extension().wstring();
-  return e == L".gs";  // the engine compares against L".gs" exactly
+  return regs::pathToUtf16(p.extension()) == u".gs";  // the engine compares against L".gs" exactly
 }
 
 }  // namespace
@@ -211,14 +209,14 @@ bool Vfs::read(const std::string& path, std::vector<uint8_t>& out, std::string* 
       return a.read(a.entries[r->entry], out, error);
     }
     case Kind::Loose: {
-      FILE* f = _wfopen(r->disk.wstring().c_str(), L"rb");
+      FILE* f = regs::openFile(r->disk, "rb");
       if (!f) {
         if (error) *error = "cannot open";
         return false;
       }
-      _fseeki64(f, 0, SEEK_END);
-      auto len = _ftelli64(f);
-      _fseeki64(f, 0, SEEK_SET);
+      regs::seekFile(f, 0, SEEK_END);
+      auto len = regs::tellFile(f);
+      regs::seekFile(f, 0, SEEK_SET);
       out.resize(size_t(len));
       bool ok = std::fread(out.data(), 1, out.size(), f) == out.size();
       std::fclose(f);
@@ -240,7 +238,7 @@ bool Vfs::readHead(const std::string& path, std::vector<uint8_t>& out, size_t n)
       return a.readHead(a.entries[r->entry], out, n);
     }
     case Kind::Loose: {
-      FILE* f = _wfopen(r->disk.wstring().c_str(), L"rb");
+      FILE* f = regs::openFile(r->disk, "rb");
       if (!f) return false;
       out.resize(n);
       out.resize(std::fread(out.data(), 1, n, f));
@@ -253,10 +251,10 @@ bool Vfs::readHead(const std::string& path, std::vector<uint8_t>& out, size_t n)
 
 fs::path Vfs::diskPathFor(const std::string& path) const {
   auto w = utf8ToUtf16(path);
-  fs::path rel(std::wstring(w.begin(), w.end()));
+  fs::path rel = regs::pathFromUtf16(w);
   if (path.rfind("userdata/", 0) == 0 && userdataRoot_) {
     auto sub = utf8ToUtf16(path.substr(9));
-    return *userdataRoot_ / fs::path(std::wstring(sub.begin(), sub.end()));
+    return *userdataRoot_ / regs::pathFromUtf16(sub);
   }
   return installRoot_ / rel;
 }
@@ -293,7 +291,7 @@ bool Vfs::write(const std::string& path, const std::vector<uint8_t>& data) {
   if (asyncWrites) {
     ++g_pendingWrites;
     std::thread([disk, copy = data]() {
-      if (FILE* f = _wfopen(disk.wstring().c_str(), L"wb+")) {
+      if (FILE* f = regs::openFile(disk, "wb+")) {
         if (std::fwrite(copy.data(), 1, copy.size(), f) != copy.size()) LOG_WARN("vfs: background write of %s failed", disk.string().c_str());
         std::fclose(f);
       } else {
@@ -303,7 +301,7 @@ bool Vfs::write(const std::string& path, const std::vector<uint8_t>& data) {
     }).detach();
     return true;
   }
-  FILE* f = _wfopen(disk.wstring().c_str(), L"wb+");
+  FILE* f = regs::openFile(disk, "wb+");
   if (!f) return false;  // the engine silently loses the data here
   bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size();
   std::fclose(f);
@@ -338,7 +336,13 @@ PackageWriter& packageWriter() {
 bool replaceFile(const fs::path& from, const fs::path& to) {
   // a reader of the old package (Archive::read opens the file per read) can hold it for a moment: retry
   for (int i = 0; i < 100; ++i) {
+#if defined(_WIN32)
     if (MoveFileExW(from.wstring().c_str(), to.wstring().c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+#else
+    std::error_code ec;  // rename() replaces atomically; open readers keep the old file
+    fs::rename(from, to, ec);
+    if (!ec) return true;
+#endif
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   return false;
@@ -357,7 +361,7 @@ void writeJob(Vfs::PackageJob& j) {
   fs::path tmp = j.disk;
   tmp += L".tmp";
   bool ok = false;
-  if (FILE* f = _wfopen(tmp.wstring().c_str(), L"wb")) {
+  if (FILE* f = regs::openFile(tmp, "wb")) {
     ok = std::fwrite(package.data(), 1, package.size(), f) == package.size();
     ok = std::fclose(f) == 0 && ok;
   }
@@ -416,8 +420,12 @@ void waitJob(const Vfs::PackageJob& j) {
 
 // the same file, as Windows sees it (case and separators do not matter)
 bool sameFile(const fs::path& a, const fs::path& b) {
+#if defined(_WIN32)
   std::wstring x = a.lexically_normal().wstring(), y = b.lexically_normal().wstring();
   return x.size() == y.size() && std::equal(x.begin(), x.end(), y.begin(), [](wchar_t c, wchar_t d) { return std::towupper(c) == std::towupper(d); });
+#else
+  return a.lexically_normal() == b.lexically_normal();  // (case matters on the usual Linux file systems)
+#endif
 }
 
 bool endsWith(const std::string& s, const char* suffix) {
