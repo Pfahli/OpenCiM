@@ -1,12 +1,17 @@
-// Crash reports on Linux (docs/crash-reports.md, docs/linux.md): a signal handler on its own stack writes a text report
-// to the crash folder (Documents/OpenCiM/crashes) with the signal, the stack as "module+0xoffset" lines (named with
-// `addr2line -e regs -f -C <offset>` or regs-tool symbolize), the facts and the last log lines. No minidump. The
-// Windows handler is in crash_win32.cpp.
+// Crash reports on Linux and macOS (docs/crash-reports.md, docs/linux.md, docs/macos.md): a signal handler on its own
+// stack writes a text report to the crash folder (Documents/OpenCiM/crashes) with the signal, the stack as
+// "module+0xoffset" lines (named by regs-tool symbolize: addr2line on Linux, atos on the Mac), the facts and the last
+// log lines. No minidump. The Windows handler is in crash_win32.cpp.
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <signal.h>
-#include <sys/sysinfo.h>
 #include <sys/utsname.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <sys/sysctl.h>
+#else
+#include <sys/sysinfo.h>
+#endif
 #include <unistd.h>
 
 #include <atomic>
@@ -47,8 +52,48 @@ std::string frameText(void* addr) {
   return buf;
 }
 
+#if defined(__APPLE__)
+const char* const kSystem = "macOS";
+#else
+const char* const kSystem = "Linux";
+#endif
+
+// this program's file
+std::string selfPath() {
+  char buf[4096] = {};
+#if defined(__APPLE__)
+  uint32_t size = sizeof buf;
+  if (_NSGetExecutablePath(buf, &size) != 0) buf[0] = 0;
+#else
+  const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+  buf[n > 0 ? n : 0] = 0;
+#endif
+  return buf;
+}
+
+// total and free memory in MB
+void memoryMb(unsigned long long& total, unsigned long long& free) {
+  total = free = 0;
+#if defined(__APPLE__)
+  uint64_t bytes = 0;
+  size_t len = sizeof bytes;
+  if (sysctlbyname("hw.memsize", &bytes, &len, nullptr, 0) == 0) total = bytes >> 20;
+#else
+  struct sysinfo si{};
+  if (sysinfo(&si) == 0) {
+    total = (unsigned long long)si.totalram * si.mem_unit >> 20;
+    free = (unsigned long long)si.freeram * si.mem_unit >> 20;
+  }
+#endif
+}
+
 std::string osVersion() {
   std::string pretty;
+#if defined(__APPLE__)
+  char v[64] = {};
+  size_t len = sizeof v;
+  if (sysctlbyname("kern.osproductversion", v, &len, nullptr, 0) == 0) pretty = std::string("macOS ") + v;
+#endif
   std::ifstream f("/etc/os-release");
   for (std::string l; std::getline(f, l);)
     if (l.rfind("PRETTY_NAME=", 0) == 0) {
@@ -101,22 +146,19 @@ void report(const char* what, int skip) {
   std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", &t);
   const fs::path txt = dir / (std::string(stamp) + ".txt");
   const long long up = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - g_start).count();
-  struct sysinfo si{};
-  sysinfo(&si);
-  char self[1024] = {};
-  const ssize_t sl = readlink("/proc/self/exe", self, sizeof self - 1);
-  if (sl > 0) self[sl] = 0;
+  unsigned long long memTotal = 0, memFree = 0;
+  memoryMb(memTotal, memFree);
+  const std::string self = selfPath();
 
   std::ostringstream r;
   r << "OpenCiM crash report\n"
     << "Please attach this file to the bug report.\n\n"
-    << "Version:   OpenCiM " REGS_VERSION_STRING " (build " << REGS_BUILD_NUMBER << ", " REGS_BUILD_COMMIT ", " REGS_BUILD_DATE ", Linux)\n"
+    << "Version:   OpenCiM " REGS_VERSION_STRING " (build " << REGS_BUILD_NUMBER << ", " REGS_BUILD_COMMIT ", " REGS_BUILD_DATE ", " << kSystem << ")\n"
     << "Time:      " << when << ", after " << up / 3600 << ":" << (up / 60 % 60 < 10 ? "0" : "") << up / 60 % 60 << ":"
     << (up % 60 < 10 ? "0" : "") << up % 60 << " running\n"
     << "Program:   " << fs::path(self).filename().string() << "\n"
     << "System:    " << osVersion() << ", " << sysconf(_SC_NPROCESSORS_ONLN) << " threads, "
-    << (unsigned long long)si.totalram * si.mem_unit / (1 << 20) << " MB RAM ("
-    << (unsigned long long)si.freeram * si.mem_unit / (1 << 20) << " MB free)\n"
+    << memTotal << " MB RAM" << (memFree ? " (" + std::to_string(memFree) + " MB free)" : std::string()) << "\n"
     << "What:      " << what << "\n"
     << "Where:     " << (stack.empty() ? std::string("?") : stack[0].substr(2)) << "\n";
   for (const auto& [k, v] : regs::crashContextSnapshot()) r << "  " << k << ": " << v << "\n";
@@ -212,7 +254,7 @@ void crashTest(const char* kind) {
 }
 
 // regs-tool symbolize <report.txt> [<folder with the build's binaries>]: each "module+0x..." stack line named with
-// addr2line (binutils), from the binaries of that build
+// addr2line (binutils; atos on the Mac), from the binaries of that build
 int crashSymbolize(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr, "usage: regs-tool symbolize <report.txt> [<folder with the build's binaries>]\n");
@@ -220,9 +262,8 @@ int crashSymbolize(int argc, char** argv) {
   }
   fs::path dir = argc >= 4 ? fs::path(argv[3]) : fs::path();
   if (dir.empty()) {
-    char self[1024] = {};
-    const ssize_t sl = readlink("/proc/self/exe", self, sizeof self - 1);
-    if (sl > 0) dir = fs::path(std::string(self, size_t(sl))).parent_path();
+    const std::string self = selfPath();
+    if (!self.empty()) dir = fs::path(self).parent_path();
   }
   std::ifstream in(argv[2], std::ios::binary);
   if (!in) {
@@ -238,10 +279,21 @@ int crashSymbolize(int argc, char** argv) {
       const fs::path image = dir / line.substr(start, plus - start);
       std::error_code ec;
       if (fs::exists(image, ec)) {
-        const std::string cmd = "addr2line -f -C -s -e '" + image.string() + "' " + line.substr(plus + 1, line.find(' ', plus) - plus - 1);
+        const std::string off = line.substr(plus + 1, line.find(' ', plus) - plus - 1);
+#if defined(__APPLE__)  // atos wants the address in the image as loaded at its default base
+        char addr[32];
+        std::snprintf(addr, sizeof addr, "0x%llx", 0x100000000ull + std::strtoull(off.c_str(), nullptr, 16));
+        const std::string cmd = "atos -o '" + image.string() + "' -l 0x100000000 " + addr;
+#else
+        const std::string cmd = "addr2line -f -C -s -e '" + image.string() + "' " + off;
+#endif
         if (FILE* p = popen(cmd.c_str(), "r")) {
           char fn[512] = {}, src[512] = {};
+#if defined(__APPLE__)  // one line: "function (in image) (file:line)"
+          if (std::fgets(fn, sizeof fn, p)) {
+#else
           if (std::fgets(fn, sizeof fn, p) && std::fgets(src, sizeof src, p)) {
+#endif
             fn[std::strcspn(fn, "\n")] = 0;
             src[std::strcspn(src, "\n")] = 0;
             std::printf("  %s  %s", fn, src);

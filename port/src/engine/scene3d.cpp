@@ -334,7 +334,7 @@ void assignPrograms(Display& d, VM& vm, std::vector<DrawItem>& items, uint32_t e
     unsigned rays = wanted && !v->raysFailed[wanted] ? wanted : 0;
     if (rays ? v->programRays[rays] : v->program) continue;
     if (noBatch) break;
-    if (std::any_of(builds.begin(), builds.end(), [&](const Build& b) { return b.v == v && b.rays == rays; })) continue;
+    if (std::any_of(builds.begin(), builds.end(), [&, v = v](const Build& b) { return b.v == v && b.rays == rays; })) continue;
     std::string err;
     if (uint32_t t = d.r3d().queueProgram(v->vertex, v->fragment, &err, true, rays)) builds.push_back({v, rays, t, m});
     else storeProgram(v, rays, 0, err, m->shader, m->flags, env);

@@ -45,16 +45,15 @@
 
 #if defined(_WIN32)
 void profilerFrame(long long frame);  // tools/profiler_win32.cpp: REGS_PROFILE=<first frame>:<frames>:<report file>
-namespace regs {
-void crashTest(const char* kind);  // tools/crash_win32.cpp: REGS_CRASH_TEST=<kind>[:<frame>]
-void crashThreadHandlers();        // tools/crash_win32.cpp: std::terminate's handler for this thread
-}
 #else
-inline void profilerFrame(long long) {}
+inline void profilerFrame(long long) {}  // (no sampling profiler outside Windows)
+#endif
 namespace regs {
-inline void crashTest(const char*) {}
-inline void crashThreadHandlers() {}
+void crashTest(const char* kind);  // tools/crash_win32.cpp, crash_posix.cpp: REGS_CRASH_TEST=<kind>[:<frame>]
+void crashThreadHandlers();        // the same: std::terminate's handler for this thread
 }
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
 #endif
 
 using namespace regs;
@@ -80,8 +79,37 @@ fs::path exeDir(const char* argv0) {
   std::error_code ec;
   fs::path self = fs::read_symlink("/proc/self/exe", ec);
   if (!ec && !self.empty()) return self.parent_path();
+#elif defined(__APPLE__)
+  char buf[4096];
+  uint32_t size = sizeof buf;
+  if (_NSGetExecutablePath(buf, &size) == 0) {
+    std::error_code ec;
+    fs::path self = fs::canonical(fs::path(buf), ec);
+    if (!ec) return self.parent_path();
+  }
 #endif
   return fs::absolute(widen(argv0)).parent_path();
+}
+
+// the port's own data: next to the executable; in the Mac app bundle in Contents/Resources (the signed bundle keeps
+// code in Contents/MacOS and everything else beside it)
+fs::path dataDir(const char* argv0) {
+  const fs::path exe = exeDir(argv0);
+#if defined(__APPLE__)
+  std::error_code ec;
+  if (fs::is_directory(exe.parent_path() / "Resources" / "data", ec)) return exe.parent_path() / "Resources" / "data";
+#endif
+  return exe / "data";
+}
+
+// install.cfg (the game folder the setup or --download-game chose): next to the executable; on the Mac in
+// ~/Library/Application Support/OpenCiM, since writing into the signed app bundle would break its signature
+fs::path installCfg(const char* argv0) {
+#if defined(__APPLE__)
+  if (const char* home = std::getenv("HOME"); home && *home)
+    return fs::path(home) / "Library" / "Application Support" / "OpenCiM" / "install.cfg";
+#endif
+  return exeDir(argv0) / "install.cfg";
 }
 
 int usage() {
@@ -136,13 +164,15 @@ int main(int argc, char** argv) {
     std::printf("%s\n", ok ? "Cities in Motion is ready. Start OpenCiM without a folder: it finds the game there."
                            : "Cities in Motion was not downloaded.");
     if (ok && argc >= 3) {  // another folder than the default: remembered in install.cfg next to regs
-      if (!writeInstallCfg(exeDir(argv[0]) / "install.cfg", dir)) std::printf("(install.cfg could not be written: start regs with the folder)\n");
+      std::error_code mk;
+      fs::create_directories(installCfg(argv[0]).parent_path(), mk);
+      if (!writeInstallCfg(installCfg(argv[0]), dir)) std::printf("(install.cfg could not be written: start regs with the folder)\n");
     }
     return ok ? 0 : 1;
   }
   const bool gameGiven = argc >= 2 && argv[1][0] != '-';
   if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) return usage();
-  fs::path game = gameGiven ? widen(argv[1]) : fs::path(), documents, screenshot;
+  fs::path game = gameGiven ? gameDataFolder(widen(argv[1])) : fs::path(), documents, screenshot;
   // no game: the reason on stderr and (Windows) in a message box; REGS_NO_DIALOGS=1 (test runs) leaves the box out
   auto noGame = [](const std::string& why) {
     std::fprintf(stderr, "%s\n", why.c_str());
@@ -159,7 +189,8 @@ int main(int argc, char** argv) {
   };
   std::string gameSource = "argument";
   if (!gameGiven) {
-    fs::path cfg = readInstallCfgGame(exeDir(argv[0]) / "install.cfg");
+    fs::path cfg = readInstallCfgGame(installCfg(argv[0]));
+    if (!cfg.empty()) cfg = gameDataFolder(cfg);
     if (!cfg.empty() && checkGameFolder(cfg).ok) game = cfg, gameSource = "install.cfg";
     else game = findGame(&gameSource);
     if (game.empty()) return noGame(gameNotFoundMessage());
@@ -172,7 +203,7 @@ int main(int argc, char** argv) {
   crashSetDialog(true);  // the game shows where its crash report went (tools/crash_win32.cpp)
   bool printPaths = false;
   // the port's own data (menu pages, strings) next to the executable; --data overrides
-  fs::path data = exeDir(argv[0]) / "data";
+  fs::path data = dataDir(argv[0]);
   long long maxFrames = -1;
   std::vector<Scripted> scripted;
   for (int i = gameGiven ? 2 : 1; i < argc; ++i) {

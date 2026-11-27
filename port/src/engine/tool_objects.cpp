@@ -195,7 +195,7 @@ const SearchMap& searchMap(VM& vm, GridObj* grid) {
     (void)serial;
     Tpl t = tplOf(vm, grid, name);
     uint32_t c = t.conn, c2 = t.conn2, f = t.flags & 0xcf0f0u;
-    auto put = [&](uint32_t a, uint32_t b, int orient) {
+    auto put = [&, &name = name](uint32_t a, uint32_t b, int orient) {
       SearchKey k{uint32_t(t.type), uint32_t(t.variation), a, b, f};
       auto it = m.map.find(k);
       if (it == m.map.end()) m.map.emplace(k, SearchHit{orient, name});

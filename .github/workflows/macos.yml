@@ -1,0 +1,112 @@
+# OpenCiM for macOS (port/docs/macos.md): a universal app (Apple Silicon and Intel) in a disk image, signed and
+# notarized when the signing secrets are set, ad hoc signed otherwise.
+#  - every push to main that touches the port: the DMG as a build artifact
+#  - a published GitHub release: the DMG of that tag attached to the release
+#  - by hand (Actions > macOS > Run workflow)
+# The controller glyphs' letters are drawn with Windows fonts, so a Windows job draws them first (regs-tool padglyphs).
+#
+# Secrets (Settings > Secrets and variables > Actions), all optional:
+#   MACOS_CERTIFICATE           the "Developer ID Application" certificate with its key, as .p12, base64 encoded
+#   MACOS_CERTIFICATE_PASSWORD  the .p12's password
+#   MACOS_SIGN_IDENTITY         its name, e.g. "Developer ID Application: Jane Doe (AB12CD34EF)"
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   notarization (an app-specific password from account.apple.com)
+name: macOS
+
+on:
+  push:
+    branches: [main]
+    paths: ['port/**', '.github/workflows/macos.yml']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # attaching the DMG to a release
+
+env:
+  MOLTENVK_VERSION: v1.4.2
+
+jobs:
+  glyphs:
+    runs-on: windows-2022
+    steps:
+      - run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+      - name: Draw the controller glyphs
+        shell: pwsh
+        run: |
+          cd port
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          cmd /c "call `"$vs\VC\Auxiliary\Build\vcvarsall.bat`" x64 >nul && cmake -S . -B build/glyphs -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/glyphs --target regs-tool"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          build/glyphs/regs-tool.exe padglyphs pad third_party/kenney-input-prompts
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pad-glyphs
+          path: port/pad
+
+  macos:
+    needs: glyphs
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the build number is the commit count
+      - uses: actions/download-artifact@v4
+        with:
+          name: pad-glyphs
+          path: port/build/pad
+      - name: Tools and MoltenVK
+        run: |
+          brew install ninja
+          mkdir -p port/build/moltenvk
+          curl -L --fail -o port/build/moltenvk/mvk.tar "https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK_VERSION/MoltenVK-macos.tar"
+          tar -xf port/build/moltenvk/mvk.tar -C port/build/moltenvk
+          cp "$(find port/build/moltenvk -path '*dylib/macOS/libMoltenVK.dylib' | head -1)" port/build/moltenvk/libMoltenVK.dylib
+          lipo -info port/build/moltenvk/libMoltenVK.dylib
+      - name: Build (universal)
+        run: |
+          cd port
+          cmake -S . -B build/macos-Release -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DREGS_PAD_GLYPHS_DIR="$PWD/build/pad"
+          cmake --build build/macos-Release
+          lipo -info build/macos-Release/regs
+          build/macos-Release/regs-tool parse data/regs/extend/metro/scripts/main.script > /dev/null
+      - name: Signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ] || [ -z "$MACOS_SIGN_IDENTITY" ]; then echo "no signing secrets: ad hoc signature"; exit 0; fi
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KCPW=$(uuidgen)
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "MACOS_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
+      - name: Package (app, DMG, notarization)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          cd port
+          bash macos/package.sh build/macos-Release build/release build/moltenvk/libMoltenVK.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenCiM-macos
+          path: |
+            port/build/release/*-macos.dmg
+            port/build/release/*-macos.dmg.sha256
+            port/build/release/*-macos-symbols.zip
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" port/build/release/*-macos.dmg port/build/release/*-macos.dmg.sha256 --clobber

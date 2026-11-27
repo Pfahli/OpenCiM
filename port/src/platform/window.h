@@ -113,6 +113,9 @@ class Window {
   // surface for a VkInstance (written to *surface, a VkSurfaceKHR*); false when it cannot
   virtual std::vector<const char*> vulkanExtensions() const { return {}; }
   virtual bool vulkanSurface(void* instance, void* surface) const { return false; }
+  // and the vkGetInstanceProcAddr of the Vulkan library the window loaded (SDL; on the Mac the bundled MoltenVK), so the
+  // device uses the same one; null where the device loads it itself
+  virtual void* vulkanGetInstanceProcAddr() const { return nullptr; }
 };
 
 std::unique_ptr<Window> createWindow();

@@ -14,6 +14,8 @@ struct GameCheck {
 };
 
 // The base archives the port needs and the DLCs it knows, checked in `dir` (the folder with Cities In Motion.exe).
+// the folder that holds the game's archives: dir itself, or inside a Mac app bundle in it (Contents/MacOS)
+std::filesystem::path gameDataFolder(const std::filesystem::path& dir);
 GameCheck checkGameFolder(const std::filesystem::path& dir);
 
 struct GameCandidate {

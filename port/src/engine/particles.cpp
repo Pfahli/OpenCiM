@@ -1109,7 +1109,7 @@ void collectBoatWakes(Display& d, VM& vm, SimState& s, const Vec3& eye, float fa
       render::MeshData md;
       const int n = w.count;
       const float plane = w.emitter->planeSize * (wakeTest ? 8.0f : 1.0f);
-      auto pt = [&](int i) { return w.ring[(w.head + 16 - n + i) & 15]; };
+      auto pt = [&, &w = w](int i) { return w.ring[(w.head + 16 - n + i) & 15]; };  // (named: older Clang cannot capture bindings)
       auto dir = [&](int i) {
         Vec3 q = pt(i + 1) - pt(i);
         float l = std::sqrt(dot(q, q));

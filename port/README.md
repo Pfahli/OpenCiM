@@ -327,7 +327,7 @@ node ..\tools\gen-port-operators.mjs ..\docs\script-runtime\operators.json src\s
 | `src/vfs/` | GS10 archives and the virtual file system (mount rules, loose overrides, `memory/`, `userdata/`) |
 | `src/script/` | script language: lexer, parser, compiler, bytecode VM (threads, events, macros, `load`), values and operators (`vm_ops.cpp`; the dispatch table is generated from the engine's) |
 | `src/engine/` | engine instance and `MAIN`, the generated native API (every class, field, method, event and constant), hand-written natives, the display (window tick, GUI pass) and input dispatch |
-| `src/platform/` | OS window, input and OpenGL context behind an interface (Win32/WGL on Windows, SDL3 on Linux) |
+| `src/platform/` | OS window, input and OpenGL context behind an interface (Win32/WGL on Windows, SDL3 on Linux and macOS) |
 | `src/render/` | OpenGL 3.3 core loader, DDS decoding, the batched 2D renderer |
 | `src/app/` | `regs`, the game executable |
 | `src/setup/` | `opencim-setup`, the setup program (install, update, repair, uninstall; `docs/installer.md`), and its pictures |
@@ -488,5 +488,5 @@ Third-party code in the tree keeps its own license (each folder has its license 
 | `third_party/glslang` | GLSL to SPIR-V compiler | BSD-2/3-Clause, MIT, Apache-2.0 and others (see its `LICENSES`) |
 | `third_party/vulkan-headers` | Vulkan API headers | Apache-2.0 / MIT |
 | `third_party/kenney-input-prompts` | controller button pictures | CC0 |
-| `third_party/SDL3` (3.4.20) | Linux: window, input, controllers, display modes (`docs/linux.md`) | zlib |
-| `third_party/stb` (stb_image 2.34) | Linux: PNG and JPEG decoding | public domain / MIT |
+| `third_party/SDL3` (3.4.20) | Linux and macOS: window, input, controllers, display modes (`docs/linux.md`, `docs/macos.md`) | zlib |
+| `third_party/stb` (stb_image 2.34) | Linux and macOS: PNG and JPEG decoding | public domain / MIT |

@@ -103,9 +103,9 @@ Windows build's copy.
 
 - `src/platform/window_sdl.cpp` and `gamepad_sdl.cpp` replace `window_win32.cpp`, `gamepad_win32.cpp`,
   `steam_hid_win32.cpp` and `touchpad_win32.cpp`. Keys still reach the engine as Windows virtual-key codes.
-- `src/engine/platform_linux.cpp` replaces `platform_win32.cpp`: libcurl for HTTPS, stb_image for PNG and JPEG, SDL
+- `src/engine/platform_posix.cpp` (shared with macOS) replaces `platform_win32.cpp`: libcurl for HTTPS, stb_image for PNG and JPEG, SDL
   for display modes and the user's folders.
-- `src/tools/crash_linux.cpp` replaces `crash_win32.cpp`; there is no sampling profiler (`REGS_PROFILE`) on Linux.
+- `src/tools/crash_posix.cpp` (shared with macOS) replaces `crash_win32.cpp`; there is no sampling profiler (`REGS_PROFILE`) on Linux.
 - The Vulkan device loads `libvulkan.so.1` and lets the window make its surface (`Window::vulkanSurface`).
 - Paths: `core/file.h` (`openFile`, `seekFile`, `tellFile`) and the path helpers in `core/text.h` and
   `core/game_find.h`; `wchar_t` is 4 bytes on Linux, so a path's `wstring()` is never taken as UTF-16.

@@ -70,7 +70,7 @@ void registerLinePanelNatives(VM& vm) {
   if (ClassInfo* c = vm.findClass("gsViewPort"))
     for (auto [name, def] : {std::pair{u"minDistance", 0.1f}, std::pair{u"maxDistance", 400.0f}})
       if (auto f = c->fields.find(name); f != c->fields.end())
-        f->second.get = [key = std::u16string(name), def](VM&, Object* o) {
+        f->second.get = [key = std::u16string(name), def = def](VM&, Object* o) {
           auto it = o->fieldValues.find(key);
           return it == o->fieldValues.end() || it->second.isNone() ? Value::real(def) : it->second;
         };

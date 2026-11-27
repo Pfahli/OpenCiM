@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <string>
 
@@ -69,8 +70,12 @@ int toVk(const SDL_KeyboardEvent& k) {
     case SDL_SCANCODE_INSERT: return 0x2D;
     case SDL_SCANCODE_DELETE: return 0x2E;
     case SDL_SCANCODE_HELP: return 0x2F;
+#if defined(__APPLE__)  // Command is the Mac's Ctrl (Cmd+Z, Cmd+S, Cmd-click)
+    case SDL_SCANCODE_LGUI: case SDL_SCANCODE_RGUI: return 0x11;
+#else
     case SDL_SCANCODE_LGUI: return 0x5B;
     case SDL_SCANCODE_RGUI: return 0x5C;
+#endif
     case SDL_SCANCODE_APPLICATION: return 0x5D;
     case SDL_SCANCODE_SLEEP: return 0x5F;
     case SDL_SCANCODE_KP_MULTIPLY: return 0x6A;
@@ -125,6 +130,20 @@ class SdlWindow final : public Window {
     SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (desc.openGL) flags |= SDL_WINDOW_OPENGL;
     else flags |= SDL_WINDOW_VULKAN;
+#if defined(__APPLE__)
+    // Vulkan on the Mac is MoltenVK, shipped in the app bundle (Contents/Frameworks); SDL would only look in the
+    // system's library folders
+    if (!desc.openGL && !SDL_GetHint(SDL_HINT_VULKAN_LIBRARY)) {
+      const char* base = SDL_GetBasePath();  // Contents/Resources/ in a bundle
+      if (base) {
+        const std::string lib = std::string(base) + "../Frameworks/libMoltenVK.dylib";
+        if (FILE* f = std::fopen(lib.c_str(), "rb")) {
+          std::fclose(f);
+          SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, lib.c_str());
+        }
+      }
+    }
+#endif
     if (!desc.visible) flags |= SDL_WINDOW_HIDDEN;
     if (desc.resizable) flags |= SDL_WINDOW_RESIZABLE;
     if (desc.borderless) flags |= SDL_WINDOW_BORDERLESS | SDL_WINDOW_RESIZABLE;
@@ -135,6 +154,9 @@ class SdlWindow final : public Window {
       SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
       SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
       SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#if defined(__APPLE__)  // macOS gives core contexts (3.3 as 4.1) only forward-compatible
+      SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
       SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
       SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
       SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
@@ -290,6 +312,7 @@ class SdlWindow final : public Window {
     const char* const* e = SDL_Vulkan_GetInstanceExtensions(&n);
     return e ? std::vector<const char*>(e, e + n) : std::vector<const char*>{};
   }
+  void* vulkanGetInstanceProcAddr() const override { return reinterpret_cast<void*>(SDL_Vulkan_GetVkGetInstanceProcAddr()); }
   bool vulkanSurface(void* instance, void* surface) const override {
     return SDL_Vulkan_CreateSurface(win_, static_cast<VkInstance>(instance), nullptr, static_cast<VkSurfaceKHR*>(surface));
   }

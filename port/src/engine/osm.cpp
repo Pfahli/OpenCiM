@@ -2378,7 +2378,7 @@ void runImport(int serial, Frame fr, int flags, std::string* errorOut, std::shar
   if (!pavedAreas.empty() || !pavedLines.empty()) {
     data->paving.assign(size_t(W) * size_t(L), 0);
     for (auto& [edges, t] : pavedAreas)
-      fillEdges(edges, W, L, [&](int x, int z) {
+      fillEdges(edges, W, L, [&, t = t](int x, int z) {
         size_t i = size_t(z) * size_t(W) + size_t(x);
         if (!water[i]) data->paving[i] = t;
       });

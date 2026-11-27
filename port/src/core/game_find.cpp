@@ -149,6 +149,7 @@ std::vector<fs::path> steamLibraries(const fs::path& vdf) {
 void addUnique(std::vector<GameCandidate>& list, GameCandidate c) {
   std::error_code ec;
   if (!isDir(c.dir)) return;
+  c.dir = gameDataFolder(c.dir);  // the Mac version: the archives inside its app bundle
   fs::path canon = fs::weakly_canonical(c.dir, ec);
   if (!ec) c.dir = canon;
   for (const GameCandidate& o : list) {
@@ -166,6 +167,19 @@ void addUnique(std::vector<GameCandidate>& list, GameCandidate c) {
 }
 
 }  // namespace
+
+// the Mac version of the game keeps its archives inside the app bundle (Cities In Motion.app/Contents/MacOS, where
+// players put addons and DLC files): a folder without data.gs but with an .app holding it means that folder
+fs::path gameDataFolder(const fs::path& dir) {
+  if (!isDir(dir) || isFile(dir / "data.gs")) return dir;
+  std::error_code ec;
+  for (const auto& e : fs::directory_iterator(dir, ec)) {
+    if (e.path().extension() != ".app") continue;
+    for (const char* sub : {"Contents/MacOS", "Contents/Resources", "Contents/Resources/data"})
+      if (isFile(e.path() / sub / "data.gs")) return e.path() / sub;
+  }
+  return dir;
+}
 
 GameCheck checkGameFolder(const fs::path& dir) {
   GameCheck r;
@@ -197,6 +211,10 @@ std::vector<GameCandidate> findGameCandidates() {
     DWORD n = GetEnvironmentVariableW(var, buf, MAX_PATH);
     if (n > 0 && n < MAX_PATH) steamRoots.push_back(fs::path(buf) / "Steam");
   }
+#elif defined(__APPLE__)
+  // macOS: Steam's folder in Application Support (the game's Mac and Windows depots both land in steamapps/common)
+  if (const char* home = std::getenv("HOME"); home && *home)
+    steamRoots.push_back(fs::path(home) / "Library" / "Application Support" / "Steam");
 #else
   // Linux: the native client (~/.steam/steam, ~/.steam/root and ~/.local/share/Steam, or $XDG_DATA_HOME/Steam), the
   // Flatpak and the Snap; the game itself runs there under Proton but its files sit in the same steamapps/common

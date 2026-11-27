@@ -148,6 +148,12 @@ for Linux (Steam uses Proton for the Windows game, but OpenCiM only needs its fi
 Flatpak and Snap Steam libraries. It runs on Ubuntu 22.04+, Debian 12+, Fedora, Arch and SteamOS (Steam Deck), with
 Vulkan or OpenGL. Details, the Steam Deck and building: [`port/docs/linux.md`](port/docs/linux.md).
 
+### macOS
+Download `OpenCiM-<version>-macos.dmg` from the [latest release](https://github.com/Pfahli/OpenCiM/releases/latest), open it and
+drag OpenCiM into Applications. It runs on macOS 12 or newer, on Apple Silicon and Intel Macs, with Vulkan through
+MoltenVK or OpenGL. Install Cities in Motion once with Steam for Mac (the Mac or the Windows version); OpenCiM finds it.
+The Mac version is built by GitHub Actions and not tested on a real Mac yet. Details: [`port/docs/macos.md`](port/docs/macos.md).
+
 ### Build from source (Windows)
 You need the Visual Studio 2022 Build Tools with the C++ workload. MSVC, CMake and Ninja are taken from there, and
 every other dependency is bundled in `port/third_party`. Some files there (AMD FSR) have long paths, so enable long

@@ -1137,6 +1137,7 @@ class VkDeviceImpl final : public Device {
   bool hdrWanted_ = false, hdr_ = false, hdrAvailable_ = false, colorspaceExt_ = false, hdrMetadataExt_ = false;
   // Direct3D 11 interop (importD3D11Texture, adapterLuid)
   bool externalMemWin32_ = false, externalSemWin32_ = false, luidValid_ = false;
+  bool portabilityEnum_ = false, portabilitySubset_ = false;  // MoltenVK on macOS (docs/macos.md)
   std::vector<VkSemaphore> sharedFences_;            // importD3D11Fence: handle i+1
   std::vector<VkSemaphoreSubmitInfo> pendingWaits_;  // waitFence: the next submit waits for them
   uint8_t luid_[8] = {};
@@ -1262,13 +1263,18 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   }
   vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(lib_, "vkGetInstanceProcAddr"));
 #else
-  lib_ = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
-  if (!lib_) lib_ = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
-  if (!lib_) {
-    if (error) *error = "libvulkan.so.1 not found (no Vulkan loader installed)";
-    return false;
+  // the library the window's SDL loaded (libvulkan.so.1; on the Mac the bundled MoltenVK), so the surface and this
+  // device always come from the same Vulkan; else loaded here
+  vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(window_.vulkanGetInstanceProcAddr());
+  if (!vkGetInstanceProcAddr) lib_ = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+  if (!vkGetInstanceProcAddr) {
+    if (!lib_) lib_ = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+    if (!lib_) {
+      if (error) *error = "libvulkan.so.1 not found (no Vulkan loader installed)";
+      return false;
+    }
+    vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(lib_, "vkGetInstanceProcAddr"));
   }
-  vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(lib_, "vkGetInstanceProcAddr"));
 #endif
   if (!vkGetInstanceProcAddr) {
     if (error) *error = "vkGetInstanceProcAddr missing";
@@ -1297,9 +1303,17 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr);
     std::vector<VkExtensionProperties> ie(n);
     vkEnumerateInstanceExtensionProperties(nullptr, &n, ie.data());
-    for (const auto& e : ie)
+    bool portability = false;
+    for (const auto& e : ie) {
       if (std::strcmp(e.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0) colorspaceExt_ = true;
+      if (std::strcmp(e.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0) portability = true;
+    }
     if (colorspaceExt_) exts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+    // MoltenVK (macOS) is a "portability" implementation: listed only when asked for
+    if (portability) {
+      exts.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+      portabilityEnum_ = true;
+    }
   }
   if (const char* v = regs::envVar("REGS_VK_VALIDATION"); v && *v == '1') {
     uint32_t n = 0;
@@ -1320,6 +1334,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   ici.ppEnabledLayerNames = layers.data();
   ici.enabledExtensionCount = uint32_t(exts.size());
   ici.ppEnabledExtensionNames = exts.data();
+  if (portabilityEnum_) ici.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
   if (VkResult r = vkCreateInstance(&ici, nullptr, &instance_); r != VK_SUCCESS) {
     if (error) *error = vkError("vkCreateInstance", r);
     return false;
@@ -1421,6 +1436,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     auto has = [&](const char* e) {
       return std::any_of(ep.begin(), ep.end(), [&](const VkExtensionProperties& x) { return std::strcmp(x.extensionName, e) == 0; });
     };
+    portabilitySubset_ = has("VK_KHR_portability_subset");  // MoltenVK: must be enabled when offered
     VkPhysicalDeviceRayQueryFeaturesKHR rq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &rq};
     VkPhysicalDeviceVulkan12Features v12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &asf};
@@ -1498,6 +1514,7 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     dexts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
   }
   if (hdrMetadataExt_) dexts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+  if (portabilitySubset_) dexts.push_back("VK_KHR_portability_subset");
 #if defined(_WIN32)
   if (externalMemWin32_) dexts.push_back(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
   if (externalSemWin32_ && timelineSupported_) dexts.push_back(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME);

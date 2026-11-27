@@ -1,5 +1,5 @@
-// Platform services on Linux and other non-Windows systems (docs/linux.md): SDL3 for the display modes, the user's
-// folders and opening the file manager; libcurl for HTTPS; stb_image for PNG and JPEG. The Windows versions are in
+// Platform services on Linux and macOS (docs/linux.md, docs/macos.md): SDL3 for the display modes, the user's folders,
+// the region and opening the file manager; libcurl for HTTPS; stb_image for PNG and JPEG. The Windows versions are in
 // platform_win32.cpp.
 #include "engine/platform.h"
 
@@ -142,18 +142,26 @@ bool platformDecodeImage(const std::vector<uint8_t>& file, int& width, int& heig
   return true;
 }
 
-// the country of the user's locale (LC_ALL, LC_MESSAGES or LANG, e.g. de_DE.UTF-8), as its centre; no network
+// the country of the user's preferred locale (the system's region setting through SDL; else LC_ALL, LC_MESSAGES or
+// LANG, e.g. de_DE.UTF-8), as its centre; no network
 bool platformHomeRegion(double& lat, double& lon) {
-  const char* loc = nullptr;
-  for (const char* v : {"LC_ALL", "LC_MESSAGES", "LANG"})
-    if (const char* s = std::getenv(v); s && *s) {
-      loc = s;
-      break;
-    }
-  if (!loc) return false;
-  const char* u = std::strchr(loc, '_');
-  if (!u || !std::isalpha(static_cast<unsigned char>(u[1])) || !std::isalpha(static_cast<unsigned char>(u[2]))) return false;
-  const char cc[3] = {char(std::toupper(static_cast<unsigned char>(u[1]))), char(std::toupper(static_cast<unsigned char>(u[2]))), 0};
+  char cc[3] = {};
+  auto take = [&](const char* s) {
+    if (s && std::isalpha(static_cast<unsigned char>(s[0])) && std::isalpha(static_cast<unsigned char>(s[1])))
+      cc[0] = char(std::toupper(static_cast<unsigned char>(s[0]))), cc[1] = char(std::toupper(static_cast<unsigned char>(s[1])));
+  };
+  int count = 0;
+  if (SDL_Locale** locs = SDL_GetPreferredLocales(&count)) {
+    for (int i = 0; i < count && !cc[0]; ++i) take(locs[i]->country);
+    SDL_free(locs);
+  }
+  if (!cc[0])
+    for (const char* v : {"LC_ALL", "LC_MESSAGES", "LANG"})
+      if (const char* s = std::getenv(v); s && *s) {
+        if (const char* u = std::strchr(s, '_')) take(u + 1);
+        break;
+      }
+  if (!cc[0]) return false;
   struct Country {
     const char* code;
     double lat, lon;

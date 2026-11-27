@@ -436,7 +436,7 @@ void registerUiNatives(VM& vm) {
     // the size arguments (shadow map width/height) are kept for it
     for (auto [m, cls] : {std::pair{u"new_shadowEffect", "gsShadowEffect_OGL"}, std::pair{u"new_bloomEffect", "gsBloomEffect_OGL"},
                           std::pair{u"new_shaderEffect", "gsShaderEffect_OGL"}})
-      implement(vm, video, m, [cls](VM& v, Object*, int argc, const Value* a) {
+      implement(vm, video, m, [cls = cls](VM& v, Object*, int argc, const Value* a) {
         Ref<Object> e = v.newObject(v.findClass(cls), nullptr);
         if (argc > 0) e->fieldValues[u"<width>"] = Value::integer(v.toInt(a[0]));
         if (argc > 1) e->fieldValues[u"<height>"] = Value::integer(v.toInt(a[1]));

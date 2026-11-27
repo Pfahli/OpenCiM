@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
+# macOS: 12 and newer (set before project(); other systems ignore it). Apple Silicon and Intel in one binary with
+# -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" (docs/macos.md)
+set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0 CACHE STRING "oldest macOS")
 project(regs VERSION 0.2.2 LANGUAGES C CXX)
 
 # ReGS: a from-source reimplementation of the GSystem engine that runs Cities in Motion from an installed copy.
@@ -121,7 +124,8 @@ add_library(regs_engine STATIC
   src/audio/miniaudio_impl.cpp
 )
 target_include_directories(regs_engine PUBLIC src)
-# the platform layer: Win32 on Windows; SDL3 (third_party/SDL3, linked statically) elsewhere (docs/linux.md)
+# the platform layer: Win32 on Windows; SDL3 (third_party/SDL3, linked statically) on Linux and macOS (docs/linux.md,
+# docs/macos.md)
 if(WIN32)
   target_sources(regs_engine PRIVATE src/engine/platform_win32.cpp src/platform/window_win32.cpp
                  src/platform/touchpad_win32.cpp src/platform/gamepad_win32.cpp src/platform/steam_hid_win32.cpp)
@@ -139,12 +143,17 @@ else()
   add_subdirectory(third_party/SDL3 EXCLUDE_FROM_ALL)
   find_package(CURL REQUIRED)
   find_package(Threads REQUIRED)
-  target_sources(regs_engine PRIVATE src/engine/platform_linux.cpp src/platform/window_sdl.cpp src/platform/gamepad_sdl.cpp)
+  target_sources(regs_engine PRIVATE src/engine/platform_posix.cpp src/platform/window_sdl.cpp src/platform/gamepad_sdl.cpp)
   target_include_directories(regs_engine PRIVATE third_party/stb)
   target_link_libraries(regs_engine PUBLIC SDL3::SDL3-static CURL::libcurl Threads::Threads ${CMAKE_DL_LIBS})
-  # the C++ runtime inside the binaries: they run on distributions with an older libstdc++ than the build's
-  add_link_options(-static-libstdc++ -static-libgcc)
-  set(REGS_CRASH_SRC src/tools/crash_linux.cpp)
+  if(APPLE)
+    # miniaudio's Core Audio backend (SDL3's static target brings its own frameworks)
+    target_link_libraries(regs_engine PUBLIC "-framework CoreFoundation" "-framework CoreAudio" "-framework AudioToolbox")
+  else()
+    # the C++ runtime inside the binaries: they run on distributions with an older libstdc++ than the build's
+    add_link_options(-static-libstdc++ -static-libgcc)
+  endif()
+  set(REGS_CRASH_SRC src/tools/crash_posix.cpp)
   set(REGS_PROFILER_SRC)
 endif()
 # the version and the build's git state (build_info.h: REGS_VERSION_STRING, REGS_BUILD_NUMBER = commit count,
