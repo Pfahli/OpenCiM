@@ -1,14 +1,15 @@
 # Puts an OpenCiM release together (docs/installer.md §6, step 5):
-#   .\make-release.ps1 [-Out <folder>] [-NoBuild]
+#   .\make-release.ps1 [-Out <folder>] [-NoBuild] [-Name suffix]
 # builds the port (build.ps1), collects the install folder (regs.exe, regs-tool.exe, data\, README, licences) into
 # <Out>\OpenCiM-<version>, zips it with its .sha256 (the plain download), and appends the same files plus the setup's
 # pictures (src\setup\show) to opencim-setup.exe: <Out>\OpenCiM-<version>-setup.exe, the offline installer.
 # Nothing of the game is in any of it. Signing and the GitHub release come later (no certificate, no repository yet).
-param([string]$Out = "$PSScriptRoot\build\release", [switch]$NoBuild)
+# -Name: build and package build\x64-Release-<suffix> (build.ps1 -Name), e.g. while the game runs from the main tree
+param([string]$Out = "$PSScriptRoot\build\release", [switch]$NoBuild, [string]$Name = '')
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$bin = "$root\build\x64-Release"
-if (-not $NoBuild) { & "$root\build.ps1" | Out-Host }
+$bin = "$root\build\x64-Release" + $(if ($Name) { "-$Name" } else { '' })
+if (-not $NoBuild) { & "$root\build.ps1" -Name $Name | Out-Host }
 foreach ($f in 'regs.exe', 'regs-tool.exe', 'opencim-setup.exe') {
   if (-not (Test-Path "$bin\$f")) { throw "missing $bin\$f (build first)" }
 }
