@@ -47,6 +47,7 @@
 // through SDL_main.h, whose #define main would also rename the engine's main()
 namespace regs {
 void androidLogToLogcat();  // platform/android_jni.cpp
+void androidDebugEnv();
 }
 #define REGS_MAIN regsMain
 #else
@@ -162,6 +163,7 @@ void setStartEnv(const char* name, const std::string& value) {
 int REGS_MAIN(int argc, char** argv) {
 #if defined(__ANDROID__)
   androidLogToLogcat();
+  androidDebugEnv();
 #endif
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   crashThreadHandlers();

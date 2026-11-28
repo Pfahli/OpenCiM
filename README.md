@@ -154,6 +154,14 @@ drag OpenCiM into Applications. It runs on macOS 12 or newer, on Apple Silicon a
 MoltenVK or OpenGL. Install Cities in Motion once with Steam for Mac (the Mac or the Windows version); OpenCiM finds it.
 The Mac version is built by GitHub Actions and not tested on a real Mac yet. Details: [`port/docs/macos.md`](port/docs/macos.md).
 
+### Android
+Download `OpenCiM-<version>-android.apk` from the [latest release](https://github.com/Pfahli/OpenCiM/releases/latest) and
+install it on the phone or tablet (Android 10 or newer, 64-bit, Vulkan 1.3). On the first start OpenCiM signs in to Steam
+itself (account name and password with Steam Guard, or a QR code for the Steam app) and downloads your own Cities in
+Motion with the DLCs your account owns; or it copies the game folder from the device. The game runs full screen with the
+PC's interface; fingers click, drag and move the camera. Tested in the Android emulator only so far. Details:
+[`port/docs/android.md`](port/docs/android.md).
+
 ### Build from source (Windows)
 You need the Visual Studio 2022 Build Tools with the C++ workload. MSVC, CMake and Ninja are taken from there, and
 every other dependency is bundled in `port/third_party`. Some files there (AMD FSR) have long paths, so enable long

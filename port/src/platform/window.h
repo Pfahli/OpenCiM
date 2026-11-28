@@ -113,6 +113,12 @@ class Window {
   // surface for a VkInstance (written to *surface, a VkSurfaceKHR*); false when it cannot
   virtual std::vector<const char*> vulkanExtensions() const { return {}; }
   virtual bool vulkanSurface(void* instance, void* surface) const { return false; }
+  // counts up when the window's drawing surface was replaced (Android takes it away while the app is in the
+  // background): a Vulkan surface made before is gone, the device makes a new one
+  virtual unsigned surfaceGeneration() const { return 0; }
+  // whether a text field is being typed into, and where it is (window pixels): touch systems show their on-screen
+  // keyboard for it (Android); called every frame
+  virtual void textInput(bool on, int x, int y, int w, int h) {}
   // and the vkGetInstanceProcAddr of the Vulkan library the window loaded (SDL; on the Mac the bundled MoltenVK), so the
   // device uses the same one; null where the device loads it itself
   virtual void* vulkanGetInstanceProcAddr() const { return nullptr; }

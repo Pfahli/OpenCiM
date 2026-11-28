@@ -41,6 +41,7 @@
 #include "core/env.h"
 #include "platform/window.h"
 #include "render/gpu.h"
+#include "render/image.h"
 #include "render/vk_shader.h"
 #if REGS_FFX
 #include "render/fsr_vk.h"
@@ -962,6 +963,8 @@ class VkDeviceImpl final : public Device {
   float maxAniso_ = 1;
   bool vsync_ = true;
   std::atomic<bool> swapchainDirty_{false};
+  unsigned surfaceGen_ = 0;   // the window's surfaceGeneration() the surface was made for
+  bool surfaceLost_ = false;  // the driver reported VK_ERROR_SURFACE_LOST_KHR
 #if defined(_WIN32)
   HMODULE lib_ = nullptr;
 #else
@@ -1216,6 +1219,7 @@ class VkDeviceImpl final : public Device {
     return VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
   }
   bool pushDescriptors_ = true;  // VK_KHR_push_descriptor; else per-draw sets from the frame's pools (Frame::descPools)
+  bool bc_ = true;               // BC1-3 textures; else DXT data is decoded to RGBA8 on upload (texImage)
 
   // a descriptor set of this layout for one draw of this frame (without push descriptors): from the frame's pools,
   // another pool made when they are full; all are reset when the frame comes round again (beginCommands)
@@ -1413,8 +1417,9 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
     vkGetPhysicalDeviceFeatures2(pd, &f2);
-    if (!f13.dynamicRendering || !f13.synchronization2 || !f2.features.textureCompressionBC) {
-      why = std::string(p.deviceName) + ": dynamic rendering, synchronization2 or BC textures missing";
+    // (BC textures are welcome but not needed: without them the DXT textures are decoded on upload, texImage)
+    if (!f13.dynamicRendering || !f13.synchronization2) {
+      why = std::string(p.deviceName) + ": dynamic rendering or synchronization2 missing";
       continue;
     }
     uint32_t en = 0;
@@ -1547,7 +1552,15 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   f13.dynamicRendering = VK_TRUE;
   f13.synchronization2 = VK_TRUE;
   VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
-  f2.features.textureCompressionBC = VK_TRUE;
+  {
+    VkPhysicalDeviceFeatures2 hf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    vkGetPhysicalDeviceFeatures2(phys_, &hf);
+    const VkPhysicalDeviceFeatures& have = hf.features;
+    // BC1-3 (the game's DXT textures): on desktop GPUs and Adreno, not on Mali or PowerVR (REGS_VK_NO_BC: tests)
+    bc_ = have.textureCompressionBC == VK_TRUE && !regs::envVar("REGS_VK_NO_BC");
+    if (!bc_) LOG_INFO("vulkan: no BC texture compression, DXT textures are decoded to RGBA8");
+  }
+  f2.features.textureCompressionBC = bc_ ? VK_TRUE : VK_FALSE;
   f2.features.samplerAnisotropy = props.limits.maxSamplerAnisotropy > 1 ? VK_TRUE : VK_FALSE;
   std::vector<const char*> dexts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
   if (pushDescriptors_) dexts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
@@ -2044,6 +2057,20 @@ bool VkDeviceImpl::ringAlloc(VkDeviceSize bytes, VkDeviceSize align, VkBuffer& b
 }
 
 void VkDeviceImpl::beginFrame(int width, int height) {
+  // the window's surface was replaced (Android after the background) or reported lost: a new one, then a swapchain
+  if (window_.surfaceGeneration() != surfaceGen_ || surfaceLost_) {
+    fgDrain();
+    destroySwapchain();
+    vkDeviceWaitIdle(dev_);
+    if (surface_) vkDestroySurfaceKHR(instance_, surface_, nullptr);
+    surface_ = VK_NULL_HANDLE;
+    if (!window_.vulkanSurface(instance_, &surface_)) LOG_ERROR("vulkan: the window could not make a new surface");
+    else LOG_INFO("vulkan: new window surface");
+    surfaceGen_ = window_.surfaceGeneration();
+    surfaceLost_ = false;
+    swapchainDirty_ = true;
+  }
+  if (surface_ == VK_NULL_HANDLE) return;
   if (swapchainDirty_ || int(swapExtent_.width) != window_.width() || int(swapExtent_.height) != window_.height()) {
     std::string err;
     if (!createSwapchain(&err)) LOG_ERROR("vulkan: %s", err.c_str());
@@ -2077,6 +2104,7 @@ void VkDeviceImpl::present() {
     VkResult r = vkAcquireNextImageKHR(dev_, swapchain_, UINT64_MAX, f.acquired, VK_NULL_HANDLE, &image);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) presentable = false, swapchainDirty_ = true;
     else if (r == VK_SUBOPTIMAL_KHR) swapchainDirty_ = true;
+    else if (r == VK_ERROR_SURFACE_LOST_KHR) presentable = false, surfaceLost_ = true;
     else if (r != VK_SUCCESS) presentable = false;
   }
   if (presentable) {
@@ -2759,6 +2787,24 @@ void VkDeviceImpl::texImage(uint32_t tex, int face, int level, Format f, int w, 
                             size_t bytes) {
   Tex* t = texture(tex);
   if (!t) return;
+  std::vector<uint8_t> decoded;
+  if (!bc_ && isCompressed(f)) {  // a GPU without BC textures: the DXT blocks as BGRA8 texels
+    render::Image img;
+    img.format = f == Format::DXT1 ? render::Image::Format::DXT1 : f == Format::DXT3 ? render::Image::Format::DXT3
+                                                                                      : render::Image::Format::DXT5;
+    img.width = w, img.height = h;
+    if (data) img.levels.emplace_back(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + bytes);
+    int dw = w, dh = h;
+    if (data && render::decodeRgba(img, 0, decoded, dw, dh)) {
+      for (size_t i = 0; i + 3 < decoded.size(); i += 4) std::swap(decoded[i], decoded[i + 2]);
+      data = decoded.data();
+      bytes = decoded.size();
+    } else {
+      data = nullptr;
+    }
+    f = Format::RGBA8;
+    p = Pixels::BGRA8;
+  }
   if (level == 0 && (!t->image || t->format != f || t->w != w || t->h != h)) {
     if (!makeImage(*t, f, w, h, std::max(1, t->levelsHint), 1)) return;
   }

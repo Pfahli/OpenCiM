@@ -24,6 +24,11 @@ class Display {
   // the window and its graphics device: Vulkan when asked and available, else OpenGL 3.3
   bool open(const platform::WindowDesc& desc, bool vulkan, std::string* error);
   platform::Window& window() { return *window_; }
+  // the GUI pass drew an active text field there this frame (window pixels): the window's on-screen keyboard
+  void noteEdit(float x, float y, float w, float h) {
+    editSeen_ = true;
+    editRect_[0] = x, editRect_[1] = y, editRect_[2] = w, editRect_[3] = h;
+  }
   render::Renderer2D& r2d() { return r2d_; }
   render::Renderer3D& r3d() { return r3d_; }
   int antialiasing = 0;  // window.antialiasing: MSAA samples for post-effect scene targets
@@ -115,6 +120,8 @@ class Display {
   bool uiFilterSharp_ = true;  // scaled GUI textures: sharp bilinear (default) or plain bilinear (REGS_UI_FILTER=linear)
   bool saveScreenshot(const std::filesystem::path& file);
   std::unique_ptr<platform::Window> window_;
+  bool editSeen_ = false;
+  float editRect_[4] = {};
   render::Renderer2D r2d_;
   render::Renderer3D r3d_;
   std::map<TextureObj*, render::RenderTarget> targets_;

@@ -705,7 +705,10 @@ struct GuiPass {
     if (x1 <= x0 || y1 <= y0) return;
     scissor(x0, y0, x1 - x0, y1 - y0);
     if (c->hasText) text(c);
-    if (c->active && c->isEdit()) caret(c);
+    if (c->active && c->isEdit()) {
+      caret(c);
+      d.noteEdit(cx, cy, cw, ch);
+    }
     for (auto& k : c->children)
       if (auto* kc = dynamic_cast<ControlObj*>(k.get())) control(kc, organizer);
     scissor(px, py, pw, ph);
@@ -806,6 +809,8 @@ void Display::renderFrame(VM& vm, Object* win, Object* video) {
     r2d_.endFrame();
     if (stereo) stereoKeepEye(*this, eyePass == 0 ? -1 : 1, w, h);
   }
+  window_->textInput(editSeen_, int(editRect_[0]), int(editRect_[1]), int(editRect_[2]), int(editRect_[3]));
+  editSeen_ = false;
   if (stereo != kStereoLeiaSr) leiaSrStop(*this);  // (nothing to do unless glasses-free 3D was running)
   if (stereo) {
     stereoSetEye(0);

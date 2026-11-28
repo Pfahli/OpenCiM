@@ -26,6 +26,9 @@ bool videoUp() {
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     SDL_SetHint(SDL_HINT_APP_ID, "opencim");
     SDL_SetHint(SDL_HINT_APP_NAME, "OpenCiM");
+#if defined(__ANDROID__)
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");  // the window turns fingers into clicks and gestures itself (touch())
+#endif
     state = SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS) ? 1 : -1;
   }
   return state > 0;
@@ -221,6 +224,7 @@ class SdlWindow final : public Window {
 
   void pump(std::vector<InputEvent>& out) override {
     drainEvents();
+    touchLongPress();
     releaseTouch();
     out.insert(out.end(), queued_.begin(), queued_.end());
     queued_.clear();
@@ -330,6 +334,23 @@ class SdlWindow final : public Window {
   bool vulkanSurface(void* instance, void* surface) const override {
     return SDL_Vulkan_CreateSurface(win_, static_cast<VkInstance>(instance), nullptr, static_cast<VkSurfaceKHR*>(surface));
   }
+  unsigned surfaceGeneration() const override { return surfaceGen_; }
+  void textInput(bool on, int x, int y, int w, int h) override {
+#if defined(__ANDROID__)  // (elsewhere text input is always on: create())
+    if (on == textOn_) return;
+    textOn_ = on;
+    if (on) {
+      const float d = density();
+      const SDL_Rect r{int(x / d), int(y / d), std::max(1, int(w / d)), std::max(1, int(h / d))};
+      SDL_SetTextInputArea(win_, &r, 0);
+      SDL_StartTextInput(win_);
+    } else {
+      SDL_StopTextInput(win_);
+    }
+#else
+    (void)on, (void)x, (void)y, (void)w, (void)h;
+#endif
+  }
 
   // SDL's one event queue, shared out to the windows it belongs to
   static void drainEvents() {
@@ -337,6 +358,14 @@ class SdlWindow final : public Window {
     while (SDL_PollEvent(&ev)) {
       if (ev.type == SDL_EVENT_QUIT) {  // a termination signal: the first window closes (the game asks the scripts)
         if (!windows().empty()) windows().begin()->second->emit({InputEvent::Type::Close});
+        continue;
+      }
+      if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {  // (Android) back from the background: new drawing surfaces
+        for (auto& [wid, w] : windows()) ++w->surfaceGen_;
+        continue;
+      }
+      if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {  // fingers and held buttons end there
+        for (auto& [wid, w] : windows()) w->fingers_.clear(), w->tmode_ = TouchMode::None;
         continue;
       }
       const SDL_WindowID id = SDL_GetWindowFromEvent(&ev) ? SDL_GetWindowID(SDL_GetWindowFromEvent(&ev)) : 0;
@@ -370,6 +399,110 @@ class SdlWindow final : public Window {
   // game's buttons act on a release over the control the cursor was already on when pressed, as with a mouse. They go
   // out spread over frames: moves freely, a press or release only in a frame of its own after the move before it.
   void emitTouch(InputEvent e) { touch_.push_back(e); }
+  // Fingers on a touchscreen (Android, docs/android.md): one finger is the mouse's left button (a tap clicks, a drag
+  // drags; the press waits until the finger moves or lifts, so a second finger can still make it a gesture), held
+  // still it is a right click; two fingers move the camera (their centre pans, their spread zooms, their turn turns,
+  // as the touchpad gestures of window_win32.cpp).
+  struct Finger {
+    SDL_FingerID id;
+    float x, y, sx, sy;  // now and where it went down, in pixels
+  };
+  enum class TouchMode { None, Pending, Dragging, Gesture, Done };
+  std::vector<Finger> fingers_;
+  TouchMode tmode_ = TouchMode::None;
+  Uint64 touchDown_ = 0;
+  float gx_ = 0, gy_ = 0, gdist_ = 0, gangle_ = 0;
+
+  void touchMouse(InputEvent::Type t, float x, float y, int button = 0) {
+    InputEvent e{t};
+    e.x = int(std::lround(x)), e.y = int(std::lround(y)), e.button = button;
+    emitTouch(e);
+  }
+  void gestureRefs() {
+    const Finger &a = fingers_[0], &b = fingers_[1];
+    gx_ = (a.x + b.x) * 0.5f, gy_ = (a.y + b.y) * 0.5f;
+    gdist_ = std::hypot(b.x - a.x, b.y - a.y);
+    gangle_ = std::atan2(b.y - a.y, b.x - a.x);
+  }
+  void touch(const SDL_Event& ev) {
+    using T = InputEvent::Type;
+    const float x = ev.tfinger.x * float(width_), y = ev.tfinger.y * float(height_);
+    auto it = std::find_if(fingers_.begin(), fingers_.end(), [&](const Finger& f) { return f.id == ev.tfinger.fingerID; });
+    if (ev.type == SDL_EVENT_FINGER_DOWN) {
+      if (fingers_.size() >= 2) return;  // a third finger changes nothing
+      fingers_.push_back({ev.tfinger.fingerID, x, y, x, y});
+      if (fingers_.size() == 1) {
+        tmode_ = TouchMode::Pending;
+        touchDown_ = SDL_GetTicks();
+        touchMouse(T::MouseMove, x, y);  // the cursor goes where the finger is (the controls under it light up)
+      } else {
+        if (tmode_ == TouchMode::Dragging) touchMouse(T::MouseUp, fingers_[0].x, fingers_[0].y);
+        tmode_ = TouchMode::Gesture;
+        gestureRefs();
+      }
+      return;
+    }
+    if (it == fingers_.end()) return;
+    if (ev.type == SDL_EVENT_FINGER_MOTION) {
+      it->x = x, it->y = y;
+      if (tmode_ == TouchMode::Pending) {
+        const float slop = float(dpi()) * 0.08f;  // about 2 mm before a press becomes a drag
+        if (std::hypot(x - it->sx, y - it->sy) > slop) {
+          touchMouse(T::MouseDown, it->sx, it->sy);
+          touchMouse(T::MouseMove, x, y);
+          tmode_ = TouchMode::Dragging;
+        }
+      } else if (tmode_ == TouchMode::Dragging) {
+        touchMouse(T::MouseMove, x, y);
+      } else if (tmode_ == TouchMode::Gesture && fingers_.size() == 2) {
+        const float ox = gx_, oy = gy_, od = gdist_, oa = gangle_;
+        gestureRefs();
+        InputEvent e{T::Gesture};
+        e.x = int(std::lround(gx_)), e.y = int(std::lround(gy_));
+        if (gx_ != ox || gy_ != oy) {
+          e.gesture = 3, e.dx = gx_ - ox, e.dy = gy_ - oy;
+          emit(e);
+        }
+        if (od > 1 && gdist_ > 1 && gdist_ != od) {
+          e.gesture = 1, e.value = gdist_ / od;
+          emit(e);
+        }
+        float da = gangle_ - oa;
+        if (da > 3.14159265f) da -= 6.2831853f;
+        if (da < -3.14159265f) da += 6.2831853f;
+        if (da != 0) {
+          e.gesture = 2, e.value = -da;  // (screen y points down: the engine's counterclockwise is the negative angle)
+          emit(e);
+        }
+      }
+      return;
+    }
+    // up or cancelled
+    const Finger f = *it;
+    fingers_.erase(it);
+    const bool cancelled = ev.type == SDL_EVENT_FINGER_CANCELED;
+    if (tmode_ == TouchMode::Pending && !cancelled) {  // a tap
+      touchMouse(T::MouseDown, f.sx, f.sy);
+      touchMouse(T::MouseUp, f.sx, f.sy);
+    } else if (tmode_ == TouchMode::Dragging) {
+      touchMouse(T::MouseUp, x, y);
+    } else if (tmode_ == TouchMode::Gesture) {
+      InputEvent e{T::Gesture};
+      e.gesture = 4, e.x = int(std::lround(gx_)), e.y = int(std::lround(gy_));
+      emit(e);
+      tmode_ = TouchMode::Done;  // the finger left on the screen does nothing until it lifts too
+    }
+    if (fingers_.empty()) tmode_ = TouchMode::None;
+  }
+  void touchLongPress() {
+    using T = InputEvent::Type;
+    if (tmode_ != TouchMode::Pending || fingers_.size() != 1 || SDL_GetTicks() - touchDown_ < 500) return;
+    const Finger& f = fingers_[0];
+    touchMouse(T::MouseDown, f.sx, f.sy, 1);
+    touchMouse(T::MouseUp, f.sx, f.sy, 1);
+    tmode_ = TouchMode::Done;
+  }
+
   void releaseTouch() {
     using T = InputEvent::Type;
     bool moved = false, pressed = false;
@@ -479,7 +612,15 @@ class SdlWindow final : public Window {
         }
         return;
       }
+      case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_CANCELED:
+#if defined(__ANDROID__)
+        touch(ev);
+#endif
+        return;
       case SDL_EVENT_PINCH_BEGIN: case SDL_EVENT_PINCH_UPDATE: case SDL_EVENT_PINCH_END: {
+#if defined(__ANDROID__)
+        return;  // (touch() makes the zoom from the two fingers, together with their pan and turn)
+#endif
         float mx = 0, my = 0;
         SDL_GetMouseState(&mx, &my);
         InputEvent e{T::Gesture};
@@ -554,6 +695,8 @@ class SdlWindow final : public Window {
   bool held_[256] = {};
   std::vector<InputEvent> queued_;
   std::vector<InputEvent> touch_;  // touch-made mouse events not yet given out (releaseTouch)
+  unsigned surfaceGen_ = 0;
+  bool textOn_ = false;  // the on-screen keyboard is asked for (Android)
 };
 
 }  // namespace

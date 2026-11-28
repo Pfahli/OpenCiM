@@ -488,5 +488,8 @@ Third-party code in the tree keeps its own license (each folder has its license 
 | `third_party/glslang` | GLSL to SPIR-V compiler | BSD-2/3-Clause, MIT, Apache-2.0 and others (see its `LICENSES`) |
 | `third_party/vulkan-headers` | Vulkan API headers | Apache-2.0 / MIT |
 | `third_party/kenney-input-prompts` | controller button pictures | CC0 |
-| `third_party/SDL3` (3.4.20) | Linux and macOS: window, input, controllers, display modes (`docs/linux.md`, `docs/macos.md`) | zlib |
+| `third_party/SDL3` (3.4.20) | Linux, macOS and Android: window, input, controllers, display modes (`docs/linux.md`, `docs/macos.md`, `docs/android.md`) | zlib |
 | `third_party/stb` (stb_image 2.34) | Linux and macOS: PNG and JPEG decoding | public domain / MIT |
+| `third_party/lzma` (LZMA SDK decoder) | Android: Steam's LZMA-compressed chunks (`docs/android.md`) | public domain |
+| `third_party/zstd` (1.5.6, decoder) | Android: Steam's zstd-compressed chunks | BSD |
+| `third_party/qrcodegen` | Android: the Steam login's QR code | MIT |

@@ -3,7 +3,11 @@
 // (core/steam_client.h), the game folder check and the QR code's modules.
 #include <android/log.h>
 #include <jni.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
+
+#include <cstdio>
+#include <cstdlib>
 
 #include <memory>
 #include <string>
@@ -39,6 +43,24 @@ void androidLogToLogcat() {
       }
     }
   }).detach();
+}
+
+// tests: the system property debug.opencim.env ("NAME=value;NAME2=value", set with adb shell setprop) as environment
+// variables of the game (REGS_VK_NO_BC and the other test switches)
+void androidDebugEnv() {
+  char v[PROP_VALUE_MAX] = {};
+  if (__system_property_get("debug.opencim.env", v) <= 0) return;
+  std::string s = v;
+  for (size_t p = 0; p < s.size();) {
+    size_t e = s.find(';', p);
+    if (e == std::string::npos) e = s.size();
+    const std::string kv = s.substr(p, e - p);
+    if (size_t eq = kv.find('='); eq != std::string::npos) {
+      setenv(kv.substr(0, eq).c_str(), kv.substr(eq + 1).c_str(), 1);
+      std::printf("[info] test setting %s\n", kv.c_str());
+    }
+    p = e + 1;
+  }
 }
 
 }  // namespace regs
