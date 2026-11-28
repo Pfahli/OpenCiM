@@ -193,8 +193,13 @@ bool Display::open(const platform::WindowDesc& desc, bool vulkan, std::string* e
 }
 
 float Display::pickUiScale(VM& vm, int w, int h) const {
-  // the graphics page's choices 1×, 1.5×, 2×; no setting: 2× on windows taller than 1800 px (4K-class screens)
+  // the graphics page's choices 1×, 1.5×, 2×; no setting: 2× on windows taller than 1800 px (4K-class screens), on
+  // Android the largest that fits (phones' small, dense screens: a 1080-pixel-high phone gets 1.5×)
+#if defined(__ANDROID__)
+  float want = settingNumber(vm, u"regsUiScale", 2.0f);
+#else
   float want = settingNumber(vm, u"regsUiScale", h > 1800 ? 2.0f : 1.0f);
+#endif
   float s = want >= 1.75f ? 2.0f : want >= 1.25f ? 1.5f : 1.0f;
   // the scripts' window stays at least 1024 × 720: the main menu's buttons run into its bottom links below about
   // 660 script pixels, and the graphics page is 1000 wide. Smaller scaled windows step down to the next scale

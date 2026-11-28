@@ -14,10 +14,14 @@ std::string logStamp();
 
 template <typename... A>
 std::string fmt(const char* f, A... a) {
-  int n = std::snprintf(nullptr, 0, f, a...);
-  std::string s(n > 0 ? n : 0, '\0');
-  if (n > 0) std::snprintf(s.data(), s.size() + 1, f, a...);
-  return s;
+  if constexpr (sizeof...(A) == 0) {
+    return f;  // (no format work: the Android NDK refuses printf with a non-literal format and no arguments)
+  } else {
+    int n = std::snprintf(nullptr, 0, f, a...);
+    std::string s(n > 0 ? n : 0, '\0');
+    if (n > 0) std::snprintf(s.data(), s.size() + 1, f, a...);
+    return s;
+  }
 }
 
 #define REGS_LOG(level, ...) ::regs::logWrite(level, ::regs::fmt(__VA_ARGS__))

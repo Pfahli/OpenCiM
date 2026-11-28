@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the launcher icon's long-press entry: the setup screen also when the game is there (update, repair, copy) -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="gamefiles"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_files"
+        android:shortcutLongLabel="@string/shortcut_files_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="io.github.pfahli.opencim"
+            android:targetClass="io.github.pfahli.opencim.SetupActivity">
+            <extra android:name="manage" android:value="true" />
+        </intent>
+    </shortcut>
+</shortcuts>

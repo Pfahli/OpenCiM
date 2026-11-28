@@ -55,7 +55,7 @@ int toVk(const SDL_KeyboardEvent& k) {
     case SDL_SCANCODE_LALT: case SDL_SCANCODE_RALT: return 0x12;
     case SDL_SCANCODE_PAUSE: return 0x13;
     case SDL_SCANCODE_CAPSLOCK: return 0x14;
-    case SDL_SCANCODE_ESCAPE: return 0x1B;
+    case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_AC_BACK: return 0x1B;  // (AC_BACK: Android's back button)
     case SDL_SCANCODE_SPACE: return 0x20;
     case SDL_SCANCODE_PAGEUP: return 0x21;
     case SDL_SCANCODE_PAGEDOWN: return 0x22;
@@ -148,6 +148,12 @@ class SdlWindow final : public Window {
     if (desc.resizable) flags |= SDL_WINDOW_RESIZABLE;
     if (desc.borderless) flags |= SDL_WINDOW_BORDERLESS | SDL_WINDOW_RESIZABLE;
     if (desc.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
+#if defined(__ANDROID__)
+    // Android: the one window is the whole screen, the system bars hidden (docs/android.md)
+    flags |= SDL_WINDOW_FULLSCREEN;
+    flags &= ~SDL_WindowFlags(SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS);
+    borderless_ = false;
+#endif
     owner_ = dynamic_cast<SdlWindow*>(desc.shareGL);
     if (desc.openGL && !owner_) {
       SDL_GL_ResetAttributes();
@@ -205,7 +211,9 @@ class SdlWindow final : public Window {
         setVsync(desc.vsync);
       }
     }
+#if !defined(__ANDROID__)  // (on Android this would bring up the on-screen keyboard)
     SDL_StartTextInput(win_);
+#endif
     SDL_SyncWindow(win_);
     updateSize();
     return true;
@@ -213,6 +221,7 @@ class SdlWindow final : public Window {
 
   void pump(std::vector<InputEvent>& out) override {
     drainEvents();
+    releaseTouch();
     out.insert(out.end(), queued_.begin(), queued_.end());
     queued_.clear();
   }
@@ -258,6 +267,11 @@ class SdlWindow final : public Window {
     }
   }
   void setMode(bool fullscreen, int w, int h) override {
+#if defined(__ANDROID__)
+    (void)fullscreen, (void)w, (void)h;  // always the whole screen
+    updateSize();
+    return;
+#endif
     if (fullscreen) {
       SDL_SetWindowFullscreenMode(win_, nullptr);  // borderless over the desktop, no mode change
       SDL_SetWindowFullscreen(win_, true);
@@ -351,6 +365,23 @@ class SdlWindow final : public Window {
     else if (SDL_GetMouseFocus() == win_) SDL_HideCursor();
   }
   void emit(InputEvent e) { queued_.push_back(e); }
+
+  // Touches (SDL's mouse events made from them): a tap brings the move, the press and the release in one frame, but the
+  // game's buttons act on a release over the control the cursor was already on when pressed, as with a mouse. They go
+  // out spread over frames: moves freely, a press or release only in a frame of its own after the move before it.
+  void emitTouch(InputEvent e) { touch_.push_back(e); }
+  void releaseTouch() {
+    using T = InputEvent::Type;
+    bool moved = false, pressed = false;
+    while (!touch_.empty()) {
+      const InputEvent& e = touch_.front();
+      const bool button = e.type == T::MouseDown || e.type == T::MouseUp;
+      if (button && (moved || pressed)) break;
+      (button ? pressed : moved) = true;
+      queued_.push_back(e);
+      touch_.erase(touch_.begin());
+    }
+  }
   int px(float v) const { return int(std::lround(v * density())); }
 
   int buttonAt(int x, int y) const {
@@ -400,7 +431,8 @@ class SdlWindow final : public Window {
         }
         InputEvent e{T::MouseMove};
         e.x = x, e.y = y;
-        emit(e);
+        if (ev.motion.which == SDL_TOUCH_MOUSEID || !touch_.empty()) emitTouch(e);
+        else emit(e);
         return;
       }
       case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP: {
@@ -428,7 +460,8 @@ class SdlWindow final : public Window {
         SDL_CaptureMouse(down);
         InputEvent e{down ? T::MouseDown : T::MouseUp};
         e.x = x, e.y = y, e.button = button;
-        emit(e);
+        if (ev.button.which == SDL_TOUCH_MOUSEID || !touch_.empty()) emitTouch(e);
+        else emit(e);
         return;
       }
       case SDL_EVENT_MOUSE_WHEEL: {
@@ -520,6 +553,7 @@ class SdlWindow final : public Window {
   int hot_ = 0, heldButton_ = 0;
   bool held_[256] = {};
   std::vector<InputEvent> queued_;
+  std::vector<InputEvent> touch_;  // touch-made mouse events not yet given out (releaseTouch)
 };
 
 }  // namespace

@@ -93,6 +93,7 @@ namespace {
   X(vkDestroyAccelerationStructureKHR) X(vkGetAccelerationStructureBuildSizesKHR)                                     \
   X(vkCmdBuildAccelerationStructuresKHR) X(vkGetAccelerationStructureDeviceAddressKHR) X(vkSetHdrMetadataEXT)  \
   X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets)          \
+  X(vkResetDescriptorPool)                                                                                           \
   X(vkCmdBindDescriptorSets) X(vkResetCommandBuffer) X(vkCreatePipelineCache) X(vkDestroyPipelineCache)              \
   X(vkGetPipelineCacheData) REGS_VK_DEVICE_WIN32(X)
 
@@ -774,6 +775,9 @@ class VkDeviceImpl final : public Device {
       const uint8_t* texels = nullptr;
     };
     std::vector<RedRead> reads;
+    // without VK_KHR_push_descriptor (Android drivers): each draw's set from these, all reset with the frame
+    std::vector<VkDescriptorPool> descPools;
+    size_t descPool = 0;
   };
   struct State {
     std::array<int, 4> vp{0, 0, 1, 1}, sc{0, 0, 1, 1};
@@ -1202,6 +1206,41 @@ class VkDeviceImpl final : public Device {
   uint32_t bindlessCount_ = 0;
   VkDescriptorSetLayout bindlessLayout_ = VK_NULL_HANDLE;
   VkDescriptorPool bindlessPool_ = VK_NULL_HANDLE;
+  // the swapchain's transform: none, and the size swapped to the window's when the surface is turned (Android in
+  // landscape reports its portrait size and a 90 degree rotation); the compositor turns the picture. The back buffer
+  // is drawn upright, so the swapchain never takes the rotation over.
+  static VkSurfaceTransformFlagBitsKHR swapTransform(const VkSurfaceCapabilitiesKHR& caps, VkExtent2D& ext) {
+    const VkSurfaceTransformFlagsKHR turned = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR;
+    if (!(caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)) return caps.currentTransform;
+    if (caps.currentTransform & turned) std::swap(ext.width, ext.height);
+    return VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+  }
+  bool pushDescriptors_ = true;  // VK_KHR_push_descriptor; else per-draw sets from the frame's pools (Frame::descPools)
+
+  // a descriptor set of this layout for one draw of this frame (without push descriptors): from the frame's pools,
+  // another pool made when they are full; all are reset when the frame comes round again (beginCommands)
+  VkDescriptorSet frameDescriptorSet(VkDescriptorSetLayout layout) {
+    Frame& f = frames_[frame_];
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (f.descPool >= f.descPools.size()) {
+        const VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2048},
+                                               {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8192},
+                                               {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 256}};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pci.maxSets = 2048;
+        pci.poolSizeCount = rt_ ? 3 : 2;
+        pci.pPoolSizes = sizes;
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        if (vkCreateDescriptorPool(dev_, &pci, nullptr, &pool) != VK_SUCCESS) return VK_NULL_HANDLE;
+        f.descPools.push_back(pool);
+      }
+      VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, f.descPools[f.descPool], 1, &layout};
+      VkDescriptorSet set = VK_NULL_HANDLE;
+      if (vkAllocateDescriptorSets(dev_, &ai, &set) == VK_SUCCESS) return set;
+      ++f.descPool;  // full: the next pool (made above when there is none)
+    }
+    return VK_NULL_HANDLE;
+  }
   VkDescriptorSet bindlessSet_ = VK_NULL_HANDLE;
   VkSampler hitSampler_ = VK_NULL_HANDLE;
   struct HitRecord {
@@ -1385,8 +1424,8 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
     auto has = [&](const char* e) {
       return std::any_of(ep.begin(), ep.end(), [&](const VkExtensionProperties& x) { return std::strcmp(x.extensionName, e) == 0; });
     };
-    if (!has(VK_KHR_SWAPCHAIN_EXTENSION_NAME) || !has(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) {
-      why = std::string(p.deviceName) + ": VK_KHR_swapchain or VK_KHR_push_descriptor missing";
+    if (!has(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
+      why = std::string(p.deviceName) + ": VK_KHR_swapchain missing";
       continue;
     }
     uint32_t qn = 0;
@@ -1437,6 +1476,9 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
       return std::any_of(ep.begin(), ep.end(), [&](const VkExtensionProperties& x) { return std::strcmp(x.extensionName, e) == 0; });
     };
     portabilitySubset_ = has("VK_KHR_portability_subset");  // MoltenVK: must be enabled when offered
+    // push descriptors: on every desktop driver, missing on many Android ones (and REGS_VK_NO_PUSH, tests)
+    pushDescriptors_ = has(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) && !regs::envVar("REGS_VK_NO_PUSH");
+    if (!pushDescriptors_) LOG_INFO("vulkan: no push descriptors, descriptor sets per draw");
     VkPhysicalDeviceRayQueryFeaturesKHR rq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, &rq};
     VkPhysicalDeviceVulkan12Features v12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &asf};
@@ -1507,7 +1549,8 @@ bool VkDeviceImpl::init(bool vsync, std::string* error) {
   VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
   f2.features.textureCompressionBC = VK_TRUE;
   f2.features.samplerAnisotropy = props.limits.maxSamplerAnisotropy > 1 ? VK_TRUE : VK_FALSE;
-  std::vector<const char*> dexts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
+  std::vector<const char*> dexts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+  if (pushDescriptors_) dexts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
   if (rt_) {
     dexts.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
     dexts.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
@@ -1698,7 +1741,7 @@ bool VkDeviceImpl::createSwapchain(std::string* error) {
   sci.imageArrayLayers = 1;
   sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  sci.preTransform = caps.currentTransform;
+  sci.preTransform = swapTransform(caps, sci.imageExtent);
   sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
   sci.presentMode = mode;
   sci.clipped = VK_TRUE;
@@ -1726,7 +1769,7 @@ bool VkDeviceImpl::createSwapchain(std::string* error) {
     md.maxFrameAverageLightLevel = std::min(hdrPeak_, hdrPaper_ * 1.5f);
     vkSetHdrMetadataEXT(dev_, 1, &swapchain_, &md);
   }
-  swapExtent_ = ext;
+  swapExtent_ = sci.imageExtent;
   vkGetSwapchainImagesKHR(dev_, swapchain_, &n, nullptr);
   swapImages_.resize(n);
   vkGetSwapchainImagesKHR(dev_, swapchain_, &n, swapImages_.data());
@@ -1889,6 +1932,7 @@ void VkDeviceImpl::shutdown() {
       vkDestroyFence(dev_, f.fence, nullptr);
       vkDestroySemaphore(dev_, f.acquired, nullptr);
       vkDestroyCommandPool(dev_, f.pool, nullptr);
+      for (VkDescriptorPool dp : f.descPools) vkDestroyDescriptorPool(dev_, dp, nullptr);
     }
     for (auto& x : extra_)
       if (x) {
@@ -1927,6 +1971,8 @@ void VkDeviceImpl::shutdown() {
 void VkDeviceImpl::beginCommands() {
   Frame& f = frames_[frame_];
   vkResetCommandPool(dev_, f.pool, 0);
+  for (VkDescriptorPool dp : f.descPools) vkResetDescriptorPool(dev_, dp, 0);
+  f.descPool = 0;
   f.cmdIndex = 0;
   f.cmd = f.cmds[0];
   VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -2204,7 +2250,7 @@ bool VkDeviceImpl::makeExtraSwapchain(ExtraWindow& x) {
   sci.imageArrayLayers = 1;
   sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  sci.preTransform = caps.currentTransform;
+  sci.preTransform = swapTransform(caps, sci.imageExtent);
   sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
   sci.presentMode = mode;
   sci.clipped = VK_TRUE;
@@ -2216,7 +2262,7 @@ bool VkDeviceImpl::makeExtraSwapchain(ExtraWindow& x) {
   }
   destroyExtraSwapchain(x);
   x.swapchain = sc;
-  x.extent = ext;
+  x.extent = sci.imageExtent;
   vkGetSwapchainImagesKHR(dev_, sc, &n, nullptr);
   x.images.resize(n);
   vkGetSwapchainImagesKHR(dev_, sc, &n, x.images.data());
@@ -3056,7 +3102,7 @@ uint32_t VkDeviceImpl::installProgram(bool compiled, vk::ProgramSpirv& sp, const
         bindings.push_back({uint32_t(u.binding), u.accel ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                             1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    lci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    lci.flags = pushDescriptors_ ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0;
     lci.bindingCount = uint32_t(bindings.size());
     lci.pBindings = bindings.data();
     vkCreateDescriptorSetLayout(dev_, &lci, nullptr, &p.setLayout);
@@ -3608,7 +3654,8 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
   // descriptors: the uniform block (copied into the ring when it changed) and the images of the units the samplers
   // point at; with the same layout as the last push only what differs from it is pushed
   if (rec_.pushLayout != p.layout) pushed_.clear();
-  const bool incremental = !recordAll_ && rec_.pushLayout == p.layout;
+  // (a new set per draw holds every binding: only pushes can leave the unchanged ones out)
+  const bool incremental = pushDescriptors_ && !recordAll_ && rec_.pushLayout == p.layout;
   int maxBinding = p.blockBinding;
   for (const vk::UniformInfo& u : p.uniforms)
     if (u.sampler || u.accel) maxBinding = std::max(maxBinding, u.binding);
@@ -3710,7 +3757,15 @@ void VkDeviceImpl::draw(Prim prim, bool indexed, int count, size_t first) {
     rec_.vbs = vbs, rec_.offs = offs;
   }
   if (!writes.empty()) {
-    vkCmdPushDescriptorSetKHR(c, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 0, uint32_t(writes.size()), writes.data());
+    if (pushDescriptors_) {
+      vkCmdPushDescriptorSetKHR(c, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 0, uint32_t(writes.size()), writes.data());
+    } else {
+      VkDescriptorSet set = frameDescriptorSet(p.setLayout);
+      if (set == VK_NULL_HANDLE) return;
+      for (VkWriteDescriptorSet& w : writes) w.dstSet = set;
+      vkUpdateDescriptorSets(dev_, uint32_t(writes.size()), writes.data(), 0, nullptr);
+      vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 0, 1, &set, 0, nullptr);
+    }
     for (const VkWriteDescriptorSet& w : writes) {
       Pushed& d = pushed_[w.dstBinding];
       d = Pushed{};

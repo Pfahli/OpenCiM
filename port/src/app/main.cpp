@@ -42,6 +42,16 @@
 #else
 #include <SDL3/SDL.h>
 #endif
+#if defined(__ANDROID__)
+// the game is SDL_main in libmain.so, which SDL's activity (GameActivity, docs/android.md) looks up and starts; not
+// through SDL_main.h, whose #define main would also rename the engine's main()
+namespace regs {
+void androidLogToLogcat();  // platform/android_jni.cpp
+}
+#define REGS_MAIN regsMain
+#else
+#define REGS_MAIN main
+#endif
 
 #if defined(_WIN32)
 void profilerFrame(long long frame);  // tools/profiler_win32.cpp: REGS_PROFILE=<first frame>:<frames>:<report file>
@@ -149,7 +159,10 @@ void setStartEnv(const char* name, const std::string& value) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int REGS_MAIN(int argc, char** argv) {
+#if defined(__ANDROID__)
+  androidLogToLogcat();
+#endif
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   crashThreadHandlers();
 #if defined(_WIN32)
@@ -244,6 +257,9 @@ int main(int argc, char** argv) {
   // folder is <documents>\OpenCiM, the original's <documents>\Cities In Motion is only read (engine/user_folders.h)
   bool standIn = !documents.empty();
   if (!standIn) documents = engine::platformDocumentsFolder();
+#if defined(__ANDROID__)
+  standIn = false;  // the app gives its own storage as --documents: the player's real folder (with the log)
+#endif
   documents = fs::absolute(documents);
   if (printPaths) {
     std::error_code ec;
@@ -549,3 +565,7 @@ int main(int argc, char** argv) {
   regs::Vfs::waitForWrites();  // the editor's autosave writes in the background
   return 0;
 }
+
+#if defined(__ANDROID__)
+extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char* argv[]) { return regsMain(argc, argv); }
+#endif

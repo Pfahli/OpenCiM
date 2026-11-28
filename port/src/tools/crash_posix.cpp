@@ -3,7 +3,12 @@
 // "module+0xoffset" lines (named by regs-tool symbolize: addr2line on Linux, atos on the Mac), the facts and the last
 // log lines. No minidump. The Windows handler is in crash_win32.cpp.
 #include <dlfcn.h>
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#include <unwind.h>
+#else
 #include <execinfo.h>
+#endif
 #include <signal.h>
 #include <sys/utsname.h>
 #if defined(__APPLE__)
@@ -54,8 +59,39 @@ std::string frameText(void* addr) {
 
 #if defined(__APPLE__)
 const char* const kSystem = "macOS";
+#elif defined(__ANDROID__)
+const char* const kSystem = "Android";
 #else
 const char* const kSystem = "Linux";
+#endif
+
+#if defined(__ANDROID__)
+// Android 10 has no execinfo.h (backtrace() came with Android 13): the unwinder of the C++ runtime walks the stack
+struct UnwindState {
+  void** cur;
+  void** end;
+};
+_Unwind_Reason_Code unwindStep(_Unwind_Context* ctx, void* arg) {
+  auto* s = static_cast<UnwindState*>(arg);
+  if (uintptr_t pc = _Unwind_GetIP(ctx)) {
+    if (s->cur == s->end) return _URC_END_OF_STACK;
+    *s->cur++ = reinterpret_cast<void*>(pc);
+  }
+  return _URC_NO_REASON;
+}
+int backtrace(void** frames, int n) {
+  UnwindState s{frames, frames + n};
+  _Unwind_Backtrace(unwindStep, &s);
+  return int(s.cur - frames);
+}
+void backtrace_symbols_fd(void* const* frames, int n, int fd) {
+  char buf[32];
+  for (int i = 0; i < n; ++i) {
+    const int len = std::snprintf(buf, sizeof buf, "  %p\n", frames[i]);
+    ssize_t w = write(fd, buf, size_t(len));
+    (void)w;
+  }
+}
 #endif
 
 // this program's file
@@ -93,6 +129,12 @@ std::string osVersion() {
   char v[64] = {};
   size_t len = sizeof v;
   if (sysctlbyname("kern.osproductversion", v, &len, nullptr, 0) == 0) pretty = std::string("macOS ") + v;
+#elif defined(__ANDROID__)
+  char release[PROP_VALUE_MAX] = {}, model[PROP_VALUE_MAX] = {}, maker[PROP_VALUE_MAX] = {};
+  __system_property_get("ro.build.version.release", release);
+  __system_property_get("ro.product.model", model);
+  __system_property_get("ro.product.manufacturer", maker);
+  pretty = std::string("Android ") + release + ", " + maker + " " + model;
 #endif
   std::ifstream f("/etc/os-release");
   for (std::string l; std::getline(f, l);)
