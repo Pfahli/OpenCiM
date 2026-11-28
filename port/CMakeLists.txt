@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 # macOS: 12 and newer (set before project(); other systems ignore it). Apple Silicon and Intel in one binary with
 # -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" (docs/macos.md)
 set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0 CACHE STRING "oldest macOS")
-project(regs VERSION 0.2.3 LANGUAGES C CXX)
+project(regs VERSION 0.2.4 LANGUAGES C CXX)
 
 # ReGS: a from-source reimplementation of the GSystem engine that runs Cities in Motion from an installed copy.
 # No game data is part of this tree; everything is read from the user's install at run time.
