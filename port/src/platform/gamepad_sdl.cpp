@@ -5,6 +5,8 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <vector>
 
 #include "platform/gamepad.h"
 
@@ -53,9 +55,31 @@ bool readGamepad(PadState& out) {
     SDL_JoystickID* ids = SDL_GetGamepads(&n);
     // (a Deck or Steam Controller that Steam already reads shows up only as Steam Input's pad: SDL leaves the real one
     // to Steam)
-    for (int i = 0; i < n && !pad; ++i) pad = SDL_OpenGamepad(ids[i]);
+    for (int i = 0; i < n && !pad; ++i) {
+#if defined(__ANDROID__)
+      // Android reports some keyboards as gamepads (they have gamepad keys, e.g. the emulator's "qwerty2"): a controller
+      // has sticks or a D-pad (axes); the others are left alone from then on
+      static std::vector<SDL_JoystickID> notPads;
+      if (std::find(notPads.begin(), notPads.end(), ids[i]) != notPads.end()) continue;
+      if (SDL_Gamepad* g = SDL_OpenGamepad(ids[i])) {
+        if (SDL_GetNumJoystickAxes(SDL_GetGamepadJoystick(g)) >= 2) {
+          pad = g;
+        } else {
+          const char* nm = SDL_GetGamepadName(g);
+          std::printf("[info] controller: %s is a keyboard with gamepad keys, not used\n", nm ? nm : "?");
+          SDL_CloseGamepad(g);
+          notPads.push_back(ids[i]);
+        }
+      }
+#else
+      pad = SDL_OpenGamepad(ids[i]);
+#endif
+    }
     SDL_free(ids);
     if (!pad) return false;
+    const char* name = SDL_GetGamepadName(pad);
+    std::printf("[info] controller: %s (vendor %04x, product %04x)\n", name ? name : "?", SDL_GetGamepadVendor(pad),
+                SDL_GetGamepadProduct(pad));
   }
   out.connected = true;
   out.layout = layoutOf(pad, out.kind);

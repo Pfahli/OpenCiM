@@ -47,7 +47,11 @@ Saves are the same files as on Windows, Linux and macOS. Uninstalling the app de
   second): right click.
 - **Two fingers**: move the camera; pinch to zoom, turn them to rotate the view.
 - **Back**: Escape (closes windows and tools, opens the game menu).
-- Text fields bring up the on-screen keyboard. A Bluetooth or USB keyboard, mouse and controller work as on the PC.
+- Text fields bring up the on-screen keyboard. A Bluetooth or USB keyboard and mouse work as on the PC.
+- **Controllers** (Xbox, PlayStation, Switch and others, over Bluetooth or USB) through SDL3, with the game's own
+  controller support as on the PC: the stick moves the cursor, the buttons click, the camera on the other stick and
+  the triggers, the button pictures of the pad. Keyboards that Android reports with gamepad keys but no sticks or D-pad
+  are not taken for a controller. (Not tried with a real controller on Android yet.)
 - The interface is drawn at 1.5× on 1080p phones and 2× on large tablets (the graphics page has 1×, 1.5×, 2×).
 
 ## Differences from Windows
